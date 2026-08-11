@@ -207,6 +207,24 @@
 (defstruct TcScratchArenaState
   (address i64))
 
+;; Typed unused-unsafe collection runs a nested typecheck from the lint driver.
+;; Keep both its traversal selectors and retained block records in that
+;; typecheck job: another compiler job may reset or destroy its own state while
+;; this collection is active.
+(defstruct TcUnusedUnsafeStateData
+  (enabled bool)
+  (current-block i64)
+  (current-path String)
+  (target-path String)
+  (block-len i64)
+  (block-spans (__tl_dyn-array ast.AstSourceSpan))
+  (block-paths (__tl_dyn-array String))
+  (block-used (__tl_dyn-array bool))
+  (fixed-storage-arena i64))
+
+(defstruct TcUnusedUnsafeState
+  (address i64))
+
 (defstruct TcMacroCallSiteActiveDecl
   (path-id i64)
   (editable bool)
@@ -387,6 +405,7 @@
   (inlay-hints TcInlayHintState)
   (macro-call-sites TcMacroCallSiteState)
   (scratch-arenas TcScratchArenaState)
+  (unused-unsafe TcUnusedUnsafeState)
   ;; Lazily points into the expansion scratch arena while one macro walk owns
   ;; a segmented declaration/path view. Zero outside that structural scope, so
   ;; idle compiler jobs retain no segment table or maximum-capacity storage.
@@ -522,6 +541,30 @@
               (ptr-cast (array-data cell) : (Ptr TcScratchArenaStateData))))
           : i64)))))
 
+(define (tc-unused-unsafe-state-new) : TcUnusedUnsafeState
+  (let
+    [cell : (__tl_dyn-array TcUnusedUnsafeStateData)
+      (array.make-array TcUnusedUnsafeStateData 1)]
+    (begin
+      (set!
+        (array-ref cell 0)
+        (TcUnusedUnsafeStateData
+          false
+          -1
+          ""
+          ""
+          0
+          (array.make-array ast.AstSourceSpan 0)
+          (array.make-array String 0)
+          (array.make-array bool 0)
+          (arena.tl_arena_current)))
+      (TcUnusedUnsafeState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr TcUnusedUnsafeStateData))))
+          : i64)))))
+
 (define (tc-job-state-new) : TcJobState
   (let
     [cell : (__tl_dyn-array TcJobStateData) (array.make-array TcJobStateData 1)]
@@ -535,6 +578,7 @@
           (tc-inlay-hint-state-new)
           (tc-macro-call-site-state-new)
           (tc-scratch-arena-state-new)
+          (tc-unused-unsafe-state-new)
           0))
       (TcJobState
         (cast
@@ -575,6 +619,9 @@
 (define (tc-job-state-scratch-arenas [state : TcJobState]) : TcScratchArenaState
   (__tl-project-field (tc-job-state-data state) scratch-arenas))
 
+(define (tc-job-state-unused-unsafe [state : TcJobState]) : TcUnusedUnsafeState
+  (tc-job-state-field state unused-unsafe TcUnusedUnsafeState))
+
 (define (tc-job-state-macro-program-view-address [state : TcJobState]) : i64
   (tc-job-state-field state macro-program-view-address i64))
 
@@ -602,6 +649,19 @@
   (unsafe
     (ptr-write!
       (int->ptr (cast state.address : u64) : (MutPtr TcScratchArenaStateData))
+      data)))
+
+(define (tc-unused-unsafe-state-data [state : TcUnusedUnsafeState]) : TcUnusedUnsafeStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr TcUnusedUnsafeStateData)))))
+
+(define (tc-unused-unsafe-state-data-set!
+  [state : TcUnusedUnsafeState]
+  [data : TcUnusedUnsafeStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast state.address : u64) : (MutPtr TcUnusedUnsafeStateData))
       data)))
 
 (define (tc-inlay-hint-state-data [state : TcInlayHintState]) : TcInlayHintStateData
@@ -1089,7 +1149,8 @@
 (define (tc-job-state-reset-file-state! [state : TcJobState]) : unit
   (begin
     (tc-job-state-reset-derived-caches! state)
-    (tc-inlay-hints-reset-for-state! (tc-job-state-inlay-hints state))))
+    (tc-inlay-hints-reset-for-state! (tc-job-state-inlay-hints state))
+    (tc-unused-unsafe-tracking-clear! (tc-job-state-unused-unsafe state))))
 
 ;; Scratch destruction is a lifetime boundary, not a generic cache reset.
 ;; Lowering performs internal file-state resets while a caller still owns an
@@ -2338,9 +2399,6 @@
 (defstruct TcLazyGlobalTableState
   (owner arena.Arena)
   (type-needs-resolution-slots (__tl_dyn-array i64))
-  (unused-unsafe-block-spans (__tl_dyn-array ast.AstSourceSpan))
-  (unused-unsafe-block-paths (__tl_dyn-array String))
-  (unused-unsafe-block-used (__tl_dyn-array bool))
   (lazy-import-stub-module-ids (__tl_dyn-array i64))
   (lazy-import-stub-alias-ids (__tl_dyn-array i64))
   (lazy-import-stub-target-ids (__tl_dyn-array i64))
@@ -2359,9 +2417,6 @@
   (TcLazyGlobalTableState
     (arena.Arena 0)
     (array.make-array i64 0)
-    (array.make-array ast.AstSourceSpan 128)
-    (array.make-array String 128)
-    (array.make-array bool 128)
     (array.make-array i64 0)
     (array.make-array i64 0)
     (array.make-array i64 0)
@@ -13058,118 +13113,123 @@
         [(ast.AstMaybeType.Some _) true]
         [(ast.AstMaybeType.No) false]))))
 
-(define tc-unused-unsafe-tracking-enabled : bool
-  false)
-(define tc-unused-unsafe-current-block : i64
-  -1)
-(define tc-unused-unsafe-current-path : String
-  "")
-(define tc-unused-unsafe-target-path : String
-  "")
-(define tc-unused-unsafe-block-len : i64
-  0)
-
-;; Set once the block arrays have been reallocated into the never-reset lazy
-;; global table arena. The define-time initializers above run under whatever
-;; arena is active at program init, so array capacity cannot be used to detect
-;; that migration; track it explicitly instead.
-(define tc-unused-unsafe-blocks-stable : bool
-  false)
-
 (define (tc-unused-unsafe-no-span) : ast.AstSourceSpan
   (ast.ast-source-span 0 0 0 0))
 
-(define (tc-unused-unsafe-tracking-reset! [path : String]) : unit
-  (begin
-    (set! tc-unused-unsafe-current-block -1)
-    (set! tc-unused-unsafe-current-path "")
-    (set! tc-unused-unsafe-target-path path)
-    (set! tc-unused-unsafe-block-len 0)
-    (set! tc-unused-unsafe-tracking-enabled true)))
-
-(define (tc-unused-unsafe-tracking-disable!) : unit
-  (begin
-    (set! tc-unused-unsafe-tracking-enabled false)
-    (set! tc-unused-unsafe-current-block -1)
-    (set! tc-unused-unsafe-current-path "")
-    (set! tc-unused-unsafe-target-path "")))
-
-(define (tc-unused-unsafe-tracking-clear!) : unit
-  (begin
-    (tc-unused-unsafe-tracking-disable!)
-    ;; Allocate the block arrays in the never-reset lazy global table arena.
-    ;; The lint pass runs its nested check in transient per-module arenas that
-    ;; are finished as the check progresses; allocating under the caller's
-    ;; transient arena would leave these globals dangling when the LSP runs
-    ;; lint and check back-to-back in one process (array index OOB).
-    ;;
-    ;; Allocate only once. This runs per linted file, and the stable arena is
-    ;; never reset, so reallocating here would leak three arrays (plus every
-    ;; grow-doubling step) per file. The buffers stay valid across files
-    ;; because every read is guarded by tc-unused-unsafe-block-len, which both
-    ;; this function and tracking-reset! zero before any push; entries left
-    ;; above the length are unreachable. Reusing them also preserves grown
-    ;; capacity, so grow! runs once per high-water mark instead of per file.
-    (if tc-unused-unsafe-blocks-stable
+(define (tc-unused-unsafe-state-storage-ensure! [state : TcUnusedUnsafeState]) : unit
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    (if (> (array.length data.block-spans) 0)
       unit
       (let
-        [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 data.fixed-storage-arena]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
         (begin
-          (in-arena
-            owner
-            (begin
-              (__tl-project-set-field
-                tc-lazy-global-table-state
-                unused-unsafe-block-spans
-                (array.make-array ast.AstSourceSpan 128))
-              (__tl-project-set-field
-                tc-lazy-global-table-state
-                unused-unsafe-block-paths
-                (array.make-array String 128))
-              (__tl-project-set-field
-                tc-lazy-global-table-state
-                unused-unsafe-block-used
-                (array.make-array bool 128))))
-          (set! tc-unused-unsafe-blocks-stable true))))
-    (set! tc-unused-unsafe-block-len 0)))
+          (set! data.block-spans (array.make-array ast.AstSourceSpan 128))
+          (set! data.block-paths (array.make-array String 128))
+          (set! data.block-used (array.make-array bool 128))
+          (set! data.fixed-storage-arena (arena.tl_arena_current))
+          (tc-unused-unsafe-state-data-set! state data)
+          (unsafe
+            (arena.tl_arena_set
+              (if (= previous owner)
+                data.fixed-storage-arena
+                previous))))))))
 
-(define (tc-unused-unsafe-block-count) : i64
-  tc-unused-unsafe-block-len)
+(define (tc-unused-unsafe-tracking-reset!
+  [state : TcUnusedUnsafeState]
+  [path : String]) : unit
+  (begin
+    (tc-unused-unsafe-state-storage-ensure! state)
+    (let
+      [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+      (begin
+        (set! data.current-block -1)
+        (set! data.current-path "")
+        (set! data.target-path path)
+        (set! data.block-len 0)
+        (set! data.enabled true)
+        (tc-unused-unsafe-state-data-set! state data)))))
 
-(define (tc-unused-unsafe-block-path [index : i64]) : String
-  (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (tc-global-array-element-shared-view
-      (__tl-project-field tc-lazy-global-table-state unused-unsafe-block-paths)
-      index)
-    ""))
-
-(define (tc-unused-unsafe-block-span [index : i64]) : ast.AstSourceSpan
-  (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref
-      (__tl-project-field tc-lazy-global-table-state unused-unsafe-block-spans)
-      index)
-    (tc-unused-unsafe-no-span)))
-
-(define (tc-unused-unsafe-block-used? [index : i64]) : bool
-  (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref
-      (__tl-project-field tc-lazy-global-table-state unused-unsafe-block-used)
-      index)
-    false))
-
-(define (tc-unused-unsafe-set-current-path! [path : String]) : String
+(define (tc-unused-unsafe-tracking-disable! [state : TcUnusedUnsafeState]) : unit
   (let
-    [prev : String (string.copy (& tc-unused-unsafe-current-path))]
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
     (begin
-      (if tc-unused-unsafe-tracking-enabled
-        (set! tc-unused-unsafe-current-path path)
+      (set! data.enabled false)
+      (set! data.current-block -1)
+      (set! data.current-path "")
+      (set! data.target-path "")
+      (tc-unused-unsafe-state-data-set! state data))))
+
+(define (tc-unused-unsafe-tracking-clear! [state : TcUnusedUnsafeState]) : unit
+  (begin
+    (tc-unused-unsafe-tracking-disable! state)
+    (let
+      [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+      (begin
+        (set! data.block-len 0)
+        (tc-unused-unsafe-state-data-set! state data)))))
+
+(define (tc-unused-unsafe-block-count [state : TcUnusedUnsafeState]) : i64
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    data.block-len))
+
+(define (tc-unused-unsafe-block-path
+  [state : TcUnusedUnsafeState]
+  [index : i64]) : String
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    (if (and (>= index 0) (< index data.block-len))
+      (array-ref data.block-paths index)
+      "")))
+
+(define (tc-unused-unsafe-block-span
+  [state : TcUnusedUnsafeState]
+  [index : i64]) : ast.AstSourceSpan
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    (if (and (>= index 0) (< index data.block-len))
+      (array-ref data.block-spans index)
+      (tc-unused-unsafe-no-span))))
+
+(define (tc-unused-unsafe-block-used?
+  [state : TcUnusedUnsafeState]
+  [index : i64]) : bool
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    (if (and (>= index 0) (< index data.block-len))
+      (array-ref data.block-used index)
+      false)))
+
+(define (tc-unused-unsafe-set-current-path!
+  [state : TcUnusedUnsafeState]
+  [path : String]) : String
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    [current : String data.current-path]
+    [prev : String (string.copy (& current))]
+    (begin
+      (if data.enabled
+        (begin
+          (set! data.current-path path)
+          (tc-unused-unsafe-state-data-set! state data))
         unit)
       prev)))
 
-(define (tc-unused-unsafe-restore-current-path! [path : String]) : unit
-  (if tc-unused-unsafe-tracking-enabled
-    (set! tc-unused-unsafe-current-path path)
-    unit))
+(define (tc-unused-unsafe-restore-current-path!
+  [state : TcUnusedUnsafeState]
+  [path : String]) : unit
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    (if data.enabled
+      (begin
+        (set! data.current-path path)
+        (tc-unused-unsafe-state-data-set! state data))
+      unit)))
 
 (define (tc-unused-unsafe-span-eq?
   [a : ast.AstSourceSpan]
@@ -13181,168 +13241,127 @@
     (= (ast.ast-source-span-end-col a) (ast.ast-source-span-end-col b))))
 
 (define (tc-unused-unsafe-find-existing
+  [state : TcUnusedUnsafeState]
   [path : String]
   [span : ast.AstSourceSpan]
   [index : i64]) : i64
-  (if (>= index tc-unused-unsafe-block-len)
-    -1
-    (if (and
-      (string.eq
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            unused-unsafe-block-paths)
-          index)
-        path)
-      (tc-unused-unsafe-span-eq?
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            unused-unsafe-block-spans)
-          index)
-        span))
-      index
-      (tc-unused-unsafe-find-existing path span (+ index 1)))))
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    (if (>= index data.block-len)
+      -1
+      (if (and
+        (string.eq (array-ref data.block-paths index) path)
+        (tc-unused-unsafe-span-eq? (array-ref data.block-spans index) span))
+        index
+        (tc-unused-unsafe-find-existing state path span (+ index 1))))))
 
 (define (tc-unused-unsafe-grow-copy
+  [data : TcUnusedUnsafeStateData]
   [new-spans : (__tl_dyn-array ast.AstSourceSpan)]
   [new-paths : (__tl_dyn-array String)]
   [new-used : (__tl_dyn-array bool)]
   [index : i64]) : unit
-  (if (>= index tc-unused-unsafe-block-len)
+  (if (>= index data.block-len)
     unit
     (begin
-      (set!
-        (array-ref new-spans index)
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            unused-unsafe-block-spans)
-          index))
-      (set!
-        (array-ref new-paths index)
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            unused-unsafe-block-paths)
-          index))
-      (set!
-        (array-ref new-used index)
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            unused-unsafe-block-used)
-          index))
-      (tc-unused-unsafe-grow-copy new-spans new-paths new-used (+ index 1)))))
+      (set! (array-ref new-spans index) (array-ref data.block-spans index))
+      (set! (array-ref new-paths index) (array-ref data.block-paths index))
+      (set! (array-ref new-used index) (array-ref data.block-used index))
+      (tc-unused-unsafe-grow-copy data new-spans new-paths new-used (+ index 1)))))
 
-(define (tc-unused-unsafe-grow!) : unit
+(define (tc-unused-unsafe-grow! [state : TcUnusedUnsafeState]) : unit
   (let
-    [old-cap : i64
-      (array.length
-        (__tl-project-field
-          tc-lazy-global-table-state
-          unused-unsafe-block-spans))]
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    [old-cap : i64 (array.length data.block-spans)]
     [new-cap : i64 (* old-cap 2)]
-    [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 data.fixed-storage-arena]
+    [_set-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
     [new-spans : (__tl_dyn-array ast.AstSourceSpan)
-      (in-arena owner (array.make-array ast.AstSourceSpan new-cap))]
-    [new-paths : (__tl_dyn-array String)
-      (in-arena owner (array.make-array String new-cap))]
-    [new-used : (__tl_dyn-array bool)
-      (in-arena owner (array.make-array bool new-cap))]
+      (array.make-array ast.AstSourceSpan new-cap)]
+    [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
+    [new-used : (__tl_dyn-array bool) (array.make-array bool new-cap)]
     (begin
-      (tc-unused-unsafe-grow-copy new-spans new-paths new-used 0)
-      (__tl-project-set-field
-        tc-lazy-global-table-state
-        unused-unsafe-block-spans
-        new-spans)
-      (__tl-project-set-field
-        tc-lazy-global-table-state
-        unused-unsafe-block-paths
-        new-paths)
-      (__tl-project-set-field
-        tc-lazy-global-table-state
-        unused-unsafe-block-used
-        new-used))))
+      (tc-unused-unsafe-grow-copy data new-spans new-paths new-used 0)
+      (set! data.block-spans new-spans)
+      (set! data.block-paths new-paths)
+      (set! data.block-used new-used)
+      (set! data.fixed-storage-arena (arena.tl_arena_current))
+      (tc-unused-unsafe-state-data-set! state data)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous owner)
+            data.fixed-storage-arena
+            previous))))))
 
-(define (tc-unused-unsafe-push [span : ast.AstSourceSpan]) : i64
+(define (tc-unused-unsafe-push
+  [state : TcUnusedUnsafeState]
+  [span : ast.AstSourceSpan]) : i64
   (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
     [existing : i64
-      (tc-unused-unsafe-find-existing
-        (tc-global-shared-view tc-unused-unsafe-current-path)
-        span
-        0)]
+      (tc-unused-unsafe-find-existing state data.current-path span 0)]
     (if (>= existing 0)
       existing
       (let
-        [slot : i64 tc-unused-unsafe-block-len]
+        [slot : i64 data.block-len]
         (begin
-          (if (>=
-            slot
-            (array.length
-              (__tl-project-field
-                tc-lazy-global-table-state
-                unused-unsafe-block-spans)))
-            (tc-unused-unsafe-grow!)
+          (if (>= slot (array.length data.block-spans))
+            (tc-unused-unsafe-grow! state)
             unit)
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                unused-unsafe-block-spans)
-              slot)
-            span)
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                unused-unsafe-block-paths)
-              slot)
-            tc-unused-unsafe-current-path)
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                unused-unsafe-block-used)
-              slot)
-            false)
-          (set! tc-unused-unsafe-block-len (+ tc-unused-unsafe-block-len 1))
-          slot)))))
+          (let
+            [next : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+            (begin
+              (set! (array-ref next.block-spans slot) span)
+              (set! (array-ref next.block-paths slot) next.current-path)
+              (set! (array-ref next.block-used slot) false)
+              (set! next.block-len (+ slot 1))
+              (tc-unused-unsafe-state-data-set! state next)
+              slot)))))))
 
-(define (tc-unused-unsafe-enter-block [span : TcMaybeAstSourceSpan]) : i64
+(define (tc-unused-unsafe-enter-block
+  [state : TcUnusedUnsafeState]
+  [span : TcMaybeAstSourceSpan]) : i64
   (let
-    [prev : i64 tc-unused-unsafe-current-block]
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    [prev : i64 data.current-block]
     (begin
-      (if tc-unused-unsafe-tracking-enabled
-        (if (string.eq
-          tc-unused-unsafe-current-path
-          tc-unused-unsafe-target-path)
+      (if data.enabled
+        (if (string.eq data.current-path data.target-path)
           (match span
             [(TcMaybeAstSourceSpan.Some real-span)
-              (set!
-                tc-unused-unsafe-current-block
-                (tc-unused-unsafe-push real-span))]
+              (let
+                [slot : i64 (tc-unused-unsafe-push state real-span)]
+                [next : TcUnusedUnsafeStateData
+                  (tc-unused-unsafe-state-data state)]
+                (begin
+                  (set! next.current-block slot)
+                  (tc-unused-unsafe-state-data-set! state next)))]
             [(TcMaybeAstSourceSpan.No) unit])
           unit)
         unit)
       prev)))
 
-(define (tc-unused-unsafe-restore-block! [prev : i64]) : unit
-  (if tc-unused-unsafe-tracking-enabled
-    (set! tc-unused-unsafe-current-block prev)
-    unit))
+(define (tc-unused-unsafe-restore-block!
+  [state : TcUnusedUnsafeState]
+  [prev : i64]) : unit
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    (if data.enabled
+      (begin
+        (set! data.current-block prev)
+        (tc-unused-unsafe-state-data-set! state data))
+      unit)))
 
-(define (tc-unused-unsafe-mark-current-used!) : unit
-  (if (and
-    tc-unused-unsafe-tracking-enabled
-    (>= tc-unused-unsafe-current-block 0)
-    (< tc-unused-unsafe-current-block tc-unused-unsafe-block-len))
-    (set!
-      (array-ref
-        (__tl-project-field tc-lazy-global-table-state unused-unsafe-block-used)
-        tc-unused-unsafe-current-block)
-      true)
-    unit))
+(define (tc-unused-unsafe-mark-current-used! [state : TcUnusedUnsafeState]) : unit
+  (let
+    [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
+    [current : i64 data.current-block]
+    (if (and data.enabled (>= current 0) (< current data.block-len))
+      (set! (array-ref data.block-used current) true)
+      unit)))
 
 (define (tc-unsafe-begin-list-with-expected
   [ctx : TcContext]
@@ -13351,11 +13370,13 @@
   [expected : ast.AstType]
   [span : TcMaybeAstSourceSpan]) : ResultTcType
   (let
-    [prev : i64 (tc-unused-unsafe-enter-block span)]
+    [unused-unsafe : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [prev : i64 (tc-unused-unsafe-enter-block unused-unsafe span)]
     [result : ResultTcType
       (tc-begin-list-with-expected ctx (tc-enter-unsafe env) exprs expected)]
     (begin
-      (tc-unused-unsafe-restore-block! prev)
+      (tc-unused-unsafe-restore-block! unused-unsafe prev)
       result)))
 
 (define (tc-unsafe-begin-list
@@ -13364,10 +13385,12 @@
   [exprs : ast.AstExprList]
   [span : TcMaybeAstSourceSpan]) : ResultTcType
   (let
-    [prev : i64 (tc-unused-unsafe-enter-block span)]
+    [unused-unsafe : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [prev : i64 (tc-unused-unsafe-enter-block unused-unsafe span)]
     [result : ResultTcType (tc-begin-list ctx (tc-enter-unsafe env) exprs)]
     (begin
-      (tc-unused-unsafe-restore-block! prev)
+      (tc-unused-unsafe-restore-block! unused-unsafe prev)
       result)))
 
 (define (tc-bind-return-type [env : TcTypeEnv] [ty : ast.AstType]) : TcTypeEnv
@@ -16500,6 +16523,7 @@
         [(ResultTcTypeUnsafe.Ok ty unsafe)
           (if unsafe
             (match (tc-require-unsafe
+              ctx
               env
               (tc-source-lookup-display-name ctx name name-id lookup-name))
               [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
@@ -16621,7 +16645,7 @@
             (match found
               [(ResultTcTypeUnsafe.Ok ty unsafe)
                 (if unsafe
-                  (match (tc-require-unsafe env name)
+                  (match (tc-require-unsafe ctx env name)
                     [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
                     [(ResultTcUnit.Err message) (ResultTcType.Err message)])
                   (ResultTcType.Ok ty))]
@@ -28091,7 +28115,7 @@
   [env : TcTypeEnv]
   [name : String]
   [args : ast.AstExprList]) : ResultTcType
-  (match (tc-require-unsafe env name)
+  (match (tc-require-unsafe ctx env name)
     [(ResultTcUnit.Ok)
       (if (> args.len 0)
         (let
@@ -28188,10 +28212,11 @@
       (ResultTcType.Err
         "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")]))
 
-(define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
+(define (tc-require-unsafe [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcUnit
   (if (tc-in-unsafe? env)
     (begin
-      (tc-unused-unsafe-mark-current-used!)
+      (tc-unused-unsafe-mark-current-used!
+        (tc-job-state-unused-unsafe (tc-context-job-state ctx)))
       ResultTcUnit.Ok)
     (ResultTcUnit.Err
       (str_cat.str-cat "typecheck: " name " requires unsafe context"))))
@@ -40004,7 +40029,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : ast.AstExprList]) : ResultTcType
-  (match (tc-require-unsafe env "tls-current-arena-set!")
+  (match (tc-require-unsafe ctx env "tls-current-arena-set!")
     [(ResultTcUnit.Ok)
       (if (= args.len 1)
         (let
@@ -56272,7 +56297,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [place : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe env "ptr-addr-of")
+  (match (tc-require-unsafe ctx env "ptr-addr-of")
     [(ResultTcUnit.Ok)
       (match (tc-ptr-addr-of-place ctx env place)
         [(ResultTcType.Ok ty)
@@ -56287,7 +56312,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [ptr : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe env "ptr-read")
+  (match (tc-require-unsafe ctx env "ptr-read")
     [(ResultTcUnit.Ok)
       (match (tc-expr ctx env ptr)
         [(ResultTcType.Ok ptr-ty)
@@ -56305,7 +56330,7 @@
   [env : TcTypeEnv]
   [ptr : ast.AstExpr]
   [value : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe env "ptr-write!")
+  (match (tc-require-unsafe ctx env "ptr-write!")
     [(ResultTcUnit.Ok)
       (match (tc-expr ctx env ptr)
         [(ResultTcType.Ok ptr-ty)
@@ -56335,7 +56360,7 @@
   [env : TcTypeEnv]
   [ptr : ast.AstExpr]
   [offset : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe env "ptr-offset")
+  (match (tc-require-unsafe ctx env "ptr-offset")
     [(ResultTcUnit.Ok)
       (match (tc-expr ctx env ptr)
         [(ResultTcType.Ok ptr-ty)
@@ -56365,7 +56390,7 @@
   [env : TcTypeEnv]
   [ptr : ast.AstExpr]
   [target : ast.AstType]) : ResultTcType
-  (match (tc-require-unsafe env "ptr-cast")
+  (match (tc-require-unsafe ctx env "ptr-cast")
     [(ResultTcUnit.Ok)
       (let
         [resolved-target : ast.AstType (tc-resolve-type ctx target)]
@@ -56385,7 +56410,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [ptr : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe env "ptr->int")
+  (match (tc-require-unsafe ctx env "ptr->int")
     [(ResultTcUnit.Ok)
       (match (tc-expr ctx env ptr)
         [(ResultTcType.Ok ptr-ty)
@@ -56401,7 +56426,7 @@
   [env : TcTypeEnv]
   [value : ast.AstExpr]
   [target : ast.AstType]) : ResultTcType
-  (match (tc-require-unsafe env "int->ptr")
+  (match (tc-require-unsafe ctx env "int->ptr")
     [(ResultTcUnit.Ok)
       (let
         [resolved-target : ast.AstType (tc-resolve-type ctx target)]
@@ -56421,7 +56446,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [str : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe env "string-data")
+  (match (tc-require-unsafe ctx env "string-data")
     [(ResultTcUnit.Ok)
       (match (tc-expr ctx env str)
         [(ResultTcType.Ok str-ty)
@@ -56436,7 +56461,7 @@
   [env : TcTypeEnv]
   [ptr : ast.AstExpr]
   [len : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe env "string-from-bytes")
+  (match (tc-require-unsafe ctx env "string-from-bytes")
     [(ResultTcUnit.Ok)
       (match (tc-expr ctx env ptr)
         [(ResultTcType.Ok ptr-ty)
@@ -56481,7 +56506,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [array : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe env "array-data")
+  (match (tc-require-unsafe ctx env "array-data")
     [(ResultTcUnit.Ok)
       (match (tc-expr ctx env array)
         [(ResultTcType.Ok array-ty)
@@ -56494,8 +56519,11 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
-(define (tc-program-entry-ptr-expr [env : TcTypeEnv] [name : String]) : ResultTcType
-  (match (tc-require-unsafe env name)
+(define (tc-program-entry-ptr-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcType
+  (match (tc-require-unsafe ctx env name)
     [(ResultTcUnit.Ok)
       (ResultTcType.Ok (ast.ast-ty-ptr (ast.ast-ty-ptr (ast.AstType.U8))))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -56561,7 +56589,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : ast.AstExprList]) : ResultTcType
-  (match (tc-require-unsafe env "syscall")
+  (match (tc-require-unsafe ctx env "syscall")
     [(ResultTcUnit.Ok)
       (match (tc-syscall-args ctx env args)
         [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.I64))]
@@ -57946,7 +57974,7 @@
             [module-id : i64 (macro-hygiene-global-module-id name)]
             (if (macro-hygiene-global-legacy-id? name)
               (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                (match (tc-require-unsafe env (ci.intern-str global-id))
+                (match (tc-require-unsafe ctx env (ci.intern-str global-id))
                   [(ResultTcUnit.Ok)
                     (tc-lookup-hygiene-global-visible-id ctx env global-id)]
                   [(ResultTcUnit.Err message) (ResultTcType.Err message)])
@@ -57960,7 +57988,7 @@
           (match (tc-hygiene-global-decode name-text)
             [(TcHygieneGlobalName.Legacy global-name)
               (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                (match (tc-require-unsafe env global-name)
+                (match (tc-require-unsafe ctx env global-name)
                   [(ResultTcUnit.Ok)
                     (tc-lookup-hygiene-global-visible-id ctx env global-id)]
                   [(ResultTcUnit.Err message) (ResultTcType.Err message)])
@@ -57987,6 +58015,7 @@
           [(ResultTcTypeUnsafe.Ok ty unsafe)
             (if unsafe
               (match (tc-require-unsafe
+                ctx
                 env
                 (tc-source-lookup-display-name ctx name-text name lookup-name))
                 [(ResultTcUnit.Ok)
@@ -58590,7 +58619,7 @@
             (if (and (tc-castable-type? inner-ty) (tc-castable-type? target-ty))
               (ResultTcType.Ok target-ty)
               (if (tc-function-to-integer-cast? inner-ty target-ty)
-                (match (tc-require-unsafe env "function-to-integer cast")
+                (match (tc-require-unsafe ctx env "function-to-integer cast")
                   [(ResultTcUnit.Ok) (ResultTcType.Ok target-ty)]
                   [(ResultTcUnit.Err message) (ResultTcType.Err message)])
                 (ResultTcType.Err
@@ -59022,8 +59051,10 @@
         [array : ast.AstExpr (ast.ast-node-get array-box)]
         (tc-array-data-expr ctx env array))]
     [(ast.AstExpr.ProgramArgc) (ResultTcType.Ok (ast.AstType.I64))]
-    [(ast.AstExpr.ProgramArgv) (tc-program-entry-ptr-expr env "program-argv")]
-    [(ast.AstExpr.ProgramEnvp) (tc-program-entry-ptr-expr env "program-envp")]
+    [(ast.AstExpr.ProgramArgv)
+      (tc-program-entry-ptr-expr ctx env "program-argv")]
+    [(ast.AstExpr.ProgramEnvp)
+      (tc-program-entry-ptr-expr ctx env "program-envp")]
     [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr (ast.ast-node-get leaf-box)]
@@ -91895,7 +91926,9 @@
             macro-unqualified-import-cache-values
             (array.make-array i64 macro-unqualified-import-cache-capacity)))))))
 
-(define (tc-unused-unsafe-storage-lifetime-fill! [index : i64]) : unit
+(define (tc-unused-unsafe-storage-lifetime-fill!
+  [state : TcUnusedUnsafeState]
+  [index : i64]) : unit
   (if (>= index 129)
     unit
     (let
@@ -91903,41 +91936,42 @@
       [col : i64 (+ 200 index)]
       [span : ast.AstSourceSpan (ast.ast-source-span line col line (+ col 1))]
       [previous : i64
-        (tc-unused-unsafe-enter-block (TcMaybeAstSourceSpan.Some span))]
+        (tc-unused-unsafe-enter-block state (TcMaybeAstSourceSpan.Some span))]
       (begin
         (if (= index 128)
-          (tc-unused-unsafe-mark-current-used!)
+          (tc-unused-unsafe-mark-current-used! state)
           unit)
-        (tc-unused-unsafe-restore-block! previous)
-        (tc-unused-unsafe-storage-lifetime-fill! (+ index 1))))))
+        (tc-unused-unsafe-restore-block! state previous)
+        (tc-unused-unsafe-storage-lifetime-fill! state (+ index 1))))))
 
 (define (tc-unused-unsafe-storage-lifetime-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
+    [job : TcJobState (tc-job-state-new)]
+    [state : TcUnusedUnsafeState (tc-job-state-unused-unsafe job)]
     [scratch : arena.Arena (arena.make)]
     [path : String "tc-unused-unsafe-lifetime"]
     (begin
-      ;; The first clear must run while a disposable arena is current. The
-      ;; arrays must migrate to the lazy global arena before that producer is
-      ;; destroyed, and later growth must use the same owner.
+      ;; First allocation runs while an unrelated disposable arena is current.
+      ;; The buffers must still be retained by the state owner's arena.
       (unsafe
         (arena.set! scratch))
-      (tc-unused-unsafe-tracking-clear!)
+      (tc-unused-unsafe-tracking-reset! state path)
       (unsafe
         (arena.set! caller))
       (unsafe
         (arena.destroy scratch))
-      (tc-unused-unsafe-tracking-reset! path)
-      (tc-unused-unsafe-set-current-path! path)
-      (tc-unused-unsafe-storage-lifetime-fill! 0)
+      (tc-unused-unsafe-set-current-path! state path)
+      (tc-unused-unsafe-storage-lifetime-fill! state 0)
       (let
-        [first-span : ast.AstSourceSpan (tc-unused-unsafe-block-span 0)]
-        [last-span : ast.AstSourceSpan (tc-unused-unsafe-block-span 128)]
+        [first-span : ast.AstSourceSpan (tc-unused-unsafe-block-span state 0)]
+        [last-span : ast.AstSourceSpan (tc-unused-unsafe-block-span state 128)]
+        [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
         [survived? : bool
           (and
-            (= (tc-unused-unsafe-block-count) 129)
-            (string.eq (tc-unused-unsafe-block-path 0) path)
-            (string.eq (tc-unused-unsafe-block-path 128) path)
+            (= (tc-unused-unsafe-block-count state) 129)
+            (string.eq (tc-unused-unsafe-block-path state 0) path)
+            (string.eq (tc-unused-unsafe-block-path state 128) path)
             (= (ast.ast-source-span-start-line first-span) 100)
             (= (ast.ast-source-span-start-col first-span) 200)
             (= (ast.ast-source-span-end-line first-span) 100)
@@ -91946,20 +91980,67 @@
             (= (ast.ast-source-span-start-col last-span) 328)
             (= (ast.ast-source-span-end-line last-span) 228)
             (= (ast.ast-source-span-end-col last-span) 329)
-            (not (tc-unused-unsafe-block-used? 0))
-            (tc-unused-unsafe-block-used? 128)
-            (= tc-unused-unsafe-current-block -1))]
+            (not (tc-unused-unsafe-block-used? state 0))
+            (tc-unused-unsafe-block-used? state 128)
+            (= data.current-block -1))]
         (begin
-          ;; Clear after capturing all assertions so the helper always leaves
-          ;; the global tracker disabled and with no logical entries.
-          (tc-unused-unsafe-tracking-clear!)
-          (and
-            survived?
-            (= (tc-unused-unsafe-block-count) 0)
-            (not tc-unused-unsafe-tracking-enabled)
-            (= tc-unused-unsafe-current-block -1)
-            (string.eq tc-unused-unsafe-current-path "")
-            (string.eq tc-unused-unsafe-target-path "")))))))
+          (tc-unused-unsafe-tracking-clear! state)
+          (let
+            [cleared : TcUnusedUnsafeStateData
+              (tc-unused-unsafe-state-data state)]
+            (and
+              survived?
+              (= (tc-unused-unsafe-block-count state) 0)
+              (not cleared.enabled)
+              (= cleared.current-block -1)
+              (string.eq cleared.current-path "")
+              (string.eq cleared.target-path ""))))))))
+
+(define (tc-unused-unsafe-state-isolation-ok?) : bool
+  (let
+    [job-a : TcJobState (tc-job-state-new)]
+    [job-b : TcJobState (tc-job-state-new)]
+    [state-a : TcUnusedUnsafeState (tc-job-state-unused-unsafe job-a)]
+    [state-b : TcUnusedUnsafeState (tc-job-state-unused-unsafe job-b)]
+    [path-a : String "tc-unused-unsafe-a"]
+    [path-b : String "tc-unused-unsafe-b"]
+    [span-b : ast.AstSourceSpan (ast.ast-source-span 7 8 9 10)]
+    (begin
+      (tc-unused-unsafe-tracking-reset! state-a path-a)
+      (tc-unused-unsafe-set-current-path! state-a path-a)
+      (tc-unused-unsafe-storage-lifetime-fill! state-a 0)
+      (tc-unused-unsafe-tracking-reset! state-b path-b)
+      (tc-unused-unsafe-set-current-path! state-b path-b)
+      (let
+        [previous-b : i64
+          (tc-unused-unsafe-enter-block
+            state-b
+            (TcMaybeAstSourceSpan.Some span-b))]
+        (begin
+          (tc-unused-unsafe-mark-current-used! state-b)
+          (tc-unused-unsafe-restore-block! state-b previous-b)
+          ;; A reset must not alter B's selectors, records, or result bits.
+          (tc-job-state-reset-file-state! job-a)
+          (let
+            [data-b : TcUnusedUnsafeStateData
+              (tc-unused-unsafe-state-data state-b)]
+            (and
+              (= (tc-unused-unsafe-block-count state-a) 0)
+              (= (tc-unused-unsafe-block-count state-b) 1)
+              (string.eq (tc-unused-unsafe-block-path state-b 0) path-b)
+              (tc-unused-unsafe-span-eq?
+                (tc-unused-unsafe-block-span state-b 0)
+                span-b)
+              (tc-unused-unsafe-block-used? state-b 0)
+              data-b.enabled
+              (= data-b.current-block -1)
+              (string.eq data-b.current-path path-b)
+              (string.eq data-b.target-path path-b))))))))
+
+(define (tc-unused-unsafe-state-isolation-self-test) : bool
+  (and
+    (tc-unused-unsafe-storage-lifetime-ok?)
+    (tc-unused-unsafe-state-isolation-ok?)))
 
 (define (tc-inlay-hint-string-lifetime-record-in-arena!
   [state : TcInlayHintState]
@@ -92481,12 +92562,15 @@
           (let
             [unused-unsafe-lifetime? : bool
               (tc-unused-unsafe-storage-lifetime-ok?)]
+            [unused-unsafe-isolation? : bool
+              (tc-unused-unsafe-state-isolation-ok?)]
             (and
               initially-lazy?
               restored-caller?
               exact-capacities?
               survived?
-              unused-unsafe-lifetime?)))))))
+              unused-unsafe-lifetime?
+              unused-unsafe-isolation?)))))))
 
 (define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
   (cast
@@ -106629,8 +106713,13 @@
                             decl-base-ctx
                             type-module-id)
                           decl-base-ctx)]
+                      [unused-unsafe : TcUnusedUnsafeState
+                        (tc-job-state-unused-unsafe
+                          (tc-context-job-state decl-ctx))]
                       [prev-path : String
-                        (tc-unused-unsafe-set-current-path! decl-path)]
+                        (tc-unused-unsafe-set-current-path!
+                          unused-unsafe
+                          decl-path)]
                       (begin
                         (cfg
                           compile-profile
@@ -106644,7 +106733,9 @@
                           decl)
                           [(ResultTcUnit.Ok)
                             (begin
-                              (tc-unused-unsafe-restore-current-path! prev-path)
+                              (tc-unused-unsafe-restore-current-path!
+                                unused-unsafe
+                                prev-path)
                               (set! cur-decls rest)
                               (set! cur-paths rest-paths)
                               (if tc-poison-observed
@@ -106678,7 +106769,9 @@
                                     (tc-summary-add-decl cur-summary decl)))))]
                           [(ResultTcUnit.Err message)
                             (begin
-                              (tc-unused-unsafe-restore-current-path! prev-path)
+                              (tc-unused-unsafe-restore-current-path!
+                                unused-unsafe
+                                prev-path)
                               (if tc-poison-observed
                                 unit
                                 (cdiag.compiler-diagnostic-list-push!

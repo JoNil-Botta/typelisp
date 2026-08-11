@@ -3438,6 +3438,8 @@
                     (if (= expected-forces 0)
                       (= (tc_core.tc-lazy-import-summary-macro-force-count) 0)
                       (> (tc_core.tc-lazy-import-summary-macro-force-count) 0))))]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _)
+                (set! ok false)]
               [(tc_core.ResultCompilerTypecheckChecked.Err _) (set! ok false)])]
           [(parser.ResultAstProgramDiagnostic.Err _) (set! ok false)])
         (set! ok false))
@@ -3822,6 +3824,7 @@
                     "typecheck smoke: missing full.entry id: "
                     "full.entry"))
                 env)]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
     (begin
@@ -4745,6 +4748,7 @@
                           [(tc_core.ResultTcType.Ok _) true]
                           [(tc_core.ResultTcType.Err _) false]))]
                     [(tc_core.ResultTcEnv.Err _) false])))]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
     (begin
@@ -4768,6 +4772,7 @@
                     env
                     (ci.intern
                       (compiler_symbols.compiler-symbol-module-key "vec" "Vec")))))]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(load.ResultCompilerLoadWithPaths.Err _) false])]
     (begin
@@ -4800,6 +4805,7 @@
                     (io.panic
                       "typecheck: lazy import stdlib.array materialized")
                     true)]
+                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
                 [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [message : String
@@ -4840,6 +4846,7 @@
                 paths)
                 [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
                   (and (= skip-count 0) result-materialized)]
+                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
                 [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [message : String
@@ -4871,6 +4878,7 @@
               (ast.ast-program decls)
               paths)
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [message : String
@@ -4901,6 +4909,7 @@
               (ast.ast-program decls)
               paths)
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [message : String
@@ -4934,6 +4943,7 @@
                 paths)
                 [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
                   (= skip-count 0)]
+                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
                 [(tc_core.ResultCompilerTypecheckChecked.Err _) false]))]
           [(load.ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4951,6 +4961,7 @@
             (ast.ast-program decls)
             paths)
             [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(load.ResultCompilerLoadWithPaths.Err _) false])]
     (begin
@@ -4968,6 +4979,7 @@
             (ast.ast-program decls)
             paths)
             [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(load.ResultCompilerLoadWithPaths.Err _) false])]
     (begin
@@ -5475,6 +5487,7 @@
                   test
                   (= (tc_core.tc-proof-reuse-skips-total-value) expected-skips)
                   true)]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
                 (let
                   [message : String
@@ -5542,6 +5555,16 @@
                 roots
                 cfgs))
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) false]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial
+                  diagnostics
+                  _
+                  _
+                  _)
+                (load.compiler-load-string-contains?
+                  (diagnostic.compiler-diagnostic-message
+                    (diagnostic.compiler-diagnostic-list-first
+                      (box-get diagnostics)))
+                  expected-substring)]
               [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
                 (load.compiler-load-string-contains?
                   (diagnostic.compiler-diagnostic-message

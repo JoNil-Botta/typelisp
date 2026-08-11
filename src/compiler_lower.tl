@@ -66065,6 +66065,12 @@
                       compile-profile
                       (compiler-lower-profile-finish "clone_augment_names"))
                     (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
+        [(tc_core.ResultCompilerTypecheckChecked.Partial diag _ _ _)
+          (begin
+            (tc_core.tc-clone-root-collection-abort!)
+            (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
+            (ResultCompilerLower.Err
+              (box (cdiag.compiler-diagnostic-list-first (box-get diag)))))]
         [(tc_core.ResultCompilerTypecheckChecked.Err diag)
           (begin
             (tc_core.tc-clone-root-collection-abort!)

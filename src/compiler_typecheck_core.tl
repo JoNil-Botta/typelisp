@@ -2547,6 +2547,15 @@
 
 (defenum ResultCompilerTypecheckChecked
   (Ok CompilerTypecheckSummary TcContext TcTypeEnv ast.AstDeclPathList)
+  ;; The checked program, symbol identities, and every successfully established
+  ;; body fact remain available even when declaration recovery reports type
+  ;; diagnostics. Semantic tooling consumes this transient view immediately and
+  ;; copies any useful records into its own arena.
+  (Partial
+    (Box cdiag.CompilerDiagnosticList)
+    TcContext
+    TcTypeEnv
+    ast.AstDeclPathList)
   (Err (Box cdiag.CompilerDiagnosticList)))
 
 (defenum TcPrefixSnapshotLookup
@@ -106242,7 +106251,13 @@
                                           top-env
                                           paths))]
                                     [(ResultCompilerTypecheck.Err diag)
-                                      (ResultCompilerTypecheckChecked.Err diag)])))])]
+                                      (begin
+                                        (tc-context-capture-active-pools! ctx)
+                                        (ResultCompilerTypecheckChecked.Partial
+                                          diag
+                                          ctx
+                                          top-env
+                                          paths))])))])]
                         [(ResultTcEnv.Err message)
                           (ResultCompilerTypecheckChecked.Err
                             (box
@@ -106329,6 +106344,17 @@
               ctx
               top-env
               checked-paths))]
+        [(ResultCompilerTypecheckChecked.Partial diag ctx top-env checked-paths)
+          (begin
+            ;; Recovery has completed its one declaration walk. Publish the
+            ;; facts proven by that walk just like a successful check; poisoned
+            ;; or unresolved expressions have no fact for index consumers.
+            (tc-body-early-exit-facts-finish! body-state)
+            (ResultCompilerTypecheckChecked.Partial
+              diag
+              ctx
+              top-env
+              checked-paths))]
         [(ResultCompilerTypecheckChecked.Err diag)
           (begin
             (tc-body-early-exit-facts-abort! body-state)
@@ -106382,6 +106408,8 @@
     intern-state)
     [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
       (ResultCompilerTypecheck.Ok summary)]
+    [(ResultCompilerTypecheckChecked.Partial diag _ _ _)
+      (ResultCompilerTypecheck.Err diag)]
     [(ResultCompilerTypecheckChecked.Err diag)
       (ResultCompilerTypecheck.Err diag)]))
 

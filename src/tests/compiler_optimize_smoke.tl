@@ -3445,6 +3445,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-switch-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-second-exit-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-second-exit-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-negative-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
       42)
@@ -3507,6 +3515,22 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-c27-if-convert-compare-self-test"
       (smoke-c27-if-convert-compare-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-equality-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-equality-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-range-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-range-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-runtime-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
       42)
     42))
 
@@ -3764,6 +3788,20 @@
     "multi-block versioning remaps total-switch case and trap edges"))
 
 (test
+  bce-version-multiblock-second-exit
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
+    42
+    "multi-block versioning admits a second exiting branch on the guard chain"))
+
+(test
+  bce-version-multiblock-second-exit-boundaries
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
+    42
+    "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
+
+(test
   bce-version-multiblock-rejections
   (test.assert-i64-eq
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
@@ -3888,3 +3926,31 @@
     (smoke-cfg-index-block-lookup-self-test)
     42
     "CFG block lookup is dense, first-match, missing-safe, and stale-index-safe"))
+
+(test
+  bit-test-equality-chain
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-equality-self-test)
+    42
+    "A six-way equality classifier chain becomes one windowed mask test"))
+
+(test
+  bit-test-range-chain
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-range-self-test)
+    42
+    "Closed ranges and equalities share one mask over a subtracted base"))
+
+(test
+  bit-test-refusals
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-refusal-self-test)
+    42
+    "Mixed values, impure links, wide windows, short chains and unsigned compares are refused"))
+
+(test
+  bit-test-runtime-boundaries
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
+    42
+    "The source-level classifier preserves hits, gaps, window edges and out-of-window values"))

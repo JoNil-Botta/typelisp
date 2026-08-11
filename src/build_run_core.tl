@@ -910,6 +910,9 @@
             (source-tool-linux-crt-entry? target link-inputs))
             [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
               (source-tool-render-linkable-linux-elf-object image)]
+            [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
+                category)
+              (ResultSourceToolString.Err category)]
             [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
@@ -940,6 +943,8 @@
         (source-tool-linux-crt-entry? target link-inputs))
         [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
           (source-tool-render-linkable-linux-elf-object image)]
+        [(compiler_driver_core.ResultCompilerDriverObject.Unavailable category)
+          (ResultSourceToolString.Err category)]
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic
@@ -1008,6 +1013,9 @@
             (source-tool-linux-crt-entry? target link-inputs))
             [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
               (source-tool-render-linkable-windows-coff-object image)]
+            [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
+                category)
+              (ResultSourceToolString.Err category)]
             [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
@@ -1037,6 +1045,8 @@
         false)
         [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
           (source-tool-render-linkable-windows-coff-object image)]
+        [(compiler_driver_core.ResultCompilerDriverObject.Unavailable category)
+          (ResultSourceToolString.Err category)]
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic

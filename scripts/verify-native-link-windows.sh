@@ -287,6 +287,51 @@ fi
 assert_empty "$WORKDIR/built-direct-object.stdout"
 assert_empty "$WORKDIR/built-direct-object.stderr"
 
+FALLBACK_SOURCE="$WORKDIR/semantic-fallback.tl"
+FALLBACK_SOURCE_BIN="$WORKDIR/semantic-fallback.exe"
+cat > "$FALLBACK_SOURCE" <<'EOF'
+(import stdlib.io)
+(define (main) : i64
+  (if (= (io.arg-count) 1) 42 1))
+EOF
+
+echo "[windows-native-link] source unsupported semantics use assembler fallback"
+set +e
+TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
+    TYPELISP_WINDOWS_CLANG=__typelisp_expected_assembler_fallback__.exe \
+    "$COMPILER" build --direct "$FALLBACK_SOURCE" --target windows-x86_64 \
+    -o "$FALLBACK_SOURCE_BIN" --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/build-source-fallback-probe.stdout" \
+    2> "$WORKDIR/build-source-fallback-probe.stderr"
+fallback_source_probe_status=$?
+set -e
+if [ "$fallback_source_probe_status" -eq 0 ]; then
+    fail "unsupported Windows source semantics unexpectedly bypassed the assembler"
+fi
+assert_contains "$WORKDIR/build-source-fallback-probe.stderr" \
+    "__typelisp_expected_assembler_fallback__.exe"
+
+if ! TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
+    "$COMPILER" build --direct "$FALLBACK_SOURCE" --target windows-x86_64 \
+    -o "$FALLBACK_SOURCE_BIN" --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/build-source-fallback.stdout" \
+    2> "$WORKDIR/build-source-fallback.stderr"; then
+    sed 's/^/  /' "$WORKDIR/build-source-fallback.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/build-source-fallback.stderr" >&2 || true
+    fail "Windows source assembler fallback build failed"
+fi
+assert_empty "$WORKDIR/build-source-fallback.stderr"
+set +e
+"$FALLBACK_SOURCE_BIN" > "$WORKDIR/source-fallback.stdout" \
+    2> "$WORKDIR/source-fallback.stderr"
+fallback_source_run_status=$?
+set -e
+if [ "$fallback_source_run_status" -ne 42 ]; then
+    fail "Windows source assembler-fallback executable expected exit 42, got $fallback_source_run_status"
+fi
+assert_empty "$WORKDIR/source-fallback.stdout"
+assert_empty "$WORKDIR/source-fallback.stderr"
+
 PACKAGE_DIR="$WORKDIR/direct-object-package"
 PACKAGE_OUTPUT_DIR="$PACKAGE_DIR/target/release"
 PACKAGE_BIN="$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.exe"
@@ -362,14 +407,16 @@ cat > "$FALLBACK_PACKAGE_DIR/typelisp.pkg" <<'EOF'
   (entry "src/main.tl"))
 EOF
 cat > "$FALLBACK_PACKAGE_DIR/src/main.tl" <<'EOF'
-(define (main) : i64 (/ 84 2))
+(import stdlib.io)
+(define (main) : i64
+  (if (= (io.arg-count) 1) 42 1))
 EOF
 
 echo "[windows-native-link] package unsupported semantics use assembler fallback"
 set +e
 TYPELISP_WINDOWS_CLANG=__typelisp_expected_package_assembler_fallback__.exe \
     "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
-    --target windows-x86_64 --opt-level 0 --stdlib-root "$ROOT/stdlib" \
+    --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/build-package-fallback-probe.stdout" \
     2> "$WORKDIR/build-package-fallback-probe.stderr"
 fallback_probe_status=$?
@@ -380,7 +427,7 @@ fi
 assert_contains "$WORKDIR/build-package-fallback-probe.stderr" \
     "__typelisp_expected_package_assembler_fallback__.exe"
 if ! "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
-    --target windows-x86_64 --opt-level 0 --stdlib-root "$ROOT/stdlib" \
+    --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/build-package-fallback.stdout" \
     2> "$WORKDIR/build-package-fallback.stderr"; then
     sed 's/^/  /' "$WORKDIR/build-package-fallback.stdout" >&2 || true
@@ -423,21 +470,29 @@ cat > "$TEST_SRC" <<'EOF'
 (cfg test (test direct-object-smoke unit))
 EOF
 
-echo "[windows-native-link] test direct-object without assembler"
+echo "[windows-native-link] test unsupported semantics use assembler fallback"
 set +e
 TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
     "$COMPILER" test "$TEST_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
-    > "$WORKDIR/test-direct-object.stdout" 2> "$WORKDIR/test-direct-object.stderr"
-noasm_test_status=$?
+    > "$WORKDIR/test-fallback-probe.stdout" 2> "$WORKDIR/test-fallback-probe.stderr"
+test_fallback_probe_status=$?
 set -e
-if [ "$noasm_test_status" -ne 0 ]; then
-    sed 's/^/  /' "$WORKDIR/test-direct-object.stdout" >&2 || true
-    sed 's/^/  /' "$WORKDIR/test-direct-object.stderr" >&2 || true
-    fail "selfhost test direct-object without assembler failed"
+if [ "$test_fallback_probe_status" -eq 0 ]; then
+    fail "selfhost test unsupported semantics bypassed assembler fallback"
 fi
-assert_empty "$WORKDIR/test-direct-object.stdout"
-assert_contains "$WORKDIR/test-direct-object.stderr" "TypeLisp tests: 1 passed; 0 failed; 1 total"
+assert_empty "$WORKDIR/test-fallback-probe.stdout"
+assert_contains "$WORKDIR/test-fallback-probe.stderr" "failed to run assembler"
+
+if ! TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
+    "$COMPILER" test "$TEST_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/test-fallback.stdout" 2> "$WORKDIR/test-fallback.stderr"; then
+    sed 's/^/  /' "$WORKDIR/test-fallback.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/test-fallback.stderr" >&2 || true
+    fail "selfhost test assembly fallback failed"
+fi
+assert_empty "$WORKDIR/test-fallback.stdout"
+assert_contains "$WORKDIR/test-fallback.stderr" "TypeLisp tests: 1 passed; 0 failed; 1 total"
 
 LINK_LIB_DIR="$WORKDIR/native-lib"
 mkdir -p "$LINK_LIB_DIR"

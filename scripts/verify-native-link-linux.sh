@@ -274,6 +274,46 @@ EOF
         exit 1
     fi
 
+    _fallback_src="$_dir/semantic-fallback.tl"
+    _fallback_bin="$_dir/semantic-fallback"
+    _fallback_probe_out="$_dir/semantic-fallback-probe.stdout"
+    _fallback_probe_err="$_dir/semantic-fallback-probe.stderr"
+    _fallback_out="$_dir/semantic-fallback.stdout"
+    _fallback_err="$_dir/semantic-fallback.stderr"
+    cat > "$_fallback_src" <<'EOF'
+(import stdlib.io)
+(define (main) : i64
+  (if (= (io.arg-count) 1) 42 1))
+EOF
+
+    echo "[selfhost-native] Linux unsupported object semantics use assembler fallback"
+    set +e
+    PATH="$_shim:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" build --direct "$_fallback_src" --target linux-x86_64 \
+        --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
+        -o "$_fallback_bin" \
+        > "$_fallback_probe_out" 2> "$_fallback_probe_err"
+    _got=$?
+    set -e
+    [ "$_got" -ne 0 ] ||
+        fail "unsupported Linux source semantics bypassed the assembler"
+    assert_contains "$_fallback_probe_err" "unexpected assembler fallback" \
+        "Linux semantic fallback probe"
+
+    TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" build --direct "$_fallback_src" --target linux-x86_64 \
+        --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
+        -o "$_fallback_bin" \
+        > "$_fallback_out" 2> "$_fallback_err" ||
+        fail "Linux source semantic fallback build failed"
+    assert_empty "$_fallback_err" "Linux source semantic fallback stderr"
+    set +e
+    "$_fallback_bin"
+    _fallback_run_got=$?
+    set -e
+    [ "$_fallback_run_got" -eq 42 ] ||
+        fail "Linux source semantic fallback exited $_fallback_run_got, expected 42"
+
     mkdir -p "$_pkg/src" "$_dep/src"
     cat > "$_pkg/typelisp.pkg" <<'EOF'
 (package
@@ -325,6 +365,50 @@ EOF
         echo "FAIL: Linux direct object package executable exited $_pkg_run_got, expected 42" >&2
         exit 1
     fi
+
+    _fallback_pkg="$_dir/semantic-fallback-package"
+    _fallback_pkg_bin="$_fallback_pkg/target/release/semantic_fallback_pkg"
+    mkdir -p "$_fallback_pkg/src"
+    cat > "$_fallback_pkg/typelisp.pkg" <<'EOF'
+(package
+  (name "semantic_fallback_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+    cat > "$_fallback_pkg/src/main.tl" <<'EOF'
+(import stdlib.io)
+(define (main) : i64
+  (if (= (io.arg-count) 1) 42 1))
+EOF
+
+    echo "[selfhost-native] Linux package unsupported semantics use assembler fallback"
+    set +e
+    PATH="$_shim:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" build --manifest-path "$_fallback_pkg/typelisp.pkg" \
+        --target linux-x86_64 --stdlib-root "$ROOT/stdlib" \
+        > "$_dir/package-fallback-probe.stdout" \
+        2> "$_dir/package-fallback-probe.stderr"
+    _got=$?
+    set -e
+    [ "$_got" -ne 0 ] ||
+        fail "unsupported Linux package semantics bypassed the assembler"
+    assert_contains "$_dir/package-fallback-probe.stderr" \
+        "unexpected assembler fallback" "Linux package semantic fallback probe"
+
+    TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" build --manifest-path "$_fallback_pkg/typelisp.pkg" \
+        --target linux-x86_64 --stdlib-root "$ROOT/stdlib" \
+        > "$_dir/package-fallback.stdout" 2> "$_dir/package-fallback.stderr" ||
+        fail "Linux package semantic fallback build failed"
+    assert_empty "$_dir/package-fallback.stderr" \
+        "Linux package semantic fallback stderr"
+    set +e
+    "$_fallback_pkg_bin"
+    _fallback_pkg_run_got=$?
+    set -e
+    [ "$_fallback_pkg_run_got" -eq 42 ] ||
+        fail "Linux package semantic fallback exited $_fallback_pkg_run_got, expected 42"
 }
 
 run_compiler_driver() {

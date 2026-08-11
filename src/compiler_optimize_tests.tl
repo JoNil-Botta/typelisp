@@ -47510,7 +47510,6 @@
       map)))
 
 (define (opt-lp-promoted-with-clean-map-and-cells
-  [symbols : OptLpTestSymbols]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [clean : opt_i64_i64_map.Map]
   [cells : compiler_optimize.OptGlobalCellSummary]) : compiler_ir_types.CompilerIrBlockList
@@ -47533,7 +47532,6 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [clean : opt_i64_i64_map.Map]) : compiler_ir_types.CompilerIrBlockList
   (opt-lp-promoted-with-clean-map-and-cells
-    symbols
     blocks
     clean
     (opt-lp-test-cells symbols)))
@@ -47589,7 +47587,6 @@
     ;; call through a copy, Phi, caller parameter, or returned reference.
     [addr-taken : compiler_ir_types.CompilerIrBlockList
       (opt-lp-promoted-with-clean-map-and-cells
-        symbols
         addr-blocks
         (opt-lp-test-clean-map symbols global-bit)
         (compiler_optimize.opt-global-cell-summary-build

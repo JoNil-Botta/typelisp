@@ -1,47 +1,157 @@
 name: Publish Docs
 
-# Build the selfhost docs site and publish it to GitHub Pages on pushes to the
-# default branch (main). There is no PR-time docs-site validation gate yet
-# (#1327). Refs #874.
+# Build and publish the docs site only after Bootstrap Stage0 has produced a
+# compatible compiler for the same main commit. The workflow_run event's own
+# GITHUB_SHA names the current default branch, not necessarily the triggering
+# run, so resolve the bootstrap run explicitly and check out its head_sha.
 #
-# The site is generated entirely by the selfhost builder tools/doc-site/doc_site.tl,
-# compiled with the published stage0 compiler fetched via scripts/fetch-stage0.sh
-# (no extra toolchain is involved in this workflow).
+# Manual publication requires the run ID of a successful Bootstrap Stage0 run.
+# That keeps the manual source/compiler pairing as exact as the automatic path:
+#
+#   gh workflow run docs-pages.yml -f bootstrap_run_id=<run-id>
 #
 # Prerequisite (one-time, repo setting): Settings -> Pages -> Build and
-# deployment -> Source = "GitHub Actions". Until that is set, the deploy job's
-# actions/deploy-pages step will fail.
+# deployment -> Source = "GitHub Actions". Until that is set, deploy-pages
+# will fail.
 
 on:
-  push:
+  workflow_run:
+    workflows: [Bootstrap Stage0]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      bootstrap_run_id:
+        description: Successful Bootstrap Stage0 run ID for the current main commit
+        required: true
+        type: string
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+# Every job declares only what it needs. In particular, the untrusted-code
+# warning attached to workflow_run does not apply here: only a successful push
+# run from this repository's main branch is admitted, and write permissions are
+# withheld until the final deploy job.
+permissions: {}
 
-# Allow a single concurrent Pages deployment; never cancel an in-progress
-# publish so a deploy always finishes cleanly.
+# Serialize Pages publications. A stale run may wait here, so both resolution
+# and deployment re-check origin/main before any site can be published.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
+  resolve:
+    name: Resolve compatible bootstrap run
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run_id: ${{ steps.source.outputs.run_id }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      current: ${{ steps.source.outputs.current }}
+    steps:
+      - name: Resolve and validate bootstrap provenance
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          AUTOMATIC_RUN_ID: ${{ github.event.workflow_run.id }}
+          MANUAL_RUN_ID: ${{ inputs.bootstrap_run_id }}
+        run: |
+          if [ "$EVENT_NAME" = workflow_run ]; then
+            run_id="$AUTOMATIC_RUN_ID"
+          else
+            run_id="$MANUAL_RUN_ID"
+          fi
+
+          case "$run_id" in
+            ''|*[!0-9]*)
+              echo "bootstrap_run_id must be a numeric GitHub Actions run ID" >&2
+              exit 2
+              ;;
+          esac
+
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+          workflow_path="$(printf '%s' "$run_json" | jq -r .path)"
+          event="$(printf '%s' "$run_json" | jq -r .event)"
+          branch="$(printf '%s' "$run_json" | jq -r .head_branch)"
+          conclusion="$(printf '%s' "$run_json" | jq -r .conclusion)"
+          head_repo="$(printf '%s' "$run_json" | jq -r .head_repository.full_name)"
+          source_sha="$(printf '%s' "$run_json" | jq -r .head_sha)"
+
+          test "$workflow_path" = .github/workflows/bootstrap-stage0.yml
+          test "$event" = push
+          test "$branch" = main
+          test "$conclusion" = success
+          test "$head_repo" = "$GITHUB_REPOSITORY"
+          case "$source_sha" in
+            ''|*[!0-9a-f]*)
+              echo "bootstrap run returned an invalid head SHA: $source_sha" >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#source_sha}" -ne 40 ]; then
+            echo "bootstrap run returned an invalid head SHA: $source_sha" >&2
+            exit 1
+          fi
+
+          latest_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          current=false
+          if [ "$source_sha" = "$latest_main" ]; then
+            current=true
+          else
+            echo "Skipping stale bootstrap run $run_id for $source_sha; origin/main is $latest_main."
+          fi
+
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build docs site
+    needs: resolve
+    if: needs.resolve.outputs.current == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pages: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out documented commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+
+      - name: Download matching Linux stage0 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: stage0-linux
+          path: ${{ runner.temp }}/stage0-linux
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.resolve.outputs.run_id }}
+
+      - name: Install and verify matching stage0
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -s "$RUNNER_TEMP/stage0-linux/typelisp-stage0-linux"
+          install -D -m 0755 \
+            "$RUNNER_TEMP/stage0-linux/typelisp-stage0-linux" \
+            target/stage0/typelisp
 
       - name: Check native toolchain
         run: |
           command -v as
           command -v ld
-
-      - name: Fetch published stage0 compiler
-        run: scripts/fetch-stage0.sh
 
       - name: Build and verify docs site
         run: DOC_SITE_OUT=_site TYPELISP_BIN=target/stage0/typelisp scripts/verify-doc-site.sh
@@ -56,12 +166,34 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
-    needs: build
+    needs:
+      - resolve
+      - build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Recheck current main before deployment
+        id: current
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        run: |
+          latest_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          publish=false
+          if [ "$SOURCE_SHA" = "$latest_main" ]; then
+            publish=true
+          else
+            echo "Skipping stale docs for $SOURCE_SHA; origin/main is $latest_main."
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to GitHub Pages
+        if: steps.current.outputs.publish == 'true'
         id: deployment
         uses: actions/deploy-pages@v4

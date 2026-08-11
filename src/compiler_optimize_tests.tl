@@ -46926,6 +46926,73 @@
       4
       "single-element trip counts stay exact")))
 
+;; Source-level runtime witness for the whole classifier path: lowering must
+;; form the compare chain, bit_test must rewrite it, and the backend must fuse
+;; the shift/test/branch without changing any boundary result. The inputs live
+;; in an array so the opt2 smoke cannot constant-fold the calls away.
+(define (opt-bit-test-runtime-classifier? [c : i64]) : bool
+  (cond
+    [(and (>= c 48) (<= c 57)) true]
+    [(= c 33) true]
+    [(and (>= c 37) (<= c 38)) true]
+    [(= c 42) true]
+    [(= c 43) true]
+    [(= c 45) true]
+    [(= c 46) true]
+    [(= c 47) true]
+    [(= c 58) true]
+    [(and (>= c 60) (<= c 63)) true]
+    [(= c 95) true]
+    [else false]))
+
+(define (compiler-optimize-bit-test-runtime-self-test) : i64
+  (let
+    [values : (Array i64)
+      (make-array
+        -100
+        32
+        33
+        34
+        36
+        37
+        38
+        39
+        41
+        42
+        43
+        44
+        45
+        46
+        47
+        48
+        53
+        57
+        58
+        59
+        60
+        61
+        62
+        63
+        64
+        94
+        95
+        96
+        1000)]
+    [expected : (Array i64)
+      (make-array 0 0 1 0 0 1 1 0 0 1 1 0 1 1 1 1 1 1 1 0 1 1 1 1 0 0 1 0 0)]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length values))
+        (let
+          [actual : i64
+            (if (opt-bit-test-runtime-classifier? (array-ref values index))
+              1
+              0)]
+          (if (!= actual (array-ref expected index))
+            (return (+ index 1))
+            (set! index (+ index 1)))))
+      42)))
+
 ;; --- bit_test: classifier compare chain -> one bitmask test ------------------
 ;;
 ;; Fixtures are spelled the way lowering leaves a `cond`/`or` classifier: one

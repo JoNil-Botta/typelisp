@@ -3528,6 +3528,10 @@
       "compiler-optimize-bit-test-refusal-self-test"
       (compiler_optimize_tests.compiler-optimize-bit-test-refusal-self-test)
       42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-runtime-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
+      42)
     42))
 
 (define (main) : i64
@@ -3943,3 +3947,10 @@
     (compiler_optimize_tests.compiler-optimize-bit-test-refusal-self-test)
     42
     "Mixed values, impure links, wide windows, short chains and unsigned compares are refused"))
+
+(test
+  bit-test-runtime-boundaries
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
+    42
+    "The source-level classifier preserves hits, gaps, window edges and out-of-window values"))

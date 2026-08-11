@@ -2648,6 +2648,14 @@
       (compiler_optimize_tests.compiler-optimize-bounds-dom-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dom-cmp-rule-a-self-test"
+      (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dom-cmp-rule-a-cfg-self-test"
+      (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-cfg-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-object-bounds-self-test"
       (smoke-object-bounds-self-test)
       42)

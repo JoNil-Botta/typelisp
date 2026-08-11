@@ -7429,6 +7429,26 @@
     facts
     (OptBoundsFacts.Cons (OptBoundsFact.Fact index length) (box facts))))
 
+;; Has this index passed a check against ANY length? `bounds_check` is an
+;; unsigned `index < length` whose length operand is a runtime container
+;; length, so it is below 2^63 and an index that passed cannot have its sign
+;; bit set: reaching a point the check dominates proves `0 <= index` in the
+;; SIGNED domain, whatever length was used. The dominator walk uses that to
+;; discharge the nonnegative half of a LATER check on the same index whose
+;; length half a dominating comparison already decided. The block-local pass
+;; never asks.
+(define (opt-bounds-index-checked?
+  [facts : OptBoundsFacts]
+  [index : ir.CompilerIrValue]) : bool
+  (match facts
+    [(OptBoundsFacts.Nil) false]
+    [(OptBoundsFacts.Cons fact rest)
+      (match fact
+        [(OptBoundsFact.Fact fact-index _)
+          (if (opt-value-eq fact-index index)
+            true
+            (opt-bounds-index-checked? (box-get rest) index))])]))
+
 (define (opt-bounds-fact-uses-var? [fact : OptBoundsFact] [var : i64]) : bool
   (match fact
     [(OptBoundsFact.Fact index length)
@@ -34809,21 +34829,263 @@
     lhs
     rhs))
 
-;; Canonical negations: `not (lt a b)` is `le b a`, `not (le a b)` is `lt b a`,
-;; and eq/ne negate in place.
-(define (opt-dom-cmp-negated-op [op : ir.CompilerIrBinOp]) : ir.CompilerIrBinOp
+;; --- implication: what a dominating fact decides about a dominated compare ---
+;;
+;; A dominating fact and the compare below it need not be spelled the same way
+;; to be the same question. `(> i 0)` on an edge decides `(>= i 0)` below it;
+;; `(< i 3)` decides `(< i 5)`; a passed `bounds_check` decides the defensive
+;; `(<= i len)` an accessor re-tests. Matching on "same operator, same operands,
+;; or the exact negation" saw only a slice of that, so the rest survived as
+;; provably-constant per-iteration work.
+;;
+;; Integer comparison is a TOTAL ORDER, so for an ordered operand pair `(x, y)`
+;; exactly one of `x < y`, `x = y`, `x > y` holds. Every comparison is therefore
+;; just a SET of admissible relations, encoded as a 3-bit mask (bit 0 `<`, bit 1
+;; `=`, bit 2 `>`), and a decided fact narrows the set the dominated point may
+;; be in:
+;;
+;;   fact `x < y` true  -> {<}          fact `x < y` false -> {=, >}
+;;   fact `x <= y` true -> {<, =}       fact `x <= y` false -> {>}
+;;   fact `x = y` true  -> {=}          fact `x = y` false -> {<, >}
+;;
+;; With `K` the narrowed set and `Q` the relations that make the query true,
+;; `K subset-of Q` proves the query TRUE and `K disjoint-from Q` proves it
+;; FALSE. Nothing else is decided. This subsumes the identical-compare and
+;; exact-negation cases it replaces (`Q = K` and `Q = complement K`), reading
+;; the fact with the operands the other way round is one mask swap, and no
+;; arithmetic is involved, so signedness and wrapping cannot enter.
+;;
+;; RULE (a) EXTENDED TO A WEAKER LITERAL. When the fact and the query compare
+;; the SAME var against DIFFERENT literals -- `i < 3` dominating `i < 5` -- the
+;; relations transfer through the order of the two literals, in the type's own
+;; comparison (unsigned types compare unsigned, so an unsigned literal pair is
+;; ordered unsigned). For `fk < qk`: `v < fk` and `v = fk` both give `v < qk`,
+;; while `v > fk` only pins `v >= qk` when `qk` is `fk`'s immediate successor,
+;; and otherwise gives nothing. The mirrored case reads the same way. The only
+;; arithmetic is that successor test, which refuses at the type's maximum, so
+;; it never wraps. Types must match exactly (the fact carries its own), which
+;; is what keeps one type's order from being read in another's.
+;;
+;; Facts are recorded only for integer comparisons (see the edge fact below),
+;; so float NaN -- where trichotomy fails -- never reaches this.
+;;
+;; Every mask below is over the ORDERED pair `(lhs, rhs)`: 1 is `<`, 2 is `=`,
+;; 4 is `>`, so 3 is `<=`, 6 is `>=`, 5 is `!=` and 7 is "anything".
+;;
+;; The relations that make `lhs op rhs` true.
+(define (opt-dom-cmp-op-mask [op : ir.CompilerIrBinOp]) : i64
   (match op
-    [(ir.CompilerIrBinOp.Lt) (ir.CompilerIrBinOp.Le)]
-    [(ir.CompilerIrBinOp.Le) (ir.CompilerIrBinOp.Lt)]
-    [(ir.CompilerIrBinOp.Eq) (ir.CompilerIrBinOp.Ne)]
-    [(ir.CompilerIrBinOp.Ne) (ir.CompilerIrBinOp.Eq)]
-    [_ op]))
+    [(ir.CompilerIrBinOp.Lt) 1]
+    [(ir.CompilerIrBinOp.Le) 3]
+    [(ir.CompilerIrBinOp.Gt) 4]
+    [(ir.CompilerIrBinOp.Ge) 6]
+    [(ir.CompilerIrBinOp.Eq) 2]
+    [(ir.CompilerIrBinOp.Ne) 5]
+    [_ 0]))
 
-(define (opt-dom-cmp-negation-swaps? [op : ir.CompilerIrBinOp]) : bool
-  (match op
-    [(ir.CompilerIrBinOp.Lt) true]
-    [(ir.CompilerIrBinOp.Le) true]
-    [_ false]))
+;; The relations a DECIDED comparison leaves possible.
+(define (opt-dom-cmp-fact-mask [op : ir.CompilerIrBinOp] [value : bool]) : i64
+  (let
+    [mask : i64 (opt-dom-cmp-op-mask op)]
+    (if (= mask 0)
+      0
+      (if value
+        mask
+        (bit-xor mask 7)))))
+
+;; The same set read with the operands the other way round.
+(define (opt-dom-cmp-mask-swap [mask : i64]) : i64
+  (bit-or
+    (bit-and mask 2)
+    (bit-or
+      (if (= (bit-and mask 1) 0)
+        0
+        4)
+      (if (= (bit-and mask 4) 0)
+        0
+        1))))
+
+;; `known` is what the fact leaves possible, `query` what makes the compare
+;; true. An empty `known` means the facts in scope are contradictory, which only
+;; happens on unreachable code; it decides nothing here.
+(define (opt-dom-cmp-mask-verdict [known : i64] [query : i64]) : OptDomCmpLookup
+  (if (= known 0)
+    (OptDomCmpLookup.No)
+    (let
+      [hit : i64 (bit-and known query)]
+      (cond
+        [(= hit known) (OptDomCmpLookup.Some true)]
+        [(= hit 0) (OptDomCmpLookup.Some false)]
+        [else (OptDomCmpLookup.No)]))))
+
+;; A comparison of one var against one literal: the var's id, the literal, and
+;; whether the var was the left operand.
+(defenum OptDomCmpVarLit
+  (No)
+  (Some i64 i64 bool))
+
+(define (opt-dom-cmp-var-lit
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptDomCmpVarLit
+  (match lhs
+    [(ir.CompilerIrValue.Var var)
+      (match rhs
+        [(ir.CompilerIrValue.I64 literal)
+          (OptDomCmpVarLit.Some var literal true)]
+        [_ (OptDomCmpVarLit.No)])]
+    [(ir.CompilerIrValue.I64 literal)
+      (match rhs
+        [(ir.CompilerIrValue.Var var) (OptDomCmpVarLit.Some var literal false)]
+        [_ (OptDomCmpVarLit.No)])]
+    [_ (OptDomCmpVarLit.No)]))
+
+(define (opt-dom-cmp-type-max [ty : ast.AstType]) : i64
+  (match ty
+    [(ast.AstType.I64) 9223372036854775807]
+    [(ast.AstType.I32) 2147483647]
+    [(ast.AstType.I16) 32767]
+    [(ast.AstType.I8) 127]
+    [(ast.AstType.U64) (- 0 1)]
+    [(ast.AstType.U32) 4294967295]
+    [(ast.AstType.U16) 65535]
+    [(ast.AstType.U8) 255]
+    [_ 0]))
+
+;; Is `b` the immediate successor of `a` in this type's order? Refused at the
+;; maximum, where there is no successor and `a + 1` would wrap.
+(define (opt-dom-cmp-adjacent? [a : i64] [b : i64] [ty : ast.AstType]) : bool
+  (and (not (= a (opt-dom-cmp-type-max ty))) (= (+ a 1) b)))
+
+;; The relations `v` may have to `qk`, given the relations it may have to `fk`.
+;; Both masks are read with the VAR on the left.
+(define (opt-dom-cmp-shift-mask
+  [known : i64]
+  [fk : i64]
+  [qk : i64]
+  [ty : ast.AstType]) : i64
+  (cond
+    [(= fk qk) known]
+    [(opt-typed-lt? fk qk ty)
+      (bit-or
+        (if (= (bit-and known 3) 0)
+          0
+          1)
+        (if (= (bit-and known 4) 0)
+          0
+          (if (opt-dom-cmp-adjacent? fk qk ty)
+            6
+            7)))]
+    [else
+      (bit-or
+        (if (= (bit-and known 6) 0)
+          0
+          4)
+        (if (= (bit-and known 1) 0)
+          0
+          (if (opt-dom-cmp-adjacent? qk fk ty)
+            3
+            7)))]))
+
+;; Same var, different literals. `query` is the query's mask read on ITS pair;
+;; both masks are rotated so the var sits on the left before they meet.
+(define (opt-dom-cmp-literal-verdict
+  [fact-op : ir.CompilerIrBinOp]
+  [fact-value : bool]
+  [fact-lhs : ir.CompilerIrValue]
+  [fact-rhs : ir.CompilerIrValue]
+  [query : i64]
+  [query-var-lit : OptDomCmpVarLit]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (match query-var-lit
+    [(OptDomCmpVarLit.No) (OptDomCmpLookup.No)]
+    [(OptDomCmpVarLit.Some var literal var-left?)
+      (match (if (opt-integer-type? ty)
+        (opt-dom-cmp-var-lit fact-lhs fact-rhs)
+        (OptDomCmpVarLit.No))
+        [(OptDomCmpVarLit.No) (OptDomCmpLookup.No)]
+        [(OptDomCmpVarLit.Some fact-var fact-literal fact-var-left?)
+          (if (not (= var fact-var))
+            (OptDomCmpLookup.No)
+            (let
+              [known : i64
+                (let
+                  [mask : i64 (opt-dom-cmp-fact-mask fact-op fact-value)]
+                  (if fact-var-left?
+                    mask
+                    (opt-dom-cmp-mask-swap mask)))]
+              (opt-dom-cmp-mask-verdict
+                (opt-dom-cmp-shift-mask
+                  known
+                  (opt-normalize-int-to-i64 fact-literal ty)
+                  (opt-normalize-int-to-i64 literal ty)
+                  ty)
+                (if var-left?
+                  query
+                  (opt-dom-cmp-mask-swap query)))))])]))
+
+;; One fact's verdict on the query. Operand identity is tried first in both
+;; orders -- that is the whole cost for a query with no literal operand, since
+;; `query-var-lit` is then `No` and the literal rule bails on its first match.
+(define (opt-dom-cmp-fact-verdict
+  [type-segment-bases : i64]
+  [fact : OptDomCmpFact]
+  [query : i64]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [query-var-lit : OptDomCmpVarLit]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (match fact
+    [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value _)
+      (if (not (opt-type-eq type-segment-bases ty fact-ty))
+        (OptDomCmpLookup.No)
+        (cond
+          [(and (opt-value-eq lhs fact-lhs) (opt-value-eq rhs fact-rhs))
+            (opt-dom-cmp-mask-verdict
+              (opt-dom-cmp-fact-mask fact-op fact-value)
+              query)]
+          [(and (opt-value-eq lhs fact-rhs) (opt-value-eq rhs fact-lhs))
+            (opt-dom-cmp-mask-verdict
+              (opt-dom-cmp-mask-swap (opt-dom-cmp-fact-mask fact-op fact-value))
+              query)]
+          [else
+            (opt-dom-cmp-literal-verdict
+              fact-op
+              fact-value
+              fact-lhs
+              fact-rhs
+              query
+              query-var-lit
+              ty)]))]))
+
+(define (opt-dom-cmp-lookup-mask
+  [type-segment-bases : i64]
+  [facts : OptDomCmpFacts]
+  [query : i64]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [query-var-lit : OptDomCmpVarLit]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (match facts
+    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
+    [(OptDomCmpFacts.Cons fact rest)
+      (match (opt-dom-cmp-fact-verdict
+        type-segment-bases
+        fact
+        query
+        lhs
+        rhs
+        query-var-lit
+        ty)
+        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
+        [(OptDomCmpLookup.No)
+          (opt-dom-cmp-lookup-mask
+            type-segment-bases
+            (box-get rest)
+            query
+            lhs
+            rhs
+            query-var-lit
+            ty)])]))
 
 (define (opt-dom-cmp-lookup
   [type-segment-bases : i64]
@@ -34832,31 +35094,149 @@
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptDomCmpLookup
+  (let
+    [query : i64 (opt-dom-cmp-op-mask op)]
+    (if (= query 0)
+      (OptDomCmpLookup.No)
+      (opt-dom-cmp-lookup-mask
+        type-segment-bases
+        facts
+        query
+        lhs
+        rhs
+        (opt-dom-cmp-var-lit lhs rhs)
+        ty))))
+
+;; --- one transitive step ------------------------------------------------------
+;;
+;; Two facts in scope can pin a compare neither of them mentions: a loop's
+;; header proves `i < n` for its whole body, an entry guard proves `n <= len`
+;; for the whole loop, and the accessor's own `i < len` inside the body is then
+;; decided without either fact naming both operands. Chaining exactly ONE
+;; intermediate closes that shape, which is the one the versioned loops leave
+;; behind; a longer chain would be a range analysis and is refused.
+;;
+;; `a <= m` and `m <= c` give `a <= c`, strict as soon as either step is, which
+;; is the entire rule -- the order is transitive and no arithmetic is involved,
+;; so signedness and wrapping are again out of the picture. Both steps must
+;; carry the query's type (the direct lookup's requirement, for the same
+;; reason), and the search runs only after the direct lookup returned nothing:
+;; the head scan is one pass that usually matches no fact at all, and only a
+;; match pays for the tail scan.
+(defenum OptDomCmpBelow
+  (No)
+  (Some ir.CompilerIrValue bool))
+
+;; Read one fact as `a < upper` (strict) or `a <= upper`. Anything weaker --
+;; a fact that leaves `a` possibly above `upper` -- carries no step.
+(define (opt-dom-cmp-below-of-mask [mask : i64] [other : ir.CompilerIrValue]) : OptDomCmpBelow
+  (cond
+    [(= mask 1) (OptDomCmpBelow.Some other true)]
+    [(= mask 3) (OptDomCmpBelow.Some other false)]
+    [else (OptDomCmpBelow.No)]))
+
+(define (opt-dom-cmp-fact-below
+  [type-segment-bases : i64]
+  [fact : OptDomCmpFact]
+  [a : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpBelow
+  (match fact
+    [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value _)
+      (if (not (opt-type-eq type-segment-bases ty fact-ty))
+        (OptDomCmpBelow.No)
+        (cond
+          [(opt-value-eq fact-lhs a)
+            (opt-dom-cmp-below-of-mask
+              (opt-dom-cmp-fact-mask fact-op fact-value)
+              fact-rhs)]
+          [(opt-value-eq fact-rhs a)
+            (opt-dom-cmp-below-of-mask
+              (opt-dom-cmp-mask-swap (opt-dom-cmp-fact-mask fact-op fact-value))
+              fact-lhs)]
+          [else (OptDomCmpBelow.No)]))]))
+
+;; The second step: some fact putting `mid` at or below exactly `c`.
+(define (opt-dom-cmp-chain-tail
+  [type-segment-bases : i64]
+  [facts : OptDomCmpFacts]
+  [mid : ir.CompilerIrValue]
+  [c : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpBelow
+  (match facts
+    [(OptDomCmpFacts.Nil) (OptDomCmpBelow.No)]
+    [(OptDomCmpFacts.Cons fact rest)
+      (match (opt-dom-cmp-fact-below type-segment-bases fact mid ty)
+        [(OptDomCmpBelow.Some upper strict?)
+          (if (opt-value-eq upper c)
+            (OptDomCmpBelow.Some upper strict?)
+            (opt-dom-cmp-chain-tail type-segment-bases (box-get rest) mid c ty))]
+        [(OptDomCmpBelow.No)
+          (opt-dom-cmp-chain-tail type-segment-bases (box-get rest) mid c ty)])]))
+
+(define (opt-dom-cmp-chain-scan
+  [type-segment-bases : i64]
+  [all-facts : OptDomCmpFacts]
+  [facts : OptDomCmpFacts]
+  [query : i64]
+  [a : ir.CompilerIrValue]
+  [c : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
   (match facts
     [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
     [(OptDomCmpFacts.Cons fact rest)
-      (match fact
-        [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value _)
-          (if (and
-            (opt-type-eq type-segment-bases ty fact-ty)
-            (opt-binop-eq op fact-op)
-            (opt-value-eq lhs fact-lhs)
-            (opt-value-eq rhs fact-rhs))
-            (OptDomCmpLookup.Some fact-value)
-            (if (and
-              (opt-type-eq type-segment-bases ty fact-ty)
-              (opt-binop-eq op (opt-dom-cmp-negated-op fact-op))
-              (if (opt-dom-cmp-negation-swaps? fact-op)
-                (and (opt-value-eq lhs fact-rhs) (opt-value-eq rhs fact-lhs))
-                (and (opt-value-eq lhs fact-lhs) (opt-value-eq rhs fact-rhs))))
-              (OptDomCmpLookup.Some (not fact-value))
-              (opt-dom-cmp-lookup
-                type-segment-bases
-                (box-get rest)
-                op
-                lhs
-                rhs
-                ty)))])]))
+      (match (match (opt-dom-cmp-fact-below type-segment-bases fact a ty)
+        [(OptDomCmpBelow.No) (OptDomCmpLookup.No)]
+        [(OptDomCmpBelow.Some mid head-strict?)
+          ;; A step onto `a` or straight onto `c` is not a chain: the direct
+          ;; lookup already saw the latter and the former proves nothing.
+          (if (or (opt-value-eq mid a) (opt-value-eq mid c))
+            (OptDomCmpLookup.No)
+            (match (opt-dom-cmp-chain-tail
+              type-segment-bases
+              all-facts
+              mid
+              c
+              ty)
+              [(OptDomCmpBelow.No) (OptDomCmpLookup.No)]
+              [(OptDomCmpBelow.Some _ tail-strict?)
+                (opt-dom-cmp-mask-verdict
+                  (if (or head-strict? tail-strict?)
+                    1
+                    3)
+                  query)]))])
+        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
+        [(OptDomCmpLookup.No)
+          (opt-dom-cmp-chain-scan
+            type-segment-bases
+            all-facts
+            (box-get rest)
+            query
+            a
+            c
+            ty)])]))
+
+(define (opt-dom-cmp-lookup-chained
+  [type-segment-bases : i64]
+  [facts : OptDomCmpFacts]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (match (opt-dom-cmp-lookup type-segment-bases facts op lhs rhs ty)
+    [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
+    [(OptDomCmpLookup.No)
+      (let
+        [query : i64 (opt-dom-cmp-op-mask op)]
+        (if (= query 0)
+          (OptDomCmpLookup.No)
+          (opt-dom-cmp-chain-scan
+            type-segment-bases
+            facts
+            facts
+            query
+            lhs
+            rhs
+            ty)))]))
 
 ;; The fact an edge into `taken?` establishes, given the branch condition's
 ;; defining comparison. Operands are resolved through the same copy map the
@@ -35596,6 +35976,15 @@
 ;; both operands are then nonnegative i64s, where unsigned and signed order
 ;; agree. The signed fact is looked up first -- it is the rarer half, and a
 ;; check with no dominating comparison at all pays only that scan.
+;;
+;; A dominating check on the SAME index supplies the nonnegative half directly
+;; (see `opt-bounds-index-checked?`), whatever length it used. That is what
+;; retires a check an equal-or-stronger dominating check subsumes: the
+;; dominating `idx < len1` fact decides `idx < len2` whenever the two lengths
+;; are ordered (identical values, or literals the implication rule compares),
+;; and the passed check itself decides the rest. The scan runs before the
+;; induction reasoning because it is a short walk over the pairs already in
+;; hand.
 (define (opt-bounds-dom-guarded-in-range?
   [type-segment-bases : i64]
   [index : OptCfgIndex]
@@ -35604,10 +35993,12 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
+  [facts : OptBoundsFacts]
+  [raw-idx : ir.CompilerIrValue]
   [idx : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]) : bool
   (and
-    (match (opt-dom-cmp-lookup
+    (match (opt-dom-cmp-lookup-chained
       type-segment-bases
       cmp-facts
       (ir.CompilerIrBinOp.Lt)
@@ -35616,15 +36007,18 @@
       (ast.AstType.I64))
       [(OptDomCmpLookup.Some decided) decided]
       [(OptDomCmpLookup.No) false])
-    (opt-bounds-dom-nonneg?
-      type-segment-bases
-      index
-      doms
-      defs
-      phi-defs
-      copies
-      cmp-facts
-      idx)))
+    (or
+      (opt-bounds-index-checked? facts raw-idx)
+      (opt-bounds-index-checked? facts idx)
+      (opt-bounds-dom-nonneg?
+        type-segment-bases
+        index
+        doms
+        defs
+        phi-defs
+        copies
+        cmp-facts
+        idx))))
 
 ;; `bit-and X m` lands in [0, m] for every nonnegative m: bit-and only clears
 ;; bits, so the result cannot exceed m, and a nonnegative m has a clear sign bit
@@ -35848,6 +36242,8 @@
                       phi-defs
                       copies
                       cur-cmp-facts
+                      cur-facts
+                      cidx
                       sidx
                       slen))
                     unit
@@ -35921,7 +36317,7 @@
   (match instr
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       (if (and (opt-dom-cmp-foldable-op? op) (opt-integer-type? ty))
-        (match (opt-dom-cmp-lookup
+        (match (opt-dom-cmp-lookup-chained
           type-segment-bases
           cmp-facts
           (opt-dom-cmp-canon-op op)
@@ -55555,6 +55951,205 @@
         uncovered
         state)]))
 
+;; --- invariant upper bounds hoisted into the guard ---------------------------
+;;
+;; The entry guard chain proves `counter < bound` for the whole body of a
+;; top-tested loop -- that is the header test itself, and it dominates every
+;; body block. A body test of the counter against a LOOP-INVARIANT upper bound
+;; (the defensive `(< i len)` an inlined accessor re-tests every iteration) is
+;; then decided as soon as `bound <= len` is known, and `bound <= len` is ONE
+;; invariant comparison the guard can take once at loop entry. Emitting it
+;; leaves the per-iteration test provably true on the fast path: `bounds_dom`
+;; sees the header's `counter < bound` and the guard's `bound <= len` as two
+;; dominating branch facts on a later pipeline round and its one transitive
+;; step retires the compare, which takes the whole diamond around the access
+;; with it.
+;;
+;; The conjunct is a runtime test like every other guard conjunct, so nothing
+;; about the slow path changes: a loop whose body really does test a SMALLER
+;; invariant bound fails it and runs unversioned, which is the same per-
+;; iteration decision it was making anyway. Only compares that are a BRANCH
+;; CONDITION inside the loop are hoisted for -- those are the ones whose
+;; folding removes control flow -- and only a bounded number of distinct
+;; bounds, so the guard stays a handful of compares whatever the body does.
+;; A literal bound is left alone: `bound <= k` for a small literal is the
+;; shape that deselects the fast path, and the fold rules already decide a
+;; counter against a literal from its own range.
+;;
+;; The conjunct only pays where `counter < bound` is a DOMINATING BRANCH FACT,
+;; which is the top-tested form and only there. Its entry guard chain is the
+;; shape's `uncovered` set -- the header through the counter compare, the
+;; blocks that compare does not cover -- so a non-empty `uncovered` identifies
+;; the form and its members are the blocks to skip: the counter compare does
+;; not dominate itself, and the chain runs one extra time with the counter at
+;; the value that failed. In the do-while form `uncovered` is empty, the
+;; counter compare sits at the latch and dominates nothing above it, and the
+;; trip range is a fact only the versioning pass's own derivations carry, so
+;; nothing is hoisted there.
+(defenum OptBceMbUppers
+  (Nil)
+  (Cons ir.CompilerIrValue (Box OptBceMbUppers)))
+
+(define (opt-bce-mb-upper-max) : i64
+  2)
+
+(define (opt-bce-mb-uppers-count [uppers : OptBceMbUppers]) : i64
+  (match uppers
+    [(OptBceMbUppers.Nil) 0]
+    [(OptBceMbUppers.Cons _ rest)
+      (+ 1 (opt-bce-mb-uppers-count (box-get rest)))]))
+
+(define (opt-bce-mb-uppers-contains?
+  [uppers : OptBceMbUppers]
+  [value : ir.CompilerIrValue]) : bool
+  (match uppers
+    [(OptBceMbUppers.Nil) false]
+    [(OptBceMbUppers.Cons item rest)
+      (if (opt-value-eq item value)
+        true
+        (opt-bce-mb-uppers-contains? (box-get rest) value))]))
+
+;; The invariant `X` a branch condition tests the counter's UPPER side against,
+;; in either spelling (`counter < X`, `X > counter`). `Le` counts too: the
+;; range gives `counter <= bound - 1 < bound <= X`, which decides it as well.
+(define (opt-bce-mb-upper-of-cond
+  [body-blocks : ir.CompilerIrBlockList]
+  [iphi : i64]
+  [bound : ir.CompilerIrValue]
+  [cond : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match cond
+    [(ir.CompilerIrValue.Var raw)
+      (match (opt-bce-mb-find-def
+        body-blocks
+        (opt-bce-mb-resolve body-blocks raw 16))
+        [(OptBceMbMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
+        [(OptBceMbMaybeInstr.Some instr)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not (opt-bce-fold-i64-type? ty))
+                (ir.CompilerIrMaybeValue.No)
+                (cond
+                  [(and
+                      (or
+                        (opt-binop-eq op (ir.CompilerIrBinOp.Lt))
+                        (opt-binop-eq op (ir.CompilerIrBinOp.Le)))
+                      (opt-bce-fold-counter-operand? body-blocks iphi lhs))
+                    (opt-bce-mb-upper-candidate body-blocks bound rhs)]
+                  [(and
+                      (or
+                        (opt-binop-eq op (ir.CompilerIrBinOp.Gt))
+                        (opt-binop-eq op (ir.CompilerIrBinOp.Ge)))
+                      (opt-bce-fold-counter-operand? body-blocks iphi rhs))
+                    (opt-bce-mb-upper-candidate body-blocks bound lhs)]
+                  [else (ir.CompilerIrMaybeValue.No)]))]
+            [_ (ir.CompilerIrMaybeValue.No)])])]
+    [_ (ir.CompilerIrMaybeValue.No)]))
+
+(define (opt-bce-mb-upper-candidate
+  [body-blocks : ir.CompilerIrBlockList]
+  [bound : ir.CompilerIrValue]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match (opt-bce-fold-invariant-operand body-blocks value)
+    [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrMaybeValue.No)]
+    [(ir.CompilerIrMaybeValue.Some canon)
+      (match canon
+        ;; the header's own test needs no conjunct, and a literal is refused
+        [(ir.CompilerIrValue.Var _)
+          (if (opt-value-eq canon bound)
+            (ir.CompilerIrMaybeValue.No)
+            (ir.CompilerIrMaybeValue.Some canon))]
+        [_ (ir.CompilerIrMaybeValue.No)])]))
+
+(define (opt-bce-mb-upper-scan-instrs
+  [body-blocks : ir.CompilerIrBlockList]
+  [iphi : i64]
+  [bound : ir.CompilerIrValue]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [uppers : OptBceMbUppers]) : OptBceMbUppers
+  (if (or
+    (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (>= (opt-bce-mb-uppers-count uppers) (opt-bce-mb-upper-max)))
+    uppers
+    (opt-bce-mb-upper-scan-instrs
+      body-blocks
+      iphi
+      bound
+      instrs
+      (+ index 1)
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.Branch cond _ _)
+          (match (opt-bce-mb-upper-of-cond body-blocks iphi bound cond)
+            [(ir.CompilerIrMaybeValue.No) uppers]
+            [(ir.CompilerIrMaybeValue.Some upper)
+              (if (opt-bce-mb-uppers-contains? uppers upper)
+                uppers
+                (OptBceMbUppers.Cons upper (box uppers)))])]
+        [_ uppers]))))
+
+(define (opt-bce-mb-upper-scan
+  [body-blocks : ir.CompilerIrBlockList]
+  [blocks : ir.CompilerIrBlockList]
+  [iphi : i64]
+  [bound : ir.CompilerIrValue]
+  [uncovered : OptLabelSet]
+  [uppers : OptBceMbUppers]) : OptBceMbUppers
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) uppers]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-bce-mb-upper-scan
+            body-blocks
+            (box-get rest)
+            iphi
+            bound
+            uncovered
+            (if (opt-label-contains uncovered label)
+              uppers
+              (opt-bce-mb-upper-scan-instrs
+                body-blocks
+                iphi
+                bound
+                instrs
+                0
+                uppers)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-upper-scan
+        body-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        iphi
+        bound
+        uncovered
+        uppers)]))
+
+;; Nothing is hoisted for a loop whose counter compare dominates no body block.
+(define (opt-bce-mb-uppers-for-shape [shape : OptBceMbShape]) : OptBceMbUppers
+  (match (struct-get shape uncovered)
+    [(OptLabelSet.Nil) (OptBceMbUppers.Nil)]
+    [(OptLabelSet.Dense _ _)
+      (opt-bce-mb-upper-scan
+        (struct-get shape body-blocks)
+        (struct-get shape body-blocks)
+        (struct-get shape iphi)
+        (struct-get shape bound)
+        (struct-get shape uncovered)
+        (OptBceMbUppers.Nil))]))
+
+(define (opt-bce-mb-upper-conds
+  [cell : (__tl_dyn-array i64)]
+  [bound : ir.CompilerIrValue]
+  [uppers : OptBceMbUppers]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match uppers
+    [(OptBceMbUppers.Nil) acc]
+    [(OptBceMbUppers.Cons upper rest)
+      (opt-bce-mb-upper-conds
+        cell
+        bound
+        (box-get rest)
+        (opt-bce-version-cond cell (ir.CompilerIrBinOp.Le) bound upper acc))]))
+
 (define (opt-bce-mb-guard-conds
   [descriptor : OptBceMbDescriptor]
   [write-free? : bool]
@@ -55604,7 +56199,11 @@
           (struct-get shape seed)
           (struct-get shape bound)
           cell
-          (struct-get dr guard)))
+          (opt-bce-mb-upper-conds
+            cell
+            (struct-get shape bound)
+            (opt-bce-mb-uppers-for-shape shape)
+            (struct-get dr guard))))
         [(OptBceVersionGuardResult.No) (OptBceMbGuardOut.No)]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
           (OptBceMbGuardOut.Some

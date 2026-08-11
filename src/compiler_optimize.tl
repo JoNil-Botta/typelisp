@@ -72554,6 +72554,121 @@
     (opt-inline-bounds-loop-cascade-safe?)
     (opt-inline-caller-recursive?)))
 
+;; --- absorbing a SINGLE-SITE callee at any size -----------------------------
+;;
+;; Every band above prices a body against a size ceiling, because every band
+;; above can be asked to COPY one. The ceilings are growth budgets: 32
+;; instructions for the loop tier, 128 for the recursive-site tier, and the cost
+;; model's shared block fuel of 32 on top of both. A callee with exactly one
+;; static reference is the one shape none of that arithmetic applies to. Its
+;; body does not get copied, it MOVES: the site takes it, the original is left
+;; unreferenced, and the program's total instruction count after the rewrite is
+;; what it was before, minus the call sequence and the prologue that no longer
+;; run. There is no growth to bound, so a growth budget is the wrong instrument,
+;; and the ceilings it imposes refuse the one class of absorption that is free.
+;;
+;; What the ceilings were costing is a whole benchmark row. liveness_scan's
+;; `ln-recompute!` and `ln-live-out-into!` have exactly one call site each, and
+;; clang absorbs both into the fixpoint loop. This compiler kept them out of
+;; line, because both carry bounds checks inside loops and are far past the
+;; loop tier's 32 and the recursive tier's 128 -- 368 and 217 instructions. They
+;; are 14- and 10-parameter functions, so what the boundary costs is not one
+;; call: it is 88 instructions of prologue per entry over 140,905 entries, plus
+;; the argument marshalling, plus every value in the trio living in a frame slot
+;; because it crosses a call boundary that the absorbed form does not have.
+;;
+;; The size ceiling comes off. Two other clauses go on in its place, and both
+;; were put there by measurement, not by symmetry -- the first version of this
+;; band asked the reference count and nothing else, and it LOST:
+;; liveness_scan 620,776,020 -> 726,936,390, +17.10%, with both target callees
+;; confirmed absorbed. The prologue arithmetic that motivated the band is real
+;; and it is not the whole account. What it leaves out is that a body absorbed
+;; into a LOOP puts its entire working set inside that loop, where the
+;; allocator must now keep the loop's own live values across it. Absorbing
+;; `ln-recompute!` into the fixpoint worklist loop cost far more in spills
+;; inside that loop than the 14-argument boundary ever cost in marshalling.
+;;
+;; That is the trade this band makes explicit. The loop tier bounds the body
+;; and demands an in-loop site: a small body is safe inside a loop, and only an
+;; in-loop site repays a boundary worth little. This tier is its exact
+;; complement -- it lifts the size bound and demands the opposite site:
+;;
+;;   1. absorb-class 1 -- exactly one static reference, not address-taken, not
+;;      `main`, not a self-call from this caller. This is what makes the move
+;;      free. Note that a self-RECURSIVE callee is already excluded by this
+;;      number rather than by a separate test: the census counts the callee's
+;;      own `Call`/`TailCall` as a reference, so a function with one external
+;;      caller and one self-call counts 2 and lands in the duplication class.
+;;      Mutual recursion is excluded one level up, where a callee in the
+;;      caller's own SCC is refused before any of these predicates run;
+;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more. This
+;;      is the band's actual subject. What no size budget prices, and what
+;;      absorption retires outright, is argument marshalling, and marshalling
+;;      cost scales with ARITY, not with body size. Below the arity where the
+;;      ABI runs out of argument registers there is no marshalling to retire,
+;;      the boundary is a call and a cheap prologue, and the site-conditioned
+;;      tiers above already price it correctly -- including their measured
+;;      refusal of once-per-program `init`/`fill` helpers, whose absorption
+;;      into a hot-loop-holding caller costs that caller its allocation. This
+;;      clause is what keeps those refusals intact;
+;;   3. the site is NOT in a natural loop of the caller. An unbounded body may
+;;      be moved next to a loop; it may not be moved inside one. This is the
+;;      clause the first version lacked, and the 17.10% above is what it costs
+;;      to lack it;
+;;   4. the heavy gate is kept. It is not a growth budget -- it is the block
+;;      count past which the whole-function passes downstream stop running --
+;;      so a merged function that would cross it is refused here for the same
+;;      reason every other band refuses it. The shared block fuel is NOT kept:
+;;      that budget exists to stop a caller from ballooning on copies, and this
+;;      band makes no copies. Its blocks are still charged to the shared
+;;      accumulator, so the bands that DO grow the caller see the real size;
+;;   5. the body is call-free, the same clause the duplication and
+;;      recursive-site tiers carry, for the same reason: the multiblock clone
+;;      path miscompiles call-carrying bodies (#6307). Here it is conservatism
+;;      rather than a mechanism requirement -- a move makes one copy, not two --
+;;      and it costs less than it reads, because SCC order processes callees
+;;      before callers, so a chain of single-site functions is absorbed
+;;      bottom-up in ONE pass;
+;;   6. the cascade clause, asked only when the callee actually carries bounds
+;;      checks, because that is the only thing it protects against: handing a
+;;      bounds-free single-reference CALLER its first bounds check used to cost
+;;      that caller its own inline at the loop tier.
+;;
+;; Ordered cheapest-first: two integer compares, then arithmetic, then the
+;; memoized caller facts, and the scan over the callee's blocks last.
+;;
+;; On the arity floor below: x86-64 SysV passes six integer arguments in
+;; registers and Windows x64 passes four, so at eight parameters BOTH ABIs store
+;; surplus arguments to the stack at the call and reload them in the callee --
+;; traffic that exists only because the boundary exists, that no body-size
+;; budget can see, and that absorption retires completely. Below the floor the
+;; boundary is cheap enough that the site-conditioned tiers own the decision.
+;; The measured population starts above it: the liveness callees this band was
+;; built for present at 10 and 14 parameters, and the only compiler function it
+;; claims across a whole self-compile has exactly 8.
+(define (opt-inline-single-site-min-params) : i64
+  8)
+
+(define (opt-inline-single-site-absorb-ok?
+  [absorb-class : i64]
+  [has-bounds? : bool]
+  [param-count : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (= absorb-class 1)
+    (>= param-count (opt-inline-single-site-min-params))
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        added-so-far
+        added-blocks))
+    (not (opt-inline-bounds-loop-site-in-loop?))
+    (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
+    (opt-inline-blocks-call-free? blocks)))
+
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
   [absorbable? : bool]
@@ -73629,6 +73744,18 @@
                     added-blocks
                     caller-blocks
                     added-so-far)]
+                ;; A callee with exactly one static reference absorbs at any
+                ;; size: the body moves rather than being copied, so no growth
+                ;; budget applies to it.
+                [single-site-absorb? : bool
+                  (opt-inline-single-site-absorb-ok?
+                    absorb-class
+                    has-bounds?
+                    np
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
                 [bounds-ok? : bool
                   (or
                     (opt-inline-bounds-inline-ok?
@@ -73647,7 +73774,8 @@
                       callee-instrs
                       callee-name
                       cblocks)
-                    hot-loop-leaf?)]
+                    hot-loop-leaf?
+                    single-site-absorb?)]
                 [budget-cost-ok? : bool
                   (or
                     (opt-inline-cost-inline?
@@ -73691,7 +73819,11 @@
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or legacy-cost-ok? hot-loop-leaf? branch-chain?))]
+                    (or
+                      legacy-cost-ok?
+                      hot-loop-leaf?
+                      branch-chain?
+                      single-site-absorb?))]
                 ;; True only when the hot-loop-leaf gate is what admits this
                 ;; site: its blocks spend the gate's own fuel, not the shared
                 ;; accumulator the caller's banked absorptions draw on.
@@ -74408,6 +74540,16 @@
                     added-blocks
                     caller-blocks
                     added-so-far)]
+                ;; Same single-site absorption verdict as the non-span path.
+                [single-site-absorb? : bool
+                  (opt-inline-single-site-absorb-ok?
+                    absorb-class
+                    has-bounds?
+                    np
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
                 [bounds-ok? : bool
                   (or
                     (opt-inline-bounds-inline-ok?
@@ -74426,7 +74568,8 @@
                       callee-instrs
                       callee-name
                       cblocks)
-                    hot-loop-leaf?)]
+                    hot-loop-leaf?
+                    single-site-absorb?)]
                 [budget-cost-ok? : bool
                   (or
                     (opt-inline-cost-inline?
@@ -74468,7 +74611,11 @@
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or legacy-cost-ok? hot-loop-leaf? branch-chain?))]
+                    (or
+                      legacy-cost-ok?
+                      hot-loop-leaf?
+                      branch-chain?
+                      single-site-absorb?))]
                 ;; Same hot-import accounting as the non-span path.
                 [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
                 ;; Same chain-import accounting as the non-span path.

@@ -3638,6 +3638,55 @@
     "import refused when it would cost a bounds-free single-site caller its own inline"))
 
 (test
+  inline-single-site-wide-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-absorb-ok?)
+    "a 220-instruction ten-parameter single-site callee absorbs whole at its one cold site"))
+
+(test
+  inline-single-site-wide-loop-site-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-loop-site-refusal-ok?)
+    "the same unbounded body stays out of line at an in-loop site"))
+
+(test
+  inline-single-site-narrow-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-refusal-ok?)
+    "the same body below the arity floor stays out of line: no marshalling to retire"))
+
+(test
+  inline-single-site-two-reference-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-two-reference-refusal-ok?)
+    "two cold sites keep the body at both: this band moves, it never copies"))
+
+(test
+  inline-single-site-self-recursive-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-self-recursive-refusal-ok?)
+    "a self-calling callee counts two references and is refused"))
+
+(test
+  inline-single-site-call-bearing-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-call-bearing-refusal-ok?)
+    "a wide single-site callee that calls out stays out of line (#6307)"))
+
+(test
+  inline-single-site-address-taken-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-address-taken-refusal-ok?)
+    "an address-taken callee is refused even at one call site"))
+
+(test
+  inline-single-site-cascade
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-cascade-depth-code)
+    0
+    "a three-deep single-site chain collapses into one function in a single pass"))
+
+(test
   inline-dup-two-site
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-dup-two-site-ok?)

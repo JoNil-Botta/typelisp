@@ -36696,6 +36696,47 @@
         program-index
         (+ index 1)))))
 
+;; Build the synthetic var-id set used by closure-entry adapters. Unlike an
+;; ordinary IR function, an adapter is emitted directly from its signature, so
+;; it never passes through regalloc's function-group scan. Its parameter homes
+;; still need the group classification: otherwise word 1 of parameter N falls
+;; back to scalar slot N+1 and aliases word 0 of the following parameter.
+(define (compiler-backend-type-list-group-vars-at
+  [type-segment-bases : i64]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]
+  [out : compiler_liveness.CompilerLiveI64Set]) : compiler_liveness.CompilerLiveI64Set
+  (if (>= index (compiler_ast_types.ast-type-list-len types))
+    out
+    (compiler-backend-type-list-group-vars-at
+      type-segment-bases
+      types
+      program-index
+      (+ index 1)
+      (if (compiler-backend-group-type?
+        type-segment-bases
+        program-index
+        (compiler_ast_types.ast-type-segment-bases-get
+          type-segment-bases
+          (compiler_ast_types.ast-type-list-get
+            types
+            index
+            (compiler_ast_types.ast-type-id-fallback))))
+        (compiler_liveness.compiler-live-set-insert out index)
+        out))))
+
+(define (compiler-backend-type-list-group-vars
+  [type-segment-bases : i64]
+  [types : compiler_ast_types.AstTypeList]
+  [program-index : CompilerBackendProgramIndex]) : compiler_liveness.CompilerLiveI64Set
+  (compiler-backend-type-list-group-vars-at
+    type-segment-bases
+    (& types)
+    program-index
+    0
+    (compiler_liveness.compiler-live-set-empty)))
+
 (define (compiler-backend-direct-tail-call?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -66032,6 +66073,20 @@
       (compiler-backend-set-current-fn-abi!
         backend-state
         (compiler-backend-regalloc-abi target))]
+    [groups : compiler_liveness.CompilerLiveI64Set
+      (compiler-backend-type-list-group-vars
+        type-segment-bases
+        param-types
+        program-index)]
+    [_groups : unit
+      (begin
+        (compiler-backend-current-slot-vars-set!
+          backend-state
+          (compiler-backend-type-list-count param-types))
+        (compiler-backend-group-vars-enable!
+          backend-state
+          groups
+          (compiler_liveness.compiler-live-set-empty)))]
     [emitted : ResultCompilerBackend
       (compiler-backend-emit-closure-entry-adapter
         type-segment-bases

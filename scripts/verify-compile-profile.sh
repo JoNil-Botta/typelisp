@@ -1796,6 +1796,22 @@ else
         1 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
+    # Direct capture owns one native operand array per call. This stable mix of
+    # fixed and final-variadic macros used 52 KiB when every call reserved all
+    # eight ABI slots and 35 KiB with declared-parameter-sized storage. Keep a
+    # per-call ceiling with enough headroom for allocation-accounting changes,
+    # while still rejecting the fixed-eight regression.
+    DIRECT_MARSHAL_CALLS=$(profile_counter_value_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.walk_direct_marshal_calls")
+    DIRECT_MARSHAL_ALLOC_KB=$(profile_counter_value_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.walk_direct_marshal_alloc_kb")
+    if [ $((DIRECT_MARSHAL_ALLOC_KB * 4)) -gt \
+        $((DIRECT_MARSHAL_CALLS * 5)) ]; then
+        show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
+        fail "direct marshal storage exceeded 1.25 KiB per call: ${DIRECT_MARSHAL_ALLOC_KB} KiB / ${DIRECT_MARSHAL_CALLS} calls"
+    fi
     assert_profile_counter_eq_in \
         "$CHECK_STDERR" \
         "typecheck.macro.stdlib_tlci_catalog_misses" \

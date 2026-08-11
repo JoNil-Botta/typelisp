@@ -13,7 +13,7 @@
 ;; totals. The bounds checks in front of every `array-ref` are folded compares
 ;; too, so a fold that changed a check's sense would abort here instead of
 ;; returning.
-(import stdlib.io as io)
+(import stdlib.io)
 
 (define cmp-mem-fold-smoke-n : i64
   257)
@@ -31,9 +31,7 @@
 ;; The folded shape: `(= (array-ref flags i) 1)` and `(>= (array-ref marks i) 0)`
 ;; are single-use element loads feeding compares that feed branches, which is
 ;; the M6-B/M6-D shape (`cmpq $1, (base,index,8)`).
-(define (cmp-mem-fold-smoke-folded
-  [flags : (Array i64)]
-  [marks : (Array i64)]) : i64
+(define (cmp-mem-fold-smoke-folded [flags : (Array i64)] [marks : (Array i64)]) : i64
   (let
     [i : i64 0]
     [total : i64 0]
@@ -109,6 +107,59 @@
             (set! i (+ i 1)))))
       acc)))
 
+;; GAP8-C: the accumulator shape, where the single-use element load sits on the
+;; LHS and the OTHER operand is a loop-carried register value. This is the shape
+;; whose two-address destination the allocator now ties to the accumulator
+;; instead of to the load, so the commuted fold's staging `mov` self-elides and
+;; the ALU line reads the element itself -- the loop body becomes one `andq
+;; (base,index,8), %acc` per element instead of a `mov`/`and` pair that ping-pongs
+;; the accumulator between two registers.
+;;
+;; Each op reads a DIFFERENT array so every load stays single use; four reads of
+;; one element would be CSE'd into a multi-use load, which retires the fold.
+(define (cmp-mem-fold-smoke-acc-folded
+  [a : (Array i64)]
+  [b : (Array i64)]
+  [c : (Array i64)]
+  [d : (Array i64)]
+  [seed : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 seed]
+    (begin
+      (while (< i (array-length a))
+        (begin
+          (set! acc (bit-and (array-ref a i) acc))
+          (set! acc (bit-or (array-ref b i) acc))
+          (set! acc (bit-xor (array-ref c i) acc))
+          (set! acc (+ (array-ref d i) acc))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (cmp-mem-fold-smoke-acc-unfolded
+  [a : (Array i64)]
+  [b : (Array i64)]
+  [c : (Array i64)]
+  [d : (Array i64)]
+  [seed : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 seed]
+    (begin
+      (while (< i (array-length a))
+        (let
+          [av : i64 (array-ref a i)]
+          [bv : i64 (array-ref b i)]
+          [cv : i64 (array-ref c i)]
+          [dv : i64 (array-ref d i)]
+          (begin
+            (set! acc (bit-and (bit-or av (- av av)) acc))
+            (set! acc (bit-or (bit-or bv (- bv bv)) acc))
+            (set! acc (bit-xor (bit-or cv (- cv cv)) acc))
+            (set! acc (+ (bit-or dv (- dv dv)) acc))
+            (set! i (+ i 1)))))
+      acc)))
+
 ;; Indirect indexing: the loaded value becomes the NEXT access's index, so its
 ;; bounds check and the compare behind it must keep reading the same element.
 (define (cmp-mem-fold-smoke-indirect
@@ -162,9 +213,16 @@
           (cmp-mem-fold-smoke-words-unfolded uses live defs)))
         (io.panic "cmp-mem fold: word ALU parity mismatch")
         unit)
+      (if (not
+        (=
+          (cmp-mem-fold-smoke-acc-folded uses live defs marks 12345)
+          (cmp-mem-fold-smoke-acc-unfolded uses live defs marks 12345)))
+        (io.panic "cmp-mem fold: accumulator ALU parity mismatch")
+        unit)
       (io.println
-        "cmp-mem fold smoke: compares={} words={} indirect={}"
+        "cmp-mem fold smoke: compares={} words={} indirect={} acc={}"
         (cmp-mem-fold-smoke-folded flags marks)
         (cmp-mem-fold-smoke-words-folded uses live defs)
-        (cmp-mem-fold-smoke-indirect index flags))
+        (cmp-mem-fold-smoke-indirect index flags)
+        (cmp-mem-fold-smoke-acc-folded uses live defs marks 12345))
       0)))

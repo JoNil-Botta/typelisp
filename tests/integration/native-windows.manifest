@@ -126,6 +126,7 @@ switch_dispatch_scavenge|tests/integration/switch_dispatch_scavenge.tl|42|-|-|st
 total_switch_runtime|tests/integration/total_switch_runtime.tl|42|-|-|stdlib/array.tl
 gap_switch_runtime|tests/integration/gap_switch_runtime.tl|42|-|-|stdlib/array.tl
 cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|
 gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 const_global_mask_unroll|tests/integration/const_global_mask_unroll.tl|0|-|-|stdlib/array.tl

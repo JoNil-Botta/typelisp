@@ -464,6 +464,28 @@ check_cmp_fold_load() {
     assert_not_contains "$_body" 'call tl_oob_abort' cmp-fold-load
 }
 
+check_alu_mem_operand_tie() {
+    _asm=$(compile_gate alu_mem_operand_tie tests/integration/alu_mem_operand_tie.tl)
+    _body=$(function_body "$_asm" _tl_alu_mem_operand_tie_fold_words)
+    # GAP8-C: four commutative ops, each reading a single-use element load on the
+    # LHS and the loop-carried accumulator on the RHS. The allocator ties each
+    # destination to the ACCUMULATOR, so the commuted ALU fold's staging `mov`
+    # self-elides and every op becomes one memory-operand ALU line. Both loop
+    # clones fold -- the bounds-check-eliminated fast body and the checked slow
+    # body -- so four ops over two clones is eight lines.
+    assert_regex_count_eq "$_body" \
+        '^[[:space:]]+(andq|orq|xorq|addq) \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 8 \
+        alu-mem-operand-tie
+    # No element load survives: the fold consumed all eight.
+    assert_not_matches "$_body" \
+        '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' alu-mem-operand-tie
+    # The only register-to-register copies left are the seed's entry home and the
+    # accumulator's move into the return register -- one each, outside both loops.
+    # A destination tied to the load instead would add one staging copy per op.
+    assert_regex_count_eq "$_body" \
+        '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 2 alu-mem-operand-tie
+}
+
 check_const_global_mask_unroll() {
     _asm=$(compile_gate         const_global_mask_unroll         tests/integration/const_global_mask_unroll.tl)
     _global=$(function_body "$_asm" _tl_const_global_mask_unroll_mask_sum)
@@ -776,6 +798,7 @@ check_global_handle_cse
 check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
+check_alu_mem_operand_tie
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

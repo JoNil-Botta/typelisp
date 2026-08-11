@@ -28635,48 +28635,129 @@
                 true-jcc
                 false-jcc
                 backend-state)))
+          ;; M6-F: a SPILLED rhs is already a legal `cmp` SOURCE operand
+          ;; whenever the lhs occupies the destination slot as a register --
+          ;; `cmpq SLOT, %r` -- so the reload the scavenge path emits below is
+          ;; pure overhead. This is the mirror of the lhs-address arm in
+          ;; compiler-backend-emit-compare-branch-with-plan, which has spelled a
+          ;; spilled LHS straight into the destination slot all along; between
+          ;; them exactly one operand is ever memory, which is all x86 allows.
+          ;;
+          ;; Restricted to a register lhs-operand for that reason, and to
+          ;; non-bit-test ops because `test` renders its operands through
+          ;; compiler-backend-binop-reg-asm, which sizes REGISTER spellings.
+          ;; Narrow widths are fine: `cmp<w> SLOT, %r<w>` reads the low w bytes
+          ;; of the slot, exactly what reloading the slot and comparing the
+          ;; sized register did. Nothing between lhs-asm and the compare moves
+          ;; %rsp -- emergency saves write fixed slots, never push -- which is
+          ;; the same assumption the lhs-address arm already runs on.
           (let
-            [rhs-reg : String
-              (if (string.eq planned-rhs lhs-reg)
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-compare-rhs-scavenge-exclude lhs-reg)
-                  (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
-                  "%r8"
-                  backend-state)
-                (compiler-backend-planned-or-scavenge-reg-here
-                  planned-rhs
-                  (compiler-backend-compare-rhs-scavenge-exclude lhs-reg)
-                  (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
-                  "%r8"
-                  backend-state))]
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              rhs
-              rhs-reg
-              backend-state)
-              [(ResultCompilerBackend.Ok rhs-asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    lhs-asm
-                    rhs-asm
-                    (compiler-backend-emit-compare-operand-flags
-                      type-segment-bases
-                      op
-                      (compiler-backend-sized-reg type-segment-bases rhs-reg ty)
-                      lhs-operand
-                      ty
-                      false
-                      lhs-register?)
-                    (compiler-backend-emit-compare-branch-jumps
-                      function
-                      true-label
-                      false-label
-                      fallthrough
-                      true-jcc
-                      false-jcc
-                      backend-state)))]
-              [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err message)]))))]))
+            [rhs-address : String
+              (compiler-backend-value-stack-address
+                assignments
+                rhs
+                backend-state)]
+            (if (and
+              lhs-register?
+              (not (string.eq rhs-address ""))
+              (not (compiler-backend-bit-test-op? op)))
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  lhs-asm
+                  (compiler-backend-emit-compare-operand-flags
+                    type-segment-bases
+                    op
+                    rhs-address
+                    lhs-operand
+                    ty
+                    false
+                    lhs-register?)
+                  (compiler-backend-emit-compare-branch-jumps
+                    function
+                    true-label
+                    false-label
+                    fallthrough
+                    true-jcc
+                    false-jcc
+                    backend-state)))
+              (compiler-backend-emit-compare-branch-staged-rhs
+                type-segment-bases
+                assignments
+                function
+                rhs
+                ty
+                true-label
+                false-label
+                fallthrough
+                true-jcc
+                false-jcc
+                lhs-asm
+                lhs-operand
+                lhs-register?
+                lhs-reg
+                planned-rhs
+                op
+                backend-state)))))]))
+
+(define (compiler-backend-emit-compare-branch-staged-rhs
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [function : String]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [true-label : i64]
+  [false-label : i64]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [true-jcc : String]
+  [false-jcc : String]
+  [lhs-asm : String]
+  [lhs-operand : String]
+  [lhs-register? : bool]
+  [lhs-reg : String]
+  [planned-rhs : String]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [rhs-reg : String
+      (if (string.eq planned-rhs lhs-reg)
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-compare-rhs-scavenge-exclude lhs-reg)
+          (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
+          "%r8"
+          backend-state)
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-rhs
+          (compiler-backend-compare-rhs-scavenge-exclude lhs-reg)
+          (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
+          "%r8"
+          backend-state))]
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      rhs
+      rhs-reg
+      backend-state)
+      [(ResultCompilerBackend.Ok rhs-asm)
+        (ResultCompilerBackend.Ok
+          (str_cat.str-cat
+            lhs-asm
+            rhs-asm
+            (compiler-backend-emit-compare-operand-flags
+              type-segment-bases
+              op
+              (compiler-backend-sized-reg type-segment-bases rhs-reg ty)
+              lhs-operand
+              ty
+              false
+              lhs-register?)
+            (compiler-backend-emit-compare-branch-jumps
+              function
+              true-label
+              false-label
+              fallthrough
+              true-jcc
+              false-jcc
+              backend-state)))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-compare-branch-with-plan
   [type-segment-bases : i64]
@@ -50328,6 +50409,29 @@
           [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
             (let
               [mnem : String (compiler-backend-gep-load-alu-mnemonic op)]
+              ;; GAP8-B: the loaded value on the RHS is the shape the two-address
+              ;; lowering hands over directly -- `dst := lhs; dst op= rhs` puts
+              ;; the memory operand in the ALU's source slot. A COMMUTATIVE op
+              ;; folds the mirrored shape just as soundly: `dst = MEM op x` is
+              ;; `dst = x op MEM`, so the non-loaded operand lands in dst's home
+              ;; first and the fold reads memory from the other side. Sub is
+              ;; excluded by construction -- compiler-backend-commutative-binop?
+              ;; refuses it -- because `MEM - x` is not `x - MEM`.
+              [mem-is-rhs? : bool
+                (and
+                  (compiler-backend-branch-uses-var? rhs load-dst)
+                  (not (compiler-backend-branch-uses-var? lhs load-dst)))]
+              [mem-is-lhs? : bool
+                (and
+                  (compiler-backend-commutative-binop? op)
+                  (compiler-backend-branch-uses-var? lhs load-dst)
+                  (not (compiler-backend-branch-uses-var? rhs load-dst)))]
+              ;; The operand that is NOT the folded load; it is staged into the
+              ;; ALU destination's home before the memory operand is consumed.
+              [x : compiler_ir_types.CompilerIrValue
+                (if mem-is-rhs?
+                  lhs
+                  rhs)]
               [dst-home : String
                 (compiler-backend-var-register-home
                   backend-state
@@ -50345,8 +50449,7 @@
                   offset)]
               (if (and
                 (not (string.eq mnem ""))
-                (compiler-backend-branch-uses-var? rhs load-dst)
-                (not (compiler-backend-branch-uses-var? lhs load-dst))
+                (or mem-is-rhs? mem-is-lhs?)
                 (not
                   (compiler-backend-binop-f64? types global-types lhs rhs ty))
                 (=
@@ -50363,7 +50466,7 @@
                 (not (string.eq dst-home ""))
                 (not (string.eq dst-home base-home))
                 (not (string.eq dst-home offset-home)))
-                (CompilerBackendGepLoadAluFold.Some mnem dst lhs after-binop)
+                (CompilerBackendGepLoadAluFold.Some mnem dst x after-binop)
                 (CompilerBackendGepLoadAluFold.No)))]
           [_ (CompilerBackendGepLoadAluFold.No)]))
       (CompilerBackendGepLoadAluFold.No))))
@@ -50627,6 +50730,155 @@
                 scale
                 index-home)
               ""))]))))
+
+;; M6-D. Every address above is spelled straight out of the homes the allocator
+;; chose, so a gep whose BASE was spilled (or homed in %rbp, which the dynamic
+;; arm's SIB base slot cannot take) declines and the ordinary path emits three
+;; instructions:
+;;
+;;     movq SPILL, %t          ; stage the base
+;;     movq (%t,%i,8), %r      ; load
+;;     cmpq $K, %r             ; compare
+;;
+;; The staging `movq` is unavoidable -- x86 has no memory BASE operand -- but
+;; the load is not: once the base sits in %t the compare reads `(%t,%i,8)`
+;; itself, and the shape folds to two instructions instead of three.
+;;
+;; The staging register is the LOAD DESTINATION's own register home -- not a
+;; scavenged one. That keeps the probe pure (the M-D lesson: a probe that may
+;; still decline must never scavenge, or a rejected fold leaks an
+;; emergency-pending register), and it is sound by construction:
+;;
+;;   - the whole M6 family is gated on `compiler-backend-var-single-use?` for
+;;     the load destination, and the fold consumes that single use, so after the
+;;     fold nothing reads the home at all;
+;;   - the unfolded emission WRITES that same home at exactly this program point
+;;     (it is the load's destination), so writing it here instead clobbers
+;;     nothing the allocator had not already declared dead;
+;;   - the compare's other operand is live ACROSS the load it replaces, so the
+;;     allocator cannot have given it the load destination's home; the operands
+;;     therefore cannot collide;
+;;   - the base is register-less on this path, so it cannot collide either, and
+;;     the index is checked explicitly below -- an index sharing the load
+;;     destination's home (legal for `movq (%r11,%rcx,8), %rcx`) would be
+;;     destroyed by the staging write, so that shape declines.
+;;
+;; A spilled load destination has no home and declines. %rbp is refused as a
+;; staging base for the same reason address-base-filter refuses it elsewhere.
+;;
+;; Only shapes the DIRECT address declines reach here, and only where the
+;; ordinary path would have staged too -- otherwise the "fold" would add a
+;; staging `movq` that was never being paid. That is address-base-filter on the
+;; dynamic arm (%rbp included: its home cannot serve as a SIB base) and a
+;; genuinely register-less home on the const arm, where
+;; address-base-filter-direct lets even %rbp address `disp(,%rbp,1)` in place.
+(define (compiler-backend-gep-load-cmp-staged-base
+  [ctx : CompilerBackendEmissionContext]
+  [load-dst : i64]) : String
+  (compiler-backend-address-base-filter
+    (compiler-backend-var-register-home
+      ctx.backend-state
+      ctx.assignments
+      load-dst)))
+
+(define (compiler-backend-gep-load-cmp-staged-address
+  [backend-state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [gep-disp : i64]
+  [direct-addr : String]
+  [staged-base : String]) : String
+  (let
+    [raw-base-home : String
+      (compiler-backend-value-scalar-register backend-state assignments base)]
+    (if (or
+      (string.eq staged-base "")
+      (string.eq staged-base "%rbp")
+      ;; The direct address already spells this shape; staging would only add a
+      ;; redundant copy.
+      (not (string.eq direct-addr "")))
+      ""
+      (match (compiler-backend-value-as-i64 offset)
+        [(option_i64.Some n)
+          ;; Const arm: the ordinary path addresses a %rbp-homed base in place,
+          ;; so only a base with no register home at all is staged there.
+          (let
+            [disp : i64
+              (+
+                (* n (compiler-backend-type-size type-segment-bases elem-ty))
+                gep-disp)]
+            (if (and
+              (string.eq raw-base-home "")
+              (compiler-backend-imm32? disp))
+              (compiler-backend-base-address disp staged-base)
+              ""))]
+        [(option_i64.None)
+          (let
+            [scale : i64
+              (compiler-backend-type-size type-segment-bases elem-ty)]
+            [base-home : String
+              (compiler-backend-address-base-filter raw-base-home)]
+            [index-home : String
+              (compiler-backend-value-scalar-register
+                backend-state
+                assignments
+                offset)]
+            (if (or
+              (not (compiler-backend-gep-sib-scale? scale))
+              (not (compiler-backend-imm32? gep-disp)))
+              ""
+              (cond
+                ;; Stage the BASE: the index already occupies a register the SIB
+                ;; index slot can take.
+                [(and
+                    (string.eq base-home "")
+                    (not (string.eq index-home ""))
+                    (not (string.eq index-home "%rbp"))
+                    ;; The staging write must not land on the index register the
+                    ;; same address then reads.
+                    (not (string.eq index-home staged-base)))
+                  (compiler-backend-gep-index-address-disp
+                    gep-disp
+                    staged-base
+                    scale
+                    index-home)]
+                ;; Stage the INDEX: the mirror case, and the common one -- a
+                ;; spilled loop index the ordinary path copies into a scavenged
+                ;; register before the load. Staging it into the load
+                ;; destination's home instead lets the compare read the element
+                ;; without the load, for the same one staging `movq`.
+                [(and
+                    (not (string.eq base-home ""))
+                    (string.eq index-home "")
+                    (not (string.eq base-home staged-base)))
+                  (compiler-backend-gep-index-address-disp
+                    gep-disp
+                    base-home
+                    scale
+                    staged-base)]
+                ;; Both sides spilled would need two staging registers, and the
+                ;; fold owns exactly one.
+                [else ""])))]))))
+
+;; Which operand M6-D stages. Mirrors the arms of
+;; compiler-backend-gep-load-cmp-staged-address: a base the SIB base slot cannot
+;; take is staged, otherwise it is the spilled index. Only ever consulted when
+;; that function returned a non-empty address, so exactly one of the two arms
+;; applies.
+(define (compiler-backend-gep-load-cmp-staged-value
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrValue
+  (if (string.eq
+    (compiler-backend-address-base-filter
+      (compiler-backend-value-scalar-register backend-state assignments base))
+    "")
+    base
+    offset))
 
 ;; True when the instruction would emit the LOCATED runtime-abort tail
 ;; (`tl_oob_abort_at`), which re-reads both compare operands through `pushq`
@@ -51046,6 +51298,7 @@
         load-ty
         value-var
         instrs
+        index
         stop)]))
 
 (define (compiler-backend-gep-load-cmp-branch-probe-at
@@ -51055,6 +51308,10 @@
   [load-ty : compiler_ast_types.AstType]
   [value-var : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  ;; The instruction right behind the fused load, i.e. where the walk started.
+  ;; M6-E threads phi-edge copies only when the compare sits exactly there, so
+  ;; that the branch lands on the scratch-plan offset the copies read.
+  [origin : i64]
   [index : i64]) : CompilerBackendGepLoadCmpBranchFold
   (let
     [maybe-cast : compiler_ir_types.CompilerIrInstr
@@ -51165,15 +51422,23 @@
                       (not (string.eq cmp-asm ""))
                       (not (string.eq true-jcc ""))
                       (compiler-backend-branch-uses-var? cond cmp-dst)
-                      ;; Phi-edge copies would have to be threaded through the
-                      ;; branch (and would need their own cycle scratch); the
-                      ;; fold declines and the ordinary path emits them.
-                      (not
-                        (compiler-backend-branch-needs-phi-copies?
-                          (compiler-backend-state-function-state
-                            ctx.backend-state)
-                          true-label
-                          false-label)))
+                      ;; M6-E: phi-edge copies are threaded onto the successor
+                      ;; edges by compiler-backend-gep-load-cmp-branch-emit,
+                      ;; which reads the BRANCH's own cycle/stage scratch out of
+                      ;; the allocator plan at offset 3 (gep, load, compare,
+                      ;; branch). A fold that swallowed extra instructions -- a
+                      ;; widening cast, or one the walk stepped over -- puts the
+                      ;; branch at a different offset, so it keeps declining
+                      ;; rather than reading a slot planned for some other
+                      ;; instruction.
+                      (or
+                        (not
+                          (compiler-backend-branch-needs-phi-copies?
+                            (compiler-backend-state-function-state
+                              ctx.backend-state)
+                            true-label
+                            false-label))
+                        (= cmp-index origin)))
                       (CompilerBackendGepLoadCmpBranchFold.Some
                         cmp-asm
                         true-jcc
@@ -51190,17 +51455,176 @@
   (No)
   (Some ResultCompilerBackend))
 
+;; M6-E: the folded compare sets the flags its branch consumes, so successor
+;; phi-edge copies cannot sit between them -- they have to run ON the edge,
+;; behind the jcc. That is exactly the shape
+;; compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
+;; already builds for the unfolded compare: each edge's copies become their own
+;; block, the branch jumps to the edge labels instead of the real successors,
+;; and the edge blocks are appended behind the branch. Reusing it costs nothing
+;; -- those edge blocks are the very ones the unfolded path emitted -- and lets
+;; the fold keep shapes it used to hand back whole.
+(define (compiler-backend-gep-load-cmp-branch-emit
+  [ctx : CompilerBackendEmissionContext]
+  [cmp-asm : String]
+  [true-jcc : String]
+  [false-jcc : String]
+  [true-label : i64]
+  [false-label : i64]
+  [branch-fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
+  (if (not
+    (compiler-backend-branch-needs-phi-copies?
+      (compiler-backend-state-function-state ctx.backend-state)
+      true-label
+      false-label))
+    (ResultCompilerBackend.Ok
+      (str_cat.str-cat
+        cmp-asm
+        (compiler-backend-emit-compare-branch-jumps
+          ctx.function
+          true-label
+          false-label
+          branch-fallthrough
+          true-jcc
+          false-jcc
+          ctx.backend-state)))
+    (let
+      [planned-cycle : String
+        (compiler-backend-scratch-plan-register-ahead
+          (compiler-backend-runtime-plan-scratch ctx.plan)
+          3
+          1
+          ctx.backend-state)]
+      [planned-stage : String
+        (compiler-backend-scratch-plan-register-ahead
+          (compiler-backend-runtime-plan-scratch ctx.plan)
+          3
+          2
+          ctx.backend-state)]
+      (match (compiler-backend-emit-phi-edge-copies
+        ctx.type-segment-bases
+        ctx.assignments
+        ctx.blocks
+        true-label
+        ctx.current-label
+        ctx.program-index
+        ctx.vars
+        planned-cycle
+        planned-stage
+        (compiler-backend-current-phi-planned-xmm-cycle ctx.backend-state))
+        [(ResultCompilerBackend.Ok true-copies)
+          (match (compiler-backend-emit-phi-edge-copies
+            ctx.type-segment-bases
+            ctx.assignments
+            ctx.blocks
+            false-label
+            ctx.current-label
+            ctx.program-index
+            ctx.vars
+            planned-cycle
+            planned-stage
+            (compiler-backend-current-phi-planned-xmm-cycle ctx.backend-state))
+            [(ResultCompilerBackend.Ok false-copies)
+              (ResultCompilerBackend.Ok
+                (compiler-backend-emit-branch-edges
+                  ctx.function
+                  ctx.current-label
+                  true-label
+                  false-label
+                  true-copies
+                  false-copies
+                  (str_cat.str-cat
+                    cmp-asm
+                    (compiler-backend-emit-compare-branch-jumps
+                      ctx.function
+                      (compiler-backend-branch-edge-target
+                        (compiler-backend-branch-edge-label
+                          ctx.current-label
+                          "true")
+                        true-label
+                        true-copies)
+                      (compiler-backend-branch-edge-target
+                        (compiler-backend-branch-edge-label
+                          ctx.current-label
+                          "false")
+                        false-label
+                        false-copies)
+                      (compiler-backend-branch-edge-fallthrough
+                        ctx.current-label
+                        true-copies
+                        false-copies
+                        branch-fallthrough)
+                      true-jcc
+                      false-jcc
+                      ctx.backend-state))))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
+
+;; M6-D emission: put the base in its planned staging register FIRST, then build
+;; the folded compare and its branch on top -- the same order the unfolded path
+;; used, so the phi-edge copies M6-E may emit still see the identical machine
+;; state. `staged-base` is "" whenever the fold spelled a direct address, and
+;; then this is just the branch emission. Nothing here runs until the fold has
+;; COMMITTED, so the M-D rule holds: no probe that can still decline reaches an
+;; emitter.
+(define (compiler-backend-gep-load-cmp-emit
+  [ctx : CompilerBackendEmissionContext]
+  [staged-value : compiler_ir_types.CompilerIrValue]
+  [staged-base : String]
+  [cmp-asm : String]
+  [true-jcc : String]
+  [false-jcc : String]
+  [true-label : i64]
+  [false-label : i64]
+  [branch-fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
+  (if (string.eq staged-base "")
+    (compiler-backend-gep-load-cmp-branch-emit
+      ctx
+      cmp-asm
+      true-jcc
+      false-jcc
+      true-label
+      false-label
+      branch-fallthrough)
+    (match (compiler-backend-emit-load-value-with-plan
+      ctx.assignments
+      staged-value
+      staged-base
+      ctx.backend-state)
+      [(ResultCompilerBackend.Ok stage-asm)
+        (match (compiler-backend-gep-load-cmp-branch-emit
+          ctx
+          cmp-asm
+          true-jcc
+          false-jcc
+          true-label
+          false-label
+          branch-fallthrough)
+          [(ResultCompilerBackend.Ok body-asm)
+            (ResultCompilerBackend.Ok (str_cat.str-cat stage-asm body-asm))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
 (define (compiler-backend-gep-load-cmp-fold-rest
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [addr : String]
+  ;; M6-D: the operand that has to be staged (base or index), the staging
+  ;; register, and the address built on it. The last two are "" when the direct
+  ;; address already spelled the operand.
+  [staged-value : compiler_ir_types.CompilerIrValue]
+  [staged-base : String]
+  [staged-addr : String]
   [load-dst : i64]
   [load-ty : compiler_ast_types.AstType]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepLoadCmpEmission
   (if (or
-    (string.eq addr "")
+    (and (string.eq addr "") (string.eq staged-addr ""))
     (compiler-backend-float-type? load-ty)
     (not (compiler-backend-var-single-use? ctx.use-counts load-dst))
     (>= index instrs.len))
@@ -51230,9 +51654,15 @@
             after-bounds
             out))]
       [(CompilerBackendGepLoadBoundsFold.No)
+        ;; The bounds fold above stays on the DIRECT address: its abort tail
+        ;; re-reads both operands and owns its own operand discipline, so M6-D
+        ;; leaves it exactly as validated. Only the compare+branch shapes take
+        ;; the staged address.
         (match (compiler-backend-gep-load-cmp-branch-probe
           ctx
-          addr
+          (if (string.eq addr "")
+            staged-addr
+            addr)
           load-dst
           load-ty
           instrs
@@ -51248,20 +51678,21 @@
               (compiler-backend-emit-fused-result-rest
                 ctx
                 fallthrough
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    cmp-asm
-                    (compiler-backend-emit-compare-branch-jumps
-                      ctx.function
-                      true-label
-                      false-label
-                      (compiler-backend-fused-compare-fallthrough
-                        instrs
-                        after-branch
-                        fallthrough)
-                      true-jcc
-                      false-jcc
-                      ctx.backend-state)))
+                (compiler-backend-gep-load-cmp-emit
+                  ctx
+                  staged-value
+                  (if (string.eq addr "")
+                    staged-base
+                    "")
+                  cmp-asm
+                  true-jcc
+                  false-jcc
+                  true-label
+                  false-label
+                  (compiler-backend-fused-compare-fallthrough
+                    instrs
+                    after-branch
+                    fallthrough))
                 instrs
                 after-branch
                 out))]
@@ -51284,37 +51715,58 @@
   ;; M6 first: its probes are pure, and the shapes they claim (bounds-check
   ;; length, compare+branch, narrow compare) are disjoint from the GAP8 ALU
   ;; shapes below, so the order only decides which rule sees the instruction.
-  (match (compiler-backend-gep-load-cmp-fold-rest
-    ctx
-    fallthrough
-    (compiler-backend-gep-load-cmp-address
-      ctx.backend-state
-      ctx.type-segment-bases
-      ctx.assignments
-      base
-      offset
-      elem-ty
-      gep-fold-disp)
-    load-dst
-    load-ty
-    instrs
-    index
-    out)
-    [(CompilerBackendMaybeGepLoadCmpEmission.Some result) result]
-    [(CompilerBackendMaybeGepLoadCmpEmission.No)
-      (compiler-backend-emit-fused-gep-load-rest-tail
-        ctx
-        fallthrough
-        _gep-dst
-        gep-fold-disp
+  (let
+    [direct-addr : String
+      (compiler-backend-gep-load-cmp-address
+        ctx.backend-state
+        ctx.type-segment-bases
+        ctx.assignments
         base
         offset
         elem-ty
-        load-dst
-        load-ty
-        instrs
-        index
-        out)]))
+        gep-fold-disp)]
+    [staged-base : String
+      (compiler-backend-gep-load-cmp-staged-base ctx load-dst)]
+    (match (compiler-backend-gep-load-cmp-fold-rest
+      ctx
+      fallthrough
+      direct-addr
+      (compiler-backend-gep-load-cmp-staged-value
+        ctx.backend-state
+        ctx.assignments
+        base
+        offset)
+      staged-base
+      (compiler-backend-gep-load-cmp-staged-address
+        ctx.backend-state
+        ctx.type-segment-bases
+        ctx.assignments
+        base
+        offset
+        elem-ty
+        gep-fold-disp
+        direct-addr
+        staged-base)
+      load-dst
+      load-ty
+      instrs
+      index
+      out)
+      [(CompilerBackendMaybeGepLoadCmpEmission.Some result) result]
+      [(CompilerBackendMaybeGepLoadCmpEmission.No)
+        (compiler-backend-emit-fused-gep-load-rest-tail
+          ctx
+          fallthrough
+          _gep-dst
+          gep-fold-disp
+          base
+          offset
+          elem-ty
+          load-dst
+          load-ty
+          instrs
+          index
+          out)])))
 
 (define (compiler-backend-emit-fused-gep-load-rest-tail
   [ctx : CompilerBackendEmissionContext]

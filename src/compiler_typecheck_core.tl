@@ -95896,11 +95896,11 @@
               (set! index (+ index 1)))]))
       env)))
 
-;; Route embedded-stdlib macro calls through the TLCI catalog before the
-;; semantic CTFE fallback. The mapped catalog owns its package-agnostic index
-;; and terminal shell state for the mapping lifetime. Explicit stdlib roots
-;; never enter this branch because loader provenance is per compilation
-;; session.
+;; Route trusted embedded-stdlib macro calls through the TLCI catalog before
+;; the semantic CTFE fallback. The mapped catalog owns its package-agnostic
+;; index and terminal shell state for the mapping lifetime. Loader provenance
+;; is per compilation session: embedded source and byte-identical disk source
+;; may enter this branch, while modified or otherwise untrusted roots cannot.
 (define macro-expand-stdlib-tlci-route-active : bool
   false)
 
@@ -95992,13 +95992,13 @@
   0x1cf1)
 
 ;; #5926: production-route sustained stress telemetry. The declarations only
-;; exist in the focused profile compiler, and a second runtime environment
-;; key gates the workload, so normal Windows compilers and every non-stress
-;; profile compile retain the production route-off policy. A fixed-width stderr
-;; record is emitted at pass boundaries, lifecycle/result transitions, dispatch one,
-;; every 256 dispatches, and the historical 13,552-dispatch boundary. The
-;; redirected record survives a later allocator or mapping crash and names the
-;; last completed production macro dispatch without retaining an unbounded log.
+;; exist in the focused profile compiler, and a runtime environment key gates
+;; record emission without changing the production routing policy. A
+;; fixed-width stderr record is emitted at pass boundaries, lifecycle/result
+;; transitions, dispatch one, every 256 dispatches, and the historical
+;; 13,552-dispatch boundary. The redirected record survives a later allocator
+;; or mapping crash and names the last completed production macro dispatch
+;; without retaining an unbounded log.
 (cfg
   (all embedded-stdlib-tlci tlci-native-route-stress)
   (define compiler-tc-tlci-native-stress-active : bool
@@ -103981,41 +103981,24 @@
     (ast.ast-node-pool-context-install! pools)
     (ci.intern-compat-state-install! intern-state)
     (macro-expand-program-structural-change-reset!)
-    ;; The embedded-source flag is only set when stdlib modules actually load
-    ;; from the embedded payload; a compile with an explicit stdlib root never
-    ;; sets it. Extra roots (the compiler's own src root during self-compiles)
-    ;; therefore must not disable the route -- the catalog identity check
-    ;; still gates every dispatch to embedded-stdlib-defined macros.
-    ;; Windows: a scale-dependent memory corruption in sustained native
-    ;; dispatch is still open (three fixed layers deep: provenance arenas,
-    ;; mapping lifetime, guard-page probes; the residual fault surfaces at
-    ;; unrelated allocations after ~13k dispatches). Until it is pinned,
-    ;; Windows keeps the interpreted route -- identical behavior to main.
-    ;; Native dispatch is opt-in (--cfg tlci-native-route) until its
-    ;; environmental sensitivity is closed out: parity holds everywhere it
-    ;; runs, but sustained dispatch has shown machine-dependent instability
-    ;; (#5460 on Windows; CI-runner-only failures on Linux) that local
-    ;; batteries cannot reproduce. The routing contracts build with the cfg
-    ;; so the machinery stays continuously verified.
+    ;; The route is a property of the compiler's embedded image plus the exact
+    ;; source provenance observed by this load session. Embedded source marks
+    ;; the session directly; byte-identical disk source may mark individual
+    ;; modules through the content-equivalence cache. Extra non-stdlib roots
+    ;; (for example `src` during a self-compile) do not disable the route, while
+    ;; modified/untrusted stdlib source never receives embedded provenance.
+    ;; #5926 exercised the real macro walk beyond the historical failure point
+    ;; and across five reset/release/remap cycles on hosted Linux and Windows,
+    ;; so production routing now uses this same policy on both hosts. The
+    ;; stress-only cfg controls durable telemetry, not route selection.
     (set!
       macro-expand-stdlib-tlci-route-active
       (cfg
-        tlci-native-route
-        (cfg
-          windows
-          (cfg
-            (all embedded-stdlib-tlci tlci-native-route-stress)
-            (if (compiler-tc-tlci-native-stress-requested?)
-              (or
-                (cload.compiler-load-session-state-embedded-stdlib-source-used?
-                  load-state)
-                (cload.compiler-load-embedded-provenance-noted?))
-              false)
-            false)
-          (or
-            (cload.compiler-load-session-state-embedded-stdlib-source-used?
-              load-state)
-            (cload.compiler-load-embedded-provenance-noted?)))
+        embedded-stdlib-tlci
+        (or
+          (cload.compiler-load-session-state-embedded-stdlib-source-used?
+            load-state)
+          (cload.compiler-load-embedded-provenance-noted?))
         false))
     (cfg
       embedded-stdlib-tlci

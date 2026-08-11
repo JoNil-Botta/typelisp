@@ -2535,11 +2535,10 @@
 ;;     `shared-arena` and then calls this constructor; with the flag on, the
 ;;     cells were redirected to the GLOBAL base arena instead, so a pool built
 ;;     during an expansion described itself with cells owned by a different
-;;     arena's lifetime. On the `--cfg embedded-stdlib-tlci --cfg
-;;     tlci-native-route` build the stdlib surface is re-hydrated through
-;;     exactly that constructor from inside macro expansion, which is why it
-;;     surfaced on the comptime host-metadata smoke and on no workload this
-;;     packet had measured.
+;;     arena's lifetime. On an `embedded-stdlib-tlci` build the default native
+;;     stdlib route re-hydrates the surface through exactly that constructor
+;;     from inside macro expansion, which is why it surfaced on the comptime
+;;     host-metadata smoke and on no workload this packet had measured.
 ;;   * it was BYPASSABLE. Any future constructor that built cells without
 ;;     consulting the flag was silently outside the rule.
 ;;

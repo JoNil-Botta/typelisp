@@ -3094,6 +3094,9 @@
                   BuildPackageSideAssembly.Regenerate)]
               [(build_run_core.ResultSourceToolString.Err message)
                 (ResultBuildPackagePreparedRuntime.Unavailable message)])]
+          [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
+              category)
+            (ResultBuildPackagePreparedRuntime.Unavailable category)]
           [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
             (ResultBuildPackagePreparedRuntime.Unavailable
               (compiler_driver_core.compiler-driver-render-source-diagnostic

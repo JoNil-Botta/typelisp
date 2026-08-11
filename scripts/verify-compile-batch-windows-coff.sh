@@ -119,8 +119,11 @@ cmp "$LEGACY_ASSEMBLY" "$FALLBACK_ASSEMBLY" ||
 
 # Permanent object/forced-assembly differential sentinels. Together these
 # cover an ordinary runtime/entry path, string/data relocations, an explicitly
-# allowed Windows external symbol, a runtime trap, and the assembly text shape
-# that keeps u64_float_casts on the forced path in the integration manifest.
+# allowed Windows external symbol, wide immediates, control flow, register
+# groups, tail calls, pointer copies, bounds checks, runtime traps/helpers, and
+# the string/cast cases that previously crashed or returned the wrong result as
+# partial direct objects. The u64 cast's forced half also preserves the assembly
+# text assertions used by the integration manifest.
 DIFFERENTIAL_LIST="$WORKDIR/differential.list"
 DIFFERENTIAL_PLAN="$WORKDIR/differential.plan"
 ALLOWED_EXTERN_SOURCE="$WORKDIR/allowed_external.tl"
@@ -147,8 +150,14 @@ write_differential_rows ordinary tests/integration/hello.tl
 write_differential_rows string_data tests/integration/string_length.tl
 write_differential_rows allowed_external "$ALLOWED_EXTERN_SOURCE"
 write_differential_rows runtime_trap tests/integration/div_zero_trap.tl
-printf '%s|%s/forced_text.forced-unused.obj|%s/forced_text.forced.s|force-assembly\n' \
-    tests/integration/u64_float_casts.tl "$WORKDIR" "$WORKDIR" >> "$DIFFERENTIAL_LIST"
+write_differential_rows wide_immediate tests/integration/integer_literal_boundary_matrix.tl
+write_differential_rows branch_phi_switch tests/integration/enum_match.tl
+write_differential_rows tail_call tests/integration/tail_call_stack_args.tl
+write_differential_rows register_group tests/integration/register_group_try.tl
+write_differential_rows pointer_copy tests/integration/ptr_aggregate_copy.tl
+write_differential_rows bounds_check tests/integration/fixed_array_take.tl
+write_differential_rows string_match tests/integration/string_match.tl
+write_differential_rows u64_float_casts tests/integration/u64_float_casts.tl
 
 if ! TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_batch_assembler__.exe \
     "$COMPILER" compile --batch "$DIFFERENTIAL_LIST" \
@@ -177,12 +186,23 @@ write_differential_expected() {
 write_differential_expected ordinary tests/integration/hello.tl
 write_differential_expected string_data tests/integration/string_length.tl
 write_differential_expected allowed_external "$ALLOWED_EXTERN_SOURCE"
-printf '%s|assembly|%s/runtime_trap.direct.s|unsupported-object-semantics\n' \
-    tests/integration/div_zero_trap.tl "$WORKDIR" >> "$DIFFERENTIAL_EXPECTED"
-printf '%s|assembly|%s/runtime_trap.forced.s|forced-assembly\n' \
-    tests/integration/div_zero_trap.tl "$WORKDIR" >> "$DIFFERENTIAL_EXPECTED"
-printf '%s|assembly|%s/forced_text.forced.s|forced-assembly\n' \
-    tests/integration/u64_float_casts.tl "$WORKDIR" >> "$DIFFERENTIAL_EXPECTED"
+write_fallback_differential_expected() {
+    _name=$1
+    _source=$2
+    printf '%s|assembly|%s/%s.direct.s|unsupported-object-semantics\n' \
+        "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
+    printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
+        "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
+}
+write_fallback_differential_expected runtime_trap tests/integration/div_zero_trap.tl
+write_fallback_differential_expected wide_immediate tests/integration/integer_literal_boundary_matrix.tl
+write_fallback_differential_expected branch_phi_switch tests/integration/enum_match.tl
+write_fallback_differential_expected tail_call tests/integration/tail_call_stack_args.tl
+write_fallback_differential_expected register_group tests/integration/register_group_try.tl
+write_fallback_differential_expected pointer_copy tests/integration/ptr_aggregate_copy.tl
+write_fallback_differential_expected bounds_check tests/integration/fixed_array_take.tl
+write_fallback_differential_expected string_match tests/integration/string_match.tl
+write_fallback_differential_expected u64_float_casts tests/integration/u64_float_casts.tl
 cmp "$DIFFERENTIAL_EXPECTED" "$DIFFERENTIAL_PLAN" ||
     fail "Windows COFF differential plan changed classification"
 
@@ -196,23 +216,28 @@ for differential_case in ordinary string_data allowed_external; do
     [ ! -e "$WORKDIR/$differential_case.forced-unused.obj" ] ||
         fail "differential forced row wrote an object: $differential_case"
 done
-[ -s "$WORKDIR/runtime_trap.direct.s" ] ||
-    fail "runtime-trap automatic fallback assembly is missing"
-[ ! -e "$WORKDIR/runtime_trap.direct.obj" ] ||
-    fail "runtime-trap automatic fallback wrote an object"
-[ -s "$WORKDIR/runtime_trap.forced.s" ] ||
-    fail "runtime-trap forced assembly is missing"
-[ ! -e "$WORKDIR/runtime_trap.forced-unused.obj" ] ||
-    fail "runtime-trap forced assembly wrote an object"
-cmp "$WORKDIR/runtime_trap.direct.s" "$WORKDIR/runtime_trap.forced.s" ||
-    fail "runtime-trap automatic fallback differs from forced assembly"
-[ -s "$WORKDIR/forced_text.forced.s" ] ||
+for differential_case in runtime_trap wide_immediate branch_phi_switch \
+    tail_call register_group pointer_copy bounds_check string_match \
+    u64_float_casts; do
+    [ -s "$WORKDIR/$differential_case.direct.s" ] ||
+        fail "automatic fallback assembly is missing: $differential_case"
+    [ ! -e "$WORKDIR/$differential_case.direct.obj" ] ||
+        fail "automatic fallback wrote an object: $differential_case"
+    [ -s "$WORKDIR/$differential_case.forced.s" ] ||
+        fail "forced assembly is missing: $differential_case"
+    [ ! -e "$WORKDIR/$differential_case.forced-unused.obj" ] ||
+        fail "forced assembly wrote an object: $differential_case"
+    cmp "$WORKDIR/$differential_case.direct.s" \
+        "$WORKDIR/$differential_case.forced.s" ||
+        fail "automatic fallback differs from forced assembly: $differential_case"
+done
+[ -s "$WORKDIR/u64_float_casts.forced.s" ] ||
     fail "forced assembly text sentinel is missing"
-[ ! -e "$WORKDIR/forced_text.forced-unused.obj" ] ||
+[ ! -e "$WORKDIR/u64_float_casts.forced-unused.obj" ] ||
     fail "forced assembly text sentinel wrote an object"
-assert_contains "$WORKDIR/forced_text.forced.s" "cast_u64_float_"
-assert_contains "$WORKDIR/forced_text.forced.s" "    addsd "
-assert_contains "$WORKDIR/forced_text.forced.s" "    addss "
+assert_contains "$WORKDIR/u64_float_casts.forced.s" "cast_u64_float_"
+assert_contains "$WORKDIR/u64_float_casts.forced.s" "    addsd "
+assert_contains "$WORKDIR/u64_float_casts.forced.s" "    addss "
 
 MALFORMED_LIST="$WORKDIR/malformed.list"
 MALFORMED_PLAN="$WORKDIR/malformed.plan"
@@ -346,16 +371,18 @@ if [ "$HOST_OS" = windows ]; then
     }
 
     echo "[compile-batch-windows-coff] direct-object/forced-assembly differential"
-    for differential_case in ordinary string_data allowed_external runtime_trap; do
+    for differential_case in ordinary string_data allowed_external runtime_trap \
+        wide_immediate branch_phi_switch tail_call register_group pointer_copy \
+        bounds_check string_match u64_float_casts; do
         differential_direct_object="$WORKDIR/$differential_case.direct.obj"
         differential_forced_assembly="$WORKDIR/$differential_case.forced.s"
         differential_forced_object="$WORKDIR/$differential_case.forced.obj"
         differential_direct_exe="$WORKDIR/$differential_case.direct.exe"
         differential_forced_exe="$WORKDIR/$differential_case.forced.exe"
 
-        if [ "$differential_case" = runtime_trap ]; then
+        if [ -s "$WORKDIR/$differential_case.direct.s" ]; then
             clang --target=x86_64-pc-windows-msvc \
-                -c "$WORKDIR/runtime_trap.direct.s" \
+                -c "$WORKDIR/$differential_case.direct.s" \
                 -o "$differential_direct_object"
         fi
         clang --target=x86_64-pc-windows-msvc \
@@ -379,7 +406,8 @@ if [ "$HOST_OS" = windows ]; then
             fail "Windows COFF differential stderr mismatch: $differential_case"
 
         case "$differential_case" in
-            ordinary | allowed_external)
+            ordinary | allowed_external | wide_immediate | branch_phi_switch | \
+                tail_call | register_group | bounds_check | string_match)
                 [ "$differential_direct_exit" = 42 ] ||
                     fail "Windows COFF differential expected exit 42 for $differential_case, got $differential_direct_exit"
                 ;;
@@ -390,6 +418,10 @@ if [ "$HOST_OS" = windows ]; then
             runtime_trap)
                 [ "$differential_direct_exit" != 0 ] ||
                     fail "Windows COFF runtime-trap differential unexpectedly succeeded"
+                ;;
+            pointer_copy | u64_float_casts)
+                [ "$differential_direct_exit" = 0 ] ||
+                    fail "Windows COFF differential expected exit 0 for $differential_case, got $differential_direct_exit"
                 ;;
         esac
     done

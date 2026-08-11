@@ -29233,6 +29233,454 @@
         7]
       [else 42])))
 
+;; --- second-exit (entry guard chain) fixture -----------------------------------
+;;
+;; The counter compare is NOT the header's own branch: the header tests a
+;; monotone flag first and only its continuing arm reaches the block that
+;; compares the counter. This is what `(while (if done false (< i n)) ...)`
+;; lowers to, and what `liveness_storage/recompute!` spends its scan on. Both
+;; branches leave the loop, so the shape is the pass's "second exiting branch"
+;; case.
+;;
+;;   entry -> header(counter phi, flag phi; branch flag -> flagexit, gate)
+;;            gate(c = i < n; branch c -> body, gateexit)
+;;            body(bounds_check i, len; jump merge)
+;;            merge(i+1; jump header)
+;;   flagexit/gateexit -> exit, which READS the flag directly.
+;;
+;; Variants:
+;;   0 the shape above;
+;;   1 adds a FAR direct use of the flag in a block the exit dominates;
+;;   2 makes that far use read the COUNTER instead -- a var the exit block
+;;     itself does not read, which the far repair refuses;
+;;   3 puts a bounds check in `gate`, on the guard chain: the compare does not
+;;     cover it, so the clone must KEEP it;
+;;   4 pulls `flagexit` into the loop, so the header branch is an ordinary
+;;     diamond with two in-loop successors and the chain walk stops;
+;;   5 gives the LATCH a second exit as well (`branch f, lexit, header`).
+(define opt-bce-mb2-test-frame : i64
+  20)
+
+(define (opt-bce-mb2-test-far-variant? [variant : i64]) : bool
+  (or (= variant 1) (= variant 2)))
+
+(define (opt-bce-mb2-test-entry-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb2-test-header-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "header")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          4
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Bool false)
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "merge")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.compiler-ir-label "flagexit")
+            (compiler_ir_types.compiler-ir-label "gate"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb2-test-flagexit-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "flagexit")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (if (= variant 4)
+          ;; back inside the loop: the header branch is now a diamond
+          (compiler_ir_types.compiler-ir-label "merge")
+          (compiler_ir_types.compiler-ir-label "exit")))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb2-test-gate-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "gate")
+    (let
+      [tail : compiler_ir_types.CompilerIrInstrList
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "gateexit"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))]
+      (if (= variant 3)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "mb2_gate_ok"))
+          tail)
+        tail))))
+
+(define (opt-bce-mb2-test-gateexit-block) : compiler_ir_types.CompilerIrBlock
+  (opt-bce-mb-test-jump-block
+    (compiler_ir_types.compiler-ir-label "gateexit")
+    (compiler_ir_types.compiler-ir-label "exit")))
+
+(define (opt-bce-mb2-test-body-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "mb2_ok0"))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          6
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb2-test-merge-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "merge")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          9
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (if (= variant 5)
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "lexit")
+              (compiler_ir_types.compiler-ir-label "header"))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "header")))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb2-test-exit-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "exit")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (if (opt-bce-mb2-test-far-variant? variant)
+          (compiler_ir_types.compiler-ir-label "fara")
+          (compiler_ir_types.compiler-ir-label "ret1"))
+        (if (opt-bce-mb2-test-far-variant? variant)
+          (compiler_ir_types.compiler-ir-label "farb")
+          (compiler_ir_types.compiler-ir-label "ret0")))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb2-test-farjoin-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "farjoin")
+    (if (= variant 2)
+      ;; reads the COUNTER, which the wire point does not read
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          13
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 13)
+            (compiler_ir_types.compiler-ir-label "ret1")
+            (compiler_ir_types.compiler-ir-label "ret0"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.compiler-ir-label "ret1")
+          (compiler_ir_types.compiler-ir-label "ret0"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-bce-mb2-test-return-block [label : String] [value : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label label)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.I64 value)))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb2-test-tail-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [returns : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb2-test-return-block "ret1" 1)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb2-test-return-block "ret0" 0)
+          (if (= variant 5)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bce-mb2-test-return-block "lexit" 2)
+              compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrBlockList.Nil)))]
+    (if (opt-bce-mb2-test-far-variant? variant)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb-test-jump-block
+          (compiler_ir_types.compiler-ir-label "fara")
+          (compiler_ir_types.compiler-ir-label "farjoin"))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb-test-jump-block
+            (compiler_ir_types.compiler-ir-label "farb")
+            (compiler_ir_types.compiler-ir-label "farjoin"))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-mb2-test-farjoin-block variant)
+            returns)))
+      returns)))
+
+(define (opt-bce-mb2-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bce-mb2-test-entry-block)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-mb2-test-header-block)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb2-test-flagexit-block variant)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb2-test-gate-block variant)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-mb2-test-gateexit-block)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bce-mb2-test-body-block)
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-bce-mb2-test-merge-block variant)
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-bce-mb2-test-exit-block variant)
+                  (opt-bce-mb2-test-tail-blocks variant))))))))))
+
+(define (opt-bce-mb2-test-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb2_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    opt-bce-mb2-test-frame
+    blocks))
+
+(define (opt-bce-mb2-test-versioned-fn [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-bce-version-function
+    (opt-bce-mb2-test-function (opt-bce-mb2-test-blocks variant))))
+
+(define (opt-bce-mb2-test-versioned [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (opt-bce-mb2-test-versioned-fn variant)))
+
+;; The versioner grows the frame, so the verify must see the function it
+;; returned, not a rebuild around the fixture's original frame.
+(define (opt-bce-mb2-test-verify-ok? [variant : i64]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (opt-bce-mb2-test-versioned-fn variant))))
+
+(define (opt-bce-mb2-test-versioned?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (opt-block-list-has-label?
+    blocks
+    (compiler_ir_types.compiler-ir-label "header__bce_fast")))
+
+;; Phis in one block.
+(define (opt-bce-mb2-test-block-phis
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler_optimize.opt-unroll-phi-prefix-count instrs 0)])]))
+
+;; The var a block's terminating Branch tests, or -1.
+(define (opt-bce-mb2-test-branch-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              (- 0 1)
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                instrs
+                (- count 1))
+                [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
+                  (match cond
+                    [(compiler_ir_types.CompilerIrValue.Var id) id]
+                    [_ (- 0 1)])]
+                [_ (- 0 1)])))])]))
+
+;; A loop whose entry test short-circuits through a SECOND exiting branch
+;; versions: the guard chain walk finds the counter compare one block below the
+;; header, the whole loop plus its two exit stubs clone, and the exit block's
+;; direct read of the flag becomes one merge phi carrying the slow value on the
+;; slow edges and the clone's value on the fast ones.
+(define (compiler-optimize-bce-version-mb-second-exit-self-test) : i64
+  (let
+    [plain : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 0)]
+    [far : compiler_ir_types.CompilerIrBlockList (opt-bce-mb2-test-versioned 1)]
+    (cond
+      [(not (opt-bce-mb2-test-verify-ok? 0)) 1]
+      [(not (opt-bce-mb2-test-versioned? plain)) 2]
+      ;; every loop block and both exit stubs cloned
+      [(not
+          (opt-block-list-has-label?
+            plain
+            (compiler_ir_types.compiler-ir-label "gate__bce_fast")))
+        3]
+      [(not
+          (opt-block-list-has-label?
+            plain
+            (compiler_ir_types.compiler-ir-label "flagexit__bce_fast")))
+        4]
+      [(not
+          (opt-block-list-has-label?
+            plain
+            (compiler_ir_types.compiler-ir-label "gateexit__bce_fast")))
+        5]
+      ;; the guard block sits on the preheader edge
+      [(not
+          (opt-block-list-has-label?
+            plain
+            (compiler_ir_types.compiler-ir-label "header__bce_guard")))
+        6]
+      ;; the body check is gone from the clone and kept in the original
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              plain
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        7]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              plain
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        8]
+      ;; the flag's direct outside read is wired through exactly one merge phi
+      [(not
+          (=
+            (opt-bce-mb2-test-block-phis
+              plain
+              (compiler_ir_types.compiler-ir-label "exit"))
+            1))
+        9]
+      [(<
+          (opt-bce-mb2-test-branch-var
+            plain
+            (compiler_ir_types.compiler-ir-label "exit"))
+          opt-bce-mb2-test-frame)
+        10]
+      ;; a FAR use in a block the exit dominates reuses that same merge phi
+      [(not (opt-bce-mb2-test-verify-ok? 1)) 11]
+      [(not (opt-bce-mb2-test-versioned? far)) 12]
+      [(not
+          (=
+            (opt-bce-mb2-test-block-phis
+              far
+              (compiler_ir_types.compiler-ir-label "exit"))
+            1))
+        13]
+      [(not
+          (=
+            (opt-bce-mb2-test-branch-var
+              far
+              (compiler_ir_types.compiler-ir-label "farjoin"))
+            (opt-bce-mb2-test-branch-var
+              far
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        14]
+      [else 42])))
+
+;; The boundaries of the same admission.
+(define (compiler-optimize-bce-version-mb-second-exit-refusal-self-test) : i64
+  (let
+    [far-other : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 2)]
+    [chain-check : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 3)]
+    [diamond : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 4)]
+    [latch-exit : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 5)]
+    (cond
+      ;; a far use of a var the wire point itself does not read has no proof
+      ;; that the def dominates the wire point's predecessor edges: refused
+      [(not (opt-bce-mb2-test-verify-ok? 2)) 1]
+      [(opt-bce-mb2-test-versioned? far-other) 2]
+      ;; a check ON the guard chain runs one time more than the body does, so
+      ;; the compare does not cover it and the clone KEEPS it
+      [(not (opt-bce-mb2-test-verify-ok? 3)) 3]
+      [(not (opt-bce-mb2-test-versioned? chain-check)) 4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              chain-check
+              (compiler_ir_types.compiler-ir-label "gate__bce_fast"))
+            1))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              chain-check
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        6]
+      ;; two in-loop successors ahead of the compare is an ordinary diamond,
+      ;; not a guard chain: the walk stops and the loop is refused
+      [(not (opt-bce-mb2-test-verify-ok? 4)) 7]
+      [(opt-bce-mb2-test-versioned? diamond) 8]
+      ;; the latch may carry a second exit of its own
+      [(not (opt-bce-mb2-test-verify-ok? 5)) 9]
+      [(not (opt-bce-mb2-test-versioned? latch-exit)) 10]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              latch-exit
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        11]
+      [else 42])))
+
 (define (opt-bce-mb-pair-test-guard-has-len-fact-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : bool

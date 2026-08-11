@@ -51534,11 +51534,15 @@
 ;; so the extra load on a zero-trip path is sound.
 ;;
 ;; The counted shape is either the do-while form above or a TOP-TESTED loop:
-;; latch `Jump header` with the counter compare `iphi < bound` ending the
-;; header (`Branch c body exit`, body target inside the loop). Every body
-;; execution has then already passed the compare, so the same [seed, bound)
-;; trip-range argument stays sound; early exits (a second branch leaving the
-;; loop, e.g. a flag test) only shrink the executed range.
+;; latch `Jump header` with the counter compare `iphi < bound` ending an
+;; exiting `Branch c continue exit` on the loop's ENTRY GUARD CHAIN -- the
+;; header, or any block reached from it by single in-loop successors, so a
+;; second exiting branch ahead of the compare (`(while (if done false (< i n))
+;; ...)`) is admitted rather than refused. Every body execution has then
+;; already passed the compare, so the same [seed, bound) trip-range argument
+;; stays sound; early exits only shrink the executed range. The chain blocks
+;; themselves run one time more than the body does, so THEIR checks are kept
+;; in the clone (see `opt-bce-mb-chain-walk`).
 ;;
 ;; Exit wiring generalizes the single-block scheme: loop defs may reach
 ;; outside code as exit-phi inputs on loop edges (each such input gains a
@@ -51602,7 +51606,11 @@
   (seed ir.CompilerIrValue)
   (bound ir.CompilerIrValue)
   ;; the counter's positive literal step (for the guard's no-wrap condition)
-  (step i64))
+  (step i64)
+  ;; Loop blocks the counter compare does NOT dominate, so no trip-range
+  ;; derivation covers their checks (see the entry guard chain below). Empty
+  ;; for the do-while form, whose latch compare covers the whole body.
+  (uncovered OptLabelSet))
 
 (defenum OptBceMbMaybeShape
   (No)
@@ -51801,55 +51809,229 @@
                 [_ (OptBceMbMaybeLatch.No)])]
             [_ (OptBceMbMaybeLatch.No)])))]))
 
-;; The header of a top-tested loop ends `Branch c body exit` with the body
-;; target inside the loop and the exit target outside.
-(define (opt-bce-mb-top-test-header-branch
-  [block : ir.CompilerIrBlock]
-  [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
-  (match block
-    [(ir.CompilerIrBlock.Block _ instrs)
-      (let
-        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-        (if (< count 1)
-          (OptBceMbMaybeLatch.No)
-          (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
-            [(ir.CompilerIrInstr.Branch cond then-label else-label)
-              (match cond
-                [(ir.CompilerIrValue.Var cond-var)
-                  (if (and
-                    (opt-label-contains body-labels then-label)
-                    (not (opt-label-contains body-labels else-label)))
-                    (OptBceMbMaybeLatch.Some cond-var else-label)
-                    (OptBceMbMaybeLatch.No))]
-                [_ (OptBceMbMaybeLatch.No)])]
-            [_ (OptBceMbMaybeLatch.No)])))]))
+;; --- top-tested loops: the ENTRY GUARD CHAIN ----------------------------------
+;;
+;; Top-tested alternative to the do-while latch branch: the latch ends
+;; `Jump header` and the counter compare `iphi < bound` ends an EXITING branch
+;; somewhere on the loop's entry path. The compare used to be required at the
+;; header itself, which refused every loop whose entry test short-circuits
+;; through more than one branch -- `(while (if done false (< i n)) ...)` (and
+;; every `and`-guarded condition whose counter compare is not the FIRST
+;; conjunct) lowers to a header that branches on the flag and a second block
+;; that branches on the counter, so the counter compare is one block down and
+;; the header's own branch is a second exiting branch. Nothing about that shape
+;; is unsound: an early exit only shortens the trip.
+;;
+;; So the scan walks the chain instead. Starting at the header it follows the
+;; block's single IN-LOOP successor -- a `Jump` inside the loop, or a `Branch`
+;; with exactly one target in the loop (the other leaves it) -- and stops at
+;; the first such branch whose condition recovers the counter with its
+;; CONTINUING edge as the true arm. `Branch`es with both targets inside the
+;; loop end the walk: a real diamond gives the header two ways into the body
+;; and the argument below needs one.
+;;
+;; WHAT THE COMPARE COVERS. Let C be the compare block and A its in-loop
+;; successor. Every chain block has exactly one in-loop successor, the next
+;; chain block, and every edge from outside a natural loop enters at its header
+;; (an outside block with an edge to an inner loop block would itself reach the
+;; latch without the header, i.e. be a loop block). So any path from the header
+;; into a loop block D OUTSIDE the chain runs header -> ... -> C -> A -> ... ->
+;; D: C strictly dominates D, and since `iphi` is a header phi and holds one
+;; value per iteration, `iphi < bound` holds at D in the SAME iteration. The
+;; [seed, bound) trip-range argument -- which is all the derivations use -- is
+;; therefore sound for every check outside the chain.
+;;
+;; It is NOT sound for a check IN the chain, the header's included: those
+;; blocks run one more time than the body does, with `iphi` at the first value
+;; that fails the compare. Their checks stay in the fast clone (see the shape's
+;; `uncovered` set, which the derivation turns into unconditional `keep`
+;; entries) exactly like an underivable index, so the clone keeps their abort
+;; sites. Whether the chain is the header alone (the shape this pass always
+;; accepted) or a flag test plus a compare makes no difference to that rule.
+(defenum OptBceMbMaybeChain
+  (No)
+  ;; the recovered counter, and the chain labels (header through the compare
+  ;; block) whose own checks the compare does not cover
+  (Some OptBceMbMaybeCounter OptLabelSet))
 
-;; Top-tested alternative: the latch ends `Jump header` and the header ends
-;; `Branch c body exit` with the body target inside the loop and the exit
-;; target outside. The counter compare then lives in the header and every body
-;; execution has already passed it, so the [seed, bound) trip-range argument
-;; of the do-while form stays sound (a second exiting branch elsewhere in the
-;; loop -- an early flag test -- only shrinks the executed range).
-(define (opt-bce-mb-top-test-cond
+;; One step of the walk. `chain` is the guard blocks visited so far; revisiting
+;; one (a cycle among single-successor guards) refuses, which keeps the chain
+;; simple and the dominance argument above literal.
+(define (opt-bce-mb-chain-walk
   [blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [body-labels : OptLabelSet]
+  [latch : i64]
+  [preheader : i64]
+  [label : i64]
+  [fuel : i64]
+  [chain : OptLabelSet]) : OptBceMbMaybeChain
+  (if (or (<= fuel 0) (opt-label-contains chain label))
+    (OptBceMbMaybeChain.No)
+    (match (opt-cfg-find-block blocks label)
+      [(OptMaybeBlock.No) (OptBceMbMaybeChain.No)]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              [next-chain : OptLabelSet (opt-label-add chain label)]
+              (if (< count 1)
+                (OptBceMbMaybeChain.No)
+                (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                  [(ir.CompilerIrInstr.Jump target)
+                    (if (opt-label-contains body-labels target)
+                      (opt-bce-mb-chain-walk
+                        blocks
+                        body-blocks
+                        defs
+                        body-labels
+                        latch
+                        preheader
+                        target
+                        (- fuel 1)
+                        next-chain)
+                      (OptBceMbMaybeChain.No))]
+                  [(ir.CompilerIrInstr.Branch cond then-label else-label)
+                    (opt-bce-mb-chain-branch
+                      blocks
+                      body-blocks
+                      defs
+                      body-labels
+                      latch
+                      preheader
+                      cond
+                      then-label
+                      else-label
+                      (- fuel 1)
+                      next-chain)]
+                  [_ (OptBceMbMaybeChain.No)])))])])))
+
+;; The branch step: take this block as the compare when exactly its TRUE arm
+;; continues the loop and the condition recovers the counter; otherwise keep
+;; walking whichever single arm stays inside.
+(define (opt-bce-mb-chain-branch
+  [blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [body-labels : OptLabelSet]
+  [latch : i64]
+  [preheader : i64]
+  [cond : ir.CompilerIrValue]
+  [then-label : i64]
+  [else-label : i64]
+  [fuel : i64]
+  [chain : OptLabelSet]) : OptBceMbMaybeChain
+  (let
+    [then-in? : bool (opt-label-contains body-labels then-label)]
+    [else-in? : bool (opt-label-contains body-labels else-label)]
+    (cond
+      [(and then-in? (not else-in?))
+        (match cond
+          [(ir.CompilerIrValue.Var cond-var)
+            (match (opt-bce-mb-counter-top
+              body-blocks
+              defs
+              latch
+              preheader
+              cond-var)
+              [(OptBceMbMaybeCounter.Some iphi seed inext bound step)
+                ;; the compare's continuing successor must lead OUT of the
+                ;; chain, or it does not start the covered region
+                (if (opt-label-contains chain then-label)
+                  (OptBceMbMaybeChain.No)
+                  (OptBceMbMaybeChain.Some
+                    (OptBceMbMaybeCounter.Some iphi seed inext bound step)
+                    chain))]
+              [(OptBceMbMaybeCounter.No)
+                (opt-bce-mb-chain-walk
+                  blocks
+                  body-blocks
+                  defs
+                  body-labels
+                  latch
+                  preheader
+                  then-label
+                  fuel
+                  chain)])]
+          [_
+            (opt-bce-mb-chain-walk
+              blocks
+              body-blocks
+              defs
+              body-labels
+              latch
+              preheader
+              then-label
+              fuel
+              chain)])]
+      ;; an exiting branch whose FALSE arm continues cannot be the `iphi <
+      ;; bound` test (the recovery reads the true arm as the continuing one),
+      ;; so it is just another guard on the way in
+      [(and else-in? (not then-in?))
+        (opt-bce-mb-chain-walk
+          blocks
+          body-blocks
+          defs
+          body-labels
+          latch
+          preheader
+          else-label
+          fuel
+          chain)]
+      [else (OptBceMbMaybeChain.No)])))
+
+;; The latch of the top-tested family closes the back edge and nothing else:
+;; `Jump header`, or a `Branch` whose only in-loop target is the header (a
+;; bottom-tested SECOND exit, which -- like every other early exit -- only
+;; shortens the trip and leaves the counter compare's coverage argument
+;; untouched).
+(define (opt-bce-mb-top-test-latch-ok?
   [latch-block : ir.CompilerIrBlock]
   [header : i64]
-  [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
+  [body-labels : OptLabelSet]) : bool
   (match latch-block
     [(ir.CompilerIrBlock.Block _ instrs)
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         (if (< count 1)
-          (OptBceMbMaybeLatch.No)
+          false
           (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
-            [(ir.CompilerIrInstr.Jump target)
-              (if (not (= target header))
-                (OptBceMbMaybeLatch.No)
-                (match (opt-cfg-find-block blocks header)
-                  [(OptMaybeBlock.No) (OptBceMbMaybeLatch.No)]
-                  [(OptMaybeBlock.Some header-block)
-                    (opt-bce-mb-top-test-header-branch header-block body-labels)]))]
-            [_ (OptBceMbMaybeLatch.No)])))]))
+            [(ir.CompilerIrInstr.Jump target) (= target header)]
+            [(ir.CompilerIrInstr.Branch _ then-label else-label)
+              (or
+                (and
+                  (= then-label header)
+                  (not (opt-label-contains body-labels else-label)))
+                (and
+                  (= else-label header)
+                  (not (opt-label-contains body-labels then-label))))]
+            [_ false])))]))
+
+;; Top-tested entry: the latch closes the back edge, then the chain walk above
+;; recovers the counter and the blocks its compare does not cover.
+(define (opt-bce-mb-top-test-chain
+  [blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch-block : ir.CompilerIrBlock]
+  [header : i64]
+  [latch : i64]
+  [preheader : i64]
+  [body-labels : OptLabelSet]) : OptBceMbMaybeChain
+  (if (not (opt-bce-mb-top-test-latch-ok? latch-block header body-labels))
+    (OptBceMbMaybeChain.No)
+    (opt-bce-mb-chain-walk
+      blocks
+      body-blocks
+      defs
+      body-labels
+      latch
+      preheader
+      header
+      (opt-label-count body-labels)
+      (OptLabelSet.Nil))))
 
 ;; The counter phi: a header phi (only header phis carry latch-edge inputs)
 ;; of type i64 fed (seed from the preheader, inext from the latch).
@@ -52220,6 +52402,7 @@
   [pred : i64]
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
+  [uncovered : OptLabelSet]
   [counter : OptBceMbMaybeCounter]) : OptBceMbMaybeShape
   (match counter
     [(OptBceMbMaybeCounter.No) (OptBceMbMaybeShape.No)]
@@ -52247,7 +52430,8 @@
                     iphi
                     seed
                     bound
-                    step))
+                    step
+                    uncovered))
                 (OptBceMbMaybeShape.No))])])]))
 
 ;; Does another natural loop's header sit inside this candidate's body? A
@@ -52305,47 +52489,79 @@
       (match (opt-cfg-find-block blocks latch)
         [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
         [(OptMaybeBlock.Some latch-block)
-          (match (opt-bce-mb-latch-branch latch-block header body-labels)
-            [(OptBceMbMaybeLatch.No)
-              (match (opt-bce-mb-top-test-cond
-                blocks
-                latch-block
-                header
-                body-labels)
-                [(OptBceMbMaybeLatch.No) (OptBceMbMaybeShape.No)]
-                [(OptBceMbMaybeLatch.Some top-cond _)
-                  (let
-                    [defs : opt_i64_i64_map.Map
-                      (opt-bce-mb-collect-defs
-                        body-blocks
-                        (opt_i64_i64_map.with-capacity 64))]
-                    (opt-bce-mb-loop-shape-finish
-                      blocks
-                      header
-                      latch
-                      pred
-                      body-labels
-                      body-blocks
-                      (opt-bce-mb-counter-top
-                        body-blocks
-                        defs
-                        latch
-                        pred
-                        top-cond)))])]
-            [(OptBceMbMaybeLatch.Some cond-var _)
-              (let
-                [defs : opt_i64_i64_map.Map
-                  (opt-bce-mb-collect-defs
-                    body-blocks
-                    (opt_i64_i64_map.with-capacity 64))]
-                (opt-bce-mb-loop-shape-finish
+          (let
+            [defs : opt_i64_i64_map.Map
+              (opt-bce-mb-collect-defs
+                body-blocks
+                (opt_i64_i64_map.with-capacity 64))]
+            (match (opt-bce-mb-latch-branch latch-block header body-labels)
+              [(OptBceMbMaybeLatch.No)
+                (opt-bce-mb-loop-shape-top
+                  blocks
+                  body-blocks
+                  defs
+                  latch-block
+                  header
+                  latch
+                  pred
+                  body-labels)]
+              [(OptBceMbMaybeLatch.Some cond-var _)
+                (match (opt-bce-mb-loop-shape-finish
                   blocks
                   header
                   latch
                   pred
                   body-labels
                   body-blocks
-                  (opt-bce-mb-counter-step body-blocks defs latch pred cond-var)))])]))))
+                  ;; the latch compare covers the whole body: it bounds the
+                  ;; NEXT iteration's counter and the guard bounds the first
+                  (OptLabelSet.Nil)
+                  (opt-bce-mb-counter-step body-blocks defs latch pred cond-var))
+                  [(OptBceMbMaybeShape.Some shape)
+                    (OptBceMbMaybeShape.Some shape)]
+                  ;; a latch branch that closes the back edge but does NOT
+                  ;; carry the counter compare (a bottom-tested flag test) is
+                  ;; still a top-tested loop for the chain walk
+                  [(OptBceMbMaybeShape.No)
+                    (opt-bce-mb-loop-shape-top
+                      blocks
+                      body-blocks
+                      defs
+                      latch-block
+                      header
+                      latch
+                      pred
+                      body-labels)])]))]))))
+
+(define (opt-bce-mb-loop-shape-top
+  [blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch-block : ir.CompilerIrBlock]
+  [header : i64]
+  [latch : i64]
+  [pred : i64]
+  [body-labels : OptLabelSet]) : OptBceMbMaybeShape
+  (match (opt-bce-mb-top-test-chain
+    blocks
+    body-blocks
+    defs
+    latch-block
+    header
+    latch
+    pred
+    body-labels)
+    [(OptBceMbMaybeChain.No) (OptBceMbMaybeShape.No)]
+    [(OptBceMbMaybeChain.Some counter chain)
+      (opt-bce-mb-loop-shape-finish
+        blocks
+        header
+        latch
+        pred
+        body-labels
+        body-blocks
+        chain
+        counter)]))
 
 ;; `nested?` selects the scan phase: false offers only loops whose body holds
 ;; no other loop header, true only the nests. Every loop belongs to exactly
@@ -52685,40 +52901,95 @@
         (opt-label-ref preds 0)
         (opt-bce-mb-wire-phi-inputs (opt-label-tail preds) value))]))
 
+;; Every input of this phi is `var` on a distinct predecessor edge: the merge
+;; the wiring is about to build already exists (the far-use repair below
+;; materializes one), so reuse it instead of adding a second copy.
+(define (opt-bce-mb-merge-phi-inputs?
+  [inputs : ir.CompilerIrPhiInputList]
+  [var : i64]
+  [preds : OptLabelSet]
+  [seen : i64]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (= seen (opt-label-count preds))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-merge-phi-inputs?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        var
+        preds
+        seen)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (and
+        (match value
+          [(ir.CompilerIrValue.Var id) (= id var)]
+          [_ false])
+        (opt-label-contains preds label)
+        (opt-bce-mb-merge-phi-inputs? (box-get rest) var preds (+ seen 1)))]))
+
+;; The var of such a phi in this block, or -1.
+(define (opt-bce-mb-existing-merge-phi
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]
+  [preds : OptLabelSet]) : i64
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    -1
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Phi dst inputs _)
+        (if (opt-bce-mb-merge-phi-inputs? inputs var preds 0)
+          dst
+          (opt-bce-mb-existing-merge-phi instrs (+ index 1) var preds))]
+      [_ -1])))
+
 ;; Materialize one exit phi per wireable var and the copy env rewriting its
 ;; non-phi uses to the phi's var.
 (define (opt-bce-mb-wire-phis
   [vars : OptBceMbVarList]
   [all-blocks : ir.CompilerIrBlockList]
   [preds : OptLabelSet]
+  [instrs : ir.CompilerIrInstrSeq]
   [cell : (__tl_dyn-array i64)]
   [env : OptCopyEnv]
   [phis : ir.CompilerIrInstrList]) : OptBceMbMaybeWirePhis
   (match vars
     [(OptBceMbVarList.Nil) (OptBceMbMaybeWirePhis.Some env phis)]
     [(OptBceMbVarList.Cons var rest)
-      (match (opt-bce-mb-find-def all-blocks var)
-        [(OptBceMbMaybeInstr.No) (OptBceMbMaybeWirePhis.No)]
-        [(OptBceMbMaybeInstr.Some instr)
-          (match (opt-bce-mb-def-type instr)
-            [(OptMaybeAstType.No) (OptBceMbMaybeWirePhis.No)]
-            [(OptMaybeAstType.Some ty)
-              (let
-                [pv : i64 (opt-bce-version-alloc-var cell)]
-                (opt-bce-mb-wire-phis
-                  (box-get rest)
-                  all-blocks
-                  preds
-                  cell
-                  (OptCopyEnv.Cons var (ir.CompilerIrValue.Var pv) (box env))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Phi
-                      pv
-                      (opt-bce-mb-wire-phi-inputs
-                        preds
-                        (ir.CompilerIrValue.Var var))
-                      ty)
-                    phis)))])])]))
+      (let
+        [existing : i64 (opt-bce-mb-existing-merge-phi instrs 0 var preds)]
+        (if (>= existing 0)
+          (opt-bce-mb-wire-phis
+            (box-get rest)
+            all-blocks
+            preds
+            instrs
+            cell
+            (OptCopyEnv.Cons var (ir.CompilerIrValue.Var existing) (box env))
+            phis)
+          (match (opt-bce-mb-find-def all-blocks var)
+            [(OptBceMbMaybeInstr.No) (OptBceMbMaybeWirePhis.No)]
+            [(OptBceMbMaybeInstr.Some instr)
+              (match (opt-bce-mb-def-type instr)
+                [(OptMaybeAstType.No) (OptBceMbMaybeWirePhis.No)]
+                [(OptMaybeAstType.Some ty)
+                  (let
+                    [pv : i64 (opt-bce-version-alloc-var cell)]
+                    (opt-bce-mb-wire-phis
+                      (box-get rest)
+                      all-blocks
+                      preds
+                      instrs
+                      cell
+                      (OptCopyEnv.Cons
+                        var
+                        (ir.CompilerIrValue.Var pv)
+                        (box env))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Phi
+                          pv
+                          (opt-bce-mb-wire-phi-inputs
+                            preds
+                            (ir.CompilerIrValue.Var var))
+                          ty)
+                        phis)))])])))]))
 
 ;; The rewired block's instructions: the existing phi prefix, then the
 ;; materialized phis, then every original instruction with its non-phi uses
@@ -52813,6 +53084,7 @@
                     (opt-bce-mb-var-list-append loop-vars stub-vars)
                     all-blocks
                     preds
+                    instrs
                     cell
                     (OptCopyEnv.Nil)
                     (ir.CompilerIrInstrList.Nil))
@@ -52912,6 +53184,266 @@
                       (OptBceMbWiring.Some
                         (ir.compiler-ir-block-cons wired-block wired-tail)
                         wired-stubs)])])))])]))
+
+;; --- far exit uses ------------------------------------------------------------
+;;
+;; The wiring above rewrites a direct outside use only in a block whose every
+;; predecessor is a loop block or a forwarding stub. A loop value that survives
+;; PAST the exit join -- `(while (and (< i n) (not changed)) ...)` whose
+;; `changed` is tested at the exit AND returned many blocks later, which is
+;; `liveness_storage/recompute!` -- has a second use in a block the loop does
+;; not reach directly, and that use alone refused the whole loop.
+;;
+;; It does not have to. Call W the block the exit join wires (its own direct
+;; use is what pulls the stubs into the clone group and materializes the phi
+;; that merges the slow and fast exit values) and B a block with a far use. When
+;; W DOMINATES B, every execution reaching B has passed W, so the value W's
+;; merge carries is exactly the value B's use wants: materialize one more phi in
+;; W over its predecessor edges -- extended with the fast-edge inputs by the
+;; ordinary exit-phi extension, since the stubs join the clone group -- and
+;; rewrite B's use to it.
+;;
+;; The conditions, all required and all checked on the ORIGINAL function:
+;;   * exactly ONE wireable outside block W (several independent wire points
+;;     plus far uses would need a phi placement this pass does not compute);
+;;   * W dominates every far block;
+;;   * every var a far block reads is one W itself reads, which is what makes
+;;     the def dominate W's predecessor edges (the original verified use in W
+;;     already implies it) -- a var live only at the far block gets no such
+;;     guarantee and refuses.
+;; Anything else keeps the original rejection.
+(defstruct OptBceMbFarPlan
+  ;; the single wireable outside block: -1 none seen, -2 more than one
+  (wire i64)
+  (wire-vars OptBceMbVarList)
+  (far-labels OptLabelSet)
+  (far-vars OptBceMbVarList))
+
+(define (opt-bce-mb-var-list-contains? [vars : OptBceMbVarList] [var : i64]) : bool
+  (match vars
+    [(OptBceMbVarList.Nil) false]
+    [(OptBceMbVarList.Cons item rest)
+      (if (= item var)
+        true
+        (opt-bce-mb-var-list-contains? (box-get rest) var))]))
+
+(define (opt-bce-mb-var-list-union
+  [vars : OptBceMbVarList]
+  [acc : OptBceMbVarList]) : OptBceMbVarList
+  (match vars
+    [(OptBceMbVarList.Nil) acc]
+    [(OptBceMbVarList.Cons item rest)
+      (opt-bce-mb-var-list-union
+        (box-get rest)
+        (if (opt-bce-mb-var-list-contains? acc item)
+          acc
+          (OptBceMbVarList.Cons item (box acc))))]))
+
+(define (opt-bce-mb-var-list-subset?
+  [vars : OptBceMbVarList]
+  [outer : OptBceMbVarList]) : bool
+  (match vars
+    [(OptBceMbVarList.Nil) true]
+    [(OptBceMbVarList.Cons item rest)
+      (and
+        (opt-bce-mb-var-list-contains? outer item)
+        (opt-bce-mb-var-list-subset? (box-get rest) outer))]))
+
+;; Classify every outside block with a direct loop-def use as the wire point or
+;; as a far block.
+(define (opt-bce-mb-far-scan
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [plan : OptBceMbFarPlan]) : OptBceMbFarPlan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) plan]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-far-scan
+        pred-map
+        (ir.compiler-ir-block-seq-to-list seq)
+        all-blocks
+        body-labels
+        body-blocks
+        plan)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-bce-mb-far-scan
+        pred-map
+        (box-get rest)
+        all-blocks
+        body-labels
+        body-blocks
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (if (opt-label-contains body-labels label)
+              plan
+              (let
+                [vars : OptBceMbVarList
+                  (opt-bce-mb-wire-vars-blocks
+                    body-blocks
+                    (opt-bce-mb-nonphi-uses-seq
+                      (opt_i64_i64_map.with-capacity 8)
+                      instrs
+                      0)
+                    (OptBceMbVarList.Nil))]
+                (match vars
+                  [(OptBceMbVarList.Nil) plan]
+                  [(OptBceMbVarList.Cons _ _)
+                    (match (opt-bce-mb-wire-preds
+                      pred-map
+                      all-blocks
+                      body-labels
+                      (opt-pred-map-lookup pred-map label)
+                      label
+                      (OptLabelSet.Nil))
+                      [(OptBceMbMaybeLabels.Some _)
+                        (OptBceMbFarPlan
+                          (if (= (struct-get plan wire) -1)
+                            label
+                            -2)
+                          (if (= (struct-get plan wire) -1)
+                            vars
+                            (struct-get plan wire-vars))
+                          (struct-get plan far-labels)
+                          (struct-get plan far-vars))]
+                      [(OptBceMbMaybeLabels.No)
+                        (OptBceMbFarPlan
+                          (struct-get plan wire)
+                          (struct-get plan wire-vars)
+                          (opt-label-add (struct-get plan far-labels) label)
+                          (opt-bce-mb-var-list-union
+                            vars
+                            (struct-get plan far-vars)))])])))]))]))
+
+(define (opt-bce-mb-far-labels-dominated?
+  [doms : OptDomInfo]
+  [wire : i64]
+  [labels : OptLabelSet]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (and
+        (opt-dom-dominates? doms wire (opt-label-ref labels 0))
+        (opt-bce-mb-far-labels-dominated? doms wire (opt-label-tail labels)))]))
+
+(define (opt-bce-mb-far-plan-ok? [doms : OptDomInfo] [plan : OptBceMbFarPlan]) : bool
+  (and
+    (>= (struct-get plan wire) 0)
+    (opt-bce-mb-far-labels-dominated?
+      doms
+      (struct-get plan wire)
+      (struct-get plan far-labels))
+    (opt-bce-mb-var-list-subset?
+      (struct-get plan far-vars)
+      (struct-get plan wire-vars))))
+
+;; One merge phi per far var, materialized in the wire point over its
+;; predecessor edges, plus the env that rewrites the far uses to them.
+(define (opt-bce-mb-far-phis
+  [vars : OptBceMbVarList]
+  [all-blocks : ir.CompilerIrBlockList]
+  [preds : OptLabelSet]
+  [instrs : ir.CompilerIrInstrSeq]
+  [cell : (__tl_dyn-array i64)]
+  [env : OptCopyEnv]
+  [phis : ir.CompilerIrInstrList]) : OptBceMbMaybeWirePhis
+  (opt-bce-mb-wire-phis vars all-blocks preds instrs cell env phis))
+
+(define (opt-bce-mb-far-rewrite
+  [blocks : ir.CompilerIrBlockList]
+  [wire : i64]
+  [far-labels : OptLabelSet]
+  [phis : ir.CompilerIrInstrList]
+  [env : OptCopyEnv]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-far-rewrite
+        (ir.compiler-ir-block-seq-to-list seq)
+        wire
+        far-labels
+        phis
+        env)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (cond
+              [(= label wire)
+                ;; the merge phis join the block's phi prefix; the wire point's
+                ;; OWN uses stay on the original value, so the ordinary wiring
+                ;; still sees it as a using block and still pulls its stub
+                ;; predecessors into the clone group
+                (ir.compiler-ir-block
+                  label
+                  (opt-bce-mb-wire-block-instrs
+                    instrs
+                    0
+                    (opt-unroll-phi-prefix-count instrs 0)
+                    phis
+                    (OptCopyEnv.Nil)))]
+              [(opt-label-contains far-labels label)
+                (ir.compiler-ir-block
+                  label
+                  (opt-bce-mb-wire-block-instrs
+                    instrs
+                    0
+                    (opt-unroll-phi-prefix-count instrs 0)
+                    (ir.CompilerIrInstrList.Nil)
+                    env))]
+              [else block])
+            (opt-bce-mb-far-rewrite (box-get rest) wire far-labels phis env))])]))
+
+(defenum OptBceMbFarResult
+  ;; a far use this pass cannot repair
+  (No)
+  ;; nothing to repair: the ordinary wiring handles the function as it is
+  (Same)
+  (Some ir.CompilerIrBlockList))
+
+(define (opt-bce-mb-far-repair
+  [pred-map : OptPredMap]
+  [doms : OptDomInfo]
+  [blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [cell : (__tl_dyn-array i64)]) : OptBceMbFarResult
+  (let
+    [plan : OptBceMbFarPlan
+      (opt-bce-mb-far-scan
+        pred-map
+        blocks
+        blocks
+        body-labels
+        body-blocks
+        (OptBceMbFarPlan
+          -1
+          (OptBceMbVarList.Nil)
+          (OptLabelSet.Nil)
+          (OptBceMbVarList.Nil)))]
+    (if (= (opt-label-count (struct-get plan far-labels)) 0)
+      (OptBceMbFarResult.Same)
+      (if (not (opt-bce-mb-far-plan-ok? doms plan))
+        (OptBceMbFarResult.No)
+        (match (opt-bce-mb-far-phis
+          (struct-get plan far-vars)
+          blocks
+          (opt-pred-map-lookup pred-map (struct-get plan wire))
+          (opt-bce-mb-find-block-seq blocks (struct-get plan wire))
+          cell
+          (OptCopyEnv.Nil)
+          (ir.CompilerIrInstrList.Nil))
+          [(OptBceMbMaybeWirePhis.No) (OptBceMbFarResult.No)]
+          [(OptBceMbMaybeWirePhis.Some env phis)
+            (OptBceMbFarResult.Some
+              (opt-bce-mb-far-rewrite
+                blocks
+                (struct-get plan wire)
+                (struct-get plan far-labels)
+                phis
+                env))])))))
 
 ;; The stub blocks in layout order (they join the fast clone group).
 (define (opt-bce-mb-stub-blocks-from
@@ -54857,6 +55389,27 @@
                     state)])])]
         [_ state]))))
 
+;; An UNCOVERED block's checks: the counter compare does not dominate them
+;; (see the entry guard chain), so no trip-range derivation applies and every
+;; one of them stays -- remapped -- in the fast clone, exactly like an
+;; underivable index. The abort sites the slow path has are the abort sites the
+;; clone has.
+(define (opt-bce-mb-keep-block-checks
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [keep : OptBceMbKeep]) : OptBceMbKeep
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    keep
+    (opt-bce-mb-keep-block-checks
+      label
+      instrs
+      (+ index 1)
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.BoundsCheck _ _ _)
+          (opt-bce-mb-keep-cons label index keep)]
+        [_ keep]))))
+
 (define (opt-bce-mb-derive-blocks
   [descriptor : OptBceMbDescriptor]
   [write-free? : bool]
@@ -54871,6 +55424,7 @@
   [bound : ir.CompilerIrValue]
   [cell : (__tl_dyn-array i64)]
   [fan : OptBceVersionFan]
+  [uncovered : OptLabelSet]
   [state : OptBceMbDerive]) : OptBceMbDerive
   (match remaining
     [(ir.CompilerIrBlockList.Nil) state]
@@ -54891,23 +55445,34 @@
             bound
             cell
             fan
-            (opt-bce-mb-derive-block
-              descriptor
-              write-free?
-              label
-              instrs
-              0
-              all-blocks
-              body-blocks
-              defs
-              latch
-              preheader
-              iphi
-              seed
-              bound
-              cell
-              fan
-              state))])]
+            uncovered
+            (if (opt-label-contains uncovered label)
+              (OptBceMbDerive
+                (struct-get state guard)
+                (opt-bce-mb-keep-block-checks
+                  label
+                  instrs
+                  0
+                  (struct-get state keep))
+                (struct-get state derived)
+                (struct-get state hoists))
+              (opt-bce-mb-derive-block
+                descriptor
+                write-free?
+                label
+                instrs
+                0
+                all-blocks
+                body-blocks
+                defs
+                latch
+                preheader
+                iphi
+                seed
+                bound
+                cell
+                fan
+                state)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-derive-blocks
         descriptor
@@ -54923,6 +55488,7 @@
         bound
         cell
         fan
+        uncovered
         state)]))
 
 (define (opt-bce-mb-guard-conds
@@ -54949,6 +55515,7 @@
         (struct-get shape bound)
         cell
         fan
+        (struct-get shape uncovered)
         (OptBceMbDerive
           (OptBceVersionGuardAcc.Some
             (ir.CompilerIrInstrList.Nil)
@@ -56795,11 +57362,16 @@
             (array-ref cell 0)
             true))])))
 
-(define (opt-bce-mb-apply
+;; `blocks` is the function as the far-use repair left it; `original` is what
+;; the caller keeps when the attempt fails, so a repair that the wiring then
+;; refuses costs nothing.
+(define (opt-bce-mb-apply-repaired
   [descriptor : OptBceMbDescriptor]
   [pred-map : OptPredMap]
+  [original : ir.CompilerIrBlockList]
   [blocks : ir.CompilerIrBlockList]
   [shape : OptBceMbShape]
+  [cell : (__tl_dyn-array i64)]
   [frame : i64]) : OptUnrollResult
   (let
     [body-labels : OptLabelSet (struct-get shape body-labels)]
@@ -56811,8 +57383,6 @@
         (opt_i64_i64_map.with-capacity 64)
         blocks
         body-labels)]
-    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [_cell : unit (array-set! cell 0 frame)]
     (if (not (opt-bce-mb-defs-escape? body-blocks outside))
       ;; No direct outside use: the original exit-phi-only scheme, unchanged.
       (opt-bce-mb-apply-wired
@@ -56831,7 +57401,7 @@
         body-blocks
         cell
         (OptLabelSet.Nil))
-        [(OptBceMbWiring.No) (OptUnrollResult.Result blocks frame false)]
+        [(OptBceMbWiring.No) (OptUnrollResult.Result original frame false)]
         [(OptBceMbWiring.Some wired-blocks stub-labels)
           (let
             [stub-blocks : ir.CompilerIrBlockList
@@ -56850,7 +57420,7 @@
                 wired-blocks
                 clone-labels)]
             (if (opt-bce-mb-defs-escape? clone-blocks clone-outside)
-              (OptUnrollResult.Result blocks frame false)
+              (OptUnrollResult.Result original frame false)
               (opt-bce-mb-apply-wired
                 descriptor
                 (opt-bce-mb-write-free-blocks? body-blocks)
@@ -56864,10 +57434,48 @@
                   (struct-get shape iphi)
                   (struct-get shape seed)
                   (struct-get shape bound)
-                  (struct-get shape step))
+                  (struct-get shape step)
+                  (struct-get shape uncovered))
                 clone-defs
                 cell
                 frame)))]))))
+
+(define (opt-bce-mb-apply
+  [descriptor : OptBceMbDescriptor]
+  [pred-map : OptPredMap]
+  [doms : OptDomInfo]
+  [blocks : ir.CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [frame : i64]) : OptUnrollResult
+  (let
+    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [_cell : unit (array-set! cell 0 frame)]
+    (match (opt-bce-mb-far-repair
+      pred-map
+      doms
+      blocks
+      (struct-get shape body-labels)
+      (struct-get shape body-blocks)
+      cell)
+      [(OptBceMbFarResult.No) (OptUnrollResult.Result blocks frame false)]
+      [(OptBceMbFarResult.Same)
+        (opt-bce-mb-apply-repaired
+          descriptor
+          pred-map
+          blocks
+          blocks
+          shape
+          cell
+          frame)]
+      [(OptBceMbFarResult.Some repaired)
+        (opt-bce-mb-apply-repaired
+          descriptor
+          pred-map
+          blocks
+          repaired
+          shape
+          cell
+          frame)])))
 
 ;; One scan applies at most one multi-block versioning; the driver repeats the
 ;; scan while its invocation budget (opt-loop-apply-budget) lasts, like the
@@ -56876,6 +57484,7 @@
 (define (opt-bce-mb-loops-scan
   [descriptor : OptBceMbDescriptor]
   [pred-map : OptPredMap]
+  [doms : OptDomInfo]
   [blocks : ir.CompilerIrBlockList]
   [all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
@@ -56891,6 +57500,7 @@
         (opt-bce-mb-loops-scan
           descriptor
           pred-map
+          doms
           blocks
           all-loops
           (box-get rest)
@@ -56900,7 +57510,13 @@
           frame)
         (match (opt-bce-mb-loop-shape blocks all-loops entry-label nested? loop)
           [(OptBceMbMaybeShape.Some shape)
-            (match (opt-bce-mb-apply descriptor pred-map blocks shape frame)
+            (match (opt-bce-mb-apply
+              descriptor
+              pred-map
+              doms
+              blocks
+              shape
+              frame)
               [(OptUnrollResult.Result next-blocks next-frame changed)
                 (if changed
                   (OptBceVersionScan.Scan
@@ -56911,6 +57527,7 @@
                   (opt-bce-mb-loops-scan
                     descriptor
                     pred-map
+                    doms
                     blocks
                     all-loops
                     (box-get rest)
@@ -56922,6 +57539,7 @@
             (opt-bce-mb-loops-scan
               descriptor
               pred-map
+              doms
               blocks
               all-loops
               (box-get rest)
@@ -56942,6 +57560,7 @@
 (define (opt-bce-mb-loops-scan-phased
   [descriptor : OptBceMbDescriptor]
   [pred-map : OptPredMap]
+  [doms : OptDomInfo]
   [blocks : ir.CompilerIrBlockList]
   [all-loops : OptNaturalLoopList]
   [entry-label : i64]
@@ -56950,6 +57569,7 @@
   (match (opt-bce-mb-loops-scan
     descriptor
     pred-map
+    doms
     blocks
     all-loops
     all-loops
@@ -56963,6 +57583,7 @@
         (opt-bce-mb-loops-scan
           descriptor
           pred-map
+          doms
           blocks
           all-loops
           all-loops
@@ -57133,6 +57754,7 @@
           (match (opt-bce-mb-loops-scan-phased
             descriptor
             (struct-get context pred-map)
+            (struct-get context doms)
             blocks
             loops
             (opt-cfg-entry-label blocks)

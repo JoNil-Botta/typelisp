@@ -3445,6 +3445,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-switch-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-second-exit-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-second-exit-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-negative-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
       42)
@@ -3774,6 +3782,20 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-switch-self-test)
     42
     "multi-block versioning remaps total-switch case and trap edges"))
+
+(test
+  bce-version-multiblock-second-exit
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
+    42
+    "multi-block versioning admits a second exiting branch on the guard chain"))
+
+(test
+  bce-version-multiblock-second-exit-boundaries
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
+    42
+    "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
 
 (test
   bce-version-multiblock-rejections

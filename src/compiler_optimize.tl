@@ -65393,9 +65393,74 @@
                             name
                             _t-gep-split)
                           unit)]
-                      [gep-split-frame : i64 (opt-function-frame gep-split)]
+                      ;; Second rotation round. `flag_exit` is what makes a
+                      ;; guarded compare loop rotatable at all: it retires the
+                      ;; monotone flag's re-test and folds every outside reader
+                      ;; of a loop-carried value to a literal, leaving a
+                      ;; single-test header whose phis have no reader outside
+                      ;; the loop -- exactly the shape `rotate_ssa` accepts, and
+                      ;; the one it already rotates when the flag never escapes
+                      ;; (`it-map-insert-from`). The rotation stage cannot see
+                      ;; that shape: it sits six passes ABOVE `flag_exit`, a
+                      ;; lowered `while` keeps its flag live at a non-phi reader
+                      ;; through pipeline iteration 1 (flag_exit's C4) so the
+                      ;; conversion lands on iteration 2, and
+                      ;; `optimize-function-max-iterations` is 2 -- the
+                      ;; rotatable shape is produced strictly after the last
+                      ;; upstream chance to rotate it. Both clones of
+                      ;; `benchmarks/intern_table`'s `it-slice-eq?` byte compare
+                      ;; stayed top-tested for exactly that reason and paid an
+                      ;; unconditional back-edge `jmp` on every byte.
+                      ;;
+                      ;; Placed below `global_gvn`, and that is not incidental.
+                      ;; Rotation duplicates the header guard into the preheader
+                      ;; with the phi's INIT value substituted, so a counted
+                      ;; loop starting at zero clones `lt 0, n` -- which is
+                      ;; textually the trip-count test `bce_version` already
+                      ;; built for its own `__bce_guard`. Run above GVN, the
+                      ;; clones CSE into that one compare, its three branch
+                      ;; users stop being single-use, and the backend has to
+                      ;; materialize the bool (`cmp`/`setl`/`movzbq`, then a
+                      ;; `test` per site) instead of folding each into a
+                      ;; `cmp`/`jcc`. Measured on `it-slice-eq?` that cost five
+                      ;; instructions per call and ate a third of the rotation's
+                      ;; win, and it regressed cfg_domloops and lex_source
+                      ;; outright. Below GVN each clone stays single-use and
+                      ;; fuses. Nothing downstream needs the top-tested shape:
+                      ;; `cmp_sink` and `successor_sink` are block-local,
+                      ;; `bool_branch_late` builds its own context, and the
+                      ;; trailing dce/fold/cfg retire the landing block.
+                      ;; The pass is unchanged and still verifier-gated; a loop
+                      ;; the upstream stage already rotated has no unconditional
+                      ;; back edge left, so `opt-loop-rotation-edge-compatible?`
+                      ;; makes this round a no-op on it.
+                      [_t-rotate-ssa-late : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [rotate-ssa-late : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "rotate_ssa"
+                          (if run-heavy?
+                            (match (opt-rotate-ssa-function-with-context-result
+                              (opt-cfg-context-build
+                                (opt-function-blocks gep-split))
+                              false
+                              gep-split)
+                              [(OptFunctionCtxResult.Result f _) f])
+                            gep-split))]
+                      [_p-rotate-ssa-late : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "rotate_ssa"
+                            name
+                            _t-rotate-ssa-late)
+                          unit)]
+                      [gep-split-frame : i64
+                        (opt-function-frame rotate-ssa-late)]
                       [gep-split-blocks : ir.CompilerIrBlockList
-                        (opt-function-blocks gep-split)]
+                        (opt-function-blocks rotate-ssa-late)]
                       [_t-cmp-sink : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       ;; Sink loop-closing compares next to their branches so

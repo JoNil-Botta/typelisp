@@ -36689,6 +36689,382 @@
         blocks))
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
 
+;; The `it-slice-eq?` class, in the shape `flag_exit` leaves behind: a
+;; single-test header, and a body that can leave the loop through its OWN exit
+;; block -- never through the header's exit arm, which is the break shape
+;; `opt-rotate-ssa-body-avoids-exit?` still refuses. Both exits meet again in
+;; `done`.
+;;
+;; With `live-out` the counter is also read past the loop, on BOTH exit edges,
+;; and that is the one thing the rewrite cannot express: the fresh exit phi
+;; lands in the header's exit block, which does not dominate the body's exit,
+;; so the substitution breaks SSA and the verifier gate hands the loop back
+;; unrotated. Without it there is nothing to merge and the loop rotates.
+(define (opt-rotate-ssa-test-second-exit-blocks [live-out : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-flag-exit-test-jump-block "entry" "header")
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "cont")
+                (compiler_ir_types.compiler-ir-label "escape"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "cont")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                2
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-flag-exit-test-jump-block "latch" "header")
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-flag-exit-test-jump-block "escape" "done")
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-flag-exit-test-jump-block "exit" "done")
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "done")
+                    (if live-out
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Phi
+                          5
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.Var 1)
+                            (compiler_ir_types.compiler-ir-label "exit")
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.Var 1)
+                              (compiler_ir_types.compiler-ir-label "escape")
+                              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.Var 5)))
+                          (compiler_ir_types.CompilerIrInstrList.Nil)))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Return
+                          (compiler_ir_types.CompilerIrMaybeValue.Some
+                            (compiler_ir_types.CompilerIrValue.I64 0)))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+(define (opt-rotate-ssa-test-second-exit-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "rotate_ssa_second_exit")
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (compiler_ir_types.CompilerIrParamList.Nil))
+    (compiler_ast_types.AstType.I64)
+    6
+    blocks))
+
+(define (opt-rotate-ssa-test-second-exit-run [live-out : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-rotate-ssa-test-second-exit-blocks live-out)]
+    (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (opt-rotate-ssa-test-second-exit-function blocks))
+      [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
+
+;; A rotated loop tests its own exit condition on the back edge, so its latch
+;; ends in a Branch; a top-tested one jumps back unconditionally.
+(define (opt-rotate-ssa-test-ends-with-branch?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            (if (<= count 0)
+              false
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                instrs
+                (- count 1))
+                [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) true]
+                [_ false])))])]))
+
+(define (opt-rotate-ssa-test-latches-branch?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [loops : compiler_optimize.OptNaturalLoopList]) : bool
+  (match loops
+    [(compiler_optimize.OptNaturalLoopList.Nil) true]
+    [(compiler_optimize.OptNaturalLoopList.Cons loop rest)
+      (and
+        (opt-rotate-ssa-test-ends-with-branch?
+          blocks
+          (compiler_optimize.opt-natural-loop-latch loop))
+        (opt-rotate-ssa-test-latches-branch? blocks (box-get rest)))]))
+
+;; `it-slice-eq?` as SSA construction hands it to the loop passes: the counter
+;; and the monotone flag ride the header together, the gate re-tests the flag,
+;; the mismatch arm clears it, and the flag is read past the loop on BOTH exit
+;; edges. That last reader is what refuses the rotation up top -- the exit phi
+;; would have to reach `escape`, which the header's exit block does not
+;; dominate. `flag_exit` retires exactly that reader (it folds both edges to
+;; literals) and leaves the loop rotatable, but it runs six passes BELOW the
+;; rotation stage and needs a pipeline iteration of its own to fire, so the
+;; rotatable shape only exists after the last upstream chance to rotate it.
+(define (opt-rotate-ssa-test-flag-loop-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-flag-exit-test-jump-block "entry" "header")
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              3
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "gate")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "gate")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "cont")
+              (compiler_ir_types.compiler-ir-label "escape"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "cont")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                6
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "match")
+                  (compiler_ir_types.compiler-ir-label "mismatch"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-flag-exit-test-jump-block "match" "latch")
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-flag-exit-test-jump-block "mismatch" "latch")
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      4
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Bool false)
+                        (compiler_ir_types.compiler-ir-label "mismatch")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 3)
+                          (compiler_ir_types.compiler-ir-label "match")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.Bool))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.BinOp
+                        2
+                        (compiler_ir_types.CompilerIrBinOp.Add)
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        (compiler_ir_types.CompilerIrValue.I64 1)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "header"))
+                        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-flag-exit-test-jump-block "escape" "done")
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-flag-exit-test-jump-block "exit" "done")
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.compiler-ir-block
+                        (compiler_ir_types.compiler-ir-label "done")
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Phi
+                            7
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.Var 3)
+                              (compiler_ir_types.compiler-ir-label "exit")
+                              (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.CompilerIrValue.Var 3)
+                                (compiler_ir_types.compiler-ir-label "escape")
+                                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ast_types.AstType.Bool))
+                          (compiler_ir_types.compiler-ir-instr-cons
+                            (compiler_ir_types.CompilerIrInstr.Return
+                              (compiler_ir_types.CompilerIrMaybeValue.Some
+                                (compiler_ir_types.CompilerIrValue.Var 7)))
+                            (compiler_ir_types.CompilerIrInstrList.Nil))))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+(define (opt-rotate-ssa-test-flag-loop-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "rotate_ssa_flag_loop")
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (compiler_ir_types.CompilerIrParamList.Nil))
+    (compiler_ast_types.AstType.Bool)
+    10
+    (opt-rotate-ssa-test-flag-loop-blocks)))
+
+;; End to end: whatever order the loop passes settle in, no loop of this class
+;; may reach the backend jumping back unconditionally to a header that re-tests
+;; its own counter. Note this fixture is clean enough that `flag_exit` converts
+;; it on pipeline iteration 1, so the rotation stage ABOVE it can still win the
+;; race here -- the assertion is the invariant, not the round that establishes
+;; it. What forced the second round is the extra iteration a genuinely lowered
+;; `while` spends before the conversion fires; `benchmarks/intern_table`'s
+;; `it-slice-eq?` is the measured case and stayed top-tested without it.
+(define (opt-rotate-ssa-test-pipeline-bottom-tested?) : bool
+  (let
+    [optimized : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.optimize-function
+        (compiler_ast_types.ast-node-pool-reader-context-current)
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-rotate-ssa-test-flag-loop-function))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks optimized)]
+    [loops : compiler_optimize.OptNaturalLoopList
+      (compiler_optimize.opt-cfg-natural-loops blocks)]
+    (and
+      (> (compiler_optimize.opt-natural-loop-list-count loops) 0)
+      (opt-rotate-ssa-test-latches-branch? blocks loops))))
+
+;; The exit phi has to carry the zero-trip value on the preheader edge and the
+;; last iteration's value on the latch edge -- the whole point of minting it.
+(define (opt-rotate-ssa-test-exit-phi-inputs-ok?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label "exit"))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (<= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 0)
+            false
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+              [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+                (and
+                  (= (opt-rotate-ssa-test-phi-input-value inputs "entry") 0)
+                  (= (opt-rotate-ssa-test-phi-input-value inputs "latch") 2))]
+              [_ false]))])]))
+
+;; 0 for the literal `0` the preheader edge carries, the var id for a Var input,
+;; -1 when the edge is missing or carries anything else.
+(define (opt-rotate-ssa-test-phi-input-value
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [label : String]) : i64
+  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
+    [(compiler_ir_types.CompilerIrPhiInputList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
+      (opt-rotate-ssa-test-phi-input-value
+        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq)
+        label)]
+    [(compiler_ir_types.CompilerIrPhiInputList.Cons value input-label rest)
+      (if (= input-label (compiler_ir_types.compiler-ir-label label))
+        (match value
+          [(compiler_ir_types.CompilerIrValue.Var var) var]
+          [(compiler_ir_types.CompilerIrValue.I64 literal) literal]
+          [_ (- 0 1)])
+        (opt-rotate-ssa-test-phi-input-value (box-get rest) label))]))
+
+;; Fixpoint discipline: the rotated latch ends in the cloned guard branch, not a
+;; jump, so `opt-loop-rotation-edge-compatible?` refuses it and a second run
+;; changes nothing.
+(define (opt-rotate-ssa-test-rerun
+  [once : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunction
+  (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+    (compiler_optimize.opt-cfg-context-build
+      (compiler_optimize.opt-function-blocks once))
+    false
+    once)
+    [(compiler_optimize.OptFunctionCtxResult.Result next _) next]))
+
 (define (compiler-optimize-rotate-ssa-self-test) : i64
   (let
     [rotated : compiler_ir_types.CompilerIrFunction
@@ -36699,6 +37075,12 @@
       (opt-rotate-ssa-test-run true)]
     [side-exit-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks side-exit)]
+    [second-exit-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-rotate-ssa-test-second-exit-run false))]
+    [second-exit-live-out-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-rotate-ssa-test-second-exit-run true))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -36772,6 +37154,65 @@
             (opt-rotate-ssa-test-siblings-run))
           (compiler_ir_types.compiler-ir-label "h2"))
         15]
+      ;; the `it-slice-eq?` class: a body that leaves the loop by its own exit
+      ;; block rotates, and the rotated latch carries the test
+      [(opt-block-list-has-label?
+          second-exit-blocks
+          (compiler_ir_types.compiler-ir-label "header"))
+        16]
+      [(not
+          (opt-block-list-has-label?
+            second-exit-blocks
+            (compiler_ir_types.compiler-ir-label "header__rotate_land")))
+        17]
+      [(not
+          (opt-rotate-ssa-test-starts-with-phi?
+            second-exit-blocks
+            (compiler_ir_types.compiler-ir-label "body")))
+        18]
+      [(not
+          (opt-rotate-ssa-test-ends-with-branch?
+            second-exit-blocks
+            (compiler_ir_types.compiler-ir-label "latch")))
+        19]
+      [(not
+          (opt-rotate-ssa-test-ends-with-branch?
+            second-exit-blocks
+            (compiler_ir_types.compiler-ir-label "entry")))
+        20]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-rotate-ssa-test-second-exit-run false))))
+        21]
+      ;; ... and is refused, unchanged, once a loop-carried value is read past
+      ;; BOTH exits: the exit phi cannot reach the body's own exit block
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            second-exit-live-out-blocks
+            (opt-rotate-ssa-test-second-exit-blocks true)))
+        22]
+      ;; the exit phi merges the preheader's zero-trip value and the latch's
+      [(not (opt-rotate-ssa-test-exit-phi-inputs-ok? rotated-blocks)) 23]
+      ;; rotating a rotated loop is a no-op, in both fixtures
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-rerun rotated))
+            rotated-blocks))
+        24]
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-rerun
+                (opt-rotate-ssa-test-second-exit-run false)))
+            second-exit-blocks))
+        25]
+      ;; and the whole pipeline settles the class bottom-tested
+      [(not (opt-rotate-ssa-test-pipeline-bottom-tested?)) 26]
       [else 42])))
 
 (define (opt-label-set-persistent-branch-self-test) : bool

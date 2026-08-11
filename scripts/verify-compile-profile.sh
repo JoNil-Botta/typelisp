@@ -521,6 +521,44 @@ assert_selfhost_pool_family() {
     fail "selfhost pool boundary $_spf_prefix does not match its pin"
 }
 
+# A boundary whose used-node count sits within a few thousand nodes of a
+# segment line can legitimately land on either side across identical-source
+# runs: lower.ast_expr_pool.macro_expand measured 3,082,997 and then
+# 3,079,115 used nodes on two consecutive Windows CI runs of one source
+# tree -- 3,882 nodes of environment jitter against a 65,536-node segment,
+# bracketing the 47/48 line. Pinning either single value round-trips the
+# gate forever. This variant pins the two adjacent segment counts instead:
+# growth protection is retained (a real allocation regression moves
+# segments past the max), the family's internal consistency is still
+# checked exactly against whichever count was realized, and sub-segment
+# jitter stops failing green trees. The jitter itself is tracked as a
+# fleet issue; when its source is removed this boundary should return to a
+# single-value pin.
+assert_selfhost_pool_family_range() {
+    _spr_file=$1
+    _spr_pool=$2
+    _spr_point=$3
+    _spr_min=$4
+    _spr_max=$5
+    _spr_segment_nodes=$6
+    _spr_node_bytes=$7
+    _spr_stdout=$8
+    _spr_stderr=$9
+
+    _spr_prefix="lower.$_spr_pool.$_spr_point"
+    _spr_got=$(profile_live_counter_in "$_spr_file" "$_spr_prefix.segments")
+    if [ -n "$_spr_got" ] && [ "$_spr_got" -ge "$_spr_min" ] && [ "$_spr_got" -le "$_spr_max" ]; then
+        assert_selfhost_pool_family "$_spr_file" "$_spr_pool" "$_spr_point" \
+            "$_spr_got" "$_spr_segment_nodes" "$_spr_node_bytes" \
+            "$_spr_stdout" "$_spr_stderr"
+        return 0
+    fi
+    show_failure_logs "$_spr_stdout" "$_spr_stderr"
+    echo "selfhost pool boundary $_spr_prefix segments '$_spr_got' outside pinned range [$_spr_min, $_spr_max]" >&2
+    echo "  this probe is Windows-gated, so a Linux run cannot regenerate these values" >&2
+    fail "selfhost pool boundary $_spr_prefix does not match its pinned range"
+}
+
 # The pool-family checker is the only thing between an allocation regression and
 # a green run, and on Linux the probe it guards never executes, so exercise it
 # against synthetic profile output on every host. A grep-shaped gate that
@@ -1495,11 +1533,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # The public-place migration removes the expanded legacy accessor calls;
     # the merged path-sensitive checker remains one segment above main alone.
     # The seven-packet optimizer/backend series ported onto the unified place
-    # syntax crossed this boundary from 47 to 48 segments; the authoritative
-    # Windows CI probe measured 3,082,997 used nodes and 100,663,296 physical
-    # payload bytes.
-    assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
+    # syntax landed this boundary ON the 47/48 segment line: consecutive
+    # Windows CI probes of one tree measured 3,082,997 (48 segments) and
+    # then 3,079,115 (47) used nodes. Range-pinned until the jitter source
+    # is found; see assert_selfhost_pool_family_range.
+    assert_selfhost_pool_family_range \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Native result commit leaves the checked expression graph within the
     # 32-segment boundary; macro_expand owns the corresponding exact increase.

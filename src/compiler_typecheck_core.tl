@@ -69491,7 +69491,13 @@
                             name
                             binding-ty
                             init)
-                          (tc-move-add-local-binding ctx env locals name init)
+                          (tc-move-add-local-binding
+                            ctx
+                            expr-bases
+                            env
+                            locals
+                            name
+                            init)
                           (tc-moved-remove-root-state loop-carried name)
                           (tc-moved-remove-root-state outer-loop-carried name)
                           (tc-param-storage-rebind-from-init
@@ -77911,7 +77917,6 @@
                   (tc-moved-roots borrowed)
                   (tc-moved-partials borrowed)
                   facts
-                  (tc-moved-exact-path-index-from-facts facts)
                   (tc-moved-hidden-atomic-users borrowed)
                   (tc-moved-param-storage-origins borrowed)))
               borrowed))]

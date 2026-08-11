@@ -60765,6 +60765,8 @@
   (array.make-array String 4096))
 (define storage-identity-vars : (__tl_dyn-array i64)
   (array.make-array i64 4096))
+(define storage-module-vars : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
 (define augmented-decls : (__tl_dyn-array ast.AstDecl)
   (array.make-array ast.AstDecl 4096))
 
@@ -60833,6 +60835,10 @@
 (define first-key : i64
   -1)
 (define next-id : i64
+  -1)
+(define first-module-id : i64
+  -1)
+(define next-module-id : i64
   -1)
 (define first-slot : i64
   -1)
@@ -61082,6 +61088,7 @@
             (array-set! function-names index "")
             (array-set! local-names index "")
             (array-set! storage-identity-vars index 0)
+            (array-set! storage-module-vars index 0)
             (set! index (+ index 1))))
         (set! item-count 0)
         (set! block-generation (ci.intern-generation))
@@ -61101,6 +61108,7 @@
   [generator : String]
   [item : String]
   [identity : String]
+  [module-id : i64]
   [decl : ast.AstDecl]) : unit
   (let
     [identity-id : i64 (tc-generated-module-name-id identity)]
@@ -61126,6 +61134,7 @@
                       (array-set! function-names cursor (text-copy generator))
                       (array-set! local-names cursor (text-copy item))
                       (array-set! storage-identity-vars cursor key)
+                      (array-set! storage-module-vars cursor (+ module-id 1))
                       (array-set! augmented-decls cursor decl)
                       (set! item-count (+ item-count 1))
                       (set! done true)))]
@@ -61228,6 +61237,8 @@
   (begin
     (set! first-key -1)
     (set! next-id -1)
+    (set! first-module-id -1)
+    (set! next-module-id -1)
     (set! first-slot -1)
     (set! next-slots -1)
     (set! identity-count2 0)
@@ -62345,11 +62356,51 @@
                     [(ast.AstLiteral.String left-id)
                       (match literal
                         [(ast.AstLiteral.String right-id)
-                          (if (= left-id right-id)
-                            (begin
-                              (set! negative-literal true)
-                              true)
-                            false)]
+                          (if allow-cleanup
+                            (let
+                              [left : String (ci.intern-str left-id)]
+                              [right : String (ci.intern-str right-id)]
+                              [prefix : String
+                                (str_cat.str-cat
+                                  (ci.intern-str
+                                    (if (>= first-module-id 0)
+                                      first-module-id
+                                      first-key))
+                                  ".")]
+                              [next : String
+                                (str_cat.str-cat
+                                  (ci.intern-str
+                                    (if (>= next-module-id 0)
+                                      next-module-id
+                                      next-id))
+                                  ".")]
+                              [len : i64 (string.string-length prefix)]
+                              [starts? : bool
+                                (and
+                                  (>= (string.string-length left) len)
+                                  (string.eq
+                                    (string.substring left 0 len)
+                                    prefix))]
+                              (if (= left-id right-id)
+                                (if starts?
+                                  false
+                                  (begin
+                                    (set! negative-literal true)
+                                    true))
+                                (if (and
+                                  starts?
+                                  (string.eq
+                                    right
+                                    (string.replace left prefix next)))
+                                  (begin
+                                    (set! portable-pair true)
+                                    true)
+                                  false)))
+                            (if (= left-id right-id)
+                              (begin
+                                (set! negative-literal true)
+                                true)
+                              false))]
                         [_ false])]
                     [(ast.AstLiteral.Unit)
                       (match literal
@@ -62365,7 +62416,7 @@
                 (if (not (qualified-name name-id name))
                   false
                   (if (= name-id name)
-                    (if (>= (pair-index name-id name 0) 0)
+                    (if (or allow-cleanup (>= (pair-index name-id name 0) 0))
                       true
                       (begin
                         (set! local-use true)
@@ -62471,6 +62522,24 @@
                   (set! allow-cleanup true)
                   unit)
                 ok))]
+          [_ false])]
+      [(ast.AstDecl.DefMacro _ name params ret body)
+        (match other
+          [(ast.AstDecl.DefMacro _ name-id list result value)
+            (and
+              (exact-name name name-id)
+              (spec.gen-macro-param-list-eq? params list)
+              (ctfe_support.ctfe-type-eq ret result)
+              (let
+                [saved : bool allow-cleanup]
+                [ok : bool false]
+                (begin
+                  (set! allow-cleanup true)
+                  (set!
+                    ok
+                    (tc-proof-reuse-session-ast-expr-id-exact? ctx body value))
+                  (set! allow-cleanup saved)
+                  ok)))]
           [_ false])]
       [(ast.AstDecl.DefFn _ name params ret body meta)
         (match other
@@ -104890,6 +104959,12 @@
                           ;; declarations and expressions fail closed there.
                           (if (begin
                             (scratch-reset-functions)
+                            (set!
+                              first-module-id
+                              (if (> (array-ref storage-module-vars key) 0)
+                                (- (array-ref storage-module-vars key) 1)
+                                -1))
+                            (set! next-module-id (tc-context-module-id ctx))
                             (and
                               (tc-proof-reuse-session-identity-preflight-ids?
                                 left-id
@@ -105217,7 +105292,12 @@
                         ;; concrete decisions or failed checks.
                         (match result
                           [(ResultTcUnit.Ok)
-                            (record-slot generator item identity decl)]
+                            (record-slot
+                              generator
+                              item
+                              identity
+                              (tc-context-module-id ctx)
+                              decl)]
                           [(ResultTcUnit.Err _) unit])
                         result))])))]
           [(ast.AstGeneratedDeclMeta.No)

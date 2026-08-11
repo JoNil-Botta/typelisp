@@ -3136,35 +3136,6 @@
           trap-label
           (clone trap-label)))]))
 
-(define (compiler-ir-clone-instr-list-acc
-  [pools : ast.AstNodePoolContext]
-  [instrs : CompilerIrInstrList]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) acc]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-clone-instr-list-acc
-        pools
-        (__tl-box-place rest)
-        (compiler-ir-instr-cons (compiler-ir-clone-instr pools instr) acc))]))
-
-(define (compiler-ir-instr-list-reverse-onto
-  [instrs : CompilerIrInstrList]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) acc]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-list-reverse-onto
-        (__tl-box-place rest)
-        (compiler-ir-instr-cons instr acc))]))
-
-(define (compiler-ir-clone-instr-list
-  [pools : ast.AstNodePoolContext]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (compiler-ir-instr-list-reverse-onto
-    (compiler-ir-clone-instr-list-acc pools instrs CompilerIrInstrList.Nil)
-    CompilerIrInstrList.Nil))
-
 (define (compiler-ir-clone-instr-seq-fill
   [pools : ast.AstNodePoolContext]
   [src : (__tl_dyn-array CompilerIrInstr)]

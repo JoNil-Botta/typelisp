@@ -5,8 +5,7 @@
 (import compiler_object as cobj)
 (import stdlib.test)
 
-(test
-  compiler-backend-object-target-leaf-shapes
+(define (compiler-backend-object-target-leaf-shapes-test!) : unit
   (let
     [linux-image : cobj.CompilerObjectImage
       (object_linux.compiler-backend-object-target-linux-image
@@ -87,7 +86,10 @@
         "Windows leaf relocates the manifest resource"))))
 
 (test
-  compiler-backend-object-target-crt-entry-gate
+  compiler-backend-object-target-leaf-shapes
+  (compiler-backend-object-target-leaf-shapes-test!))
+
+(define (compiler-backend-object-target-crt-entry-gate-test!) : unit
   (let
     [linux-image : cobj.CompilerObjectImage
       (object_linux.compiler-backend-object-target-linux-image
@@ -126,3 +128,13 @@
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Data)))
         "Windows CRT mode omits the executable manifest symbol"))))
+
+(test
+  compiler-backend-object-target-crt-entry-gate
+  (compiler-backend-object-target-crt-entry-gate-test!))
+
+(define (compiler-backend-object-target-tests-main) : i64
+  (begin
+    (compiler-backend-object-target-leaf-shapes-test!)
+    (compiler-backend-object-target-crt-entry-gate-test!)
+    42))

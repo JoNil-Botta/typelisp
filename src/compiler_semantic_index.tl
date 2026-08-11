@@ -56,7 +56,12 @@
   (path String)
   (start-byte i64)
   (end-byte i64)
-  (source ast.AstSourceSpan))
+  (source ast.AstSourceSpan)
+  ;; LSP negotiates UTF-8 or UTF-16 character units. Retain both columns while
+  ;; the owning source is available so consumers never need to reread an
+  ;; imported definition's file merely to render its immutable location.
+  (utf16-start-col i64)
+  (utf16-end-col i64))
 
 (defstruct CompilerSemanticRecord
   (symbol CompilerSemanticSymbolId)
@@ -154,7 +159,7 @@
     ""
     ""
     0
-    (CompilerSemanticSpan "" -1 -1 (ast.ast-source-span 1 1 1 1))
+    (CompilerSemanticSpan "" -1 -1 (ast.ast-source-span 1 1 1 1) 1 1)
     false
     CompilerSemanticProvenance.EditableSource))
 
@@ -391,6 +396,61 @@
           (set! index (+ index 1))))
       (ast.ast-source-span line col line col))))
 
+(define (compiler-semantic-utf8-continuation-byte? [c : char]) : bool
+  (= (bit-and (cast c : i64) 192) 128))
+
+(define (compiler-semantic-utf16-units-for-byte [c : char]) : i64
+  (let
+    [byte : i64 (cast c : i64)]
+    (cond
+      [(compiler-semantic-utf8-continuation-byte? c) 0]
+      [(>= byte 240) 2]
+      [else 1])))
+
+;; One-based UTF-16 column at a byte offset. Scanning only the containing line
+;; keeps this metadata construction bounded by line length rather than source
+;; length for every semantic record.
+(define (compiler-semantic-source-utf16-col-at-offset
+  [source : String]
+  [target : i64]) : i64
+  (let
+    [source-len : i64 (string.string-length source)]
+    [limit : i64
+      (cond [(< target 0) 0] [(> target source-len) source-len] [else target])]
+    [line-start : i64 limit]
+    [cursor : i64 0]
+    [col : i64 1]
+    (begin
+      (while (and
+        (> line-start 0)
+        (not (= (string.string-ref source (- line-start 1)) '\n')))
+        (set! line-start (- line-start 1)))
+      (set! cursor line-start)
+      (while (< cursor limit)
+        (begin
+          (set!
+            col
+            (+
+              col
+              (compiler-semantic-utf16-units-for-byte
+                (string.string-ref source cursor))))
+          (set! cursor (+ cursor 1))))
+      col)))
+
+(define (compiler-semantic-span-from-byte-range
+  [path : String]
+  [source : String]
+  [start : i64]
+  [end : i64]
+  [source-span : ast.AstSourceSpan]) : CompilerSemanticSpan
+  (CompilerSemanticSpan
+    (string.copy (& path))
+    start
+    end
+    source-span
+    (compiler-semantic-source-utf16-col-at-offset source start)
+    (compiler-semantic-source-utf16-col-at-offset source end)))
+
 (define (compiler-semantic-delimiter? [c : char]) : bool
   (or
     (= c ' ')
@@ -598,15 +658,18 @@
         (ast.ast-source-span-end-col origin))]
     [found : i64 (compiler-semantic-name-offset-in-range source name start end)]
     (if (< found 0)
-      (CompilerSemanticSpan (string.copy (& path)) start end origin)
+      ;; Keep the owning form for diagnostics, but mark the name coordinates as
+      ;; inexact so navigation never returns a plausible-looking whole form.
+      (CompilerSemanticSpan (string.copy (& path)) start end origin -1 -1)
       (let
         [name-len : i64 (string.string-length name)]
         [position : ast.AstSourceSpan
           (compiler-semantic-source-position source found)]
         [line : i64 (ast.ast-source-span-start-line position)]
         [col : i64 (ast.ast-source-span-start-col position)]
-        (CompilerSemanticSpan
-          (string.copy (& path))
+        (compiler-semantic-span-from-byte-range
+          path
+          source
           found
           (+ found name-len)
           (ast.ast-source-span line col line (+ col name-len)))))))
@@ -707,8 +770,9 @@
           (compiler-semantic-source-position source start)]
         [end-position : ast.AstSourceSpan
           (compiler-semantic-source-position source end)]
-        (CompilerSemanticSpan
-          (string.copy (& path))
+        (compiler-semantic-span-from-byte-range
+          path
+          source
           start
           end
           (ast.ast-source-span
@@ -735,15 +799,18 @@
         (string.copy (& path))
         -1
         -1
-        (ast.ast-source-span 1 1 1 1))
+        (ast.ast-source-span 1 1 1 1)
+        -1
+        -1)
       (let
         [name-len : i64 (string.string-length name)]
         [position : ast.AstSourceSpan
           (compiler-semantic-source-position source found)]
         [line : i64 (ast.ast-source-span-start-line position)]
         [col : i64 (ast.ast-source-span-start-col position)]
-        (CompilerSemanticSpan
-          (string.copy (& path))
+        (compiler-semantic-span-from-byte-range
+          path
+          source
           found
           (+ found name-len)
           (ast.ast-source-span line col line (+ col name-len)))))))
@@ -1068,7 +1135,13 @@
       (match maybe-span
         [(CompilerSemanticMaybeSpan.Some origin)
           (if (string.eq state.source "")
-            (CompilerSemanticSpan (string.copy (& state.path)) -1 -1 origin)
+            (CompilerSemanticSpan
+              (string.copy (& state.path))
+              -1
+              -1
+              origin
+              -1
+              -1)
             (compiler-semantic-use-span-from-origin
               state.path
               state.source
@@ -1078,7 +1151,9 @@
             (string.copy (& state.path))
             -1
             -1
-            (ast.ast-source-span 1 1 1 1))])]
+            (ast.ast-source-span 1 1 1 1)
+            -1
+            -1)])]
     (match (compiler-semantic-binding-lookup state scope name-id)
       [(CompilerSemanticMaybeBinding.Some binding)
         (compiler-semantic-record-use-with-binding! state binding span)]
@@ -1127,7 +1202,9 @@
           (string.copy (& state.path))
           -1
           -1
-          (ast.ast-source-span 1 1 1 1))
+          (ast.ast-source-span 1 1 1 1)
+          -1
+          -1)
         (compiler-semantic-name-span-in-range
           state.path
           state.source
@@ -2747,7 +2824,7 @@
     [span : CompilerSemanticSpan
       (if (and site-editable (not (string.eq source "")))
         (compiler-semantic-use-span-from-origin path source source-span)
-        (CompilerSemanticSpan (string.copy (& path)) -1 -1 source-span))]
+        (CompilerSemanticSpan (string.copy (& path)) -1 -1 source-span -1 -1))]
     [editable : bool (and site-editable (>= span.start-byte 0))]
     [generator : String
       (tc.tc-macro-call-site-generator-for-state sites site-index)]
@@ -2947,7 +3024,9 @@
                                 (string.copy (& path))
                                 -1
                                 -1
-                                origin)
+                                origin
+                                -1
+                                -1)
                               (compiler-semantic-definition-span
                                 path
                                 cached-source
@@ -2978,7 +3057,9 @@
                                 (string.copy (& path))
                                 -1
                                 -1
-                                (ast.ast-source-span 1 1 1 1)))])]
+                                (ast.ast-source-span 1 1 1 1)
+                                -1
+                                -1))])]
                       [symbol : CompilerSemanticSymbolId
                         (compiler-semantic-symbol-for-decl
                           decl-ctx
@@ -3227,9 +3308,9 @@
               (match record.provenance
                 [(CompilerSemanticProvenance.EditableSource) true]
                 [_ false])
-              (string.eq (& span.path) wanted-path)
               (>= byte-position start)
               (< byte-position end)
+              (string.eq (& span.path) wanted-path)
               (< width found-width))
               (begin
                 (set! found record-index)

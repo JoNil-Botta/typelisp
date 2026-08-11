@@ -2,8 +2,12 @@
   "exit": 0,
   "stderr_exact": "",
   "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "\"target\":\"${{TMP_URI}}/feature/util.tl\"", "raw_contains": "\"line\":0", "raw_contains": "\"character\":8", "raw_contains": "\"character\":20"},
+    {"jsonpath_id": 2, "raw_contains": "\"target\":\"${{TMP_URI}}/feature/util.tl\"", "raw_contains": "\"target\":\"${{TMP_URI}}/feature/other.tl\""},
     {"jsonpath_id": 3, "raw_contains": "\"uri\":\"${{TMP_URI}}/feature/util.tl\"", "raw_contains": "\"line\":0", "raw_contains": "\"character\":0"},
-    {"jsonpath_id": 4, "raw_contains": "\"uri\":\"${{TMP_URI}}/feature/util.tl\"", "raw_contains": "\"line\":1", "raw_contains": "\"character\":8"}
+    {"jsonpath_id": 4, "raw_contains": "\"uri\":\"${{TMP_URI}}/feature/util.tl\"", "raw_contains": "\"range\":{\"start\":{\"line\":2,\"character\":8},\"end\":{\"line\":2,\"character\":13}}"},
+    {"jsonpath_id": 5, "raw_contains": "\"uri\":\"${{TMP_URI}}/feature/other.tl\"", "raw_contains": "\"range\":{\"start\":{\"line\":2,\"character\":8},\"end\":{\"line\":2,\"character\":13}}"},
+    {"jsonpath_id": 6, "raw_contains": "value : i64", "raw_contains": "Imported value documentation.", "raw_contains": "\"range\":{\"start\":{\"line\":2,\"character\":24},\"end\":{\"line\":2,\"character\":34}}"},
+    {"jsonpath_id": 7, "raw_contains": "value : i64", "raw_contains": "Other value documentation.", "raw_contains": "\"range\":{\"start\":{\"line\":2,\"character\":35},\"end\":{\"line\":2,\"character\":46}}"},
+    {"jsonpath_id": 8, "json_contains": "\"result\":null", "jsonpath_result": null}
   ]
 }

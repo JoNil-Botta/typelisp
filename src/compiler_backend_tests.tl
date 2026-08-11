@@ -5330,6 +5330,94 @@
       (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
     ok))
 
+;; Tail-call dispatcher shape. A multi-arm dispatch whose every arm is a TAIL
+;; CALL contains no instruction control ever returns from, so no value in it has
+;; to survive anything: the four parameters must keep their incoming argument
+;; registers and the function must save NO callee-saved register at all. Before
+;; tail calls were removed from the allocator's clobber-point set (kind 6,
+;; compiler-reg-clobber-instr-kind?) each parameter's coarse interval hull
+;; covered the sibling arms' tail calls, so all four were homed in %r12-%r15 and
+;; every invocation paid four pushes, four entry copies and four pops.
+;;
+;; Arm 1 marshals (k, y, x): %rdi keeps k while %rsi and %rdx must SWAP. That is
+;; a true 2-cycle for the argument parallel move
+;; (compiler-backend-emit-arg-move-list), which only exists once the parameters
+;; live in argument registers -- so this fixture is also the cycle-break
+;; regression test. `keep4` takes the dispatcher as a value so the optimizer
+;; cannot inline the whole thing away.
+(define compiler-backend-tail-dispatch-source : String
+  "(define (tc-arm-a [a : i64] [b : i64] [c : i64]) : i64
+  (+ (* a 3) (+ (* b 5) (* c 7))))
+(define (tc-arm-b [a : i64] [b : i64] [c : i64]) : i64
+  (- (* a 11) (+ (* b 13) (* c 17))))
+(define (tc-arm-c [a : i64] [b : i64] [c : i64]) : i64
+  (+ (* a 19) (- (* b 23) (* c 29))))
+(define (tc-dispatch [k : i64] [x : i64] [y : i64] [z : i64]) : i64
+  (if (= k 0)
+    (tc-arm-a x y z)
+    (if (= k 1)
+      (tc-arm-b k y x)
+      (if (= k 2)
+        (tc-arm-c z x y)
+        (tc-arm-a z y x)))))
+(define (keep4 [f : (-> i64 i64 i64 i64 i64)]) : i64 0)
+(define (main) : i64 (keep4 tc-dispatch))")
+
+(define (compiler-backend-tail-dispatch-no-csr-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (string.copy (& compiler-backend-tail-dispatch-source))
+    (compiler_backend.CompilerBackendTarget.Linux))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_tc_dispatch")]
+        (and
+          (not (string.eq body ""))
+          ;; No callee-saved register is saved OR restored: the plan's CSR set is
+          ;; empty, so the tail-jump tail (compiler-backend-tail-jump-tail, which
+          ;; derives its restores from that same plan) emits none either.
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    pushq "))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    popq "))
+          ;; The parameters are read straight out of their incoming ABI registers
+          ;; instead of being copied to callee-saved homes in the prologue.
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    testq %rdi, %rdi\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    movq %rdi, %r12\n"))
+          ;; Arm 1's %rsi/%rdx 2-cycle is broken through a scratch register
+          ;; instead of being emitted as two moves that overwrite a source
+          ;; before it is read: %rdx is staged into %r9, %rsi lands in %rdx, and
+          ;; the staged copy lands in %rsi.
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    movq %rdx, %r9\n")
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    movq %rsi, %rdx\n")
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    movq %r9, %rsi\n")
+          ;; Every arm still leaves through a jmp, not a call/ret pair.
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    jmp _tl_tc_arm_a\n")
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    jmp _tl_tc_arm_b\n")
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    jmp _tl_tc_arm_c\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-shifted-loop-bound-win64-ok?) : bool
   (let
     [ok : bool
@@ -43742,6 +43830,7 @@ b_keep:
         (compiler-backend-regalloc-ok?)
         (compiler-backend-call-save-r9-wrap-ok?)
         (compiler-backend-shifted-loop-bound-win64-ok?)
+        (compiler-backend-tail-dispatch-no-csr-ok?)
         (compiler-backend-fusion-pin-store-fusion-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)

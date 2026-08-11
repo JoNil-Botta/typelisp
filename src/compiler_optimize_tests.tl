@@ -9326,6 +9326,603 @@
         4]
       [else 42])))
 
+;; --- rule (a): a dominating fact decides a dominated compare -----------------
+;;
+;; The probes below drive `opt-dom-cmp-lookup` with a single fact in scope and
+;; read its verdict as 0 unknown / 1 true / 2 false, which is exactly the
+;; implication algebra without any CFG plumbing around it. The fixture after
+;; them covers the two properties the algebra cannot see on its own: a fact is
+;; only recorded for an operand the function defines once, and a bounds check an
+;; equal-or-stronger dominating check subsumes is deleted.
+(define (opt-rule-a-fact
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [value : bool]) : compiler_optimize.OptDomCmpFacts
+  (compiler_optimize.OptDomCmpFacts.Cons
+    (compiler_optimize.OptDomCmpFact.Fact op lhs rhs ty value 0)
+    (box (compiler_optimize.OptDomCmpFacts.Nil))))
+
+(define (opt-rule-a-probe
+  [fact-op : compiler_ir_types.CompilerIrBinOp]
+  [fact-lhs : compiler_ir_types.CompilerIrValue]
+  [fact-rhs : compiler_ir_types.CompilerIrValue]
+  [fact-ty : compiler_ast_types.AstType]
+  [fact-value : bool]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]) : i64
+  (match (compiler_optimize.opt-dom-cmp-lookup
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-rule-a-fact fact-op fact-lhs fact-rhs fact-ty fact-value)
+    op
+    lhs
+    rhs
+    ty)
+    [(compiler_optimize.OptDomCmpLookup.No) 0]
+    [(compiler_optimize.OptDomCmpLookup.Some decided)
+      (if decided
+        1
+        2)]))
+
+(define (opt-rule-a-var) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var 1))
+
+(define (opt-rule-a-other) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var 2))
+
+(define (opt-rule-a-lit [value : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.I64 value))
+
+;; Operator and type shorthands: the qualified constructors are what make a
+;; probe list unreadable, and every probe below needs several.
+(define (opt-rule-a-lt) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Lt))
+
+(define (opt-rule-a-le) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Le))
+
+(define (opt-rule-a-gt) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Gt))
+
+(define (opt-rule-a-ge) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Ge))
+
+(define (opt-rule-a-ne) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Ne))
+
+(define (opt-rule-a-i64) : compiler_ast_types.AstType
+  (compiler_ast_types.AstType.I64))
+
+;; `v <fact-op> fact-k` decides `v <op> k`, both compares read in `ty`.
+(define (opt-rule-a-typed-probe
+  [fact-op : compiler_ir_types.CompilerIrBinOp]
+  [fact-k : i64]
+  [fact-value : bool]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [k : i64]
+  [ty : compiler_ast_types.AstType]) : i64
+  (opt-rule-a-probe
+    fact-op
+    (opt-rule-a-var)
+    (opt-rule-a-lit fact-k)
+    ty
+    fact-value
+    op
+    (opt-rule-a-var)
+    (opt-rule-a-lit k)
+    ty))
+
+(define (opt-rule-a-lit-probe
+  [fact-op : compiler_ir_types.CompilerIrBinOp]
+  [fact-k : i64]
+  [fact-value : bool]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [k : i64]) : i64
+  (opt-rule-a-typed-probe fact-op fact-k fact-value op k (opt-rule-a-i64)))
+
+;; The first failing case wins: once `previous` is non-zero it is carried
+;; through unchanged, so the returned code names the EARLIEST mismatch.
+(define (opt-rule-a-step [previous : i64] [code : i64] [got : i64] [want : i64]) : i64
+  (if (!= previous 0)
+    previous
+    (if (= got want)
+      0
+      code)))
+
+(define (compiler-optimize-dom-cmp-rule-a-self-test) : i64
+  (let
+    [fail : i64 0]
+    (begin
+      ;; (a) the identical compare, and its exact negation, still decide.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          1
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-lt) 3)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          2
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 false (opt-rule-a-lt) 3)
+          2))
+      ;; same operands, weaker operator: `i < 3` gives `i <= 3` and `i != 3`,
+      ;; and refutes `i >= 3`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          3
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-le) 3)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          4
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-ne) 3)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          5
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-ge) 3)
+          2))
+      ;; `i > 0` decides `i >= 0`; `i >= 0` does NOT decide `i > 0`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          6
+          (opt-rule-a-lit-probe (opt-rule-a-gt) 0 true (opt-rule-a-ge) 0)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          7
+          (opt-rule-a-lit-probe (opt-rule-a-ge) 0 true (opt-rule-a-gt) 0)
+          0))
+      ;; (b) a weaker literal: `i < 3` decides `i < 5`, and decides `i <= 2`
+      ;; through the immediate-successor step.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          8
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-lt) 5)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          9
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-le) 2)
+          1))
+      ;; `i > 0` decides `i >= 1` (the successor step the other way round).
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          10
+          (opt-rule-a-lit-probe (opt-rule-a-gt) 0 true (opt-rule-a-ge) 1)
+          1))
+      ;; `i >= 3` refutes `i < 2` and decides nothing about `i < 4`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          11
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 false (opt-rule-a-lt) 2)
+          2))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          12
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 false (opt-rule-a-lt) 4)
+          0))
+      ;; (d) the weaker literal only travels one way: `i < 5` says nothing
+      ;; about `i < 3`, and a fact about another var never matches.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          13
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 5 true (opt-rule-a-lt) 3)
+          0))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          14
+          (opt-rule-a-probe
+            (opt-rule-a-lt)
+            (opt-rule-a-var)
+            (opt-rule-a-lit 3)
+            (opt-rule-a-i64)
+            true
+            (opt-rule-a-lt)
+            (opt-rule-a-other)
+            (opt-rule-a-lit 5)
+            (opt-rule-a-i64))
+          0))
+      ;; two non-literal operands still decide through operand identity, in
+      ;; either order: `i < n` refutes `n <= i`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          15
+          (opt-rule-a-probe
+            (opt-rule-a-lt)
+            (opt-rule-a-var)
+            (opt-rule-a-other)
+            (opt-rule-a-i64)
+            true
+            (opt-rule-a-le)
+            (opt-rule-a-other)
+            (opt-rule-a-var)
+            (opt-rule-a-i64))
+          2))
+      ;; (f) the literals are ordered in the FACT'S OWN type. Unsigned `i < 5`
+      ;; decides `i < 0xffffffffffffffff`; the signed reading of the same two
+      ;; literals puts `-1` BELOW `5`, where `i < 5` decides nothing.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          16
+          (opt-rule-a-typed-probe
+            (opt-rule-a-lt)
+            5
+            true
+            (opt-rule-a-lt)
+            (- 0 1)
+            (compiler_ast_types.AstType.U64))
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          17
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 5 true (opt-rule-a-lt) (- 0 1))
+          0))
+      ;; (f) a fact in one type never decides a compare in another.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          18
+          (opt-rule-a-probe
+            (opt-rule-a-lt)
+            (opt-rule-a-var)
+            (opt-rule-a-lit 3)
+            (compiler_ast_types.AstType.U64)
+            true
+            (opt-rule-a-lt)
+            (opt-rule-a-var)
+            (opt-rule-a-lit 3)
+            (opt-rule-a-i64))
+          0))
+      ;; (f) the successor step refuses at the type's maximum, where `k + 1`
+      ;; would wrap; the plain order still decides this one.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          19
+          (opt-rule-a-typed-probe
+            (opt-rule-a-gt)
+            127
+            true
+            (opt-rule-a-gt)
+            (- 0 128)
+            (compiler_ast_types.AstType.I8))
+          1))
+      ;; The transitive step: `i < n` and `n <= len` decide `i < len`, which
+      ;; neither fact names both operands of.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          20
+          (opt-rule-a-chain-probe (opt-rule-a-le) (opt-rule-a-lt))
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          21
+          (opt-rule-a-chain-probe (opt-rule-a-le) (opt-rule-a-le))
+          1))
+      ;; Two non-strict steps give only `i <= len`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          22
+          (opt-rule-a-chain-probe-op
+            (opt-rule-a-le)
+            (opt-rule-a-le)
+            (opt-rule-a-lt))
+          0))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          23
+          (opt-rule-a-chain-probe-op
+            (opt-rule-a-le)
+            (opt-rule-a-le)
+            (opt-rule-a-le))
+          1))
+      ;; A step in the WRONG direction chains nothing: `n >= len` leaves
+      ;; `i < len` open.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          24
+          (opt-rule-a-chain-probe (opt-rule-a-ge) (opt-rule-a-lt))
+          0))
+      (if (= fail 0)
+        42
+        fail))))
+
+;; `i <head-op> n` from one fact and `n <mid-op> len` from another, queried as
+;; `i <op> len` -- the shape a versioned loop leaves behind, where the header
+;; bounds the counter and the entry guard bounds the bound. Var 1 is `i`,
+;; var 2 is `n`, var 3 is `len`.
+(define (opt-rule-a-chain-probe-op
+  [head-op : compiler_ir_types.CompilerIrBinOp]
+  [mid-op : compiler_ir_types.CompilerIrBinOp]
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (match (compiler_optimize.opt-dom-cmp-lookup-chained
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.OptDomCmpFacts.Cons
+      (compiler_optimize.OptDomCmpFact.Fact
+        head-op
+        (opt-rule-a-var)
+        (opt-rule-a-other)
+        (opt-rule-a-i64)
+        true
+        0)
+      (box (opt-rule-a-chain-tail-facts mid-op)))
+    op
+    (opt-rule-a-var)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (opt-rule-a-i64))
+    [(compiler_optimize.OptDomCmpLookup.No) 0]
+    [(compiler_optimize.OptDomCmpLookup.Some decided)
+      (if decided
+        1
+        2)]))
+
+(define (opt-rule-a-chain-tail-facts
+  [mid-op : compiler_ir_types.CompilerIrBinOp]) : compiler_optimize.OptDomCmpFacts
+  (compiler_optimize.OptDomCmpFacts.Cons
+    (compiler_optimize.OptDomCmpFact.Fact
+      mid-op
+      (opt-rule-a-other)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (opt-rule-a-i64)
+      true
+      0)
+    (box (compiler_optimize.OptDomCmpFacts.Nil))))
+
+;; `i < n` chained through `n <mid-op> len`, queried as `i <op> len`.
+(define (opt-rule-a-chain-probe
+  [mid-op : compiler_ir_types.CompilerIrBinOp]
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (opt-rule-a-chain-probe-op (opt-rule-a-lt) mid-op op))
+
+;; Rule (a) at CFG scope. `entry` branches on `idx < 3`; the true arm re-tests
+;; the weaker `idx < 5` (folded) and checks `(idx, 8)`, which the dominating
+;; `(idx, 4)` check subsumes -- 4 <= 8 and the passed check proves the index
+;; nonnegative -- while `(idx, 2)` is not subsumed and stays. The false arm's
+;; `idx >= 3` decides nothing about `idx < 5`, so that copy survives.
+(define (opt-rule-a-cfg-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "idx"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-rule-a-cfg-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          1
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "hit")
+            (compiler_ir_types.compiler-ir-label "miss"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "hit")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            2
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 4)
+              (compiler_ir_types.compiler-ir-label "h_ok"))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 8)
+                (compiler_ir_types.compiler-ir-label "h2_ok"))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.CompilerIrValue.I64 2)
+                  (compiler_ir_types.compiler-ir-label "h3_ok"))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "join"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "miss")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; (c) The same shape with the compared operand REDEFINED. `n` is written in
+;; two places, so it is not a single-source var and the guard's fact about it
+;; is never recorded -- the dominated re-test must survive untouched.
+(define (opt-rule-a-redef-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            2
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (compiler_ir_types.compiler-ir-label "join"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "hit")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.I64 9)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.I64 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "join")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 1)))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-rule-a-count-compares-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-rule-a-count-compares-seq
+      instrs
+      (+ index 1)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ _ _) (+ acc 1)]
+        [_ acc]))))
+
+(define (opt-rule-a-count-compares
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-rule-a-count-compares-seq instrs 0 0)
+            (opt-rule-a-count-compares (deref rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-rule-a-count-compares
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-rule-a-run
+  [params : compiler_ir_types.CompilerIrParamList]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-bounds-dom-blocks-with-context
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    params
+    8
+    blocks))
+
+(define (compiler-optimize-dom-cmp-rule-a-cfg-self-test) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList (opt-rule-a-cfg-blocks)]
+    [after-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-rule-a-run (opt-rule-a-cfg-params) blocks)]
+    [redef : compiler_ir_types.CompilerIrBlockList (opt-rule-a-redef-blocks)]
+    [after-redef : compiler_ir_types.CompilerIrBlockList
+      (opt-rule-a-run (compiler_ir_types.CompilerIrParamList.Nil) redef)]
+    (cond
+      [(not (= (compiler_optimize.opt-count-bounds-blocks blocks) 3)) 1]
+      [(not (= (opt-rule-a-count-compares blocks) 3)) 2]
+      ;; (e) kept: the dominating `(idx, 4)` check and the unsubsumed
+      ;; `(idx, 2)`. dropped: `(idx, 8)`, which `(idx, 4)` subsumes.
+      [(not (= (compiler_optimize.opt-count-bounds-blocks after-blocks) 2)) 3]
+      ;; (b) folded: `idx < 5` on the true arm. kept: the branch's own compare
+      ;; and the false arm's copy, which `idx >= 3` does not decide.
+      [(not (= (opt-rule-a-count-compares after-blocks) 2)) 4]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count after-blocks) 4))
+        5]
+      [(not (compiler_optimize.opt-cfg-successor-targets-known? after-blocks))
+        6]
+      ;; (c) nothing folds when the compared operand is redefined between.
+      [(not (= (opt-rule-a-count-compares redef) 2)) 7]
+      [(not (= (opt-rule-a-count-compares after-redef) 2)) 8]
+      [else 42])))
+
 (define (compiler-optimize-bounds-self-test) : i64
   (let
     [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]

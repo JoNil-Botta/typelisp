@@ -10584,7 +10584,7 @@
   "(define (lambda-body-discard [s : String]) : String
   (begin (lambda () : unit (let [t : String s] unit)) s))")
 
-(define (compiler-typecheck-move-owner-lambda-capture-box-ok-source) : String
+(define (compiler-typecheck-move-owner-lambda-capture-box-return-source) : String
   "(define (owner-lambda-capture-box-ok [cell : (Box i64)]) : (-> i64)
   (lambda () : i64 (deref cell)))")
 
@@ -11586,8 +11586,9 @@
         "typecheck: closure capability would be erased by escaping the direct local binding")
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-move-owner-lambda-capture-box-ok-source))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-lambda-capture-box-return-source)
+        "typecheck: non-Copy closure ownership would be erased by escaping the direct local binding")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

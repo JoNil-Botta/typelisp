@@ -170,6 +170,58 @@
         (set! g f)
         (g)))))")
 
+(define (compiler-typecheck-closure-copy-aggregate-source) : String
+  "(defstruct Pair
+  (left i64)
+  (right i64))
+(define (named) : i64 1)
+(define (main [x : i64]) : i64
+  (let
+    [pair : Pair (Pair 40 2)]
+    [fn-value : (-> i64) named]
+    [f : (-> i64)
+      (lambda () : i64
+        (+ x (+ pair.left (fn-value))))]
+    [copy : (-> i64) f]
+    (+ (f) (copy))))")
+
+(define (compiler-typecheck-closure-copy-reference-source) : String
+  "(define (read [r : (& n i64)]) : i64 1)
+(define (main [x : i64]) : i64
+  (let
+    [r : (& x i64) (& x)]
+    [f : (-> i64) (lambda () : i64 (read r))]
+    [copy : (-> i64) f]
+    (+ (f) (copy))))")
+
+(define (compiler-typecheck-closure-copy-reference-escape-source) : String
+  "(define (read [r : (& n i64)]) : i64 1)
+(define (main [x : i64]) : (-> i64)
+  (let
+    [r : (& x i64) (& x)]
+    [f : (-> i64) (lambda () : i64 (read r))]
+    [copy : (-> i64) f]
+    copy))")
+
+(define (compiler-typecheck-closure-move-owner-alias-source) : String
+  "(import stdlib.string)
+(define (main) : i64
+  (let
+    [owned : String \"captured\"]
+    [f : (-> i64) (lambda () : i64 (string.string-length owned))]
+    [moved : (-> i64) f]
+    (+ (moved) (f))))")
+
+(define (compiler-typecheck-closure-move-nested-alias-source) : String
+  "(import stdlib.string)
+(define (main) : i64
+  (let
+    [owned : String \"captured\"]
+    [inner : (-> i64) (lambda () : i64 (string.string-length owned))]
+    [outer : (-> i64) (lambda () : i64 (inner))]
+    [moved : (-> i64) outer]
+    (+ (moved) (outer))))")
+
 (define (compiler-typecheck-reference-lambda-inner-arena-return-source) : String
   "(define (read [r : (& n i64)]) : i64 42)
 (define (main) : (-> i64)
@@ -1321,6 +1373,22 @@
     (compiler_typecheck.compiler-typecheck-ok?
       (compiler-typecheck-closure-owner-read-repeat-source))))
 
+(define (compiler-typecheck-closure-copy-tests-ok?) : bool
+  (and
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-closure-copy-aggregate-source))
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-closure-copy-reference-source))
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-closure-copy-reference-escape-source)
+      "typecheck: reference-capturing closure value would escape lexical scope")
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-closure-move-owner-alias-source)
+      "typecheck: use of moved value `f`")
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-closure-move-nested-alias-source)
+      "typecheck: use of moved value `outer`")))
+
 (define (compiler-typecheck-reference-escape-tests-ok?) : bool
   (and
     (compiler_typecheck.compiler-typecheck-ok?
@@ -1346,6 +1414,7 @@
       (compiler-typecheck-reference-lambda-capture-source)
       "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
     (compiler-typecheck-reference-lambda-capture-tests-ok?)
+    (compiler-typecheck-closure-copy-tests-ok?)
     (compiler-typecheck-reference-return-container-tests-ok?)
     (compiler-typecheck-reference-dyn-array-tests-ok?)
     (compiler-typecheck-signature-lifetime-alias-tests-ok?)
@@ -5269,6 +5338,32 @@
   (unless
     (compiler-typecheck-auto-borrow-tests-ok?)
     (io.panic "typecheck: auto-borrow call diagnostic inline test failed")))
+
+(test
+  compiler-typecheck-closure-copy
+  (unless
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-closure-copy-aggregate-source))
+    (io.panic "typecheck: Copy aggregate closure alias failed"))
+  (unless
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-closure-copy-reference-source))
+    (io.panic "typecheck: Copy reference closure alias failed"))
+  (unless
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-closure-copy-reference-escape-source)
+      "typecheck: reference-capturing closure value would escape lexical scope")
+    (io.panic "typecheck: copied reference closure escaped"))
+  (unless
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-closure-move-owner-alias-source)
+      "typecheck: use of moved value `f`")
+    (io.panic "typecheck: non-Copy closure source reuse passed"))
+  (unless
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-closure-move-nested-alias-source)
+      "typecheck: use of moved value `outer`")
+    (io.panic "typecheck: nested non-Copy closure source reuse passed")))
 
 (test
   compiler-typecheck-proof-reuse-exact-walker

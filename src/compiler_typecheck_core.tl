@@ -1148,6 +1148,11 @@
   (type-fact-index (__tl_dyn-array i64))
   (type-fact-expr-ids (__tl_dyn-array i64))
   (type-fact-types (__tl_dyn-array ast.AstType))
+  ;; Parallel to type-fact-types. Zero means no checker-only concrete closure
+  ;; fact has been computed for this expression; encoded facts start at 16.
+  ;; Move analysis populates a lambda body slot once, and the later borrow and
+  ;; tail-escape walks reuse it instead of recursively rechecking the lambda.
+  (type-fact-closure-codes (__tl_dyn-array i64))
   (type-fact-count i64)
   (type-fact-storage-arena i64)
   (type-fact-enclosing-arena i64)
@@ -1394,6 +1399,7 @@
           (array.make-array i64 1)
           (array.make-array i64 1)
           (array.make-array ast.AstType 1)
+          (array.make-array i64 1)
           0
           0
           0
@@ -1599,6 +1605,7 @@
         (set! data.type-fact-index (array.make-array i64 1))
         (set! data.type-fact-expr-ids (array.make-array i64 1))
         (set! data.type-fact-types (array.make-array ast.AstType 1))
+        (set! data.type-fact-closure-codes (array.make-array i64 1))
         (set! data.type-fact-storage-arena 0)
         (set! data.type-fact-enclosing-arena 0)
         (set! data.type-fact-count 0)
@@ -1637,6 +1644,9 @@
               (array.make-array
                 ast.AstType
                 (tc-body-type-fact-initial-capacity)))
+            (set!
+              data.type-fact-closure-codes
+              (array.make-array i64 (tc-body-type-fact-initial-capacity)))
             (set! data.type-fact-storage-arena (arena.tl_arena_current))
             (set! data.type-fact-count 0)
             (tc-body-state-data-set! state data)
@@ -1645,8 +1655,10 @@
 
 (define (tc-body-type-fact-grow-copy!
   [dst-types : (__tl_dyn-array ast.AstType)]
+  [dst-closure-codes : (__tl_dyn-array i64)]
   [dst-expr-ids : (__tl_dyn-array i64)]
   [src-types : (__tl_dyn-array ast.AstType)]
+  [src-closure-codes : (__tl_dyn-array i64)]
   [src-expr-ids : (__tl_dyn-array i64)]
   [count : i64]
   [index : i64]) : unit
@@ -1655,6 +1667,7 @@
     (while (< i count)
       (begin
         (set! (array-ref dst-types i) (array.ref src-types i))
+        (set! (array-ref dst-closure-codes i) (array.ref src-closure-codes i))
         (set! (array-ref dst-expr-ids i) (array.ref src-expr-ids i))
         (set! i (+ i 1))))))
 
@@ -1662,6 +1675,7 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     [old-types : (__tl_dyn-array ast.AstType) data.type-fact-types]
+    [old-closure-codes : (__tl_dyn-array i64) data.type-fact-closure-codes]
     [old-expr-ids : (__tl_dyn-array i64) data.type-fact-expr-ids]
     [old-cap : i64 (array.length old-types)]
     [new-cap : i64
@@ -1675,16 +1689,21 @@
       (let
         [next-types : (__tl_dyn-array ast.AstType)
           (array.make-array ast.AstType new-cap)]
+        [next-closure-codes : (__tl_dyn-array i64)
+          (array.make-array i64 new-cap)]
         [next-expr-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         (begin
           (tc-body-type-fact-grow-copy!
             next-types
+            next-closure-codes
             next-expr-ids
             old-types
+            old-closure-codes
             old-expr-ids
             data.type-fact-count
             0)
           (set! data.type-fact-types next-types)
+          (set! data.type-fact-closure-codes next-closure-codes)
           (set! data.type-fact-expr-ids next-expr-ids)
           (set! data.type-fact-storage-arena (arena.tl_arena_current))
           (tc-body-state-data-set! state data)
@@ -1781,6 +1800,7 @@
               [ready : TcBodyStateData (tc-body-state-data-value state)]
               (begin
                 (set! (array-ref ready.type-fact-types slot) ty)
+                (set! (array-ref ready.type-fact-closure-codes slot) 0)
                 (set! (array-ref ready.type-fact-expr-ids slot) expr-id)
                 (set! (array-ref ready.type-fact-index expr-id) (+ slot 1))
                 (set! ready.type-fact-count (+ slot 1))
@@ -1797,6 +1817,36 @@
           (TcBodyTypeFact.Hit (array.ref data.type-fact-types slot))
           (TcBodyTypeFact.Miss)))
       (TcBodyTypeFact.Miss))))
+
+;; Concrete closure facts use the same per-body slot index as inferred types.
+;; They are written during the move pass, while type facts are being consumed,
+;; and remain available to the immediately following borrow pass. Lambda body
+;; ids synthesized after source typecheck simply miss and retain the
+;; conservative recomputation path.
+(define (tc-body-closure-fact-code [state : TcBodyState] [body-id : i64]) : i64
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    [slot : i64 (tc-body-type-fact-slot state body-id)]
+    (if (and
+      data.type-facts-consuming
+      (>= slot 0)
+      (< slot data.type-fact-count))
+      (array.ref data.type-fact-closure-codes slot)
+      0)))
+
+(define (tc-body-closure-fact-record!
+  [state : TcBodyState]
+  [body-id : i64]
+  [code : i64]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    [slot : i64 (tc-body-type-fact-slot state body-id)]
+    (if (and
+      data.type-facts-consuming
+      (>= slot 0)
+      (< slot data.type-fact-count))
+      (set! (array-ref data.type-fact-closure-codes slot) code)
+      unit)))
 
 (define (tc-body-state-type-fact-i64-hit? [state : TcBodyState] [expr-id : i64]) : bool
   (match (tc-body-type-fact-lookup state expr-id)
@@ -40453,12 +40503,12 @@
             (tc-lambda-captures-reference? expr-bases env params body))])]
     [_ false]))
 
-;; Closure call capability is deliberately not part of AstType.Func: only a
-;; literal and the direct local binding that receives it may retain the fact.
-;; The move checker computes the capability from the literal's captures/body;
-;; this early query lets the ordinary let escape proof fail closed before a
-;; consuming closure can be widened to a plain function value.
-(define (tc-consuming-capturing-lambda-init?
+;; Concrete closure facts are deliberately not part of AstType.Func: literals
+;; and fact-preserving local aliases may retain them, while wider value flows
+;; fail closed when they would erase required ownership or lifetime facts. The
+;; move checker computes the capability from the literal's captures/body; this
+;; early query lets the ordinary let escape proof reject unsafe widening.
+(define (tc-move-only-capturing-lambda-init?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [init : ast.AstExpr]) : bool
@@ -40470,12 +40520,23 @@
             [expr-bases : i64 (tc-context-expr-bases ctx)]
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (and
-              (tc-lambda-capture-has-move-only? ctx expr-bases env params body)
-              (=
-                (tc-lambda-call-capability ctx env params body-box)
-                (tc-closure-call-capability-once))))])]
+            (tc-lambda-capture-has-move-only? ctx expr-bases env params body))])]
     [_ false]))
+
+(define (tc-consuming-capturing-lambda-init?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [init : ast.AstExpr]) : bool
+  (and
+    (tc-move-only-capturing-lambda-init? ctx env init)
+    (match (ast.ast-expr-unspan init)
+      [(ast.AstExpr.Lambda lambda-box)
+        (match (__tl-box-place lambda-box)
+          [(ast.AstLambda.Lambda params _ body-box)
+            (=
+              (tc-lambda-call-capability ctx env params body-box)
+              (tc-closure-call-capability-once))])]
+      [_ false])))
 
 (define (tc-ref-closure-expr-list-local-uses-ok?
   [expr-bases : i64]
@@ -40550,6 +40611,7 @@
   [body : ast.AstExpr]
   [name : String]
   [bound : TcStringList]
+  [allow-copy-alias : bool]
   [index : i64]) : bool
   (if (>= index (ast.ast-let-binding-list-len bindings))
     (tc-ref-closure-local-uses-ok? expr-bases body name bound)
@@ -40561,15 +40623,59 @@
         (let
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
-          (and
-            (tc-ref-closure-local-uses-ok? expr-bases init name bound)
-            (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
-              expr-bases
-              bindings
-              body
-              name
-              (tc-string-list-add bound (ci.intern-str bind-name))
-              (+ index 1))))])))
+          [bind-name-text : String (tc-env-key-name-text bind-name)]
+          [direct-copy-alias : bool
+            (and
+              allow-copy-alias
+              (match (ast.ast-expr-unspan init)
+                [(ast.AstExpr.Var source-name)
+                  (and
+                    (string.eq (tc-env-key-name-text source-name) name)
+                    (not (tc-string-list-contains bound name)))]
+                [_ false]))]
+          [nested-fact-capture : bool
+            (and
+              allow-copy-alias
+              (match (ast.ast-expr-unspan init)
+                [(ast.AstExpr.Lambda lambda-box)
+                  (match (__tl-box-place lambda-box)
+                    [(ast.AstLambda.Lambda params _ lambda-body-box)
+                      (tc-expr-uses-free-name?
+                        expr-bases
+                        (ast.ast-expr-segment-bases-get
+                          expr-bases
+                          lambda-body-box)
+                        name
+                        (tc-param-list-add-bound-names params bound))])]
+                [_ false]))]
+          (if (or direct-copy-alias nested-fact-capture)
+            (and
+              (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+                expr-bases
+                bindings
+                body
+                bind-name-text
+                TcStringList.Nil
+                true
+                (+ index 1))
+              (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+                expr-bases
+                bindings
+                body
+                name
+                (tc-string-list-add bound (ci.intern-str bind-name))
+                true
+                (+ index 1)))
+            (and
+              (tc-ref-closure-local-uses-ok? expr-bases init name bound)
+              (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+                expr-bases
+                bindings
+                body
+                name
+                (tc-string-list-add bound (ci.intern-str bind-name))
+                allow-copy-alias
+                (+ index 1)))))])))
 
 (define (tc-ref-closure-resource-binding-list-local-uses-ok?
   [expr-bases : i64]
@@ -41177,18 +41283,23 @@
 (define (tc-capability-closure-escape-message) : String
   "typecheck: closure capability would be erased by escaping the direct local binding")
 
+(define (tc-move-closure-escape-message) : String
+  "typecheck: non-Copy closure ownership would be erased by escaping the direct local binding")
+
 (define (tc-let-binding-ref-closure-scope-ok-at
   [expr-bases : i64]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]
   [body : ast.AstExpr]
-  [name : String]) : ResultTcUnit
+  [name : String]
+  [allow-copy-alias : bool]) : ResultTcUnit
   (if (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
     expr-bases
     bindings
     body
     name
     TcStringList.Nil
+    allow-copy-alias
     index)
     ResultTcUnit.Ok
     (ResultTcUnit.Err (tc-reference-closure-escape-message))))
@@ -41205,9 +41316,27 @@
     body
     name
     TcStringList.Nil
+    false
     index)
     ResultTcUnit.Ok
     (ResultTcUnit.Err (tc-capability-closure-escape-message))))
+
+(define (tc-let-binding-move-closure-scope-ok-at
+  [expr-bases : i64]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [index : i64]
+  [body : ast.AstExpr]
+  [name : String]) : ResultTcUnit
+  (if (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+    expr-bases
+    bindings
+    body
+    name
+    TcStringList.Nil
+    true
+    index)
+    ResultTcUnit.Ok
+    (ResultTcUnit.Err (tc-move-closure-escape-message))))
 
 ;; --------------------------------------------------------------------------
 ;; Inferred-type hint collection (used by the LSP for inlay hints).
@@ -41454,28 +41583,47 @@
     [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
     [ref-capturing-lambda : bool
       (tc-ref-capturing-lambda-init? expr-bases env init)]
+    [copyable-ref-capturing-lambda : bool
+      (and
+        ref-capturing-lambda
+        (not (tc-move-only-capturing-lambda-init? ctx env init)))]
+    [move-only-capturing-lambda : bool
+      (tc-move-only-capturing-lambda-init? ctx env init)]
     [consuming-capturing-lambda : bool
       (tc-consuming-capturing-lambda-init? ctx env init)]
     [capability-capturing-lambda : bool
-      (or ref-capturing-lambda consuming-capturing-lambda)]
+      (or
+        ref-capturing-lambda
+        move-only-capturing-lambda
+        consuming-capturing-lambda)]
     (match maybe-ty
       [(ast.AstMaybeType.Some want)
         (let
           [resolved-want : ast.AstType (tc-resolve-type ctx want)]
           (if capability-capturing-lambda
-            (match (if ref-capturing-lambda
-              (tc-let-binding-ref-closure-scope-ok-at
-                expr-bases
-                bindings
-                index
-                body
-                name)
-              (tc-let-binding-capability-closure-scope-ok-at
-                expr-bases
-                bindings
-                index
-                body
-                name))
+            (match (cond
+              [ref-capturing-lambda
+                (tc-let-binding-ref-closure-scope-ok-at
+                  expr-bases
+                  bindings
+                  index
+                  body
+                  name
+                  copyable-ref-capturing-lambda)]
+              [consuming-capturing-lambda
+                (tc-let-binding-capability-closure-scope-ok-at
+                  expr-bases
+                  bindings
+                  index
+                  body
+                  name)]
+              [else
+                (tc-let-binding-move-closure-scope-ok-at
+                  expr-bases
+                  bindings
+                  index
+                  body
+                  name)])
               [(ResultTcUnit.Ok)
                 (match (ast.ast-expr-unspan init)
                   [(ast.AstExpr.Lambda lambda-box)
@@ -41500,19 +41648,29 @@
             (tc-expr-with-expected-or-actual-id ctx env init-id resolved-want)))]
       [(ast.AstMaybeType.No)
         (if capability-capturing-lambda
-          (match (if ref-capturing-lambda
-            (tc-let-binding-ref-closure-scope-ok-at
-              expr-bases
-              bindings
-              index
-              body
-              name)
-            (tc-let-binding-capability-closure-scope-ok-at
-              expr-bases
-              bindings
-              index
-              body
-              name))
+          (match (cond
+            [ref-capturing-lambda
+              (tc-let-binding-ref-closure-scope-ok-at
+                expr-bases
+                bindings
+                index
+                body
+                name
+                copyable-ref-capturing-lambda)]
+            [consuming-capturing-lambda
+              (tc-let-binding-capability-closure-scope-ok-at
+                expr-bases
+                bindings
+                index
+                body
+                name)]
+            [else
+              (tc-let-binding-move-closure-scope-ok-at
+                expr-bases
+                bindings
+                index
+                body
+                name)])
             [(ResultTcUnit.Ok)
               (match (ast.ast-expr-unspan init)
                 [(ast.AstExpr.Lambda lambda-box)
@@ -65946,9 +66104,11 @@
 (define (tc-move-var-move-only-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [name-id : i64]) : bool
   (match (tc-lookup-id env name-id)
-    [(ResultTcType.Ok ty) (tc-type-move-only? ctx ty)]
+    [(ResultTcType.Ok ty)
+      (tc-move-local-or-type-move-only? ctx locals name-id ty)]
     [(ResultTcType.Err _) false]))
 
 (define (tc-type-consuming-by-value-now? [ctx : TcContext] [ty : ast.AstType]) : bool
@@ -66984,7 +67144,13 @@
       (if (or
         (tc-type-consuming-by-value-now? ctx init-ty)
         (and
-          (tc-type-move-only? ctx (tc-resolve-type ctx init-ty))
+          (tc-move-value-move-only?
+            ctx
+            expr-bases
+            env
+            locals
+            init
+            (tc-resolve-type ctx init-ty))
           (match (tc-move-tuple-element-path expr-bases init)
             [(TcMaybeMovePath.Some _) true]
             [(TcMaybeMovePath.No) false])))
@@ -67015,13 +67181,13 @@
     (match (tc-move-bare-var expr-bases init)
       [(TcMaybeMoveName.Some v-id v)
         (if (and
-          (tc-move-var-move-only-id? ctx env v-id)
+          (tc-move-var-move-only-id? ctx env locals v-id)
           (tc-move-global-source-root? ctx env locals v-id))
           (TcMoveResult.Err
             (tc-locate-error-at-expr init (tc-move-global-source-message v-id)))
           (if (and
             (tc-moved-contains? locals v-id)
-            (tc-move-var-move-only-id? ctx env v-id))
+            (tc-move-var-move-only-id? ctx env locals v-id))
             (if (tc-moved-partial? moved v-id)
               (tc-move-rich-use-conflict-result
                 expr-bases
@@ -67061,13 +67227,19 @@
     (match (tc-move-bare-var expr-bases init)
       [(TcMaybeMoveName.Some v-id v)
         (if (and
-          (tc-type-move-only? ctx (tc-resolve-type ctx init-ty))
+          (tc-move-value-move-only?
+            ctx
+            expr-bases
+            env
+            locals
+            init
+            (tc-resolve-type ctx init-ty))
           (tc-move-global-source-root? ctx env locals v-id))
           (TcMoveResult.Err
             (tc-locate-error-at-expr init (tc-move-global-source-message v-id)))
           (if (and
             (tc-moved-contains? locals v-id)
-            (tc-move-var-move-only-id? ctx env v-id))
+            (tc-move-var-move-only-id? ctx env locals v-id))
             (if (tc-moved-partial? moved v-id)
               (tc-move-rich-use-conflict-result
                 expr-bases
@@ -67354,27 +67526,31 @@
   [target-ty : ast.AstType]
   [_value-ty : ast.AstType]) : TcMoveResult
   (let
-    [move? : bool (tc-call-param-consuming-now? ctx target-ty)]
-    (match (tc-move-check-global-result
-      ctx
-      expr-bases
-      env
-      locals
-      moved
-      expr
-      target-ty)
-      [(TcMoveResult.Ok moved1)
-        (tc-move-after-moving-value
-          ctx
-          expr-bases
-          env
-          locals
-          loop-carried
-          moved1
-          expr
-          move?
-          false)]
-      [(TcMoveResult.Err message) (TcMoveResult.Err message)])))
+    [closure-move-only : bool
+      (tc-move-value-concrete-closure-move-only? ctx expr-bases env locals expr)]
+    (if closure-move-only
+      (TcMoveResult.Err
+        (tc-locate-error-at-expr expr (tc-move-closure-escape-message)))
+      (match (tc-move-check-global-result
+        ctx
+        expr-bases
+        env
+        locals
+        moved
+        expr
+        target-ty)
+        [(TcMoveResult.Ok moved1)
+          (tc-move-after-moving-value
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved1
+            expr
+            (tc-call-param-consuming-now? ctx target-ty)
+            false)]
+        [(TcMoveResult.Err message) (TcMoveResult.Err message)]))))
 
 (define (tc-move-check-global-result
   [ctx : TcContext]
@@ -67404,27 +67580,31 @@
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]) : TcMoveResult
   (let
-    [move? : bool (tc-type-move-only? ctx (tc-resolve-type ctx target-ty))]
-    (match (tc-move-check-global-result
-      ctx
-      expr-bases
-      env
-      locals
-      moved
-      expr
-      target-ty)
-      [(TcMoveResult.Ok moved1)
-        (tc-move-after-moving-value
-          ctx
-          expr-bases
-          env
-          locals
-          loop-carried
-          moved1
-          expr
-          move?
-          false)]
-      [(TcMoveResult.Err message) (TcMoveResult.Err message)])))
+    [closure-move-only : bool
+      (tc-move-value-concrete-closure-move-only? ctx expr-bases env locals expr)]
+    (if closure-move-only
+      (TcMoveResult.Err
+        (tc-locate-error-at-expr expr (tc-move-closure-escape-message)))
+      (match (tc-move-check-global-result
+        ctx
+        expr-bases
+        env
+        locals
+        moved
+        expr
+        target-ty)
+        [(TcMoveResult.Ok moved1)
+          (tc-move-after-moving-value
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved1
+            expr
+            (tc-type-move-only? ctx (tc-resolve-type ctx target-ty))
+            false)]
+        [(TcMoveResult.Err message) (TcMoveResult.Err message)]))))
 
 (define (tc-move-after-match-scrutinee
   [ctx : TcContext]
@@ -68097,14 +68277,19 @@
                       ;; value. The thread-only pass handles the remaining
                       ;; Copyable aggregate transfer policy and must not report
                       ;; that same capture as a second move.
-                      (not (tc-type-move-only? ctx visible-ty))
+                      (not
+                        (tc-move-local-or-type-move-only?
+                          ctx
+                          locals
+                          key
+                          visible-ty))
                       (match (tc-thread-transfer-classify-type-in-env
                         ctx
                         root
                         visible-ty)
                         [(TcThreadTransferClass.Transferable) true]
                         [_ false]))
-                    (tc-type-move-only? ctx visible-ty))
+                    (tc-move-local-or-type-move-only? ctx locals key visible-ty))
                     (if (or
                       (tc-moved-contains? moved key)
                       (tc-moved-partial? moved key))
@@ -68509,16 +68694,7 @@
       false)))
 
 (define (tc-move-local-call-capability [locals : TcMovedSet] [name-id : i64]) : i64
-  (let
-    [roots : tc_i64_i64_map.Map (tc-moved-roots locals)]
-    (match (tc_i64_i64_map.get (& roots) name-id)
-      [(tc_i64_i64_map.LookupFound capability)
-        (if (or
-          (= capability (tc-closure-call-capability-mut))
-          (= capability (tc-closure-call-capability-once)))
-          capability
-          (tc-closure-call-capability-shared))]
-      [(tc_i64_i64_map.LookupMissing) (tc-closure-call-capability-shared)])))
+  (tc-closure-local-fact-capability (tc-closure-local-fact-code locals name-id)))
 
 (define (tc-move-after-known-closure-call
   [expr-bases : i64]
@@ -68552,7 +68728,13 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [params : ast.AstTypeList]) : TcMoveResult
-  (match (if (tc-move-global-place-inspector-call? ctx env func)
+  (match (if (or
+    (tc-move-global-place-inspector-call? ctx env func)
+    ;; Safe thread spawn requires one direct lambda and separately validates
+    ;; and transfers every capture below. Do not reject that intentional
+    ;; one-way transfer merely because its public `(-> ...)` parameter cannot
+    ;; encode the concrete environment's non-Copy fact.
+    (tc-thread-safe-spawn-call-signature? ctx env func params))
     (tc-move-check-exprs ctx expr-bases env locals loop-carried moved args)
     (tc-move-check-exprs-with-types
       ctx
@@ -68839,15 +69021,16 @@
 
 (define (tc-move-add-local-binding
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [name-id : i64]
   [init : ast.AstExpr]) : TcMovedSet
   (let
-    [capability : i64 (tc-lambda-init-call-capability ctx env init)]
-    (if (= capability (tc-closure-call-capability-shared))
-      (tc-moved-add locals name-id)
-      (tc-moved-add-value locals name-id capability))))
+    [fact : i64 (tc-lambda-init-local-fact-code ctx expr-bases env locals init)]
+    (if (tc-closure-local-fact-code? fact)
+      (tc-moved-add-value locals name-id fact)
+      (tc-moved-add locals name-id))))
 
 (define (tc-move-check-let-bindings-at
   [ctx : TcContext]
@@ -68904,7 +69087,13 @@
                         name
                         binding-ty
                         init)
-                      (tc-move-add-local-binding ctx env locals name init)
+                      (tc-move-add-local-binding
+                        ctx
+                        expr-bases
+                        env
+                        locals
+                        name
+                        init)
                       (tc-moved-remove-root-state loop-carried name)
                       (tc-param-storage-rebind-from-init
                         ctx
@@ -70333,30 +70522,39 @@
                 moved
                 rhs-box)
                 [(TcMoveResult.Ok moved1)
-                  (match (tc-move-after-bind-id
+                  (match (tc-move-check-closure-assignment-facts
                     ctx
                     expr-bases
                     env
                     locals
-                    loop-carried
-                    moved1
-                    rhs-box)
-                    [(TcMoveResult.Ok moved2)
-                      (match (tc-lookup-id env name)
-                        [(ResultTcType.Ok binding-ty)
-                          (TcMoveResult.Ok
-                            (tc-param-storage-rebind-from-init
-                              ctx
-                              expr-bases
-                              env
-                              moved2
-                              name
-                              binding-ty
-                              rhs))]
-                        [(ResultTcType.Err _)
-                          (TcMoveResult.Ok
-                            (tc-moved-remove-root-state moved2 name))])]
-                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                    name
+                    rhs)
+                    [(ResultTcUnit.Ok)
+                      (match (tc-move-after-bind-id
+                        ctx
+                        expr-bases
+                        env
+                        locals
+                        loop-carried
+                        moved1
+                        rhs-box)
+                        [(TcMoveResult.Ok moved2)
+                          (match (tc-lookup-id env name)
+                            [(ResultTcType.Ok binding-ty)
+                              (TcMoveResult.Ok
+                                (tc-param-storage-rebind-from-init
+                                  ctx
+                                  expr-bases
+                                  env
+                                  moved2
+                                  name
+                                  binding-ty
+                                  rhs))]
+                            [(ResultTcType.Err _)
+                              (TcMoveResult.Ok
+                                (tc-moved-remove-root-state moved2 name))])]
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                    [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [(ResultTcUnit.Err message) (TcMoveResult.Err message)])))]
     [(ast.AstExpr.Ann inner-box _)
@@ -71212,7 +71410,15 @@
           moved
           body
           return-ty)
-          [(TcMoveResult.Ok _) ResultTcUnit.Ok]
+          [(TcMoveResult.Ok _)
+            (match (tc-move-check-tail-closure-escape
+              ctx
+              expr-bases
+              env
+              locals
+              body)
+              [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(TcMoveResult.Err message) (ResultTcUnit.Err message)])]
       [(TcMoveResult.Err message) (ResultTcUnit.Err message)])))
 
@@ -71642,6 +71848,214 @@
         (ast.ast-expr-list-get (& exprs) (- count 1) 0)
         result-ty))))
 
+;; Reconstruct only the lexical type/local closure facts needed to classify a
+;; tail result. The ordinary move walk has already checked every initializer;
+;; replaying those moves here would report them twice.
+(define (tc-move-result-let-binding-facts-at
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [index : i64]) : TcMoveBindings
+  (if (>= index (ast.ast-let-binding-list-len bindings))
+    (TcMoveBindings.Ok env moved locals loop-carried)
+    (match (ast.ast-let-binding-list-get
+      bindings
+      index
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases init-box)]
+          [binding-ty : ast.AstType
+            (tc-move-binding-type-id
+              "move.result_let_init"
+              ctx
+              env
+              maybe-ty
+              init-box)]
+          (tc-move-result-let-binding-facts-at
+            ctx
+            expr-bases
+            (tc-bind-c-abi-fnptr-if-needed-id ctx env name binding-ty init)
+            (tc-move-add-local-binding ctx expr-bases env locals name init)
+            moved
+            loop-carried
+            bindings
+            (+ index 1)))])))
+
+(define (tc-move-check-tail-closure-expr-list
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [exprs : ast.AstExprList]) : ResultTcUnit
+  (let
+    [count : i64 (ast.ast-expr-list-len (& exprs))]
+    (if (= count 0)
+      ResultTcUnit.Ok
+      (tc-move-check-tail-closure-escape
+        ctx
+        expr-bases
+        env
+        locals
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& exprs) (- count 1) 0))))))
+
+(define (tc-move-check-tail-closure-match-arms-at
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [scrut-ty : ast.AstType]
+  [arms : (& arms ast.AstMatchArmList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index arms.len)
+    ResultTcUnit.Ok
+    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
+      [(ast.AstMatchArm.Arm pattern body-box)
+        (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+          [(ResultTcEnv.Ok arm-env)
+            (let
+              [bound : TcNameIdList
+                (tc-move-pattern-bound-names ctx scrut-ty pattern)]
+              (match (tc-move-check-tail-closure-escape
+                ctx
+                expr-bases
+                arm-env
+                (tc-move-add-bound-names (tc-moved-clone locals) bound)
+                (ast.ast-expr-segment-bases-get expr-bases body-box))
+                [(ResultTcUnit.Ok)
+                  (tc-move-check-tail-closure-match-arms-at
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    scrut-ty
+                    arms
+                    (+ index 1))]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+          [(ResultTcEnv.Err message) (ResultTcUnit.Err message)])])))
+
+(define (tc-move-check-tail-closure-escape
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [expr : ast.AstExpr]) : ResultTcUnit
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+    [(ast.AstExpr.If _ then-box else-box)
+      (match (tc-move-check-tail-closure-escape
+        ctx
+        expr-bases
+        env
+        locals
+        (ast.ast-expr-segment-bases-get expr-bases then-box))
+        [(ResultTcUnit.Ok)
+          (tc-move-check-tail-closure-escape
+            ctx
+            expr-bases
+            env
+            locals
+            (ast.ast-expr-segment-bases-get expr-bases else-box))]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+    [(ast.AstExpr.Let let-box)
+      (match (__tl-box-place let-box)
+        [(ast.AstLet.Let bindings body-box)
+          (match (tc-move-result-let-binding-facts-at
+            ctx
+            expr-bases
+            env
+            locals
+            (tc-moved-empty)
+            (tc-moved-empty)
+            (& bindings)
+            0)
+            [(TcMoveBindings.Ok env2 _ locals2 _)
+              (tc-move-check-tail-closure-escape
+                ctx
+                expr-bases
+                env2
+                locals2
+                (ast.ast-expr-segment-bases-get expr-bases body-box))]
+            [(TcMoveBindings.Err message) (ResultTcUnit.Err message)])])]
+    [(ast.AstExpr.Match match-box)
+      (match (__tl-box-place match-box)
+        [(ast.AstMatch.Match scrut-box arms)
+          (match (tc-body-type-fact-expr-id
+            "move.result_closure_scrutinee"
+            ctx
+            env
+            scrut-box)
+            [(ResultTcType.Ok scrut-ty)
+              (tc-move-check-tail-closure-match-arms-at
+                ctx
+                expr-bases
+                env
+                locals
+                scrut-ty
+                (& arms)
+                0)]
+            [(ResultTcType.Err _) ResultTcUnit.Ok])])]
+    [(ast.AstExpr.Begin exprs)
+      (tc-move-check-tail-closure-expr-list ctx expr-bases env locals exprs)]
+    [(ast.AstExpr.Unsafe exprs)
+      (tc-move-check-tail-closure-expr-list ctx expr-bases env locals exprs)]
+    [(ast.AstExpr.WithRegion _ exprs)
+      (tc-move-check-tail-closure-expr-list ctx expr-bases env locals exprs)]
+    [(ast.AstExpr.WithEscape _ exprs)
+      (tc-move-check-tail-closure-expr-list ctx expr-bases env locals exprs)]
+    [(ast.AstExpr.WithScratch exprs)
+      (tc-move-check-tail-closure-expr-list ctx expr-bases env locals exprs)]
+    [(ast.AstExpr.InArena _ exprs)
+      (tc-move-check-tail-closure-expr-list ctx expr-bases env locals exprs)]
+    [(ast.AstExpr.WithResource resource-box)
+      (match (__tl-box-place resource-box)
+        [(ast.AstWithResource.WithResource _ body)
+          (tc-move-check-tail-closure-expr-list ctx expr-bases env locals body)])]
+    [(ast.AstExpr.Ann inner-box _)
+      (tc-move-check-tail-closure-escape
+        ctx
+        expr-bases
+        env
+        locals
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.Cast inner-box _)
+      (tc-move-check-tail-closure-escape
+        ctx
+        expr-bases
+        env
+        locals
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.Try inner-box)
+      (tc-move-check-tail-closure-escape
+        ctx
+        expr-bases
+        env
+        locals
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.Return inner-box)
+      (tc-move-check-tail-closure-escape
+        ctx
+        expr-bases
+        env
+        locals
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [_
+      (if (tc-move-value-concrete-closure-move-only?
+        ctx
+        expr-bases
+        env
+        locals
+        expr)
+        (ResultTcUnit.Err
+          (tc-locate-error-at-expr expr (tc-move-closure-escape-message)))
+        ResultTcUnit.Ok)]))
+
 (define (tc-move-check-result-match-arms-at
   [ctx : TcContext]
   [expr-bases : i64]
@@ -71735,16 +72149,27 @@
         [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
-        [(ast.AstLet.Let _ body-box)
-          (tc-move-check-result-expr-id
+        [(ast.AstLet.Let bindings body-box)
+          (match (tc-move-result-let-binding-facts-at
             ctx
             expr-bases
             env
             locals
-            loop-carried
             moved
-            body-box
-            result-ty)])]
+            loop-carried
+            (& bindings)
+            0)
+            [(TcMoveBindings.Ok env2 moved2 locals2 loop-carried2)
+              (tc-move-check-result-expr-id
+                ctx
+                expr-bases
+                env2
+                locals2
+                loop-carried2
+                moved2
+                body-box
+                result-ty)]
+            [(TcMoveBindings.Err message) (TcMoveResult.Err message)])])]
     [(ast.AstExpr.Begin exprs)
       (tc-move-check-result-expr-list
         ctx
@@ -71860,9 +72285,13 @@
         (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
         result-ty)]))
 
-;; Checker-only closure call capabilities. These integer facts never enter an
-;; AstType or the lowering ABI: 0 is shared/reusable, 1 is exclusive/reusable
-;; (FnMut), and 2 is consuming (FnOnce).
+;; Checker-only closure facts never enter AstType or the lowering ABI. Call
+;; capabilities are 0 = shared/reusable, 1 = exclusive/reusable (FnMut), and
+;; 2 = consuming (FnOnce). A local lambda binding stores that capability in a
+;; disjoint Copy/non-Copy range inside the existing locals map; ordinary locals
+;; retain the historical -1 sentinel. This keeps concrete environment
+;; copyability available after a fact-preserving local alias without making a
+;; plain `(-> ...)` type depend on one particular lambda value.
 (define (tc-closure-call-capability-shared) : i64
   0)
 
@@ -71872,17 +72301,95 @@
 (define (tc-closure-call-capability-once) : i64
   2)
 
+(define (tc-closure-local-fact-copy-base) : i64
+  16)
+
+(define (tc-closure-local-fact-move-base) : i64
+  32)
+
+(define (tc-closure-local-fact-code? [code : i64]) : bool
+  (or
+    (and
+      (>= code (tc-closure-local-fact-copy-base))
+      (<= code (+ (tc-closure-local-fact-copy-base) 2)))
+    (and
+      (>= code (tc-closure-local-fact-move-base))
+      (<= code (+ (tc-closure-local-fact-move-base) 2)))))
+
+(define (tc-closure-local-fact-code [locals : TcMovedSet] [name-id : i64]) : i64
+  (let
+    [roots : tc_i64_i64_map.Map (tc-moved-roots locals)]
+    (match (tc_i64_i64_map.get (& roots) name-id)
+      [(tc_i64_i64_map.LookupFound code)
+        (if (tc-closure-local-fact-code? code)
+          code
+          -1)]
+      [(tc_i64_i64_map.LookupMissing) -1])))
+
+(define (tc-closure-local-fact-copyable-code? [code : i64]) : bool
+  (and
+    (>= code (tc-closure-local-fact-copy-base))
+    (<= code (+ (tc-closure-local-fact-copy-base) 2))))
+
+(define (tc-closure-local-fact-move-only-code? [code : i64]) : bool
+  (and
+    (>= code (tc-closure-local-fact-move-base))
+    (<= code (+ (tc-closure-local-fact-move-base) 2))))
+
+(define (tc-closure-local-fact-encode [copyable : bool] [capability : i64]) : i64
+  (+
+    (if copyable
+      (tc-closure-local-fact-copy-base)
+      (tc-closure-local-fact-move-base))
+    capability))
+
+(define (tc-closure-local-fact-capability [code : i64]) : i64
+  (if (tc-closure-local-fact-copyable-code? code)
+    (- code (tc-closure-local-fact-copy-base))
+    (if (tc-closure-local-fact-move-only-code? code)
+      (- code (tc-closure-local-fact-move-base))
+      (tc-closure-call-capability-shared))))
+
+(define (tc-move-local-or-type-move-only?
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [name-id : i64]
+  [ty : ast.AstType]) : bool
+  (let
+    [code : i64 (tc-closure-local-fact-code locals name-id)]
+    (if (tc-closure-local-fact-code? code)
+      (tc-closure-local-fact-move-only-code? code)
+      (tc-type-move-only? ctx ty))))
+
+(define (tc-move-add-capture-local
+  [source-locals : TcMovedSet]
+  [capture-locals : TcMovedSet]
+  [name-id : i64]) : TcMovedSet
+  (let
+    [code : i64 (tc-closure-local-fact-code source-locals name-id)]
+    (if (tc-closure-local-fact-code? code)
+      (tc-moved-add-value capture-locals name-id code)
+      (tc-moved-add capture-locals name-id))))
+
 (define (tc-lambda-capture-locals-scan
   [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : ast.AstExpr]
   [seen : TcStringList]
+  [source-locals : TcMovedSet]
   [locals : TcMovedSet]) : TcMovedSet
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Done) locals]
     [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-lambda-capture-locals-scan expr-bases rest-env bound body seen locals)]
+      (tc-lambda-capture-locals-scan
+        expr-bases
+        rest-env
+        bound
+        body
+        seen
+        source-locals
+        locals)]
     [(TcTypeEnvMarkerStep.Bind key ty rest-env)
       (let
         [name : String (tc-env-key-name-text key)]
@@ -71900,6 +72407,7 @@
               bound
               body
               seen
+              source-locals
               locals)]
           [else
             (tc-lambda-capture-locals-scan
@@ -71908,13 +72416,15 @@
               bound
               body
               (tc-string-list-add seen name)
+              source-locals
               (if (tc-expr-uses-free-name? expr-bases body name bound)
-                (tc-moved-add locals key)
+                (tc-move-add-capture-local source-locals locals key)
                 locals))]))]))
 
 (define (tc-lambda-capture-locals
   [expr-bases : i64]
   [env : TcTypeEnv]
+  [source-locals : TcMovedSet]
   [params : ast.AstParamList]
   [body : ast.AstExpr]) : TcMovedSet
   (tc-lambda-capture-locals-scan
@@ -71923,6 +72433,7 @@
     (tc-param-bound-names params)
     body
     TcStringList.Nil
+    source-locals
     (tc-moved-empty)))
 
 (define (tc-lambda-capture-has-mut-reference-scan?
@@ -71987,6 +72498,7 @@
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : ast.AstExpr]
+  [locals : TcMovedSet]
   [seen : TcStringList]) : bool
   (match (tc-type-env-marker-step env)
     [(TcTypeEnvMarkerStep.Done) false]
@@ -71997,6 +72509,7 @@
         rest-env
         bound
         body
+        locals
         seen)]
     [(TcTypeEnvMarkerStep.Bind key ty rest-env)
       (let
@@ -72015,10 +72528,11 @@
               rest-env
               bound
               body
+              locals
               seen)]
           [(and
               (tc-expr-uses-free-name? expr-bases body name bound)
-              (tc-type-move-only? ctx ty))
+              (tc-move-local-or-type-move-only? ctx locals key ty))
             true]
           [else
             (tc-lambda-capture-has-move-only-scan?
@@ -72027,12 +72541,14 @@
               rest-env
               bound
               body
+              locals
               (tc-string-list-add seen name))]))]))
 
-(define (tc-lambda-capture-has-move-only?
+(define (tc-lambda-capture-has-move-only-with-locals?
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [params : ast.AstParamList]
   [body : ast.AstExpr]) : bool
   (tc-lambda-capture-has-move-only-scan?
@@ -72041,7 +72557,55 @@
     (tc-type-env-marker-start env)
     (tc-param-bound-names params)
     body
+    locals
     TcStringList.Nil))
+
+(define (tc-lambda-capture-has-move-only?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [params : ast.AstParamList]
+  [body : ast.AstExpr]) : bool
+  (tc-lambda-capture-has-move-only-with-locals?
+    ctx
+    expr-bases
+    env
+    (tc-moved-empty)
+    params
+    body))
+
+(define (tc-move-value-concrete-closure-move-only?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+    [(ast.AstExpr.Var name-id)
+      (tc-closure-local-fact-move-only-code?
+        (tc-closure-local-fact-code locals name-id))]
+    [(ast.AstExpr.Lambda lambda-box)
+      (match (__tl-box-place lambda-box)
+        [(ast.AstLambda.Lambda params _ body-box)
+          (tc-lambda-capture-has-move-only-with-locals?
+            ctx
+            expr-bases
+            env
+            locals
+            params
+            (ast.ast-expr-segment-bases-get expr-bases body-box))])]
+    [_ false]))
+
+(define (tc-move-value-move-only?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [expr : ast.AstExpr]
+  [fallback-ty : ast.AstType]) : bool
+  (or
+    (tc-move-value-concrete-closure-move-only? ctx expr-bases env locals expr)
+    (tc-type-move-only? ctx fallback-ty)))
 
 (define (tc-lambda-capture-consumed-scan?
   [ctx : TcContext]
@@ -72049,6 +72613,7 @@
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : ast.AstExpr]
+  [locals : TcMovedSet]
   [moved : TcMovedSet]
   [seen : TcStringList]) : bool
   (match (tc-type-env-marker-step env)
@@ -72060,6 +72625,7 @@
         rest-env
         bound
         body
+        locals
         moved
         seen)]
     [(TcTypeEnvMarkerStep.Bind key ty rest-env)
@@ -72079,11 +72645,12 @@
               rest-env
               bound
               body
+              locals
               moved
               seen)]
           [(and
               (tc-expr-uses-free-name? expr-bases body name bound)
-              (tc-type-move-only? ctx ty)
+              (tc-move-local-or-type-move-only? ctx locals key ty)
               (match (tc-moved-root-conflict moved key)
                 [(TcMoveConflict.Some _ _) true]
                 [TcMoveConflict.No false]))
@@ -72095,8 +72662,28 @@
               rest-env
               bound
               body
+              locals
               moved
               (tc-string-list-add seen name))]))]))
+
+(define (tc-lambda-call-capability-fallback-with-locals
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [params : ast.AstParamList]
+  [body : ast.AstExpr]) : i64
+  (if (tc-lambda-capture-has-move-only-with-locals?
+    ctx
+    expr-bases
+    env
+    locals
+    params
+    body)
+    (tc-closure-call-capability-once)
+    (if (tc-lambda-capture-has-mut-reference? expr-bases env params body)
+      (tc-closure-call-capability-mut)
+      (tc-closure-call-capability-shared))))
 
 (define (tc-lambda-call-capability-fallback
   [ctx : TcContext]
@@ -72104,22 +72691,25 @@
   [env : TcTypeEnv]
   [params : ast.AstParamList]
   [body : ast.AstExpr]) : i64
-  (if (tc-lambda-capture-has-move-only? ctx expr-bases env params body)
-    (tc-closure-call-capability-once)
-    (if (tc-lambda-capture-has-mut-reference? expr-bases env params body)
-      (tc-closure-call-capability-mut)
-      (tc-closure-call-capability-shared))))
+  (tc-lambda-call-capability-fallback-with-locals
+    ctx
+    expr-bases
+    env
+    (tc-moved-empty)
+    params
+    body))
 
-(define (tc-lambda-call-capability
+(define (tc-lambda-call-capability-with-locals
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [params : ast.AstParamList]
   [body-id : i64]) : i64
   (let
     [expr-bases : i64 (tc-context-expr-bases ctx)]
     [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
     [capture-locals : TcMovedSet
-      (tc-lambda-capture-locals expr-bases env params body)]
+      (tc-lambda-capture-locals expr-bases env locals params body)]
     [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
     [lambda-locals : TcMovedSet (tc-move-params-locals params capture-locals)]
     (match (tc-move-check-expr-id
@@ -72149,6 +72739,7 @@
                   (tc-type-env-marker-start env)
                   (tc-param-bound-names params)
                   body
+                  lambda-locals
                   final-moved
                   TcStringList.Nil)
                   (tc-closure-call-capability-once)
@@ -72160,27 +72751,124 @@
                     (tc-closure-call-capability-mut)
                     (tc-closure-call-capability-shared)))]
               [(TcMoveResult.Err _)
-                (tc-lambda-call-capability-fallback
+                (tc-lambda-call-capability-fallback-with-locals
                   ctx
                   expr-bases
                   env
+                  locals
                   params
                   body)])]
           [(ResultTcType.Err _)
-            (tc-lambda-call-capability-fallback ctx expr-bases env params body)])]
+            (tc-lambda-call-capability-fallback-with-locals
+              ctx
+              expr-bases
+              env
+              locals
+              params
+              body)])]
       [(TcMoveResult.Err _)
-        (tc-lambda-call-capability-fallback ctx expr-bases env params body)])))
+        (tc-lambda-call-capability-fallback-with-locals
+          ctx
+          expr-bases
+          env
+          locals
+          params
+          body)])))
 
-(define (tc-lambda-init-call-capability
+(define (tc-lambda-call-capability
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [params : ast.AstParamList]
+  [body-id : i64]) : i64
+  (tc-lambda-call-capability-with-locals
+    ctx
+    env
+    (tc-moved-empty)
+    params
+    body-id))
+
+(define (tc-lambda-init-call-capability-with-locals
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [init : ast.AstExpr]) : i64
   (match (ast.ast-expr-unspan init)
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
-          (tc-lambda-call-capability ctx env params body-box)])]
+          (tc-lambda-call-capability-with-locals ctx env locals params body-box)])]
     [_ (tc-closure-call-capability-shared)]))
+
+(define (tc-lambda-init-call-capability
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [init : ast.AstExpr]) : i64
+  (tc-lambda-init-call-capability-with-locals ctx env (tc-moved-empty) init))
+
+(define (tc-lambda-init-local-fact-code
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [init : ast.AstExpr]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
+    [(ast.AstExpr.Lambda lambda-box)
+      (match (__tl-box-place lambda-box)
+        [(ast.AstLambda.Lambda params _ body-box)
+          (let
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [state : TcBodyState (tc-context-body-state ctx)]
+            [cached : i64 (tc-body-closure-fact-code state body-box)]
+            (if (tc-closure-local-fact-code? cached)
+              cached
+              (let
+                [copyable : bool
+                  (not
+                    (tc-lambda-capture-has-move-only-with-locals?
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      params
+                      body))]
+                [capability : i64
+                  (tc-lambda-call-capability-with-locals
+                    ctx
+                    env
+                    locals
+                    params
+                    body-box)]
+                [code : i64 (tc-closure-local-fact-encode copyable capability)]
+                (begin
+                  (tc-body-closure-fact-record! state body-box code)
+                  code))))])]
+    [_
+      (match (tc-move-bare-var expr-bases init)
+        [(TcMaybeMoveName.Some name-id _)
+          (tc-closure-local-fact-code locals name-id)]
+        [(TcMaybeMoveName.No) -1])]))
+
+(define (tc-move-check-closure-assignment-facts
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [target-id : i64]
+  [rhs : ast.AstExpr]) : ResultTcUnit
+  (let
+    [target-code : i64 (tc-closure-local-fact-code locals target-id)]
+    [rhs-code : i64
+      (tc-lambda-init-local-fact-code ctx expr-bases env locals rhs)]
+    (if (or
+      (tc-closure-local-fact-move-only-code? rhs-code)
+      (and
+        (tc-closure-local-fact-code? target-code)
+        (tc-closure-local-fact-code? rhs-code)
+        (not (= target-code rhs-code))))
+      (ResultTcUnit.Err
+        (tc-locate-error-at-expr rhs (tc-move-closure-escape-message)))
+      ResultTcUnit.Ok)))
 
 ;; --- lexical borrow conflict checker ---------------------------------------
 ;;
@@ -73139,44 +73827,60 @@
 (define (tc-borrow-check-after-consuming-value
   [ctx : TcContext]
   [expr-bases : i64]
+  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]) : TcBorrowCheckResult
-  (if (tc-call-param-consuming-now? ctx target-ty)
+  (if (or
+    (tc-call-param-consuming-now? ctx target-ty)
+    (tc-move-value-concrete-closure-move-only? ctx expr-bases env locals expr))
     (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
     (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-after-move-only-value
   [ctx : TcContext]
   [expr-bases : i64]
+  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]) : TcBorrowCheckResult
-  (if (tc-type-move-only? ctx (tc-resolve-type ctx target-ty))
+  (if (tc-move-value-move-only?
+    ctx
+    expr-bases
+    env
+    locals
+    expr
+    (tc-resolve-type ctx target-ty))
     (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
     (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-after-reading-value
   [ctx : TcContext]
   [expr-bases : i64]
+  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]) : TcBorrowCheckResult
-  (if (tc-call-param-consuming-now? ctx target-ty)
+  (if (or
+    (tc-call-param-consuming-now? ctx target-ty)
+    (tc-move-value-concrete-closure-move-only? ctx expr-bases env locals expr))
     (TcBorrowCheckResult.Ok borrowed)
     (tc-borrow-check-place-read-conflict expr-bases locals borrowed expr expr)))
 
 (define (tc-borrow-check-after-bind-typed
   [ctx : TcContext]
   [expr-bases : i64]
+  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [init : ast.AstExpr]
   [init-ty : ast.AstType]) : TcBorrowCheckResult
-  (if (tc-type-consuming-by-value-now? ctx init-ty)
+  (if (or
+    (tc-type-consuming-by-value-now? ctx init-ty)
+    (tc-move-value-concrete-closure-move-only? ctx expr-bases env locals init))
     (tc-borrow-check-after-consuming-place expr-bases locals borrowed init)
     (TcBorrowCheckResult.Ok borrowed)))
 
@@ -73193,7 +73897,7 @@
       [(TcMaybeMoveName.Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
-          (tc-move-var-move-only-id? ctx env name-id))
+          (tc-move-var-move-only-id? ctx env locals name-id))
           (match (tc-borrow-check-move-conflict
             expr-bases
             borrowed
@@ -73208,6 +73912,7 @@
             (tc-borrow-check-after-bind-typed
               ctx
               expr-bases
+              env
               locals
               borrowed
               init
@@ -73410,7 +74115,7 @@
       [(TcMaybeMoveName.Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
-          (tc-move-var-move-only-id? ctx env name-id))
+          (tc-move-var-move-only-id? ctx env locals name-id))
           (match (tc-borrow-check-move-conflict
             expr-bases
             borrowed
@@ -73431,6 +74136,7 @@
                 (tc-borrow-check-after-bind-typed
                   ctx
                   expr-bases
+                  env
                   locals
                   borrowed
                   init
@@ -73449,6 +74155,7 @@
                     (tc-borrow-check-after-bind-typed
                       ctx
                       expr-bases
+                      env
                       locals
                       borrowed1
                       init
@@ -73459,6 +74166,7 @@
             (tc-borrow-check-after-bind-typed
               ctx
               expr-bases
+              env
               locals
               borrowed
               init
@@ -74015,6 +74723,7 @@
         (match (tc-borrow-check-after-consuming-value
           ctx
           expr-bases
+          env
           locals
           borrowed1
           arg
@@ -74025,6 +74734,7 @@
               (tc-borrow-check-after-reading-value
                 ctx
                 expr-bases
+                env
                 locals
                 borrowed2
                 arg
@@ -74471,6 +75181,7 @@
                 (tc-borrow-check-after-move-only-value
                   ctx
                   expr-bases
+                  env
                   locals
                   borrowed
                   message-expr
@@ -75764,6 +76475,7 @@
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [bound : TcStringList]
   [body : ast.AstExpr]
   [closure-id : i64]
@@ -75777,6 +76489,7 @@
             ctx
             expr-bases
             env
+            locals
             bound
             body
             closure-id
@@ -75790,14 +76503,51 @@
                   body
                   (tc-env-key-name-text binding-id)
                   bound)]
+              (if captured
+                (let
+                  [rebound : TcMovedPathFact
+                    (TcMovedPathFact
+                      fact.path
+                      (TcMovedPathKind.BorrowLending closure-id)
+                      fact.origin)]
+                  (if (tc-closure-local-fact-copyable-code?
+                    (tc-closure-local-fact-code locals binding-id))
+                    (TcMovedPathFacts.Cons
+                      fact
+                      (box (TcMovedPathFacts.Cons rebound (box tail))))
+                    (TcMovedPathFacts.Cons rebound (box tail))))
+                (TcMovedPathFacts.Cons fact (box tail))))]
+          [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
+
+;; A Copy closure alias keeps the source closure live and gains the same
+;; lending provenance. Duplicate only the checker-only lending marker; the
+;; shared-borrow fact and its diagnostic origin remain single and unchanged.
+(define (tc-borrow-check-copy-lambda-lending-facts
+  [facts : TcMovedPathFacts]
+  [source-id : i64]
+  [closure-id : i64]) : TcMovedPathFacts
+  (match facts
+    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
+    [(TcMovedPathFacts.Cons fact rest)
+      (let
+        [tail : TcMovedPathFacts
+          (tc-borrow-check-copy-lambda-lending-facts
+            (__tl-box-place rest)
+            source-id
+            closure-id)]
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending binding-id)
+            (if (= binding-id source-id)
               (TcMovedPathFacts.Cons
-                (if captured
-                  (TcMovedPathFact
-                    fact.path
-                    (TcMovedPathKind.BorrowLending closure-id)
-                    fact.origin)
-                  fact)
-                (box tail)))]
+                fact
+                (box
+                  (TcMovedPathFacts.Cons
+                    (TcMovedPathFact
+                      fact.path
+                      (TcMovedPathKind.BorrowLending closure-id)
+                      fact.origin)
+                    (box tail))))
+              (TcMovedPathFacts.Cons fact (box tail)))]
           [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
 
 (define (tc-borrow-check-add-closure-lending-for-lifetimes
@@ -75907,6 +76657,7 @@
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [closure-id : i64]
   [init : ast.AstExpr]) : TcMovedSet
@@ -75922,6 +76673,7 @@
                 ctx
                 expr-bases
                 env
+                locals
                 (tc-param-bound-names params)
                 body
                 closure-id
@@ -75945,7 +76697,27 @@
               init
               TcStringList.Nil
               rebound))])]
-    [_ borrowed]))
+    [_
+      (match (tc-move-bare-var expr-bases init)
+        [(TcMaybeMoveName.Some source-id _)
+          (let
+            [code : i64 (tc-closure-local-fact-code locals source-id)]
+            (if (tc-closure-local-fact-copyable-code? code)
+              (let
+                [facts : TcMovedPathFacts
+                  (tc-borrow-check-copy-lambda-lending-facts
+                    (tc-moved-paths borrowed)
+                    source-id
+                    closure-id)]
+                (TcMovedSet
+                  (tc-moved-roots borrowed)
+                  (tc-moved-partials borrowed)
+                  facts
+                  (tc-moved-exact-path-index-from-facts facts)
+                  (tc-moved-hidden-atomic-users borrowed)
+                  (tc-moved-param-storage-origins borrowed)))
+              borrowed))]
+        [(TcMaybeMoveName.No) borrowed])]))
 
 (define (tc-borrow-check-let-bindings
   [ctx : TcContext]
@@ -76023,6 +76795,7 @@
                           ctx
                           expr-bases
                           env
+                          locals
                           borrowed3
                           name
                           init)]
@@ -76035,7 +76808,13 @@
                           name
                           binding-ty
                           init)
-                        (tc-moved-add locals name)
+                        (tc-move-add-local-binding
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          name
+                          init)
                         (tc-borrow-check-remove-root-state borrowed4 name)
                         bindings
                         (+ index 1)))]
@@ -77513,6 +78292,7 @@
                           (tc-borrow-check-after-consuming-value
                             ctx
                             expr-bases
+                            env
                             locals
                             borrowed1
                             inner
@@ -77604,6 +78384,7 @@
                 (tc-borrow-check-after-consuming-value
                   ctx
                   expr-bases
+                  env
                   locals
                   borrowed1
                   inner

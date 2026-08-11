@@ -1442,13 +1442,13 @@
   (extern-link-references backend_i64_i64_map.Map)
   (extern-link-symbols (__tl_dyn-array i64))
   (extern-provided (__tl_dyn-array bool))
-  ;; Aggregate type name -> machine-word count, for every register-group
+  ;; Canonical aggregate nominal key -> machine-word count, for every register-group
   ;; type constructed anywhere in the program (whole-program compile). Drives the
   ;; backend/regalloc 2-word-vs-handle decision that the type name alone cannot.
-  (group-word-counts backend_string_i64_map.Map)
-  ;; Aggregate type name -> bit mask of SSE-class words. Bit 0 marks
+  (group-word-counts backend_i64_i64_map.Map)
+  ;; Canonical aggregate nominal key -> bit mask of SSE-class words. Bit 0 marks
   ;; word0, bit 1 marks word1. A missing/zero mask means all INTEGER words.
-  (group-word-class-masks backend_string_i64_map.Map)
+  (group-word-class-masks backend_i64_i64_map.Map)
   ;; Explicit type-reader handle for this backend job. It is snapshotted from
   ;; the job's pools once and then travels with the already-ubiquitous index.
   (type-segment-bases i64)
@@ -3751,9 +3751,9 @@
 
 (defenum CompilerBackendCollectState
   (Collections CompilerBackendProgramCollections)
-  (GroupCounts backend_string_i64_map.Map)
+  (GroupCounts backend_i64_i64_map.Map)
   (GroupClassMasks
-    backend_string_i64_map.Map
+    backend_i64_i64_map.Map
     compiler_regalloc.CompilerRegVarTypes))
 
 (define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
@@ -34479,48 +34479,44 @@
 
 (define (compiler-backend-collect-group-counts-instr
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map (:consume)]
-  [instr : compiler_ir_types.CompilerIrInstr]) : backend_string_i64_map.Map
+  [map : backend_i64_i64_map.Map (:consume)]
+  [instr : compiler_ir_types.CompilerIrInstr]) : backend_i64_i64_map.Map
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Pack _ words ty)
-      (let
-        [name : String
-          (compiler-backend-aggregate-type-name type-segment-bases ty)]
-        (if (string.eq name "")
-          map
-          (if (backend_string_i64_map.contains? (& map) name)
+      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key)
+          (if (backend_i64_i64_map.contains? (& map) key)
             map
             (begin
-              (backend_string_i64_map.insert-ref!
+              (backend_i64_i64_map.insert-ref!
                 (&mut map)
-                name
+                key
                 (compiler_ir_types.compiler-ir-value-list-count words))
-              map))))]
+              map))]
+        [(compiler_ast_types.AstMaybeNominalKey.None) map])]
     [_ map]))
 
 (define (compiler-backend-collect-signature-group-counts-type
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map (:consume)]
-  [ty : compiler_ast_types.AstType]) : backend_string_i64_map.Map
+  [map : backend_i64_i64_map.Map (:consume)]
+  [ty : compiler_ast_types.AstType]) : backend_i64_i64_map.Map
   (let
     [mask : i64 (compiler-backend-abi-group-mask type-segment-bases ty)]
     (if (< mask 0)
       map
-      (let
-        [name : String
-          (compiler-backend-aggregate-type-name type-segment-bases ty)]
-        (if (string.eq name "")
-          map
+      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key)
           (begin
             ;; Encoded groups are always exactly two words, independent of
             ;; whether a Pack survived optimization into this function.
-            (backend_string_i64_map.insert-ref! (&mut map) name 2)
-            map))))))
+            (backend_i64_i64_map.insert-ref! (&mut map) key 2)
+            map)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) map]))))
 
 (define (compiler-backend-collect-signature-group-counts-params
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map (:consume)]
-  [params : compiler_ir_types.CompilerIrParamList]) : backend_string_i64_map.Map
+  [map : backend_i64_i64_map.Map (:consume)]
+  [params : compiler_ir_types.CompilerIrParamList]) : backend_i64_i64_map.Map
   (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
     [(compiler_ir_types.CompilerIrParamList.Nil) map]
     [(compiler_ir_types.CompilerIrParamList.Array seq)
@@ -34541,8 +34537,8 @@
 
 (define (compiler-backend-collect-group-counts-functions
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : backend_string_i64_map.Map
+  [map : backend_i64_i64_map.Map]
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : backend_i64_i64_map.Map
   (match (compiler-backend-collect-functions-shared
     type-segment-bases
     (CompilerBackendCollectState.GroupCounts map)
@@ -34596,9 +34592,9 @@
 
 (define (compiler-backend-collect-group-counts-instr-seq
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map (:consume)]
+  [map : backend_i64_i64_map.Map (:consume)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [index : i64]) : backend_string_i64_map.Map
+  [index : i64]) : backend_i64_i64_map.Map
   (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
     map
     (compiler-backend-collect-group-counts-instr-seq
@@ -34612,10 +34608,10 @@
 
 (define (compiler-backend-collect-group-class-masks-instr-seq
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map (:consume)]
+  [map : backend_i64_i64_map.Map (:consume)]
   [type-info : compiler_regalloc.CompilerRegVarTypes]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [index : i64]) : backend_string_i64_map.Map
+  [index : i64]) : backend_i64_i64_map.Map
   (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
     map
     (compiler-backend-collect-group-class-masks-instr-seq
@@ -34708,7 +34704,7 @@
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function _ params ret-ty _ _)
           (let
-            [with-params : backend_string_i64_map.Map
+            [with-params : backend_i64_i64_map.Map
               (compiler-backend-collect-signature-group-class-mask-params
                 type-segment-bases
                 map
@@ -34723,21 +34719,21 @@
 
 (define (compiler-backend-merge-signature-group-class-mask-type
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map (:consume)]
-  [ty : compiler_ast_types.AstType]) : backend_string_i64_map.Map
+  [map : backend_i64_i64_map.Map (:consume)]
+  [ty : compiler_ast_types.AstType]) : backend_i64_i64_map.Map
   (let
     [mask : i64 (compiler-backend-abi-group-mask type-segment-bases ty)]
     (if (< mask 0)
       map
-      (compiler-backend-merge-group-class-mask
-        map
-        (compiler-backend-aggregate-type-name type-segment-bases ty)
-        mask))))
+      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key)
+          (compiler-backend-merge-group-class-mask map key mask)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) map]))))
 
 (define (compiler-backend-collect-signature-group-class-mask-params
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map (:consume)]
-  [params : compiler_ir_types.CompilerIrParamList]) : backend_string_i64_map.Map
+  [map : backend_i64_i64_map.Map (:consume)]
+  [params : compiler_ir_types.CompilerIrParamList]) : backend_i64_i64_map.Map
   (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
     [(compiler_ir_types.CompilerIrParamList.Nil) map]
     [(compiler_ir_types.CompilerIrParamList.Array seq)
@@ -34805,41 +34801,39 @@
         0)]))
 
 (define (compiler-backend-merge-group-class-mask
-  [map : backend_string_i64_map.Map (:consume)]
-  [name : String]
-  [mask : i64]) : backend_string_i64_map.Map
-  (if (string.eq name "")
-    map
-    (match (backend_string_i64_map.get (& map) name)
-      [(backend_string_i64_map.LookupFound found)
-        (begin
-          (backend_string_i64_map.insert-ref!
-            (&mut map)
-            name
-            (bit-or found mask))
-          map)]
-      [(backend_string_i64_map.LookupMissing)
-        (begin
-          (backend_string_i64_map.insert-ref! (&mut map) name mask)
-          map)])))
+  [map : backend_i64_i64_map.Map (:consume)]
+  [key : i64]
+  [mask : i64]) : backend_i64_i64_map.Map
+  (match (backend_i64_i64_map.get (& map) key)
+    [(backend_i64_i64_map.LookupFound found)
+      (begin
+        (backend_i64_i64_map.insert-ref! (&mut map) key (bit-or found mask))
+        map)]
+    [(backend_i64_i64_map.LookupMissing)
+      (begin
+        (backend_i64_i64_map.insert-ref! (&mut map) key mask)
+        map)]))
 
 (define (compiler-backend-collect-group-class-masks-instr
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map (:consume)]
+  [map : backend_i64_i64_map.Map (:consume)]
   [type-info : compiler_regalloc.CompilerRegVarTypes]
-  [instr : compiler_ir_types.CompilerIrInstr]) : backend_string_i64_map.Map
+  [instr : compiler_ir_types.CompilerIrInstr]) : backend_i64_i64_map.Map
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Pack _ words ty)
-      (compiler-backend-merge-group-class-mask
-        map
-        (compiler-backend-aggregate-type-name type-segment-bases ty)
-        (compiler-backend-pack-word-class-mask type-info words 0 0))]
+      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key)
+          (compiler-backend-merge-group-class-mask
+            map
+            key
+            (compiler-backend-pack-word-class-mask type-info words 0 0))]
+        [(compiler_ast_types.AstMaybeNominalKey.None) map])]
     [_ map]))
 
 (define (compiler-backend-collect-group-class-masks-functions
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : backend_string_i64_map.Map
+  [map : backend_i64_i64_map.Map]
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : backend_i64_i64_map.Map
   (match (compiler-backend-collect-functions-shared
     type-segment-bases
     (CompilerBackendCollectState.GroupClassMasks
@@ -34967,15 +34961,15 @@
         extern-link-symbols
         extern-provided
         0)]
-    [group-word-counts : backend_string_i64_map.Map
+    [group-word-counts : backend_i64_i64_map.Map
       (compiler-backend-collect-group-counts-functions
         type-segment-bases
-        (backend_string_i64_map.with-capacity (+ (* function-count 2) 1))
+        (backend_i64_i64_map.with-capacity (+ (* function-count 2) 1))
         functions)]
-    [group-word-class-masks : backend_string_i64_map.Map
+    [group-word-class-masks : backend_i64_i64_map.Map
       (compiler-backend-collect-group-class-masks-functions
         type-segment-bases
-        (backend_string_i64_map.with-capacity (+ (* function-count 2) 1))
+        (backend_i64_i64_map.with-capacity (+ (* function-count 2) 1))
         functions)]
     (CompilerBackendProgramIndex
       function-ids
@@ -35038,16 +35032,14 @@
         index
         (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [_
-      (let
-        [name : String
-          (compiler-backend-aggregate-type-name type-segment-bases ty)]
-        (if (string.eq name "")
-          1
-          (match (backend_string_i64_map.get
+      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key)
+          (match (backend_i64_i64_map.get
             (& (struct-get index group-word-counts))
-            name)
-            [(backend_string_i64_map.LookupFound count) count]
-            [(backend_string_i64_map.LookupMissing) 1])))]))
+            key)
+            [(backend_i64_i64_map.LookupFound count) count]
+            [(backend_i64_i64_map.LookupMissing) 1])]
+        [(compiler_ast_types.AstMaybeNominalKey.None) 1])]))
 
 (define (compiler-backend-group-type?
   [type-segment-bases : i64]
@@ -35254,16 +35246,14 @@
         index
         (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [_
-      (let
-        [name : String
-          (compiler-backend-aggregate-type-name type-segment-bases ty)]
-        (if (string.eq name "")
-          0
-          (match (backend_string_i64_map.get
+      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key)
+          (match (backend_i64_i64_map.get
             (& (struct-get index group-word-class-masks))
-            name)
-            [(backend_string_i64_map.LookupFound mask) mask]
-            [(backend_string_i64_map.LookupMissing) 0])))]))
+            key)
+            [(backend_i64_i64_map.LookupFound mask) mask]
+            [(backend_i64_i64_map.LookupMissing) 0])]
+        [(compiler_ast_types.AstMaybeNominalKey.None) 0])]))
 
 (define (compiler-backend-group-word-sse?
   [type-segment-bases : i64]

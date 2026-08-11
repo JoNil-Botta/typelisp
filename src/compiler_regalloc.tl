@@ -10,7 +10,6 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
-(import (hashmap.hashmap String i64) as reg_string_i64_map)
 
 ;; Block labels are interned ids, so their maps are integer-keyed (refs #5718).
 (import (hashmap.hashmap i64 i64) as reg_label_i64_map)
@@ -18430,7 +18429,7 @@
       next
       (compiler-reg-group-vars-fixpoint next blocks))))
 
-;; Program-wide aggregate-type-name -> machine-word count map, mirroring
+;; Program-wide canonical aggregate nominal key -> machine-word count map, mirroring
 ;; CompilerBackendProgramIndex.group-word-counts. The backend sets this once
 ;; before per-function planning (compiler-reg-set-group-counts!). It lets the
 ;; register allocator recognise a 2-word register-group value by its TYPE even
@@ -18442,20 +18441,20 @@
 ;; these tiny callees are inlined so the standalone pattern rarely survives; at
 ;; -O1 it is pervasive.) Self-tests never set it, so the map stays empty and the
 ;; structural Pack/Word seeding below is unaffected.
-(define compiler-reg-group-counts : reg_string_i64_map.Map
-  (reg_string_i64_map.with-capacity 8))
-(define compiler-reg-group-class-masks : reg_string_i64_map.Map
-  (reg_string_i64_map.with-capacity 8))
+(define compiler-reg-group-counts : reg_i64_i64_map.Map
+  (reg_i64_i64_map.with-capacity 8))
+(define compiler-reg-group-class-masks : reg_i64_i64_map.Map
+  (reg_i64_i64_map.with-capacity 8))
 
 ;; Direct C calls do not carry ABI metadata in CompilerIrInstr.Call. The backend
 ;; seeds this program-wide name set from extern signatures before planning.
 (define compiler-reg-c-memory-call-names : reg_i64_i64_map.Map
   (reg_i64_i64_map.with-capacity 8))
 
-(define (compiler-reg-set-group-counts! [counts : reg_string_i64_map.Map]) : unit
+(define (compiler-reg-set-group-counts! [counts : reg_i64_i64_map.Map]) : unit
   (set! compiler-reg-group-counts counts))
 
-(define (compiler-reg-set-group-class-masks! [masks : reg_string_i64_map.Map]) : unit
+(define (compiler-reg-set-group-class-masks! [masks : reg_i64_i64_map.Map]) : unit
   (set! compiler-reg-group-class-masks masks))
 
 (define (compiler-reg-clear-c-memory-call-names!) : unit
@@ -18547,8 +18546,6 @@
         values
         0)]))
 
-;; The aggregate type name a value carries (mirror of
-;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
 (define (compiler-reg-reference-to-slice?
   [type-segment-bases : i64]
   [inner : i64]) : bool
@@ -18557,26 +18554,6 @@
       (compiler-reg-reference-to-slice? type-segment-bases nested)]
     [(ast.AstType.Slice _) true]
     [_ false]))
-
-(define (compiler-reg-nominal-name-id-display [name-id : i64]) : String
-  (if (ir.compiler-ir-symbol-owned? name-id)
-    (ir.compiler-ir-symbol-text name-id)
-    (ast.ast-nominal-name-id-display name-id)))
-
-(define (compiler-reg-aggregate-type-name-with-seg-bases
-  [type-segment-bases : i64]
-  [ty : ast.AstType]) : String
-  (match ty
-    [(ast.AstType.Struct name) (compiler-reg-nominal-name-id-display name)]
-    [(ast.AstType.StructArgs name _)
-      (compiler-reg-nominal-name-id-display name)]
-    [(ast.AstType.Enum name) (compiler-reg-nominal-name-id-display name)]
-    [(ast.AstType.EnumArgs name _) (compiler-reg-nominal-name-id-display name)]
-    [(ast.AstType.Region _ inner)
-      (compiler-reg-aggregate-type-name-with-seg-bases
-        type-segment-bases
-        (ast.ast-type-segment-bases-get type-segment-bases inner))]
-    [_ ""]))
 
 ;; Backend-private SysV MEMORY transport values retain a nominal Struct name
 ;; carrying `__tl_internal_abi_mem_s<SIZE>__...`.  Regalloc only needs a
@@ -18644,16 +18621,12 @@
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [_
-      (let
-        [name : String
-          (compiler-reg-aggregate-type-name-with-seg-bases
-            type-segment-bases
-            ty)]
-        (if (string.eq name "")
-          false
-          (match (reg_string_i64_map.get (& compiler-reg-group-counts) name)
-            [(reg_string_i64_map.LookupFound count) (> count 1)]
-            [(reg_string_i64_map.LookupMissing) false])))]))
+      (match (ast.ast-aggregate-type-key type-segment-bases ty)
+        [(ast.AstMaybeNominalKey.Some key)
+          (match (reg_i64_i64_map.get (& compiler-reg-group-counts) key)
+            [(reg_i64_i64_map.LookupFound count) (> count 1)]
+            [(reg_i64_i64_map.LookupMissing) false])]
+        [(ast.AstMaybeNominalKey.None) false])]))
 
 (define (compiler-reg-type-register-group-has-sse?
   [type-segment-bases : i64]
@@ -18666,18 +18639,12 @@
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [_
-      (let
-        [name : String
-          (compiler-reg-aggregate-type-name-with-seg-bases
-            type-segment-bases
-            ty)]
-        (if (string.eq name "")
-          false
-          (match (reg_string_i64_map.get
-            (& compiler-reg-group-class-masks)
-            name)
-            [(reg_string_i64_map.LookupFound mask) (> mask 0)]
-            [(reg_string_i64_map.LookupMissing) false])))]))
+      (match (ast.ast-aggregate-type-key type-segment-bases ty)
+        [(ast.AstMaybeNominalKey.Some key)
+          (match (reg_i64_i64_map.get (& compiler-reg-group-class-masks) key)
+            [(reg_i64_i64_map.LookupFound mask) (> mask 0)]
+            [(reg_i64_i64_map.LookupMissing) false])]
+        [(ast.AstMaybeNominalKey.None) false])]))
 
 (define (compiler-reg-type-register-group-word-sse?
   [type-segment-bases : i64]
@@ -18692,26 +18659,22 @@
         (ast.ast-type-segment-bases-get type-segment-bases inner)
         word-index)]
     [_
-      (let
-        [name : String
-          (compiler-reg-aggregate-type-name-with-seg-bases
-            type-segment-bases
-            ty)]
-        (if (or (string.eq name "") (< word-index 0) (> word-index 1))
-          false
-          (match (reg_string_i64_map.get
-            (& compiler-reg-group-class-masks)
-            name)
-            [(reg_string_i64_map.LookupFound mask)
-              (not
-                (=
-                  (bit-and
-                    mask
-                    (if (= word-index 0)
-                      1
-                      2))
-                  0))]
-            [(reg_string_i64_map.LookupMissing) false])))]))
+      (if (or (< word-index 0) (> word-index 1))
+        false
+        (match (ast.ast-aggregate-type-key type-segment-bases ty)
+          [(ast.AstMaybeNominalKey.Some key)
+            (match (reg_i64_i64_map.get (& compiler-reg-group-class-masks) key)
+              [(reg_i64_i64_map.LookupFound mask)
+                (not
+                  (=
+                    (bit-and
+                      mask
+                      (if (= word-index 0)
+                        1
+                        2))
+                    0))]
+              [(reg_i64_i64_map.LookupMissing) false])]
+          [(ast.AstMaybeNominalKey.None) false]))]))
 
 (define (compiler-reg-var-register-group-has-sse?
   [type-segment-bases : i64]

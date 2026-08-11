@@ -6,8 +6,10 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import stdlib.string)
-(import stdlib.io)
 (import stdlib.str_cat_runtime as str_cat)
+
+(define (compiler-typecheck-proof-reuse-state) : tc_core.TcMacroState
+  (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state)))
 
 (define (compiler-typecheck-proof-reuse-source-missing? [text : String]) : bool
   (match (ci.intern-lookup text)
@@ -20,9 +22,20 @@
     (if (and
       (>= slot 0)
       (< slot tc_core.store-capacity)
-      (> (array-ref tc_core.identity-bytes slot) 0))
+      (>
+        (array-ref
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            identity-bytes)
+          slot)
+        0))
       (let
-        [count : i64 (array-ref tc_core.operand-count slot)]
+        [count : i64
+          (array-ref
+            (tc_core.tc-macro-proof-field
+              (compiler-typecheck-proof-reuse-state)
+              operand-count)
+            slot)]
         (if (and (>= count 0) (<= count tc_core.expected-count))
           count
           -1))
@@ -36,8 +49,20 @@
     (if (and
       (>= slot 0)
       (< slot tc_core.additional-capacity)
-      (> (array-ref tc_core.storage-identity-vars slot) 0))
-      (- (array-ref tc_core.storage-identity-vars slot) 1)
+      (>
+        (array-ref
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            storage-identity-vars)
+          slot)
+        0))
+      (-
+        (array-ref
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            storage-identity-vars)
+          slot)
+        1)
       -1)))
 
 (define (compiler-typecheck-proof-reuse-owned-metadata-ok?
@@ -67,18 +92,57 @@
   (let
     [ok : bool true]
     (begin
-      (tc_core.tc-macro-abstract-proof-reset!)
+      (if (= (ci.intern-generation) 0)
+        (ci.intern-reset!)
+        unit)
+      (tc_core.tc-macro-state-bind-source-names!
+        (compiler-typecheck-proof-reuse-state)
+        (ci.intern-source-name-session-capture-active-handle))
+      (tc_core.tc-macro-identity-reset-for-state!
+        (compiler-typecheck-proof-reuse-state))
+      (tc_core.tc-macro-abstract-proof-reset-for-state!
+        (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state)))
       (tc_core.scratch-reset-functions)
       (if (and
-        (= tc_core.first-slot -1)
-        (= tc_core.next-slots -1)
-        (= tc_core.local-ordinal 0)
-        (not tc_core.local-shadow-updated?)
-        (not tc_core.portable-pair)
-        (not tc_core.local-use)
-        (not tc_core.fixed-call)
-        (not tc_core.allow-cleanup)
-        (not tc_core.checked-context))
+        (=
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            first-slot)
+          -1)
+        (=
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            next-slots)
+          -1)
+        (=
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            local-ordinal)
+          0)
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            local-shadow-updated))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            portable-pair))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            local-use))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            fixed-call))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            allow-cleanup))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            checked-context)))
         unit
         (set! ok false))
       (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
@@ -87,9 +151,19 @@
         (set! ok false)
         unit)
       (if (and
-        tc_core.active-invalid
-        (= tc_core.first-slot -1)
-        (= tc_core.next-slots -1))
+        (tc_core.tc-macro-proof-field
+          (compiler-typecheck-proof-reuse-state)
+          active-invalid)
+        (=
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            first-slot)
+          -1)
+        (=
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            next-slots)
+          -1))
         unit
         (set! ok false))
       (tc_core.scratch-reset-functions)
@@ -133,7 +207,11 @@
         (set! ok false)
         unit)
       (tc_core.record-count "tc-self-complete")
-      (if (= tc_core.required-count 1)
+      (if (=
+        (tc_core.tc-macro-proof-field
+          (compiler-typecheck-proof-reuse-state)
+          qualified-count)
+        1)
         unit
         (set! ok false))
       (tc_core.reset-result)
@@ -165,7 +243,13 @@
         (and
           (>= family-slot 0)
           (< family-slot tc_core.additional-capacity)
-          (> (array-ref tc_core.storage-identity-vars family-slot) 0)))
+          (>
+            (array-ref
+              (tc_core.tc-macro-proof-field
+                (compiler-typecheck-proof-reuse-state)
+                storage-identity-vars)
+              family-slot)
+            0)))
         unit
         (set! ok false))
       (match (ci.intern-generated-canonical-lookup "tc-self-identity-0")
@@ -176,9 +260,21 @@
             (and
               (>= family-slot 0)
               (< family-slot tc_core.additional-capacity)
-              (> (array-ref tc_core.storage-identity-vars family-slot) 0)
+              (>
+                (array-ref
+                  (tc_core.tc-macro-proof-field
+                    (compiler-typecheck-proof-reuse-state)
+                    storage-identity-vars)
+                  family-slot)
+                0)
               (=
-                (- (array-ref tc_core.storage-identity-vars family-slot) 1)
+                (-
+                  (array-ref
+                    (tc_core.tc-macro-proof-field
+                      (compiler-typecheck-proof-reuse-state)
+                      storage-identity-vars)
+                    family-slot)
+                  1)
                 original-id)))
             unit
             (set! ok false))]
@@ -203,9 +299,21 @@
         (and
           (>= family-slot 0)
           (< family-slot tc_core.additional-capacity)
-          (> (array-ref tc_core.storage-identity-vars family-slot) 0)
+          (>
+            (array-ref
+              (tc_core.tc-macro-proof-field
+                (compiler-typecheck-proof-reuse-state)
+                storage-identity-vars)
+              family-slot)
+            0)
           (=
-            (- (array-ref tc_core.storage-identity-vars family-slot) 1)
+            (-
+              (array-ref
+                (tc_core.tc-macro-proof-field
+                  (compiler-typecheck-proof-reuse-state)
+                  storage-identity-vars)
+                family-slot)
+              1)
             (tc_core.tc-generated-module-name-id "tc-self-first-wins-identity"))))
         unit
         (set! ok false))
@@ -234,7 +342,13 @@
               (and
                 (>= family-slot 0)
                 (< family-slot tc_core.additional-capacity)
-                (> (array-ref tc_core.storage-identity-vars family-slot) 0))))
+                (>
+                  (array-ref
+                    (tc_core.tc-macro-proof-field
+                      (compiler-typecheck-proof-reuse-state)
+                      storage-identity-vars)
+                    family-slot)
+                  0))))
             (set! ok false)
             unit)
           (set! index (+ index 1)))
@@ -364,7 +478,8 @@
             owned-kind)
             unit
             (set! ok false))
-          (tc_core.macro-expand-scratch-clear-owned-caches!)
+          (tc_core.macro-expand-scratch-clear-owned-caches!
+            (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state)))
           (if (= source-mark (ci.intern-pool-len))
             unit
             (set! ok false))
@@ -395,6 +510,7 @@
       ;; cleanup boundary, and query the exact values after both calls.
       (tc_core.record-count "tc-self-lifecycle-complete")
       (tc_core.tc-macro-abstract-proof-note!
+        (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))
         "tc-self-lifecycle-proof"
         "tc-self-lifecycle-param"
         37)
@@ -410,12 +526,14 @@
         "tc-self-lifecycle-identity"
         (ci.intern "tc-self-lifecycle-module")
         (ast.AstDecl.Module (ci.intern "tc-self-lifecycle-module")))
-      (tc_core.macro-expand-scratch-clear-owned-caches!)
+      (tc_core.macro-expand-scratch-clear-owned-caches!
+        (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state)))
       (if (tc_core.complete-key "tc-self-lifecycle-complete")
         unit
         (set! ok false))
       (if (=
         (tc_core.tc-macro-abstract-proof-lookup
+          (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))
           "tc-self-lifecycle-proof"
           "tc-self-lifecycle-param")
         37)
@@ -467,6 +585,7 @@
         (set! ok false))
       (if (=
         (tc_core.tc-macro-abstract-proof-lookup
+          (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))
           "tc-self-lifecycle-proof"
           "tc-self-lifecycle-param")
         37)
@@ -582,7 +701,9 @@
           (if (tc_core.qualified-name first-qualified-id next-qualified-id)
             (set! ok false)
             unit)
-          (if tc_core.portable-pair
+          (if (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            portable-pair)
             (set! ok false)
             unit)
           ;; Equal source names pass; arbitrary source renames do not.
@@ -716,10 +837,18 @@
                             (ast.AstType.U8))
                             unit
                             (set! ok false))
-                          (if (= (bit-and tc_core.active-mask 1) 1)
+                          (if (=
+                            (bit-and
+                              (tc_core.tc-macro-proof-field
+                                (compiler-typecheck-proof-reuse-state)
+                                active-mask)
+                              1)
+                            1)
                             unit
                             (set! ok false))
-                          (if tc_core.portable-pair
+                          (if (tc_core.tc-macro-proof-field
+                            (compiler-typecheck-proof-reuse-state)
+                            portable-pair)
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -747,7 +876,11 @@
                             (ast.AstType.I64))
                             unit
                             (set! ok false))
-                          (if (= tc_core.active-mask 0)
+                          (if (=
+                            (tc_core.tc-macro-proof-field
+                              (compiler-typecheck-proof-reuse-state)
+                              active-mask)
+                            0)
                             unit
                             (set! ok false))
                           ;; A conflicting second note poisons the row;
@@ -1002,7 +1135,11 @@
                             (ast.AstType.I64))
                             unit
                             (set! ok false))
-                          (if (= tc_core.active-mask 0)
+                          (if (=
+                            (tc_core.tc-macro-proof-field
+                              (compiler-typecheck-proof-reuse-state)
+                              active-mask)
+                            0)
                             unit
                             (set! ok false))
                           (tc_core.recorded-maybe-ty)
@@ -1181,7 +1318,6 @@
               [(csym.ResultCompilerSymbols.Err _) false])]
           [(parser.ResultAstProgram.Err _) false])]
       (begin
-        (stdlib.io.print-bool answer)
         (tc_core.scratch-reset-functions)
         (tc_core.scratch-reset-result)
         (tc_core.tc-macro-abstract-proof-reset!)
@@ -1286,18 +1422,16 @@
                                                 false))]
                                           [context-ok : bool
                                             (=
-                                              tc_core.checked-context
+                                              (tc_core.tc-macro-proof-field
+                                                (compiler-typecheck-proof-reuse-state)
+                                                checked-context)
                                               want-context)]
                                           [safe-ok : bool
                                             (tc_core.invalid-keeps-first)]
-                                          (begin
-                                            (stdlib.io.print-bool exact-ok)
-                                            (stdlib.io.print-bool safe-ok)
-                                            (stdlib.io.print-bool context-ok)
-                                            (and
-                                              (= exact-ok want-exact)
-                                              (= safe-ok want-safe)
-                                              context-ok)))))]
+                                          (and
+                                            (= exact-ok want-exact)
+                                            (= safe-ok want-safe)
+                                            context-ok))))]
                                   [_ false])]
                               [_ false])))]
                       [_ false])]
@@ -1305,7 +1439,6 @@
               [(csym.ResultCompilerSymbols.Err _) false])]
           [(parser.ResultAstProgram.Err _) false])]
       (begin
-        (stdlib.io.print-bool answer)
         (tc_core.scratch-reset-functions)
         (tc_core.scratch-reset-result)
         (tc_core.tc-macro-abstract-proof-reset!)
@@ -2195,7 +2328,9 @@
                                       next-decl)
                                       (set! ok false)
                                       unit)
-                                    (if tc_core.reflection-env
+                                    (if (tc_core.tc-macro-proof-field
+                                      (compiler-typecheck-proof-reuse-state)
+                                      reflection-env)
                                       (set! ok false)
                                       unit)
                                     ;; Missing metadata is a hard preflight
@@ -2238,13 +2373,35 @@
         [(parser.ResultAstProgram.Err _) (set! ok false)])
       (tc_core.scratch-reset-functions)
       (if (and
-        (= tc_core.local-ordinal 0)
-        (not tc_core.local-shadow-updated?)
-        (not tc_core.portable-pair)
-        (not tc_core.local-use)
-        (not tc_core.fixed-call)
-        (not tc_core.allow-cleanup)
-        (not tc_core.checked-context))
+        (=
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            local-ordinal)
+          0)
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            local-shadow-updated))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            portable-pair))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            local-use))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            fixed-call))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            allow-cleanup))
+        (not
+          (tc_core.tc-macro-proof-field
+            (compiler-typecheck-proof-reuse-state)
+            checked-context)))
         unit
         (set! ok false))
       ok)))

@@ -158,22 +158,117 @@
 (define (ctfe-builtin-reset!) : unit
   unit)
 
+(defstruct CompilerCtfeMacroStateData
+  (result-hygiene-free-node i64)
+  (result-may-contain-macro bool)
+  (visible-macro-name-set ctfe_key_map.Map)
+  (module-macro-export-keys ctfe_key_map.Map)
+  (module-value-type-ids ctfe_key_map.Map)
+  (module-value-reflection-enabled bool)
+  ;; Hash-table backing arrays outlive per-file scratch arenas. Growth switches
+  ;; to this owning compiler-job arena before publishing a replacement array.
+  (map-storage-arena i64))
+
+(defstruct CompilerCtfeMacroState
+  (address i64))
+
+(define (compiler-ctfe-macro-state-new) : CompilerCtfeMacroState
+  (let
+    [cell : (__tl_dyn-array CompilerCtfeMacroStateData)
+      (array.make-array CompilerCtfeMacroStateData 1)]
+    (begin
+      (set!
+        (array-ref cell 0)
+        (CompilerCtfeMacroStateData
+          -1
+          false
+          (ctfe_key_map.with-capacity 1)
+          (ctfe_key_map.with-capacity 1)
+          (ctfe_key_map.with-capacity 1)
+          false
+          (arena.tl_arena_current)))
+      (CompilerCtfeMacroState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr CompilerCtfeMacroStateData))))
+          : i64)))))
+
+(define (compiler-ctfe-macro-state-data [state : CompilerCtfeMacroState]) : CompilerCtfeMacroStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr CompilerCtfeMacroStateData)))))
+
+(define (compiler-ctfe-macro-state-data-set!
+  [state : CompilerCtfeMacroState]
+  [data : CompilerCtfeMacroStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast state.address : u64)
+        : (MutPtr CompilerCtfeMacroStateData))
+      data)))
+
+(define (compiler-ctfe-key-map-grow-for-state-if-needed!
+  [state : CompilerCtfeMacroState]
+  [map : (&mut map ctfe_key_map.Map)]) : unit
+  (if (ctfe_key_map.needs-grow? map)
+    (let
+      [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+      [previous : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set data.map-storage-arena))
+        (ctfe_key_map.grow! map)
+        (unsafe
+          (arena.tl_arena_set previous))))
+    unit))
+
+;; Standalone APIs and direct CTFE tests are serial compatibility surfaces.
+;; Production compiler jobs pass their own explicit state through CtfeEnv.
+(define compiler-ctfe-serial-macro-state-address : i64
+  (__tl-project-field (compiler-ctfe-macro-state-new) address))
+
+(define (compiler-ctfe-serial-macro-state) : CompilerCtfeMacroState
+  (CompilerCtfeMacroState compiler-ctfe-serial-macro-state-address))
+
 ;; A generic syntax intrinsic can prove that its result contains only captured
 ;; caller expressions plus hygiene-inert syntax. Publish that exact root to the
-;; expression-macro handoff so it can reuse the tree instead of cloning it
-;; through an identity-only hygiene walk. The marker is reset for every
-;; transformer evaluation and is consumed only when the returned node matches.
-(define ctfe-result-hygiene-free-node : i64
-  -1)
+;; expression-macro handoff so it can reuse the tree instead of cloning it.
+(define (ctfe-result-hygiene-free-reset-for-state!
+  [state : CompilerCtfeMacroState]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (set! data.result-hygiene-free-node -1)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (ctfe-result-hygiene-free-note-for-state!
+  [state : CompilerCtfeMacroState]
+  [node : i64]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (set! data.result-hygiene-free-node node)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (ctfe-result-hygiene-free-node-id-for-state
+  [state : CompilerCtfeMacroState]) : i64
+  (__tl-project-field
+    (compiler-ctfe-macro-state-data state)
+    result-hygiene-free-node))
 
 (define (ctfe-result-hygiene-free-reset!) : unit
-  (set! ctfe-result-hygiene-free-node -1))
+  (ctfe-result-hygiene-free-reset-for-state! (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-result-hygiene-free-note! [node : i64]) : unit
-  (set! ctfe-result-hygiene-free-node node))
+  (ctfe-result-hygiene-free-note-for-state!
+    (compiler-ctfe-serial-macro-state)
+    node))
 
 (define (ctfe-result-hygiene-free-node-id) : i64
-  ctfe-result-hygiene-free-node)
+  (ctfe-result-hygiene-free-node-id-for-state
+    (compiler-ctfe-serial-macro-state)))
 
 ;; Transformer construction records only the event that can make an otherwise
 ;; expanded syntax value need another macro walk: creating a call whose callee
@@ -181,25 +276,73 @@
 ;; for one transformer evaluation. Captured operands have already completed
 ;; their own fixpoint walk before binding; every newly created call flows
 ;; through the helpers below.
-(define ctfe-result-may-contain-macro : bool
-  false)
-(define ctfe-visible-macro-name-set : ctfe_key_map.Map
-  (ctfe_key_map.with-capacity 128))
+(define (ctfe-visible-macro-names-reset-for-state!
+  [state : CompilerCtfeMacroState]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    [previous : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set data.map-storage-arena))
+      (if (< (ctfe_key_map.capacity (& data.visible-macro-name-set)) 128)
+        (set! data.visible-macro-name-set (ctfe_key_map.with-capacity 128))
+        (ctfe_key_map.clear-ref! (&mut data.visible-macro-name-set)))
+      (compiler-ctfe-macro-state-data-set! state data)
+      (unsafe
+        (arena.tl_arena_set previous)))))
+
+(define (ctfe-visible-macro-name-add-for-state!
+  [state : CompilerCtfeMacroState]
+  [name-id : i64]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (compiler-ctfe-key-map-grow-for-state-if-needed!
+        state
+        (&mut data.visible-macro-name-set))
+      (ctfe_key_map.insert-ref! (&mut data.visible-macro-name-set) name-id 1)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (ctfe-result-macro-provenance-reset-for-state!
+  [state : CompilerCtfeMacroState]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (set! data.result-may-contain-macro false)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (ctfe-result-may-contain-macro-note-for-state!
+  [state : CompilerCtfeMacroState]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (set! data.result-may-contain-macro true)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (ctfe-result-may-contain-macro-for-state?
+  [state : CompilerCtfeMacroState]) : bool
+  (__tl-project-field
+    (compiler-ctfe-macro-state-data state)
+    result-may-contain-macro))
 
 (define (ctfe-visible-macro-names-reset!) : unit
-  (set! ctfe-visible-macro-name-set (ctfe_key_map.with-capacity 128)))
+  (ctfe-visible-macro-names-reset-for-state! (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-visible-macro-name-add! [name-id : i64]) : unit
-  (ctfe_key_map.insert-ref! (&mut ctfe-visible-macro-name-set) name-id 1))
+  (ctfe-visible-macro-name-add-for-state!
+    (compiler-ctfe-serial-macro-state)
+    name-id))
 
 (define (ctfe-result-macro-provenance-reset!) : unit
-  (set! ctfe-result-may-contain-macro false))
+  (ctfe-result-macro-provenance-reset-for-state!
+    (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-result-may-contain-macro-note!) : unit
-  (set! ctfe-result-may-contain-macro true))
+  (ctfe-result-may-contain-macro-note-for-state!
+    (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-result-may-contain-macro?) : bool
-  ctfe-result-may-contain-macro)
+  (ctfe-result-may-contain-macro-for-state? (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-macro-provenance-callee-base-name-id [name-id : i64]) : i64
   (cond
@@ -224,6 +367,7 @@
           base-id))]))
 
 (define (ctfe-result-macro-provenance-call-head-with-pools?
+  [state : CompilerCtfeMacroState]
   [pools : ast.AstNodePoolContext]
   [callee-node : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
@@ -232,20 +376,27 @@
     [(ast.AstExpr.Var name-id)
       (let
         [base-id : i64 (ctfe-macro-provenance-callee-base-name-id name-id)]
+        [data : CompilerCtfeMacroStateData
+          (compiler-ctfe-macro-state-data state)]
         (or
-          (ctfe_key_map.contains? (& ctfe-visible-macro-name-set) base-id)
+          (ctfe_key_map.contains? (& data.visible-macro-name-set) base-id)
           (= base-id cbi.compiler-builtin-id-fix-when)
           (= base-id cbi.compiler-builtin-id-fix-unless)))]
     [_ false]))
 
 (define (ctfe-result-macro-provenance-note-call-head-with-pools!
+  [state : CompilerCtfeMacroState]
   [pools : ast.AstNodePoolContext]
   [callee-node : i64]) : unit
-  (if (ctfe-result-macro-provenance-call-head-with-pools? pools callee-node)
-    (ctfe-result-may-contain-macro-note!)
+  (if (ctfe-result-macro-provenance-call-head-with-pools?
+    state
+    pools
+    callee-node)
+    (ctfe-result-may-contain-macro-note-for-state! state)
     unit))
 
 (define (ctfe-ast-expr-call-with-provenance
+  [state : CompilerCtfeMacroState]
   [pools : ast.AstNodePoolContext]
   [callee-node : i64]
   [args : ast.AstExprList]) : i64
@@ -253,6 +404,7 @@
     [node : i64 (ast.ast-expr-call-with-pools pools callee-node args)]
     (begin
       (ctfe-result-macro-provenance-note-call-head-with-pools!
+        state
         pools
         callee-node)
       node)))
@@ -1020,7 +1172,8 @@
   (arena-store (Box CtfeEnvArena))
   (head i64)
   (syntax-pools CtfeMaybeSyntaxPools)
-  (metadata (Box CtfeEnvMetadata)))
+  (metadata (Box CtfeEnvMetadata))
+  (macro-state CompilerCtfeMacroState))
 
 (define (ctfe-env-arena-segment-capacity) : i64
   8)
@@ -1070,23 +1223,35 @@
   [pools : ast.AstNodePoolContext]
   [layouts : CtfeLayoutInfoList]
   [reflections : CtfeReflectInfoList]
-  [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
+  [source-names : ci.InternSourceNameSessionHandle]
+  [macro-state : CompilerCtfeMacroState]) : CtfeEnv
   (begin
     (cfg compile-profile (ctfe-env-profile-note-arena-root!) unit)
     (CtfeEnv
       (box (ctfe-env-arena-new))
       -1
       (CtfeMaybeSyntaxPools.None)
-      (box (CtfeEnvMetadata pools layouts reflections source-names)))))
+      (box (CtfeEnvMetadata pools layouts reflections source-names))
+      macro-state)))
 
-(define (ctfe-env-empty-with-pools-and-source-names
+(define (ctfe-env-empty-with-pools-and-source-names-and-macro-state
   [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
+  [source-names : ci.InternSourceNameSessionHandle]
+  [macro-state : CompilerCtfeMacroState]) : CtfeEnv
   (ctfe-env-new
     pools
     (ctfe-layout-info-list-empty)
     (ctfe-reflect-info-list-empty)
-    source-names))
+    source-names
+    macro-state))
+
+(define (ctfe-env-empty-with-pools-and-source-names
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
+  (ctfe-env-empty-with-pools-and-source-names-and-macro-state
+    pools
+    source-names
+    (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-env-empty-with-pools [pools : ast.AstNodePoolContext]) : CtfeEnv
   (ctfe-env-empty-with-pools-and-source-names
@@ -1103,7 +1268,8 @@
     pools
     layouts
     (ctfe-reflect-info-list-empty)
-    (ci.intern-source-name-session-capture-active-handle)))
+    (ci.intern-source-name-session-capture-active-handle)
+    (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-env-with-layouts [layouts : CtfeLayoutInfoList]) : CtfeEnv
   (ctfe-env-with-layouts-and-pools
@@ -1117,13 +1283,19 @@
     pools
     (ctfe-layout-info-list-empty)
     reflections
-    (ci.intern-source-name-session-capture-active-handle)))
+    (ci.intern-source-name-session-capture-active-handle)
+    (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-env-with-reflections-and-pools-and-source-names
   [reflections : CtfeReflectInfoList]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
-  (ctfe-env-new pools (ctfe-layout-info-list-empty) reflections source-names))
+  (ctfe-env-new
+    pools
+    (ctfe-layout-info-list-empty)
+    reflections
+    source-names
+    (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-env-with-reflections [reflections : CtfeReflectInfoList]) : CtfeEnv
   (ctfe-env-with-reflections-and-pools
@@ -1135,7 +1307,20 @@
   [reflections : CtfeReflectInfoList]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
-  (ctfe-env-new pools layouts reflections source-names))
+  (ctfe-env-new
+    pools
+    layouts
+    reflections
+    source-names
+    (compiler-ctfe-serial-macro-state)))
+
+(define (ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
+  [layouts : CtfeLayoutInfoList]
+  [reflections : CtfeReflectInfoList]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [macro-state : CompilerCtfeMacroState]) : CtfeEnv
+  (ctfe-env-new pools layouts reflections source-names macro-state))
 
 (define (ctfe-env-with-metadata-and-pools
   [layouts : CtfeLayoutInfoList]
@@ -1246,7 +1431,8 @@
         store
         index
         (ctfe-env-syntax-pools-for-value env value)
-        env.metadata))))
+        env.metadata
+        env.macro-state))))
 
 (define (ctfe-env-extend-id
   [env : CtfeEnv]
@@ -1514,6 +1700,9 @@
 (define (ctfe-env-source-names [env : CtfeEnv]) : ci.InternSourceNameSessionHandle
   (__tl-project-field (__tl-box-place env.metadata) source-names))
 
+(define (ctfe-env-macro-state [env : CtfeEnv]) : CompilerCtfeMacroState
+  env.macro-state)
+
 ;; A transformer reads its definition body from `ctfe-env-pools`, but syntax
 ;; selected from a variadic caller argument may belong to a newer pool. Carry
 ;; that pool on every environment extension so generated nodes and captured
@@ -1568,7 +1757,8 @@
           pools
           metadata.layouts
           metadata.reflections
-          metadata.source-names)))))
+          metadata.source-names))
+      env.macro-state)))
 
 ;; Binding-clause syntax values predate the pool-bearing CapturedExpr variants.
 ;; For the stdlib binding-prefix transformer, their child IDs come from a newer
@@ -1589,7 +1779,8 @@
           pools
           metadata.layouts
           metadata.reflections
-          metadata.source-names)))))
+          metadata.source-names))
+      env.macro-state)))
 
 (define (ctfe-ast-get [env : CtfeEnv] [id : i64]) : ast.AstExpr
   (ast.ast-node-pool-context-expr-get (ctfe-env-pools env) id))
@@ -1869,70 +2060,161 @@
     name
     (str_cat.str-cat module "/" name)))
 
-(define ctfe-module-macro-export-keys : (Box ctfe_key_map.Map)
-  (box (ctfe_key_map.with-capacity 1)))
-
 (define (ctfe-module-macro-export-key-id [module-id : i64] [name-id : i64]) : i64
   (ctfe-qualified-name-key-id module-id name-id))
 
+(define (ctfe-module-macro-export-reset-for-state!
+  [state : CompilerCtfeMacroState]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    [previous : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set data.map-storage-arena))
+      (if (< (ctfe_key_map.capacity (& data.module-macro-export-keys)) 256)
+        (set! data.module-macro-export-keys (ctfe_key_map.with-capacity 256))
+        (ctfe_key_map.clear-ref! (&mut data.module-macro-export-keys)))
+      (compiler-ctfe-macro-state-data-set! state data)
+      (unsafe
+        (arena.tl_arena_set previous)))))
+
+(define (ctfe-module-macro-export-add-id-for-state!
+  [state : CompilerCtfeMacroState]
+  [module-id : i64]
+  [name-id : i64]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (compiler-ctfe-key-map-grow-for-state-if-needed!
+        state
+        (&mut data.module-macro-export-keys))
+      (ctfe_key_map.insert-ref!
+        (&mut data.module-macro-export-keys)
+        (ctfe-module-macro-export-key-id module-id name-id)
+        1)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (ctfe-module-macro-export-id-for-state?
+  [state : CompilerCtfeMacroState]
+  [module-id : i64]
+  [name-id : i64]) : bool
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (ctfe_key_map.contains?
+      (& data.module-macro-export-keys)
+      (ctfe-module-macro-export-key-id module-id name-id))))
+
 (define (ctfe-module-macro-export-reset!) : unit
-  (set! (deref ctfe-module-macro-export-keys) (ctfe_key_map.with-capacity 256)))
+  (ctfe-module-macro-export-reset-for-state! (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-module-macro-export-add-id! [module-id : i64] [name-id : i64]) : unit
-  (ctfe_key_map.insert-ref!
-    (&mut (__tl-box-place ctfe-module-macro-export-keys))
-    (ctfe-module-macro-export-key-id module-id name-id)
-    1))
+  (ctfe-module-macro-export-add-id-for-state!
+    (compiler-ctfe-serial-macro-state)
+    module-id
+    name-id))
 
 (define (ctfe-module-macro-export-id? [module-id : i64] [name-id : i64]) : bool
-  (ctfe_key_map.contains?
-    (& (__tl-box-place ctfe-module-macro-export-keys))
-    (ctfe-module-macro-export-key-id module-id name-id)))
+  (ctfe-module-macro-export-id-for-state?
+    (compiler-ctfe-serial-macro-state)
+    module-id
+    name-id))
 
 ;; Public value signatures are indexed separately from CtfeEnv. Keeping this
 ;; reset-scoped side table avoids widening every immutable CTFE environment
 ;; node. Values are type-pool handles, so the map retains only two i64s per
 ;; public signature and identical top-level types remain hash-consed.
-(define ctfe-module-value-type-ids : (Box ctfe_key_map.Map)
-  (box (ctfe_key_map.with-capacity 1)))
-(define ctfe-module-value-reflection-enabled : bool
-  false)
-
 (defenum CtfeMaybeModuleValueType
   (None)
   (Some ast.AstType))
 
+(define (ctfe-module-value-reflection-enable-for-state!
+  [state : CompilerCtfeMacroState]
+  [enabled : bool]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (begin
+      (set! data.module-value-reflection-enabled enabled)
+      (compiler-ctfe-macro-state-data-set! state data))))
+
+(define (ctfe-module-value-reset-for-state! [state : CompilerCtfeMacroState]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    [minimum-capacity : i64
+      (if data.module-value-reflection-enabled
+        1024
+        1)]
+    [previous : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set data.map-storage-arena))
+      (if (<
+        (ctfe_key_map.capacity (& data.module-value-type-ids))
+        minimum-capacity)
+        (set!
+          data.module-value-type-ids
+          (ctfe_key_map.with-capacity minimum-capacity))
+        (ctfe_key_map.clear-ref! (&mut data.module-value-type-ids)))
+      (compiler-ctfe-macro-state-data-set! state data)
+      (unsafe
+        (arena.tl_arena_set previous)))))
+
+(define (ctfe-module-value-add-id-for-state!
+  [state : CompilerCtfeMacroState]
+  [module-id : i64]
+  [name-id : i64]
+  [ty : ast.AstType]) : unit
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (if data.module-value-reflection-enabled
+      (begin
+        (compiler-ctfe-key-map-grow-for-state-if-needed!
+          state
+          (&mut data.module-value-type-ids))
+        (ctfe_key_map.insert-ref!
+          (&mut data.module-value-type-ids)
+          (ctfe-qualified-name-key-id module-id name-id)
+          (ast.ty-node-push ty))
+        (compiler-ctfe-macro-state-data-set! state data))
+      unit)))
+
+(define (ctfe-module-value-type-id-for-state
+  [state : CompilerCtfeMacroState]
+  [module-id : i64]
+  [name-id : i64]) : CtfeMaybeModuleValueType
+  (let
+    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
+    (if data.module-value-reflection-enabled
+      (match (ctfe_key_map.get
+        (& data.module-value-type-ids)
+        (ctfe-qualified-name-key-id module-id name-id))
+        [(ctfe_key_map.LookupFound type-id)
+          (CtfeMaybeModuleValueType.Some (ast.ty-node-get type-id))]
+        [(ctfe_key_map.LookupMissing) (CtfeMaybeModuleValueType.None)])
+      (CtfeMaybeModuleValueType.None))))
+
 (define (ctfe-module-value-reflection-enable! [enabled : bool]) : unit
-  (set! ctfe-module-value-reflection-enabled enabled))
+  (ctfe-module-value-reflection-enable-for-state!
+    (compiler-ctfe-serial-macro-state)
+    enabled))
 
 (define (ctfe-module-value-reset!) : unit
-  (set!
-    (deref ctfe-module-value-type-ids)
-    (ctfe_key_map.with-capacity
-      (if ctfe-module-value-reflection-enabled
-        1024
-        1))))
+  (ctfe-module-value-reset-for-state! (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-module-value-add-id!
   [module-id : i64]
   [name-id : i64]
   [ty : ast.AstType]) : unit
-  (if ctfe-module-value-reflection-enabled
-    (ctfe_key_map.insert-ref!
-      (&mut (__tl-box-place ctfe-module-value-type-ids))
-      (ctfe-qualified-name-key-id module-id name-id)
-      (ast.ty-node-push ty))
-    unit))
+  (ctfe-module-value-add-id-for-state!
+    (compiler-ctfe-serial-macro-state)
+    module-id
+    name-id
+    ty))
 
 (define (ctfe-module-value-type-id [module-id : i64] [name-id : i64]) : CtfeMaybeModuleValueType
-  (if ctfe-module-value-reflection-enabled
-    (match (ctfe_key_map.get
-      (& (__tl-box-place ctfe-module-value-type-ids))
-      (ctfe-qualified-name-key-id module-id name-id))
-      [(ctfe_key_map.LookupFound type-id)
-        (CtfeMaybeModuleValueType.Some (ast.ty-node-get type-id))]
-      [(ctfe_key_map.LookupMissing) (CtfeMaybeModuleValueType.None)])
-    (CtfeMaybeModuleValueType.None)))
+  (ctfe-module-value-type-id-for-state
+    (compiler-ctfe-serial-macro-state)
+    module-id
+    name-id))
 
 (define (ctfe-reflect-info-list-add-if-missing-id
   [infos : CtfeReflectInfoList]
@@ -6132,7 +6414,10 @@
                 (CompilerCtfeValue.Bool
                   (or
                     (string.eq module "")
-                    (ctfe-module-macro-export-id? module-id name-id)))
+                    (ctfe-module-macro-export-id-for-state?
+                      (ctfe-env-macro-state env)
+                      module-id
+                      name-id)))
                 name-fuel)]
             [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
@@ -6164,7 +6449,10 @@
         [(ResultCtfeStringArg.Ok module module-id module-fuel)
           (match (ctfe-eval-string-arg name-arg expr env module-fuel query-name)
             [(ResultCtfeStringArg.Ok name name-id name-fuel)
-              (match (ctfe-module-value-type-id module-id name-id)
+              (match (ctfe-module-value-type-id-for-state
+                (ctfe-env-macro-state env)
+                module-id
+                name-id)
                 [(CtfeMaybeModuleValueType.Some ty)
                   (ResultCtfe.Ok
                     (if type-query
@@ -6220,7 +6508,10 @@
                 (if (and
                   (or
                     (string.eq module "")
-                    (ctfe-module-macro-export-id? module-id name-id)))
+                    (ctfe-module-macro-export-id-for-state?
+                      (ctfe-env-macro-state env)
+                      module-id
+                      name-id)))
                   (ResultCtfe.Ok
                     (CompilerCtfeValue.Expr
                       (ctfe-ast-push
@@ -6589,6 +6880,7 @@
                         (ctfe-syntax-expr-value
                           env
                           (ctfe-ast-expr-call-with-provenance
+                            (ctfe-env-macro-state env)
                             (ctfe-env-syntax-pool-context env)
                             callee-node
                             call-args)
@@ -6618,6 +6910,7 @@
   (ResultCtfe.Ok
     (CompilerCtfeValue.Expr
       (ctfe-ast-expr-call-with-provenance
+        (ctfe-env-macro-state env)
         (ctfe-env-pools env)
         callee
         (ast.ast-expr-cons
@@ -7312,7 +7605,9 @@
   (if (< index 0)
     (begin
       (if hygiene-free?
-        (ctfe-result-hygiene-free-note! out-node)
+        (ctfe-result-hygiene-free-note-for-state!
+          (ctfe-env-macro-state env)
+          out-node)
         unit)
       (ResultCtfe.Ok
         (CompilerCtfeValue.CapturedExpr out-node result-ty pools)
@@ -7540,7 +7835,9 @@
   (if (< index 0)
     (begin
       (if hygiene-free?
-        (ctfe-result-hygiene-free-note! out-node)
+        (ctfe-result-hygiene-free-note-for-state!
+          (ctfe-env-macro-state env)
+          out-node)
         unit)
       (ResultCtfe.Ok
         (CompilerCtfeValue.CapturedExpr out-node (ctfe-untyped-expr-type) pools)
@@ -8575,6 +8872,7 @@
 
 (define (ctfe-source-helper-call1 [env : CtfeEnv] [name : String] [arg : i64]) : i64
   (ctfe-ast-expr-call-with-provenance
+    (ctfe-env-macro-state env)
     (ctfe-env-pools env)
     (ctfe-source-helper-var env name)
     (ast.ast-expr-cons arg (ast.ast-expr-list-new))))
@@ -10395,6 +10693,7 @@
   [args : ast.AstExprList]
   [env : CtfeEnv]) : i64
   (ctfe-ast-expr-call-with-provenance
+    (ctfe-env-macro-state env)
     (ctfe-env-pools env)
     (ctfe-ast-push env (ast.AstExpr.Var name-id))
     args))
@@ -11566,6 +11865,7 @@
               [(ResultCtfeQuoteExprList.Ok quoted-args args-fuel)
                 (ResultCtfeQuoteExpr.Ok
                   (ctfe-ast-expr-call-with-provenance
+                    (ctfe-env-macro-state env)
                     (ctfe-env-pools env)
                     quoted-func
                     quoted-args)

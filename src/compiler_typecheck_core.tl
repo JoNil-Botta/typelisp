@@ -398,7 +398,22 @@
   ;; qualified table-id, generation, registry-id, ready.
   (control (__tl_dyn-array i64)))
 
+;; Explicit capability for all mutable macro-expansion and CTFE handoff state.
+;; The address is a stable pointer to the owning job's fixed-width substate
+;; directory; typed substates below are allocated lazily in that job's lifetime
+;; arena. Keeping the capability
+;; separate from TcContext lets prescan/setup code use it before a context has
+;; been built, while contexts still recover the same owner through job-state.
+(defstruct TcMacroState
+  (address i64))
+
 (defstruct TcJobStateData
+  ;; Arena and lazy typed-substate cells owned by this compiler job.  Zero is a
+  ;; valid "unused" state: an idle job allocates no macro tables or arenas.
+  (owner-arena i64)
+  ;; Fixed-width lazy address directory. Keeping this out of the job header
+  ;; avoids inflating every pass-by-value job-data read as macro subsystems grow.
+  (macro-state-addresses (__tl_dyn-array i64))
   (source-key-cache TcSourceKeyCacheState)
   (topenv-membership TcTopEnvMembershipState)
   (thread-name-kind TcThreadNameKindState)
@@ -568,10 +583,18 @@
 (define (tc-job-state-new) : TcJobState
   (let
     [cell : (__tl_dyn-array TcJobStateData) (array.make-array TcJobStateData 1)]
+    [owner : i64 (arena.tl_arena_current)]
+    [macro-state-addresses : (__tl_dyn-array i64) (array.make-array i64 14)]
     (begin
+      ;; The directory never grows, so TcMacroState may carry its data pointer
+      ;; directly. Slot 12 keeps the owner beside the lazy addresses, while
+      ;; slot 13 carries the source-name session handle.
+      (set! (array-ref macro-state-addresses 12) owner)
       (set!
         (array-ref cell 0)
         (TcJobStateData
+          owner
+          macro-state-addresses
           (tc-source-key-cache-state-new)
           (tc-topenv-membership-state-new)
           (tc-thread-name-kind-state-new)
@@ -590,6 +613,18 @@
   (unsafe
     (ptr-read (int->ptr (cast state.address : u64) : (Ptr TcJobStateData)))))
 
+(define (tc-job-state-macro-state [state : TcJobState]) : TcMacroState
+  (TcMacroState
+    (cast
+      (unsafe
+        (ptr->int
+          (array-data
+            (tc-job-state-field
+              state
+              macro-state-addresses
+              (__tl_dyn-array i64)))))
+      : i64)))
+
 (defmacro (tc-job-state-field [state : Expr] [field : Expr] [_T : type]) : Expr
   `(unsafe
     (ptr-read
@@ -600,6 +635,80 @@
             : (Ptr u8))
           (comptime (offset-of (type TcJobStateData) ,field)))
         : (Ptr ,_T)))))
+
+(defmacro (tc-job-state-set-field!
+  [state : Expr]
+  [field : Expr]
+  [_T : type]
+  [value : Expr]) : Expr
+  `(unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr
+            (cast ,(comptime.expr-struct-get state "address") : u64)
+            : (Ptr u8))
+          (comptime (offset-of (type TcJobStateData) ,field)))
+        : (MutPtr ,_T))
+      ,value)))
+
+(define (tc-macro-state-owner-arena [state : TcMacroState]) : i64
+  (unsafe
+    (ptr-read (ptr-offset (int->ptr (cast state.address : u64) : (Ptr i64)) 12))))
+
+(define tc-macro-state-slot-module-env : i64
+  0)
+(define tc-macro-state-slot-helper : i64
+  1)
+(define tc-macro-state-slot-abstract : i64
+  2)
+(define tc-macro-state-slot-walk : i64
+  3)
+(define tc-macro-state-slot-generated-module : i64
+  4)
+(define tc-macro-state-slot-generated-decls : i64
+  5)
+(define tc-macro-state-slot-surface-call : i64
+  6)
+(define tc-macro-state-slot-hygiene-produced : i64
+  7)
+(define tc-macro-state-slot-import-index : i64
+  8)
+(define tc-macro-state-slot-result-identity : i64
+  9)
+(define tc-macro-state-slot-proof-reuse : i64
+  10)
+(define tc-macro-state-slot-identity : i64
+  11)
+(define tc-macro-state-slot-source-names : i64
+  13)
+
+(define (tc-macro-state-slot-address [state : TcMacroState] [slot : i64]) : i64
+  (unsafe
+    (ptr-read
+      (ptr-offset (int->ptr (cast state.address : u64) : (Ptr i64)) slot))))
+
+(define (tc-macro-state-slot-address-set!
+  [state : TcMacroState]
+  [slot : i64]
+  [address : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-offset (int->ptr (cast state.address : u64) : (MutPtr i64)) slot)
+      address)))
+
+;; Keep the initialized path small. If allocation lives in this function, the
+;; backend gives every hot lookup the cold path's large frame and register-save
+;; prologue even though each substate initializes only once per job.
+(defmacro (tc-macro-state-address-fast
+  [state : Expr]
+  [slot : Expr]
+  [initialize : Expr]) : Expr
+  `(let
+    [address : i64 (tc-macro-state-slot-address ,state ,slot)]
+    (if (> address 0)
+      address
+      (,initialize ,state))))
 
 (define (tc-job-state-source-key-cache [state : TcJobState]) : TcSourceKeyCacheState
   (tc-job-state-field state source-key-cache TcSourceKeyCacheState))
@@ -2407,11 +2516,7 @@
   (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot))
   (agg-size-cache (__tl_dyn-array i64))
   (agg-align-cache (__tl_dyn-array i64))
-  (agg-regwords-cache (__tl_dyn-array i64))
-  (macro-abstract-proof-qualified-keys (__tl_dyn-array String))
-  (macro-unqualified-import-cache-module-keys (__tl_dyn-array i64))
-  (macro-unqualified-import-cache-name-keys (__tl_dyn-array i64))
-  (macro-unqualified-import-cache-values (__tl_dyn-array i64)))
+  (agg-regwords-cache (__tl_dyn-array i64)))
 
 (define tc-lazy-global-table-state : TcLazyGlobalTableState
   (TcLazyGlobalTableState
@@ -2423,10 +2528,6 @@
     (array.make-array bool 0)
     (array.make-array i64 0)
     (array.make-array TcAggLayoutCacheSlot 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array String 0)
     (array.make-array i64 0)
     (array.make-array i64 0)
     (array.make-array i64 0)))
@@ -5788,6 +5889,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-record
+    [state : TcMacroState]
     [macro-id : i64]
     [macro-name : String]
     [arity : i64]
@@ -5805,6 +5907,7 @@
           (- (profile.alloc-live) compiler-tc-macro-walk-eval-live-start)))
       (if compiler-tc-macro-profile-active
         (compiler-tc-macro-profile-record-entry!
+          state
           macro-id
           macro-name
           arity
@@ -5820,11 +5923,12 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-record-entry!
+    [state : TcMacroState]
     [macro-id : i64]
     [macro-name : String]
     [arity : i64]
     [elapsed-ms : i64]) : unit
-    (if (not (macro-generation-any-live?))
+    (if (not (macro-generation-any-live? state))
       (compiler-tc-macro-profile-record-in!
         (&mut compiler-tc-macro-profile-entries)
         macro-id
@@ -5833,7 +5937,7 @@
         elapsed-ms)
       (let
         [enclosing : i64 (arena.tl_arena_current)]
-        [scratch : i64 (macro-expand-scratch-arena-get)]
+        [scratch : i64 (macro-expand-scratch-arena-get state)]
         (begin
           (unsafe
             (arena.tl_arena_set scratch))
@@ -5843,17 +5947,22 @@
             macro-name
             arity
             elapsed-ms)
-          (set! macro-expand-scratch-arena (arena.tl_arena_current))
+          (tc-macro-walk-set!
+            state
+            macro-expand-scratch-arena
+            (arena.tl_arena_current))
           (unsafe
             (arena.tl_arena_set enclosing)))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-finish
+    [state : TcMacroState]
     [macro-id : i64]
     [macro-name : String]
     [args : ast.AstExprList]) : unit
     (compiler-tc-macro-profile-record
+      state
       macro-id
       macro-name
       (compiler-tc-macro-profile-arg-count args)
@@ -7229,7 +7338,7 @@
             ;; dependency scan is clear; every other success is
             ;; concrete-required.
             (if (and
-              (complete-key generator)
+              (complete-key-for-state (tc-context-macro-state ctx) generator)
               (not (tc-generated-decl-dependent-construct? ctx decl)))
               (set!
                 compiler-tc-macro-generated-decl-checks-invariant-eligible
@@ -7239,7 +7348,7 @@
                 (+ compiler-tc-macro-generated-decl-checks-concrete-required 1)))
             ;; Actual checker calls and proof reuses are mutually exclusive;
             ;; count the latter from the dispatch bit set for this attempt.
-            (if next-skip
+            (if (tc-macro-proof-field (tc-context-macro-state ctx) next-skip)
               (set! selected-count (+ selected-count 1))
               (set!
                 compiler-tc-macro-generated-decl-checks
@@ -12794,31 +12903,92 @@
   (Legacy String)
   (Context String String))
 
-(define tc-hygiene-active-top-env-ready : bool
-  false)
-
 (define (tc-empty-type-env) : TcTypeEnv
   (tc-empty-env))
 
 (define (tc-empty-module-local-env-cache) : TcModuleLocalEnvCache
   (TcModuleLocalEnvCache (array.make-array TcModuleLocalEnvEntry 0) 0))
 
-(define tc-hygiene-active-top-env : TcTypeEnv
-  (tc-empty-type-env))
-(define tc-hygiene-module-env-cache : TcModuleLocalEnvCache
-  (tc-empty-module-local-env-cache))
-(define tc-macro-module-env-cache-store : i64
-  0)
-(define tc-macro-module-env-cache-head : i64
-  -1)
-(define tc-macro-module-env-cache-capacity : i64
-  256)
-(define tc-macro-module-env-cache-module-ids : (__tl_dyn-array i64)
-  (array.make-array i64 tc-macro-module-env-cache-capacity))
-(define tc-macro-module-env-cache-values : (__tl_dyn-array TcTypeEnv)
-  (array.make-array TcTypeEnv tc-macro-module-env-cache-capacity))
-(define tc-macro-module-env-cache-len : i64
-  0)
+(defstruct TcMacroModuleEnvStateData
+  (hygiene-active-top-env-ready bool)
+  (hygiene-active-top-env TcTypeEnv)
+  (hygiene-module-env-cache TcModuleLocalEnvCache)
+  (macro-cache-store i64)
+  (macro-cache-head i64)
+  (macro-cache-capacity i64)
+  (macro-cache-module-ids (__tl_dyn-array i64))
+  (macro-cache-values (__tl_dyn-array TcTypeEnv))
+  (macro-cache-len i64)
+  (hygiene-cache-arena i64)
+  (hygiene-cache-arena-root i64)
+  (hygiene-cache-arena-mark i64))
+
+(define (tc-macro-module-env-state-new) : TcMacroModuleEnvStateData
+  (TcMacroModuleEnvStateData
+    false
+    (tc-empty-type-env)
+    (tc-empty-module-local-env-cache)
+    0
+    -1
+    256
+    (array.make-array i64 0)
+    (array.make-array TcTypeEnv 0)
+    0
+    0
+    0
+    0))
+
+(define (tc-macro-module-env-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-module-env)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroModuleEnvStateData)
+          (array.make-array TcMacroModuleEnvStateData 1)]
+        [_init : unit (set! (array-ref cell 0) (tc-macro-module-env-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr TcMacroModuleEnvStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-module-env
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-module-env-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    0
+    tc-macro-module-env-state-address-initialize))
+
+(define (tc-macro-module-env-state-data [state : TcMacroState]) : TcMacroModuleEnvStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-module-env-state-address state) : u64)
+        : (Ptr TcMacroModuleEnvStateData)))))
+
+(define (tc-macro-module-env-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroModuleEnvStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-module-env-state-address state) : u64)
+        : (MutPtr TcMacroModuleEnvStateData))
+      data)))
 
 ;; Arena that owns the module-local env cache chain. The cache lives in
 ;; the GLOBAL above, but hygiene lookups fire deep inside per-decl typechecking
@@ -12828,61 +12998,103 @@
 ;; pools' base arena). Linux starts small for tiny compiles; if a large cache
 ;; spills, reset promotes it once to a reusable general root. Module identity
 ;; itself is the stable intern ID.
-(define tc-hygiene-module-env-cache-arena : i64
-  0)
-(define tc-hygiene-module-env-cache-arena-root : i64
-  0)
-(define tc-hygiene-module-env-cache-arena-mark : i64
-  0)
-
-(define (tc-hygiene-module-env-cache-arena-install! [root : i64]) : unit
+(define (tc-hygiene-module-env-cache-arena-install!
+  [state : TcMacroState]
+  [root : i64]) : unit
   (let
     [previous : i64 (arena.tl_arena_current)]
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
     (begin
-      (set! tc-hygiene-module-env-cache-arena-root root)
-      (set! tc-hygiene-module-env-cache-arena root)
+      (set! data.hygiene-cache-arena-root root)
+      (set! data.hygiene-cache-arena root)
       (unsafe
         (arena.tl_arena_set root))
-      (set! tc-hygiene-module-env-cache-arena-mark (arena.tl_region_mark))
+      (set! data.hygiene-cache-arena-mark (arena.tl_region_mark))
+      (tc-macro-module-env-state-data-set! state data)
       (unsafe
         (arena.tl_arena_set previous)))))
 
-(define (tc-hygiene-module-env-cache-arena-handle) : i64
-  (begin
-    (if (= tc-hygiene-module-env-cache-arena-root 0)
-      (tc-hygiene-module-env-cache-arena-install!
-        (cfg windows (arena.tl_arena_make) (arena.tl_arena_make_small)))
-      unit)
-    tc-hygiene-module-env-cache-arena))
+(define (tc-hygiene-module-env-cache-arena-handle [state : TcMacroState]) : i64
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (begin
+      (if (= data.hygiene-cache-arena-root 0)
+        (tc-hygiene-module-env-cache-arena-install!
+          state
+          (cfg windows (arena.tl_arena_make) (arena.tl_arena_make_small)))
+        unit)
+      (__tl-project-field
+        (tc-macro-module-env-state-data state)
+        hygiene-cache-arena))))
 
-(define (tc-hygiene-module-env-cache-arena-reset!) : unit
-  (if (= tc-hygiene-module-env-cache-arena-root 0)
-    unit
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      [head : i64 tc-hygiene-module-env-cache-arena]
-      [root : i64 tc-hygiene-module-env-cache-arena-root]
-      (if (= head root)
-        (begin
-          (unsafe
-            (begin
-              (arena.tl_arena_set head)
-              (arena.tl_region_reset tc-hygiene-module-env-cache-arena-mark)))
-          (set! tc-hygiene-module-env-cache-arena (arena.tl_arena_current))
-          (unsafe
-            (arena.tl_arena_set previous)))
-        (begin
-          ;; A large cache outgrew the small root. Replacing the chain with one
-          ;; general root here avoids another overflow on every later reset.
-          (unsafe
-            (arena.tl_arena_destroy head))
-          (tc-hygiene-module-env-cache-arena-install! (arena.tl_arena_make)))))))
+(define (tc-hygiene-module-env-cache-arena-reset! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (if (= data.hygiene-cache-arena-root 0)
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [head : i64 data.hygiene-cache-arena]
+        [root : i64 data.hygiene-cache-arena-root]
+        (if (= head root)
+          (begin
+            (unsafe
+              (begin
+                (arena.tl_arena_set head)
+                (arena.tl_region_reset data.hygiene-cache-arena-mark)))
+            (set! data.hygiene-cache-arena (arena.tl_arena_current))
+            (tc-macro-module-env-state-data-set! state data)
+            (unsafe
+              (arena.tl_arena_set previous)))
+          (begin
+            ;; A large cache outgrew the small root. Replacing the chain with one
+            ;; general root here avoids another overflow on every later reset.
+            (unsafe
+              (arena.tl_arena_destroy head))
+            (tc-hygiene-module-env-cache-arena-install!
+              state
+              (arena.tl_arena_make))))))))
 
-(define (tc-macro-module-env-cache-clear!) : unit
-  (begin
-    (set! tc-macro-module-env-cache-store 0)
-    (set! tc-macro-module-env-cache-head -1)
-    (set! tc-macro-module-env-cache-len 0)))
+(define (tc-macro-module-env-cache-clear! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (begin
+      (set! data.macro-cache-store 0)
+      (set! data.macro-cache-head -1)
+      (set! data.macro-cache-len 0)
+      (tc-macro-module-env-state-data-set! state data))))
+
+(define (tc-hygiene-clear-active-top-env! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (begin
+      (set! data.hygiene-active-top-env-ready false)
+      (set! data.hygiene-active-top-env (tc-empty-type-env))
+      (set! data.hygiene-module-env-cache (tc-empty-module-local-env-cache))
+      (tc-macro-module-env-state-data-set! state data)
+      (tc-hygiene-module-env-cache-arena-reset! state))))
+
+(define (tc-hygiene-module-env-cache-release! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    [head : i64 data.hygiene-cache-arena]
+    (begin
+      (set! data.hygiene-active-top-env-ready false)
+      (set! data.hygiene-active-top-env (tc-empty-type-env))
+      (set! data.hygiene-module-env-cache (tc-empty-module-local-env-cache))
+      (if (= head 0)
+        unit
+        (begin
+          (if (= (arena.tl_arena_current) head)
+            (unsafe
+              (arena.tl_arena_set ast.node-pool-base-arena))
+            unit)
+          (unsafe
+            (arena.tl_arena_destroy head))))
+      (set! data.hygiene-cache-arena 0)
+      (set! data.hygiene-cache-arena-root 0)
+      (set! data.hygiene-cache-arena-mark 0)
+      (tc-macro-module-env-state-data-set! state data))))
 
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -13042,12 +13254,17 @@
 (define (tc-hygiene-global-env [top-env : TcTypeEnv]) : TcTypeEnv
   (tc-bind-id top-env (tc-hygiene-global-boundary-id) (ast.AstType.Unit)))
 
-(define (tc-hygiene-reset-active-top-env! [top-env : TcTypeEnv]) : unit
-  (begin
-    (set! tc-hygiene-active-top-env top-env)
-    (set! tc-hygiene-active-top-env-ready true)
-    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-    (tc-hygiene-module-env-cache-arena-reset!)))
+(define (tc-hygiene-reset-active-top-env!
+  [state : TcMacroState]
+  [top-env : TcTypeEnv]) : unit
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (begin
+      (set! data.hygiene-active-top-env top-env)
+      (set! data.hygiene-active-top-env-ready true)
+      (set! data.hygiene-module-env-cache (tc-empty-module-local-env-cache))
+      (tc-macro-module-env-state-data-set! state data)
+      (tc-hygiene-module-env-cache-arena-reset! state))))
 
 (define (tc-unsafe-marker-id) : i64
   cbi.compiler-builtin-id-tc-unsafe-context)
@@ -14933,23 +15150,29 @@
       (tc-install-pools! prev)
       result)))
 
-(define tc-stdlib-comptime-macro-surface-ok-ready : bool
-  false)
-
-(define (tc-stdlib-comptime-macro-surface-ok-reset!) : unit
-  (set! tc-stdlib-comptime-macro-surface-ok-ready false))
+(define (tc-stdlib-comptime-macro-surface-ok-reset! [state : TcMacroState]) : unit
+  (let
+    [cache : TcMacroHelperStateData (tc-macro-helper-state-data state)]
+    (begin
+      (set! cache.stdlib-surface-ready false)
+      (tc-macro-helper-state-data-set! state cache))))
 
 (define (tc-stdlib-comptime-surface-ok-for-macro [ctx : TcContext]) : ResultTcUnit
-  (if tc-stdlib-comptime-macro-surface-ok-ready
-    ResultTcUnit.Ok
-    (match (tc-stdlib-comptime-surface-ok ctx)
-      [(ResultTcUnit.Ok)
-        (begin
-          (if (tc-stdlib-comptime-present? ctx)
-            (set! tc-stdlib-comptime-macro-surface-ok-ready true)
-            unit)
-          ResultTcUnit.Ok)]
-      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [cache : TcMacroHelperStateData (tc-macro-helper-state-data state)]
+    (if cache.stdlib-surface-ready
+      ResultTcUnit.Ok
+      (match (tc-stdlib-comptime-surface-ok ctx)
+        [(ResultTcUnit.Ok)
+          (begin
+            (if (tc-stdlib-comptime-present? ctx)
+              (begin
+                (set! cache.stdlib-surface-ready true)
+                (tc-macro-helper-state-data-set! state cache))
+              unit)
+            ResultTcUnit.Ok)]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))))
 
 (define (tc-bind-comptime-helper-aliases
   [env : TcTypeEnv]
@@ -15724,25 +15947,83 @@
           (tc-fn1 binding-clause-list (ast.AstType.ExprList))))
       out)))
 
-(define tc-macro-helper-env-cache-ready : bool
-  false)
-(define tc-macro-helper-env-cache-value : TcTypeEnv
-  (tc-empty-env))
+(defstruct TcMacroHelperStateData
+  (ready bool)
+  (value TcTypeEnv)
+  (stdlib-surface-ready bool))
 
-(define (tc-macro-helper-env-cache-reset!) : unit
-  (begin
-    (set! tc-macro-helper-env-cache-ready false)
-    (set! tc-macro-helper-env-cache-value (tc-empty-env))))
+(define (tc-macro-helper-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-helper)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroHelperStateData)
+          (array.make-array TcMacroHelperStateData 1)]
+        [_init : unit
+          (set!
+            (array-ref cell 0)
+            (TcMacroHelperStateData false (tc-empty-env) false))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr TcMacroHelperStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-helper
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
 
-(define (tc-macro-helper-env-cached [env : TcTypeEnv]) : TcTypeEnv
-  (if tc-macro-helper-env-cache-ready
-    tc-macro-helper-env-cache-value
-    (let
-      [helper-env : TcTypeEnv (tc-macro-helper-env env)]
-      (begin
-        (set! tc-macro-helper-env-cache-value helper-env)
-        (set! tc-macro-helper-env-cache-ready true)
-        tc-macro-helper-env-cache-value))))
+(define (tc-macro-helper-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast state 1 tc-macro-helper-state-address-initialize))
+
+(define (tc-macro-helper-state-data [state : TcMacroState]) : TcMacroHelperStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-helper-state-address state) : u64)
+        : (Ptr TcMacroHelperStateData)))))
+
+(define (tc-macro-helper-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroHelperStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-helper-state-address state) : u64)
+        : (MutPtr TcMacroHelperStateData))
+      data)))
+
+(define (tc-macro-helper-env-cache-reset! [state : TcMacroState]) : unit
+  (let
+    [cache : TcMacroHelperStateData (tc-macro-helper-state-data state)]
+    (begin
+      (set! cache.ready false)
+      (set! cache.value (tc-empty-env))
+      (tc-macro-helper-state-data-set! state cache))))
+
+(define (tc-macro-helper-env-cached [state : TcMacroState] [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [cache : TcMacroHelperStateData (tc-macro-helper-state-data state)]
+    (if cache.ready
+      cache.value
+      (let
+        [helper-env : TcTypeEnv (tc-macro-helper-env env)]
+        (begin
+          (set! cache.value helper-env)
+          (set! cache.ready true)
+          (tc-macro-helper-state-data-set! state cache)
+          helper-env)))))
 
 (define (tc-env-key-display [name-id : i64]) : String
   (if (or
@@ -16558,43 +16839,52 @@
   [ctx : TcContext]
   [module : String]
   [module-id : i64]) : ResultTcEnv
-  (if tc-hygiene-active-top-env-ready
-    (if (or
-      (csym.compiler-symbol-root-module-id? module-id)
-      (= module-id cbi.compiler-builtin-id-fix-empty))
-      (ResultTcEnv.Ok tc-hygiene-active-top-env)
-      ;; Build cache entries in the dedicated persistent arena (see
-      ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
-      ;; survives the scratch arenas active during per-decl typechecking.
-      (let
-        [prev-arena : i64 (arena.tl_arena_current)]
-        [_switched : unit
-          (unsafe
-            (arena.tl_arena_set (tc-hygiene-module-env-cache-arena-handle)))]
-        (match (tc-module-local-env-cached-id
-          ctx
-          tc-hygiene-active-top-env
-          module
-          module-id
-          (tc-global-shared-view tc-hygiene-module-env-cache))
-          [(ResultTcModuleLocalEnv.Ok def-env next-cache)
-            (let
-              [cache-head : i64 (arena.tl_arena_current)]
-              (begin
-                (set! tc-hygiene-module-env-cache-arena cache-head)
-                (set! tc-hygiene-module-env-cache next-cache)
-                (unsafe
-                  (arena.tl_arena_set prev-arena))
-                (ResultTcEnv.Ok def-env)))]
-          [(ResultTcModuleLocalEnv.Err message)
-            (let
-              [cache-head : i64 (arena.tl_arena_current)]
-              (begin
-                (set! tc-hygiene-module-env-cache-arena cache-head)
-                (unsafe
-                  (arena.tl_arena_set prev-arena))
-                (ResultTcEnv.Err message)))])))
-    (ResultTcEnv.Err "typecheck: macro hygiene definition context unavailable")))
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (if data.hygiene-active-top-env-ready
+      (if (or
+        (csym.compiler-symbol-root-module-id? module-id)
+        (= module-id cbi.compiler-builtin-id-fix-empty))
+        (ResultTcEnv.Ok data.hygiene-active-top-env)
+        ;; Build cache entries in the dedicated persistent arena (see
+        ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
+        ;; survives the scratch arenas active during per-decl typechecking.
+        (let
+          [prev-arena : i64 (arena.tl_arena_current)]
+          [_switched : unit
+            (unsafe
+              (arena.tl_arena_set
+                (tc-hygiene-module-env-cache-arena-handle state)))]
+          [current : TcMacroModuleEnvStateData
+            (tc-macro-module-env-state-data state)]
+          (match (tc-module-local-env-cached-id
+            ctx
+            current.hygiene-active-top-env
+            module
+            module-id
+            current.hygiene-module-env-cache)
+            [(ResultTcModuleLocalEnv.Ok def-env next-cache)
+              (let
+                [cache-head : i64 (arena.tl_arena_current)]
+                (begin
+                  (set! current.hygiene-cache-arena cache-head)
+                  (set! current.hygiene-module-env-cache next-cache)
+                  (tc-macro-module-env-state-data-set! state current)
+                  (unsafe
+                    (arena.tl_arena_set prev-arena))
+                  (ResultTcEnv.Ok def-env)))]
+            [(ResultTcModuleLocalEnv.Err message)
+              (let
+                [cache-head : i64 (arena.tl_arena_current)]
+                (begin
+                  (set! current.hygiene-cache-arena cache-head)
+                  (tc-macro-module-env-state-data-set! state current)
+                  (unsafe
+                    (arena.tl_arena_set prev-arena))
+                  (ResultTcEnv.Err message)))])))
+      (ResultTcEnv.Err
+        "typecheck: macro hygiene definition context unavailable"))))
 
 (define (tc-hygiene-definition-env-id
   [ctx : TcContext]
@@ -20293,58 +20583,45 @@
 ;; receiver as transformer-produced syntax. Journal those focused rewrites and
 ;; restore the caller's spelling after the operand check; the expanded result
 ;; is normalized permanently when it is checked in its final lexical context.
-(define tc-dotted-macro-journal-pools : (__tl_dyn-array ast.AstNodePoolContext)
-  (array.make-array ast.AstNodePoolContext 16))
-(define tc-dotted-macro-journal-ids : (__tl_dyn-array i64)
-  (array.make-array i64 16))
-(define tc-dotted-macro-journal-exprs : (__tl_dyn-array ast.AstExpr)
-  (array.make-array ast.AstExpr 16))
-(define tc-dotted-macro-journal-len : i64
-  0)
-(define tc-dotted-macro-journal-depth : i64
-  0)
-
-(define (tc-dotted-macro-journal-pools-shared-view) : (__tl_dyn-array
-    ast.AstNodePoolContext)
-  (unsafe
-    (ptr-read (ptr-addr-of tc-dotted-macro-journal-pools))))
-
-(define (tc-dotted-macro-journal-exprs-shared-view) : (__tl_dyn-array
-    ast.AstExpr)
-  (unsafe
-    (ptr-read (ptr-addr-of tc-dotted-macro-journal-exprs))))
-
+;; The journal is job-owned because nested checks from two jobs may interleave.
 (define (tc-dotted-macro-journal-grow-copy!
+  [state : TcMacroState]
   [next-pools : (&mut next-pools (__tl_dyn-array ast.AstNodePoolContext))]
   [next-ids : (&mut next-ids (__tl_dyn-array i64))]
   [next-exprs : (&mut next-exprs (__tl_dyn-array ast.AstExpr))]
   [index : i64]) : unit
-  (if (>= index tc-dotted-macro-journal-len)
+  (if (>= index (tc-macro-walk-field state dotted-macro-journal-len))
     unit
     (begin
       (set!
         (array-ref next-pools index)
-        (array-ref (tc-dotted-macro-journal-pools-shared-view) index))
+        (array-ref (tc-macro-walk-field state dotted-macro-journal-pools) index))
       (set!
         (array-ref next-ids index)
-        (array-ref tc-dotted-macro-journal-ids index))
+        (array-ref (tc-macro-walk-field state dotted-macro-journal-ids) index))
       (set!
         (array-ref next-exprs index)
-        (array-ref (tc-dotted-macro-journal-exprs-shared-view) index))
+        (array-ref (tc-macro-walk-field state dotted-macro-journal-exprs) index))
       (tc-dotted-macro-journal-grow-copy!
+        state
         next-pools
         next-ids
         next-exprs
         (+ index 1)))))
 
-(define (tc-dotted-macro-journal-grow!) : unit
+(define (tc-dotted-macro-journal-grow! [state : TcMacroState]) : unit
   (let
-    [old-capacity : i64 (array.length tc-dotted-macro-journal-ids)]
-    [next-capacity : i64 (* old-capacity 2)]
+    [old-capacity : i64
+      (array.length (tc-macro-walk-field state dotted-macro-journal-ids))]
+    [next-capacity : i64
+      (if (< old-capacity 1)
+        16
+        (* old-capacity 2))]
     [previous-arena : i64 (arena.tl_arena_current)]
-    [_persistent : unit
+    [owner : i64 (tc-macro-state-owner-arena state)]
+    [_owner : unit
       (unsafe
-        (arena.tl_arena_set (cload.compiler-load-provenance-arena)))]
+        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
     [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
       (array.make-array ast.AstNodePoolContext next-capacity)]
     [next-ids : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
@@ -20352,15 +20629,15 @@
       (array.make-array ast.AstExpr next-capacity)]
     (begin
       (tc-dotted-macro-journal-grow-copy!
+        state
         (&mut next-pools)
         (&mut next-ids)
         (&mut next-exprs)
         0)
-      (set! tc-dotted-macro-journal-pools next-pools)
-      (set! tc-dotted-macro-journal-ids next-ids)
-      (set! tc-dotted-macro-journal-exprs next-exprs)
-      (unsafe
-        (arena.tl_arena_set previous-arena)))))
+      (tc-macro-walk-set! state dotted-macro-journal-pools next-pools)
+      (tc-macro-walk-set! state dotted-macro-journal-ids next-ids)
+      (tc-macro-walk-set! state dotted-macro-journal-exprs next-exprs)
+      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
 
 (define (tc-dotted-macro-journal-active-pools) : ast.AstNodePoolContext
   (if (ast.ast-node-pool-compat-context-active?)
@@ -20369,45 +20646,71 @@
       (ast.ast-node-pool-context-active-live)
       (ast.ast-node-pool-context-capture-active))))
 
-(define (tc-dotted-macro-journal-record! [expr-id : i64] [expr : ast.AstExpr]) : unit
-  (if (< tc-dotted-macro-journal-depth 1)
+(define (tc-dotted-macro-journal-record!
+  [state : TcMacroState]
+  [expr-id : i64]
+  [expr : ast.AstExpr]) : unit
+  (if (< (tc-macro-walk-field state dotted-macro-journal-depth) 1)
     unit
     (begin
       (if (>=
-        tc-dotted-macro-journal-len
-        (array.length tc-dotted-macro-journal-ids))
-        (tc-dotted-macro-journal-grow!)
+        (tc-macro-walk-field state dotted-macro-journal-len)
+        (array.length (tc-macro-walk-field state dotted-macro-journal-ids)))
+        (tc-dotted-macro-journal-grow! state)
         unit)
       (set!
-        (array-ref tc-dotted-macro-journal-pools tc-dotted-macro-journal-len)
+        (array-ref
+          (tc-macro-walk-field state dotted-macro-journal-pools)
+          (tc-macro-walk-field state dotted-macro-journal-len))
         (tc-dotted-macro-journal-active-pools))
       (set!
-        (array-ref tc-dotted-macro-journal-ids tc-dotted-macro-journal-len)
+        (array-ref
+          (tc-macro-walk-field state dotted-macro-journal-ids)
+          (tc-macro-walk-field state dotted-macro-journal-len))
         expr-id)
       (set!
-        (array-ref tc-dotted-macro-journal-exprs tc-dotted-macro-journal-len)
+        (array-ref
+          (tc-macro-walk-field state dotted-macro-journal-exprs)
+          (tc-macro-walk-field state dotted-macro-journal-len))
         expr)
-      (set! tc-dotted-macro-journal-len (+ tc-dotted-macro-journal-len 1)))))
+      (tc-macro-walk-set!
+        state
+        dotted-macro-journal-len
+        (+ (tc-macro-walk-field state dotted-macro-journal-len) 1)))))
 
-(define (tc-dotted-macro-journal-start!) : i64
+(define (tc-dotted-macro-journal-start! [state : TcMacroState]) : i64
   (let
-    [mark : i64 tc-dotted-macro-journal-len]
+    [mark : i64 (tc-macro-walk-field state dotted-macro-journal-len)]
     (begin
-      (set! tc-dotted-macro-journal-depth (+ tc-dotted-macro-journal-depth 1))
+      (tc-macro-walk-set!
+        state
+        dotted-macro-journal-depth
+        (+ (tc-macro-walk-field state dotted-macro-journal-depth) 1))
       mark)))
 
-(define (tc-dotted-macro-journal-restore-to! [mark : i64]) : unit
+(define (tc-dotted-macro-journal-restore-to!
+  [state : TcMacroState]
+  [mark : i64]) : unit
   (begin
-    (while (> tc-dotted-macro-journal-len mark)
+    (while (> (tc-macro-walk-field state dotted-macro-journal-len) mark)
       (let
-        [index : i64 (- tc-dotted-macro-journal-len 1)]
+        [index : i64 (- (tc-macro-walk-field state dotted-macro-journal-len) 1)]
         (begin
           (ast.ast-node-pool-context-expr-set!
-            (array-ref (tc-dotted-macro-journal-pools-shared-view) index)
-            (array-ref tc-dotted-macro-journal-ids index)
-            (array-ref (tc-dotted-macro-journal-exprs-shared-view) index))
-          (set! tc-dotted-macro-journal-len index))))
-    (set! tc-dotted-macro-journal-depth (- tc-dotted-macro-journal-depth 1))))
+            (array-ref
+              (tc-macro-walk-field state dotted-macro-journal-pools)
+              index)
+            (array-ref
+              (tc-macro-walk-field state dotted-macro-journal-ids)
+              index)
+            (array-ref
+              (tc-macro-walk-field state dotted-macro-journal-exprs)
+              index))
+          (tc-macro-walk-set! state dotted-macro-journal-len index))))
+    (tc-macro-walk-set!
+      state
+      dotted-macro-journal-depth
+      (- (tc-macro-walk-field state dotted-macro-journal-depth) 1))))
 
 ;; Local dotted fields must become ordinary projection nodes before the
 ;; move/borrow/lower passes see them.  Keeping `root.field` as a raw Var and
@@ -20430,7 +20733,10 @@
           (match (tc-dotted-local-field-expr-id-after-check name)
             [(ResultTcExprId.Ok projection-id)
               (begin
-                (tc-dotted-macro-journal-record! expr-id (ast.AstExpr.Var name))
+                (tc-dotted-macro-journal-record!
+                  (tc-context-macro-state ctx)
+                  expr-id
+                  (ast.AstExpr.Var name))
                 (ast.ast-node-set! expr-id (ast.ast-node-get projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
@@ -20445,6 +20751,7 @@
             [(ResultTcExprId.Ok projection-id)
               (begin
                 (tc-dotted-macro-journal-record!
+                  (tc-context-macro-state ctx)
                   expr-id
                   (ast.AstExpr.Set name value-box))
                 (ast.ast-node-set! expr-id (ast.ast-node-get projection-id))
@@ -22157,16 +22464,25 @@
           (TcMaybeNameId.No))))))
 
 (define (tc-source-dotted-alias-target-id
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [current-module-id : i64]
   [alias-id : i64]) : TcMaybeNameId
   (match (tc-lazy-import-stub-target-id current-module-id alias-id)
     [(TcMaybeNameId.Some target-module-id)
       (if (= target-module-id alias-id)
-        (macro-import-alias-target-cached-id decls current-module-id alias-id)
+        (macro-import-alias-target-cached-id
+          state
+          decls
+          current-module-id
+          alias-id)
         (TcMaybeNameId.Some target-module-id))]
     [(TcMaybeNameId.No)
-      (macro-import-alias-target-cached-id decls current-module-id alias-id)]))
+      (macro-import-alias-target-cached-id
+        state
+        decls
+        current-module-id
+        alias-id)]))
 
 (define (tc-source-dotted-alias-target-id-in-context
   [ctx : TcContext]
@@ -31408,7 +31724,8 @@
               lifetimes
               fields)]
           (begin
-            (ctfe_support.ctfe-module-value-add-id!
+            (ctfe_support.ctfe-module-value-add-id-for-state!
+              (tc-context-ctfe-macro-state ctx)
               module-id
               name
               constructor-ty)
@@ -31494,7 +31811,11 @@
               inner)
               [(ResultTcType.Ok ty)
                 (begin
-                  (ctfe_support.ctfe-module-value-add-id! module-id name ty)
+                  (ctfe_support.ctfe-module-value-add-id-for-state!
+                    (tc-context-ctfe-macro-state ctx)
+                    module-id
+                    name
+                    ty)
                   (ResultTcEnv.Ok
                     (tc-bind-unsafe-id
                       env
@@ -31508,7 +31829,11 @@
               (match (tc-top-decl-type extern-ctx inner)
                 [(ResultTcType.Ok ty)
                   (begin
-                    (ctfe_support.ctfe-module-value-add-id! module-id name ty)
+                    (ctfe_support.ctfe-module-value-add-id-for-state!
+                      (tc-context-ctfe-macro-state ctx)
+                      module-id
+                      name
+                      ty)
                     (ResultTcEnv.Ok
                       (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
                         (tc-bind-unsafe-c-abi-fnptr-id
@@ -31528,7 +31853,11 @@
         decl)
         [(ResultTcType.Ok ty)
           (begin
-            (ctfe_support.ctfe-module-value-add-id! module-id name ty)
+            (ctfe_support.ctfe-module-value-add-id-for-state!
+              (tc-context-ctfe-macro-state ctx)
+              module-id
+              name
+              ty)
             (ResultTcEnv.Ok
               (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
@@ -31538,7 +31867,11 @@
         decl)
         [(ResultTcType.Ok ty)
           (begin
-            (ctfe_support.ctfe-module-value-add-id! module-id name ty)
+            (ctfe_support.ctfe-module-value-add-id-for-state!
+              (tc-context-ctfe-macro-state ctx)
+              module-id
+              name
+              ty)
             (ResultTcEnv.Ok
               (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
@@ -31548,7 +31881,11 @@
         decl)
         [(ResultTcType.Ok ty)
           (begin
-            (ctfe_support.ctfe-module-value-add-id! module-id name ty)
+            (ctfe_support.ctfe-module-value-add-id-for-state!
+              (tc-context-ctfe-macro-state ctx)
+              module-id
+              name
+              ty)
             (ResultTcEnv.Ok
               (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
@@ -31560,7 +31897,11 @@
         (match (tc-top-decl-type extern-ctx decl)
           [(ResultTcType.Ok ty)
             (begin
-              (ctfe_support.ctfe-module-value-add-id! module-id name ty)
+              (ctfe_support.ctfe-module-value-add-id-for-state!
+                (tc-context-ctfe-macro-state ctx)
+                module-id
+                name
+                ty)
               (ResultTcEnv.Ok
                 (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
                   (tc-bind-c-abi-fnptr-id
@@ -31620,7 +31961,11 @@
               fields)
             struct-ty)]
         (begin
-          (ctfe_support.ctfe-module-value-add-id! module-id name constructor-ty)
+          (ctfe_support.ctfe-module-value-add-id-for-state!
+            (tc-context-ctfe-macro-state ctx)
+            module-id
+            name
+            constructor-ty)
           (ResultTcEnv.Ok
             (tc-bind-struct-cleanup-module-id
               (tc-bind-id
@@ -31643,7 +31988,11 @@
               fields)
             struct-ty)]
         (begin
-          (ctfe_support.ctfe-module-value-add-id! module-id name constructor-ty)
+          (ctfe_support.ctfe-module-value-add-id-for-state!
+            (tc-context-ctfe-macro-state ctx)
+            module-id
+            name
+            constructor-ty)
           (ResultTcEnv.Ok
             (tc-bind-struct-cleanup-module-id
               (tc-bind-id
@@ -32310,7 +32659,8 @@
     ;; removed by a non-inert splice cannot survive as stale reflection hits.
     ;; Incremental Extend plans bypass this entry and update the index
     ;; as they bind only their additive/refreshed declarations.
-    (ctfe_support.ctfe-module-value-reset!)
+    (ctfe_support.ctfe-module-value-reset-for-state!
+      (tc-context-ctfe-macro-state ctx))
     ;; Expanded declarations retain their source aliases after lazy imports are
     ;; removed. Keep the expansion-time alias -> generated-module identities;
     ;; compile-start reset already prevents them leaking between programs.
@@ -51771,19 +52121,23 @@
 ;; in the enclosing program arena, so the cached value never dangles into a
 ;; rewound scratch arena) and reset per compile at the top of that function.
 (define (tc-ctfe-env [ctx : TcContext]) : ctfe_support.CtfeEnv
-  (if macro-expand-ctfe-env-ready
-    (ctfe_support.ctfe-env-rebase-pools
-      (tc-global-shared-view macro-expand-ctfe-env-value)
-      (tc-context-pools ctx))
-    (if ctfe-needs-metadata
-      (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names
-        (tc-ctfe-layouts ctx)
-        (ctfe_support.ctfe-reflections-from-program (tc-context-program ctx))
-        (tc-context-pools ctx)
-        (tc-context-source-names ctx))
-      (ctfe_support.ctfe-env-empty-with-pools-and-source-names
-        (tc-context-pools ctx)
-        (tc-context-source-names ctx)))))
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    (if (tc-macro-walk-field state macro-expand-ctfe-env-ready)
+      (ctfe_support.ctfe-env-rebase-pools
+        (tc-macro-walk-field state macro-expand-ctfe-env-value)
+        (tc-context-pools ctx))
+      (if (tc-macro-walk-field state ctfe-needs-metadata)
+        (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
+          (tc-ctfe-layouts ctx)
+          (ctfe_support.ctfe-reflections-from-program (tc-context-program ctx))
+          (tc-context-pools ctx)
+          (tc-context-source-names ctx)
+          (tc-macro-ctfe-state state))
+        (ctfe_support.ctfe-env-empty-with-pools-and-source-names-and-macro-state
+          (tc-context-pools ctx)
+          (tc-context-source-names ctx)
+          (tc-macro-ctfe-state state))))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -59833,6 +60187,7 @@
               ctx
               env
               (tc-macro-abstract-binding-bound
+                (tc-context-macro-state ctx)
                 bound
                 name
                 (ast.ast-node-get init-box)
@@ -60005,6 +60360,7 @@
       (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
     [(ast.AstExpr.Call func args)
       (match (tc-macro-abstract-check-current-call
+        (tc-context-macro-state ctx)
         bound
         template?
         expr
@@ -60943,35 +61299,287 @@
   (Kind String)
   (CleanupOwning))
 
-(define tc-macro-abstract-active : bool
-  false)
-(define tc-macro-abstract-macro-name : String
-  "")
-(define tc-macro-abstract-param-name : String
-  "")
-(define tc-macro-abstract-kind-mask : i64
-  0)
-
 ;; Bit 0 means the abstract operand may not own cleanup; bit 1 means it may.
 ;; An empty mask represents an unreachable branch, matching the kind mask.
-(define tc-macro-abstract-cleanup-owning-mask : i64
-  0)
+(defstruct TcMacroAbstractStateData
+  (active bool)
+  (macro-name String)
+  (param-name String)
+  (kind-mask i64)
+  (cleanup-owning-mask i64)
+  (proof-capacity i64)
+  (proof-macro-keys (__tl_dyn-array i64))
+  (proof-param-keys (__tl_dyn-array i64))
+  (proof-kind-masks (__tl_dyn-array i64))
+  (proof-count i64))
 
-(define (tc-macro-abstract-state-save) : TcMacroAbstractState
-  (TcMacroAbstractState
-    tc-macro-abstract-active
-    (tc-global-shared-view tc-macro-abstract-macro-name)
-    (tc-global-shared-view tc-macro-abstract-param-name)
-    tc-macro-abstract-kind-mask
-    tc-macro-abstract-cleanup-owning-mask))
+(define (tc-macro-abstract-state-new) : TcMacroAbstractStateData
+  (TcMacroAbstractStateData
+    false
+    ""
+    ""
+    0
+    0
+    4096
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    0))
 
-(define (tc-macro-abstract-state-restore! [state : TcMacroAbstractState]) : unit
-  (begin
-    (set! tc-macro-abstract-active state.active)
-    (set! tc-macro-abstract-macro-name state.macro-name)
-    (set! tc-macro-abstract-param-name state.param-name)
-    (set! tc-macro-abstract-kind-mask state.kind-mask)
-    (set! tc-macro-abstract-cleanup-owning-mask state.cleanup-owning-mask)))
+(define (tc-macro-abstract-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-abstract)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroAbstractStateData)
+          (array.make-array TcMacroAbstractStateData 1)]
+        [_init : unit (set! (array-ref cell 0) (tc-macro-abstract-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr TcMacroAbstractStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-abstract
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-abstract-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    2
+    tc-macro-abstract-state-address-initialize))
+
+(define (tc-macro-abstract-state-data [state : TcMacroState]) : TcMacroAbstractStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-abstract-state-address state) : u64)
+        : (Ptr TcMacroAbstractStateData)))))
+
+(define (tc-macro-abstract-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroAbstractStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-abstract-state-address state) : u64)
+        : (MutPtr TcMacroAbstractStateData))
+      data)))
+
+(define (tc-macro-abstract-state-save [state : TcMacroState]) : TcMacroAbstractState
+  (let
+    [data : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    (TcMacroAbstractState
+      data.active
+      data.macro-name
+      data.param-name
+      data.kind-mask
+      data.cleanup-owning-mask)))
+
+(define (tc-macro-abstract-state-restore!
+  [carrier : TcMacroState]
+  [state : TcMacroAbstractState]) : unit
+  (let
+    [data : TcMacroAbstractStateData (tc-macro-abstract-state-data carrier)]
+    (begin
+      (set! data.active state.active)
+      (set! data.macro-name state.macro-name)
+      (set! data.param-name state.param-name)
+      (set! data.kind-mask state.kind-mask)
+      (set! data.cleanup-owning-mask state.cleanup-owning-mask)
+      (tc-macro-abstract-state-data-set! carrier data))))
+
+;; Lazily owned state for generated-declaration proof reuse. Storage remains
+;; empty until first use so an idle job does not pay for fixed-capacity tables.
+;; Keep one flat carrier: every field has the same owner and lifetime, and flat
+;; projection avoids compile-time dispatch over artificial nested sections.
+(defstruct TcMacroProofReuseStateData
+  (qualified-keys (__tl_dyn-array String))
+  (qualified-count i64)
+  (qualified-ready bool)
+  (qualified-arena i64)
+  (qualified-active bool)
+  (qualified-program-active bool)
+  (function-names (__tl_dyn-array String))
+  (local-names (__tl_dyn-array String))
+  (storage-identity-vars (__tl_dyn-array i64))
+  (storage-module-vars (__tl_dyn-array i64))
+  (augmented-decls (__tl_dyn-array ast.AstDecl))
+  (item-count i64)
+  (block-generation i64)
+  (table-cell i64)
+  (has-generated-decls bool)
+  (identity-bytes (__tl_dyn-array i64))
+  (operand-count (__tl_dyn-array i64))
+  (declared-types (__tl_dyn-array String))
+  (macro-type-kinds (__tl_dyn-array String))
+  (identity-count i64)
+  (generation-cell i64)
+  (next-table-id i64)
+  (identity-tail-forwarder bool)
+  (expected-key (__tl_dyn-array String))
+  (expected-kind (__tl_dyn-array String))
+  (scratch-count i64)
+  (first-key i64)
+  (next-id i64)
+  (first-module-id i64)
+  (next-module-id i64)
+  (first-slot i64)
+  (next-slots i64)
+  (identity-count2 i64)
+  (active-mask i64)
+  (active-invalid bool)
+  (local-alias-names (__tl_dyn-array i64))
+  (next-locals (__tl_dyn-array i64))
+  (local-ordinal i64)
+  (local-shadow-updated bool)
+  (portable-pair bool)
+  (local-use bool)
+  (fixed-call bool)
+  (allow-cleanup bool)
+  (checked-context bool)
+  (uniform-values (__tl_dyn-array i64))
+  (inject-texts (__tl_dyn-array String))
+  (digit-count i64)
+  (overflow-ok bool)
+  (conditional-operand bool)
+  (shifted bool)
+  (has-operands bool)
+  (reflection-env bool)
+  (negative-literal bool)
+  (next-skip bool))
+
+(define (tc-macro-proof-reuse-state-new) : TcMacroProofReuseStateData
+  (TcMacroProofReuseStateData
+    (array.make-array String 0)
+    0
+    false
+    0
+    false
+    false
+    (array.make-array String 0)
+    (array.make-array String 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array ast.AstDecl 0)
+    0
+    -1
+    -1
+    false
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array String 0)
+    (array.make-array String 0)
+    0
+    -1
+    -1
+    false
+    (array.make-array String 0)
+    (array.make-array String 0)
+    0
+    -1
+    -1
+    -1
+    -1
+    -1
+    -1
+    0
+    0
+    false
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    0
+    false
+    false
+    false
+    false
+    false
+    false
+    (array.make-array i64 0)
+    (array.make-array String 0)
+    0
+    false
+    false
+    false
+    false
+    false
+    false
+    false))
+
+(define (tc-macro-proof-reuse-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-proof-reuse)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroProofReuseStateData)
+          (array.make-array TcMacroProofReuseStateData 1)]
+        [_init : unit
+          (set! (array-ref cell 0) (tc-macro-proof-reuse-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr TcMacroProofReuseStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-proof-reuse
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-proof-reuse-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    10
+    tc-macro-proof-reuse-state-address-initialize))
+
+(define (tc-macro-proof-reuse-state-data [state : TcMacroState]) : TcMacroProofReuseStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-proof-reuse-state-address state) : u64)
+        : (Ptr TcMacroProofReuseStateData)))))
+
+(define (tc-macro-proof-reuse-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroProofReuseStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-proof-reuse-state-address state) : u64)
+        : (MutPtr TcMacroProofReuseStateData))
+      data)))
+
+(defmacro (tc-macro-proof-field [state : Expr] [field : Expr]) : Expr
+  `(__tl-project-field (tc-macro-proof-reuse-state-data ,state) ,field))
+
+(defmacro (tc-macro-proof-set! [state : Expr] [field : Expr] [value : Expr]) : Expr
+  `(let
+    [data : TcMacroProofReuseStateData (tc-macro-proof-reuse-state-data ,state)]
+    (begin
+      (__tl-project-set-field data ,field ,value)
+      (tc-macro-proof-reuse-state-data-set! ,state data))))
 
 ;; --- persisted abstract-validation proofs (#5296) -----------------------------
 ;;
@@ -60993,190 +61601,80 @@
 ;; entries past the fixed capacity are dropped, which is the conservative
 ;; direction (the generator then reports no proof and its declarations land in
 ;; the concrete-required lane).
-(define tc-macro-abstract-proof-capacity : i64
-  4096)
-(define tc-macro-abstract-proof-macro-keys : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-(define tc-macro-abstract-proof-param-keys : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-(define tc-macro-abstract-proof-kind-masks : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-(define tc-macro-abstract-proof-count : i64
-  0)
 (define requested-capacity : i64
   4096)
-(define required-count : i64
-  0)
-(define map-ready : bool
-  false)
-(define persistent-arena : i64
-  0)
-(define any-active : bool
-  false)
 
 ;; The first successful concrete declaration owns the family row's checked
 ;; declaration and identity; duplicate notes preserve both values exactly.
 (define additional-capacity : i64
   4096)
-(define function-names : (__tl_dyn-array String)
-  (array.make-array String 4096))
-(define local-names : (__tl_dyn-array String)
-  (array.make-array String 4096))
-(define storage-identity-vars : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-(define storage-module-vars : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-(define augmented-decls : (__tl_dyn-array ast.AstDecl)
-  (array.make-array ast.AstDecl 4096))
 
 ;; Proof-reuse white-box tests inspect the live compatibility registry without
 ;; taking ownership of its declaration storage.
-(define (augmented-decls-shared-view) : (__tl_dyn-array ast.AstDecl)
-  (tc-global-shared-view augmented-decls))
+(define (augmented-decls-shared-view-for-state [state : TcMacroState]) : (__tl_dyn-array
+    ast.AstDecl)
+  (tc-macro-proof-field state augmented-decls))
 
-(define item-count : i64
-  0)
-(define block-generation : i64
-  -1)
-(define table-cell : i64
-  -1)
-(define has-generated-decls : bool
-  false)
+(define (augmented-decls-shared-view) : (__tl_dyn-array ast.AstDecl)
+  (augmented-decls-shared-view-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))))
+
 (define store-capacity : i64
   4096)
 (define expected-count : i64
   16)
-(define identity-bytes : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-(define operand-count : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-(define declared-types : (__tl_dyn-array String)
-  (array.make-array String 65536))
-(define macro-type-kinds : (__tl_dyn-array String)
-  (array.make-array String 65536))
-(define identity-count : i64
-  0)
-(define generation-cell : i64
-  -1)
-(define next-table-id : i64
-  -1)
-(define identity-tail-forwarder? : bool
-  false)
 
 ;; This fast path is set only after at least one usable complete-proof entry
 ;; exists. Expansion precedes final defmacro proof persistence, so identity
 ;; capture is admitted only for syntactically complete fixed-type candidates;
 ;; the lane and all query paths remain gated by this bit and are non-inserting.
-(define active? : bool
-  false)
 (cfg
   test
   (define tc-proof-reuse-skips-total : i64
     0))
-(define next-skip : bool
-  false)
 
 (cfg
   test
   (define (tc-proof-reuse-skips-total-value) : i64
     tc-proof-reuse-skips-total))
 
-(define expected-key : (__tl_dyn-array String)
-  (array.make-array String 16))
-(define expected-kind : (__tl_dyn-array String)
-  (array.make-array String 16))
-(define scratch-count : i64
-  0)
-
 ;; One bounded comparison session is shared by the generated-declaration proof
 ;; lane.  The session owns only identity metadata and fixed comparison state;
 ;; a failed or uninitialized session is never usable by the exact primitives.
-(define first-key : i64
-  -1)
-(define next-id : i64
-  -1)
-(define first-module-id : i64
-  -1)
-(define next-module-id : i64
-  -1)
-(define first-slot : i64
-  -1)
-(define next-slots : i64
-  -1)
-(define identity-count2 : i64
-  0)
-(define active-mask : i64
-  0)
-(define active-invalid : bool
-  false)
-
 ;; Lexical locals are recorded as bounded first/next name pairs while one
 ;; declaration is walked.  Equal names outside this table are fixed values
 ;; (globals/helpers) rather than locals; the final Rule-4 guard rejects that
 ;; combination whenever a generated identity substitution was observed.
 (define type-capacity : i64
   128)
-(define local-alias-names : (__tl_dyn-array i64)
-  (array.make-array i64 128))
-(define next-locals : (__tl_dyn-array i64)
-  (array.make-array i64 128))
-(define local-ordinal : i64
-  0)
-(define local-shadow-updated? : bool
-  false)
-(define portable-pair : bool
-  false)
-(define local-use : bool
-  false)
 
 ;; An unchanged complete type subtree beside a substitution is a fixed
 ;; signature/annotation boundary.  Direct DefStruct field shapes may opt into
 ;; the narrow exception below after their entire declaration compares exact.
-(define fixed-call : bool
-  false)
-(define allow-cleanup : bool
-  false)
-
 ;; These expression forms rely on an implicit expected type or contextual
 ;; relation that is not represented by an AstType node.  Exact syntax is still
 ;; useful for catalog shape, but a changed recorded type operand must fall back
 ;; to concrete checking whenever this bounded fact was observed.
-(define checked-context : bool
-  false)
-
 ;; Literal facts are deliberately bounded.  The count, rather than the
 ;; backing storage contents, is authoritative after a reset; an over-capacity
 ;; append poisons the session so the final rule guard fails closed.
 (define seed-capacity : i64
   128)
-(define uniform-values : (__tl_dyn-array i64)
-  (array.make-array i64 128))
-(define inject-texts : (__tl_dyn-array String)
-  (array.make-array String 128))
-(define digit-count : i64
-  0)
-(define overflow-ok : bool
-  false)
-(define conditional-operand : bool
-  false)
-(define shifted : bool
-  false)
-(define has-operands : bool
-  false)
-(define reflection-env : bool
-  false)
-(define negative-literal : bool
-  false)
 
-(define (text-copy [macro-key : (& macro-key str)]) : String
+(define (text-copy-for-state
+  [state : TcMacroState]
+  [macro-key : (& macro-key str)]) : String
   (let
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64
-      (if (= persistent-arena 0)
+      (if (= (tc-macro-proof-field state qualified-arena) 0)
         (begin
-          (set! persistent-arena (arena.tl_arena_make_small))
-          persistent-arena)
-        persistent-arena)]
+          (tc-macro-proof-set!
+            state
+            qualified-arena
+            (arena.tl_arena_make_small))
+          (tc-macro-proof-field state qualified-arena))
+        (tc-macro-proof-field state qualified-arena))]
     [_set-owner : unit
       (unsafe
         (arena.tl_arena_set owner))]
@@ -61185,7 +61683,7 @@
       (let
         [head : i64 (arena.tl_arena_current)]
         (begin
-          (set! persistent-arena head)
+          (tc-macro-proof-set! state qualified-arena head)
           (unsafe
             (arena.tl_arena_set
               (if (= previous owner)
@@ -61193,73 +61691,317 @@
                 previous)))))
       copied)))
 
-(define (added-key [macro-key : String] [cursor : i64] [steps : i64]) : unit
+(define (text-copy [text : (& text str)]) : String
+  (text-copy-for-state (tc-job-state-macro-state (tc-serial-job-state)) text))
+
+;; Generated identities are cache keys, not syntax IDs. Keep their compact IDs
+;; in the macro job instead of interning them through whichever compatibility
+;; table happens to be installed. The string comparison makes hash collisions
+;; exact, and sequential IDs remain stable when the small table grows.
+(defstruct TcMacroIdentityStateData
+  (keys (__tl_dyn-array String))
+  (slots (__tl_dyn-array i64))
+  (capacity i64)
+  (count i64)
+  (owner-table-id i64)
+  (owner-reset-generation i64)
+  (ready bool))
+
+(define (tc-macro-identity-state-new) : TcMacroIdentityStateData
+  (TcMacroIdentityStateData
+    (array.make-array String 0)
+    (array.make-array i64 0)
+    0
+    0
+    -1
+    -1
+    false))
+
+(define (tc-macro-identity-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-identity)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroIdentityStateData)
+          (array.make-array TcMacroIdentityStateData 1)]
+        [_init : unit (set! (array-ref cell 0) (tc-macro-identity-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr TcMacroIdentityStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-identity
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-identity-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    11
+    tc-macro-identity-state-address-initialize))
+
+(define (tc-macro-identity-state-data [state : TcMacroState]) : TcMacroIdentityStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-identity-state-address state) : u64)
+        : (Ptr TcMacroIdentityStateData)))))
+
+(define (tc-macro-identity-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroIdentityStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-identity-state-address state) : u64)
+        : (MutPtr TcMacroIdentityStateData))
+      data)))
+
+(define (tc-macro-owner-text-copy [state : TcMacroState] [text : String]) : String
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (tc-macro-state-owner-arena state)]
+    [_switch : unit
+      (unsafe
+        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+    [copied : String (string.copy (& text))]
+    (begin
+      (tc-type-env-store-restore-after-owner-alloc! previous owner)
+      copied)))
+
+(define (tc-macro-identity-reset-for-state! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroIdentityStateData (tc-macro-identity-state-data state)]
+    (begin
+      (set! data.count 0)
+      (set! data.owner-table-id -1)
+      (set! data.owner-reset-generation -1)
+      (set! data.ready false)
+      (tc-macro-identity-state-data-set! state data))))
+
+(define (tc-macro-identity-state-initialize! [state : TcMacroState]) : unit
+  (let
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    [data : TcMacroIdentityStateData (tc-macro-identity-state-data state)]
+    (if (and
+      data.ready
+      (= data.owner-table-id table-id)
+      (= data.owner-reset-generation reset-generation))
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [_allocate : unit
+          (if (>= data.capacity 16)
+            unit
+            (begin
+              (set! data.capacity 16)
+              (set! data.keys (array.make-array String data.capacity))
+              (set! data.slots (array.make-array i64 data.capacity))))]
+        [index : i64 0]
+        (begin
+          (while (< index data.capacity)
+            (begin
+              (set! (array-ref data.slots index) 0)
+              (set! index (+ index 1))))
+          (set! data.count 0)
+          (set! data.owner-table-id table-id)
+          (set! data.owner-reset-generation reset-generation)
+          (set! data.ready true)
+          (tc-macro-identity-state-data-set! state data)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+
+(define (tc-macro-identity-rehash-one!
+  [keys : (__tl_dyn-array String)]
+  [slots : (&mut slots (__tl_dyn-array i64))]
+  [capacity : i64]
+  [id : i64]) : unit
+  (let
+    [key : String (array-ref keys id)]
+    [cursor : i64 (bit-and (ci.intern-hash key) (- capacity 1))]
+    (begin
+      (while (> (array-ref slots cursor) 0)
+        (set! cursor (bit-and (+ cursor 1) (- capacity 1))))
+      (set! (array-ref slots cursor) (+ id 1)))))
+
+(define (tc-macro-identity-state-grow! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroIdentityStateData (tc-macro-identity-state-data state)]
+    [next-capacity : i64 (* data.capacity 2)]
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (tc-macro-state-owner-arena state)]
+    [_switch : unit
+      (unsafe
+        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+    [next-keys : (__tl_dyn-array String)
+      (array.make-array String next-capacity)]
+    [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index data.count)
+        (begin
+          (set! (array-ref next-keys index) (array-ref data.keys index))
+          (tc-macro-identity-rehash-one!
+            next-keys
+            (&mut next-slots)
+            next-capacity
+            index)
+          (set! index (+ index 1))))
+      (set! data.keys next-keys)
+      (set! data.slots next-slots)
+      (set! data.capacity next-capacity)
+      (tc-macro-identity-state-data-set! state data)
+      (tc-type-env-store-restore-after-owner-alloc! previous owner))))
+
+(define (tc-macro-identity-lookup-for-state
+  [state : TcMacroState]
+  [name : String]) : i64
+  (begin
+    (tc-macro-identity-state-initialize! state)
+    (let
+      [data : TcMacroIdentityStateData (tc-macro-identity-state-data state)]
+      [cursor : i64 (bit-and (ci.intern-hash name) (- data.capacity 1))]
+      [steps : i64 0]
+      [out : i64 -1]
+      [done : bool false]
+      (begin
+        (while (and (not done) (< steps data.capacity))
+          (let
+            [slot : i64 (array-ref data.slots cursor)]
+            (if (= slot 0)
+              (set! done true)
+              (let
+                [id : i64 (- slot 1)]
+                (if (string.eq (array-ref data.keys id) name)
+                  (begin
+                    (set! out id)
+                    (set! done true))
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) (- data.capacity 1)))
+                    (set! steps (+ steps 1))))))))
+        out))))
+
+(define (tc-macro-identity-intern-for-state
+  [state : TcMacroState]
+  [name : String]) : i64
+  (let
+    [existing : i64 (tc-macro-identity-lookup-for-state state name)]
+    (if (>= existing 0)
+      existing
+      (begin
+        (let
+          [data-before : TcMacroIdentityStateData
+            (tc-macro-identity-state-data state)]
+          (if (>= (* (+ data-before.count 1) 2) data-before.capacity)
+            (tc-macro-identity-state-grow! state)
+            unit))
+        (let
+          [data : TcMacroIdentityStateData (tc-macro-identity-state-data state)]
+          [id : i64 data.count]
+          [cursor : i64 (bit-and (ci.intern-hash name) (- data.capacity 1))]
+          (begin
+            (while (> (array-ref data.slots cursor) 0)
+              (set! cursor (bit-and (+ cursor 1) (- data.capacity 1))))
+            (set!
+              (array-ref data.keys id)
+              (tc-macro-owner-text-copy state name))
+            (set! (array-ref data.slots cursor) (+ id 1))
+            (set! data.count (+ data.count 1))
+            (tc-macro-identity-state-data-set! state data)
+            id))))))
+
+(define (tc-macro-installed-source-owner? [state : TcMacroState]) : bool
+  (and
+    (= (ci.intern-active-table-id) (tc-macro-state-source-name-table-id state))
+    (=
+      (ci.intern-generation)
+      (tc-macro-state-source-name-reset-generation state))))
+
+(define (tc-macro-owner-generated-name-id
+  [state : TcMacroState]
+  [name : String]) : i64
+  (if (tc-macro-installed-source-owner? state)
+    (tc-generated-module-name-id name)
+    -1))
+
+(define (added-key-for-state
+  [state : TcMacroState]
+  [macro-key : String]
+  [cursor : i64]
+  [steps : i64]) : unit
   (if (>= steps requested-capacity)
     unit
-    (cond
-      [(=
-          (string.string-length
-            (&
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  macro-abstract-proof-qualified-keys)
-                cursor)))
-          0)
-        (if (>= (* required-count 2) requested-capacity)
-          unit
-          (begin
-            (set!
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  macro-abstract-proof-qualified-keys)
-                cursor)
-              (text-copy macro-key))
-            (set! required-count (+ required-count 1))
-            (set! active? true)))]
-      [(string.eq
-          (&
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                macro-abstract-proof-qualified-keys)
-              cursor))
-          macro-key)
-        (set! active? true)]
-      [else
-        (added-key
-          macro-key
-          (bit-and (+ cursor 1) (- requested-capacity 1))
-          (+ steps 1))])))
+    (let
+      [keys : (__tl_dyn-array String)
+        (tc-macro-proof-field state qualified-keys)]
+      (cond
+        [(= (string.string-length (& (array-ref keys cursor))) 0)
+          (if (>=
+            (* (tc-macro-proof-field state qualified-count) 2)
+            requested-capacity)
+            unit
+            (begin
+              (set!
+                (array-ref keys cursor)
+                (text-copy-for-state state macro-key))
+              (tc-macro-proof-set!
+                state
+                qualified-count
+                (+ (tc-macro-proof-field state qualified-count) 1))
+              (tc-macro-proof-set! state qualified-active true)))]
+        [(string.eq (& (array-ref keys cursor)) macro-key)
+          (tc-macro-proof-set! state qualified-active true)]
+        [else
+          (added-key-for-state
+            state
+            macro-key
+            (bit-and (+ cursor 1) (- requested-capacity 1))
+            (+ steps 1))]))))
 
-(define (tc-macro-abstract-proof-qualified-key-storage-ensure!) : unit
+(define (tc-macro-abstract-proof-qualified-key-storage-ensure!
+  [state : TcMacroState]) : unit
   (if (=
-    (array-length
-      (__tl-project-field
-        tc-lazy-global-table-state
-        macro-abstract-proof-qualified-keys))
+    (array-length (tc-macro-proof-field state qualified-keys))
     requested-capacity)
     unit
     (let
-      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
-      (in-arena
-        owner
-        (__tl-project-set-field
-          tc-lazy-global-table-state
-          macro-abstract-proof-qualified-keys
-          (array.make-array String requested-capacity))))))
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-macro-state-owner-arena state)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+      [storage : (__tl_dyn-array String)
+        (array.make-array String requested-capacity)]
+      (begin
+        (tc-macro-proof-set! state qualified-keys storage)
+        (tc-type-env-store-restore-after-owner-alloc! previous owner)))))
 
-(define (record-count [macro-key : String]) : unit
+(define (record-count-for-state [state : TcMacroState] [macro-key : String]) : unit
   (if (= (string.string-length macro-key) 0)
     unit
     (begin
-      (if map-ready
+      (if (tc-macro-proof-field state qualified-ready)
         unit
         (begin
-          (tc-macro-abstract-proof-qualified-key-storage-ensure!)
-          (set! map-ready true)))
-      (if any-active
+          (tc-macro-abstract-proof-qualified-key-storage-ensure! state)
+          (tc-macro-proof-set! state qualified-ready true)))
+      (if (tc-macro-proof-field state qualified-program-active)
         unit
         (let
           [index : i64 0]
@@ -61267,61 +62009,79 @@
             (while (< index requested-capacity)
               (begin
                 (set!
-                  (array-ref
-                    (__tl-project-field
-                      tc-lazy-global-table-state
-                      macro-abstract-proof-qualified-keys)
-                    index)
+                  (array-ref (tc-macro-proof-field state qualified-keys) index)
                   "")
                 (set! index (+ index 1))))
-            (set! required-count 0)
-            (set! any-active true)
-            (set! active? false))))
-      (added-key
+            (tc-macro-proof-set! state qualified-count 0)
+            (tc-macro-proof-set! state qualified-program-active true)
+            (tc-macro-proof-set! state qualified-active false))))
+      (added-key-for-state
+        state
         macro-key
         (bit-and (ci.intern-hash macro-key) (- requested-capacity 1))
         0))))
 
+(define (record-count [macro-key : String]) : unit
+  (record-count-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    macro-key))
+
+(define (tc-macro-proof-qualified-reset-for-state! [state : TcMacroState]) : unit
+  (let
+    [storage : i64 (tc-macro-proof-field state qualified-arena)]
+    (begin
+      (tc-macro-proof-set! state qualified-arena 0)
+      (tc-macro-proof-set! state qualified-program-active false)
+      (tc-macro-proof-set! state qualified-count 0)
+      (tc-macro-proof-set! state qualified-active false)
+      (if (= storage 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy storage))))))
+
 (cfg
   test
   (define (reset-result) : unit
-    (begin
-      (if (= persistent-arena 0)
-        unit
-        (begin
-          (unsafe
-            (arena.tl_arena_destroy persistent-arena))
-          (set! persistent-arena 0)))
-      (set! any-active false)
-      (set! required-count 0)
-      (set! active? false))))
+    (tc-macro-proof-qualified-reset-for-state!
+      (tc-job-state-macro-state (tc-serial-job-state)))))
 
-(define (key-matches [macro-key : String] [cursor : i64] [steps : i64]) : bool
+(define (key-matches-for-state
+  [state : TcMacroState]
+  [macro-key : String]
+  [cursor : i64]
+  [steps : i64]) : bool
   (if (>= steps requested-capacity)
     false
     (let
       [slot : String
         (tc-global-array-element-shared-view
-          (__tl-project-field
-            tc-lazy-global-table-state
-            macro-abstract-proof-qualified-keys)
+          (tc-macro-proof-field state qualified-keys)
           cursor)]
       (if (= (string.string-length slot) 0)
         false
         (if (string.eq slot macro-key)
           true
-          (key-matches
+          (key-matches-for-state
+            state
             macro-key
             (bit-and (+ cursor 1) (- requested-capacity 1))
             (+ steps 1)))))))
 
-(define (complete-key [macro-key : String]) : bool
-  (if (or (not active?) (= (string.string-length macro-key) 0))
+(define (complete-key-for-state [state : TcMacroState] [macro-key : String]) : bool
+  (if (or
+    (not (tc-macro-proof-field state qualified-active))
+    (= (string.string-length macro-key) 0))
     false
-    (key-matches
+    (key-matches-for-state
+      state
       macro-key
       (bit-and (ci.intern-hash macro-key) (- requested-capacity 1))
       0)))
+
+(define (complete-key [macro-key : String]) : bool
+  (complete-key-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    macro-key))
 
 (define (bucket-name [generator : String] [item : String]) : i64
   ;; Hashes only choose a probe start.  Stored textual keys are compared with
@@ -61334,48 +62094,94 @@
       3266489917)
     (- additional-capacity 1)))
 
-(define (map-ready-cell) : unit
-  (if (and
-    has-generated-decls
-    (= block-generation (ci.intern-generation))
-    (= table-cell (ci.intern-active-table-id)))
+(define (tc-macro-proof-family-storage-ensure! [state : TcMacroState]) : unit
+  (if (=
+    (array-length (tc-macro-proof-field state function-names))
+    additional-capacity)
     unit
     (let
-      [index : i64 0]
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-macro-state-owner-arena state)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+      [function-storage : (__tl_dyn-array String)
+        (array.make-array String additional-capacity)]
+      [local-storage : (__tl_dyn-array String)
+        (array.make-array String additional-capacity)]
+      [identity-storage : (__tl_dyn-array i64)
+        (array.make-array i64 additional-capacity)]
+      [module-storage : (__tl_dyn-array i64)
+        (array.make-array i64 additional-capacity)]
+      [decl-storage : (__tl_dyn-array ast.AstDecl)
+        (array.make-array ast.AstDecl additional-capacity)]
       (begin
-        (while (< index additional-capacity)
-          (begin
-            (set! (array-ref function-names index) "")
-            (set! (array-ref local-names index) "")
-            (set! (array-ref storage-identity-vars index) 0)
-            (set! (array-ref storage-module-vars index) 0)
-            (set! index (+ index 1))))
-        (set! item-count 0)
-        (set! block-generation (ci.intern-generation))
-        (set! table-cell (ci.intern-active-table-id))
-        (set! has-generated-decls true)))))
+        (tc-macro-proof-set! state function-names function-storage)
+        (tc-macro-proof-set! state local-names local-storage)
+        (tc-macro-proof-set! state storage-identity-vars identity-storage)
+        (tc-macro-proof-set! state storage-module-vars module-storage)
+        (tc-macro-proof-set! state augmented-decls decl-storage)
+        (tc-type-env-store-restore-after-owner-alloc! previous owner)))))
+
+(define (map-ready-cell-for-state [state : TcMacroState]) : unit
+  (let
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    (if (and
+      (tc-macro-proof-field state has-generated-decls)
+      (= (tc-macro-proof-field state block-generation) reset-generation)
+      (= (tc-macro-proof-field state table-cell) table-id))
+      unit
+      (let
+        [_ensure : unit (tc-macro-proof-family-storage-ensure! state)]
+        [index : i64 0]
+        [function-storage : (__tl_dyn-array String)
+          (tc-macro-proof-field state function-names)]
+        [local-storage : (__tl_dyn-array String)
+          (tc-macro-proof-field state local-names)]
+        [identity-storage : (__tl_dyn-array i64)
+          (tc-macro-proof-field state storage-identity-vars)]
+        [module-storage : (__tl_dyn-array i64)
+          (tc-macro-proof-field state storage-module-vars)]
+        (begin
+          (while (< index additional-capacity)
+            (begin
+              (set! (array-ref function-storage index) "")
+              (set! (array-ref local-storage index) "")
+              (set! (array-ref identity-storage index) 0)
+              (set! (array-ref module-storage index) 0)
+              (set! index (+ index 1))))
+          (tc-macro-proof-set! state item-count 0)
+          (tc-macro-proof-set! state block-generation reset-generation)
+          (tc-macro-proof-set! state table-cell table-id)
+          (tc-macro-proof-set! state has-generated-decls true))))))
+
+(define (tc-macro-proof-family-reset-for-state! [state : TcMacroState]) : unit
+  (begin
+    (tc-macro-proof-set! state has-generated-decls false)
+    (tc-macro-proof-set! state item-count 0)
+    (tc-macro-proof-set! state block-generation -1)
+    (tc-macro-proof-set! state table-cell -1)))
 
 (cfg
   test
   (define (scratch-reset) : unit
-    (begin
-      (set! has-generated-decls false)
-      (set! item-count 0)
-      (set! block-generation -1)
-      (set! table-cell -1))))
+    (tc-macro-proof-family-reset-for-state!
+      (tc-job-state-macro-state (tc-serial-job-state)))))
 
-(define (record-slot
+(define (record-slot-for-state
+  [state : TcMacroState]
   [generator : String]
   [item : String]
   [identity : String]
   [module-id : i64]
   [decl : ast.AstDecl]) : unit
   (let
-    [identity-id : i64 (tc-generated-module-name-id identity)]
+    [identity-id : i64 (tc-macro-owner-generated-name-id state identity)]
     (if (< identity-id 0)
       unit
       (begin
-        (map-ready-cell)
+        (map-ready-cell-for-state state)
         (let
           [cursor : i64 (bucket-name generator item)]
           [key : i64 (+ identity-id 1)]
@@ -61385,26 +62191,58 @@
             false
             (< steps additional-capacity))
             (let
-              [slot : i64 (array-ref storage-identity-vars cursor)]
+              [slot : i64
+                (array-ref
+                  (tc-macro-proof-field state storage-identity-vars)
+                  cursor)]
               (cond
                 [(= slot 0)
-                  (if (>= (* item-count 2) additional-capacity)
+                  (if (>=
+                    (* (tc-macro-proof-field state item-count) 2)
+                    additional-capacity)
                     (set! done true)
                     (begin
                       (set!
-                        (array-ref function-names cursor)
-                        (text-copy generator))
-                      (set! (array-ref local-names cursor) (text-copy item))
-                      (set! (array-ref storage-identity-vars cursor) key)
+                        (array-ref
+                          (tc-macro-proof-field state function-names)
+                          cursor)
+                        (text-copy-for-state state generator))
                       (set!
-                        (array-ref storage-module-vars cursor)
+                        (array-ref
+                          (tc-macro-proof-field state local-names)
+                          cursor)
+                        (text-copy-for-state state item))
+                      (set!
+                        (array-ref
+                          (tc-macro-proof-field state storage-identity-vars)
+                          cursor)
+                        key)
+                      (set!
+                        (array-ref
+                          (tc-macro-proof-field state storage-module-vars)
+                          cursor)
                         (+ module-id 1))
-                      (set! (array-ref augmented-decls cursor) decl)
-                      (set! item-count (+ item-count 1))
+                      (set!
+                        (array-ref
+                          (tc-macro-proof-field state augmented-decls)
+                          cursor)
+                        decl)
+                      (tc-macro-proof-set!
+                        state
+                        item-count
+                        (+ (tc-macro-proof-field state item-count) 1))
                       (set! done true)))]
                 [(and
-                    (string.eq (array-ref function-names cursor) generator)
-                    (string.eq (array-ref local-names cursor) item))
+                    (string.eq
+                      (array-ref
+                        (tc-macro-proof-field state function-names)
+                        cursor)
+                      generator)
+                    (string.eq
+                      (array-ref
+                        (tc-macro-proof-field state local-names)
+                        cursor)
+                      item))
                   (set! done true)]
                 [else
                   (begin
@@ -61414,9 +62252,26 @@
                     (set! steps (+ steps 1)))]))
             unit))))))
 
-(define (slot-index [generator : String] [item : String]) : i64
+(define (record-slot
+  [generator : String]
+  [item : String]
+  [identity : String]
+  [module-id : i64]
+  [decl : ast.AstDecl]) : unit
+  (record-slot-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    generator
+    item
+    identity
+    module-id
+    decl))
+
+(define (slot-index-for-state
+  [state : TcMacroState]
+  [generator : String]
+  [item : String]) : i64
   (begin
-    (map-ready-cell)
+    (map-ready-cell-for-state state)
     (let
       [cursor : i64 (bucket-name generator item)]
       [steps : i64 0]
@@ -61427,12 +62282,19 @@
           false
           (< steps additional-capacity))
           (let
-            [slot : i64 (array-ref storage-identity-vars cursor)]
+            [slot : i64
+              (array-ref
+                (tc-macro-proof-field state storage-identity-vars)
+                cursor)]
             (if (= slot 0)
               (set! done true)
               (if (and
-                (string.eq (array-ref function-names cursor) generator)
-                (string.eq (array-ref local-names cursor) item))
+                (string.eq
+                  (array-ref (tc-macro-proof-field state function-names) cursor)
+                  generator)
+                (string.eq
+                  (array-ref (tc-macro-proof-field state local-names) cursor)
+                  item))
                 (begin
                   (set! out cursor)
                   (set! done true))
@@ -61441,113 +62303,225 @@
                   (set! steps (+ steps 1)))))))
         out))))
 
+(define (slot-index [generator : String] [item : String]) : i64
+  (slot-index-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    generator
+    item))
+
 (define (index-key [identity-id : i64]) : i64
   (bit-and (* (+ identity-id 1) 2654435761) (- store-capacity 1)))
 
-(define (running-identity) : unit
-  (if (and
-    identity-tail-forwarder?
-    (= generation-cell (ci.intern-generation))
-    (= next-table-id (ci.intern-active-table-id)))
+(define (tc-macro-proof-identity-storage-ensure! [state : TcMacroState]) : unit
+  (if (=
+    (array-length (tc-macro-proof-field state identity-bytes))
+    store-capacity)
     unit
     (let
-      [index : i64 0]
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-macro-state-owner-arena state)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+      [identities : (__tl_dyn-array i64) (array.make-array i64 store-capacity)]
+      [counts : (__tl_dyn-array i64) (array.make-array i64 store-capacity)]
+      [types : (__tl_dyn-array String)
+        (array.make-array String (* store-capacity expected-count))]
+      [kinds : (__tl_dyn-array String)
+        (array.make-array String (* store-capacity expected-count))]
+      [scratch-keys : (__tl_dyn-array String)
+        (array.make-array String expected-count)]
+      [scratch-kinds : (__tl_dyn-array String)
+        (array.make-array String expected-count)]
       (begin
-        (while (< index store-capacity)
-          (begin
-            (set! (array-ref identity-bytes index) 0)
-            (set! (array-ref operand-count index) 0)
-            (set! index (+ index 1))))
-        (set! identity-count 0)
-        (set! generation-cell (ci.intern-generation))
-        (set! next-table-id (ci.intern-active-table-id))
-        (set! identity-tail-forwarder? true)))))
+        (tc-macro-proof-set! state identity-bytes identities)
+        (tc-macro-proof-set! state operand-count counts)
+        (tc-macro-proof-set! state declared-types types)
+        (tc-macro-proof-set! state macro-type-kinds kinds)
+        (tc-macro-proof-set! state expected-key scratch-keys)
+        (tc-macro-proof-set! state expected-kind scratch-kinds)
+        (tc-type-env-store-restore-after-owner-alloc! previous owner)))))
+
+(define (running-identity-for-state [state : TcMacroState]) : unit
+  (let
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    (if (and
+      (tc-macro-proof-field state identity-tail-forwarder)
+      (= (tc-macro-proof-field state generation-cell) reset-generation)
+      (= (tc-macro-proof-field state next-table-id) table-id))
+      unit
+      (let
+        [_ensure : unit (tc-macro-proof-identity-storage-ensure! state)]
+        [identities : (__tl_dyn-array i64)
+          (tc-macro-proof-field state identity-bytes)]
+        [counts : (__tl_dyn-array i64)
+          (tc-macro-proof-field state operand-count)]
+        [index : i64 0]
+        (begin
+          (while (< index store-capacity)
+            (begin
+              (set! (array-ref identities index) 0)
+              (set! (array-ref counts index) 0)
+              (set! index (+ index 1))))
+          (tc-macro-proof-set! state identity-count 0)
+          (tc-macro-proof-set! state generation-cell reset-generation)
+          (tc-macro-proof-set! state next-table-id table-id)
+          (tc-macro-proof-set! state identity-tail-forwarder true))))))
+
+(define (tc-macro-proof-identity-reset-for-state! [state : TcMacroState]) : unit
+  (begin
+    (tc-macro-proof-set! state identity-tail-forwarder false)
+    (tc-macro-proof-set! state identity-count 0)
+    (tc-macro-proof-set! state generation-cell -1)
+    (tc-macro-proof-set! state next-table-id -1)
+    (tc-macro-proof-set! state scratch-count 0)))
 
 (cfg
   test
   (define (scratch-reset-result) : unit
-    (begin
-      (set! identity-tail-forwarder? false)
-      (set! identity-count 0)
-      (set! generation-cell -1)
-      (set! next-table-id -1))))
+    (tc-macro-proof-identity-reset-for-state!
+      (tc-job-state-macro-state (tc-serial-job-state)))))
+
+(define (scratch-reset-context-for-state [state : TcMacroState]) : unit
+  (begin
+    (tc-macro-proof-identity-storage-ensure! state)
+    (tc-macro-proof-set! state scratch-count 0)))
 
 (define (scratch-reset-context) : unit
-  (set! scratch-count 0))
+  (scratch-reset-context-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))))
 
-(define (scratch-plan-result [type-key : String] [kind : String]) : unit
-  (match (< scratch-count 0)
+(define (scratch-plan-result-for-state
+  [state : TcMacroState]
+  [type-key : String]
+  [kind : String]) : unit
+  (match (< (tc-macro-proof-field state scratch-count) 0)
     [true unit]
     [false
       (match (or
         (= (string.string-length type-key) 0)
         (= (string.string-length kind) 0))
-        [true (set! scratch-count -1)]
+        [true (tc-macro-proof-set! state scratch-count -1)]
         [false
-          (match (>= scratch-count expected-count)
-            [true (set! scratch-count -1)]
+          (match (>= (tc-macro-proof-field state scratch-count) expected-count)
+            [true (tc-macro-proof-set! state scratch-count -1)]
             [false
               (let
-                [index : i64 scratch-count]
+                [index : i64 (tc-macro-proof-field state scratch-count)]
                 (begin
                   ;; Scratch is consumed by the immediately following note.  Keep
                   ;; caller Strings directly here; persistent rows copy them into
                   ;; the per-program proof key arena during commit.
-                  (set! (array-ref expected-key index) type-key)
-                  (set! (array-ref expected-kind index) kind)
-                  (set! scratch-count (+ scratch-count 1))))])])]))
+                  (set!
+                    (array-ref (tc-macro-proof-field state expected-key) index)
+                    type-key)
+                  (set!
+                    (array-ref (tc-macro-proof-field state expected-kind) index)
+                    kind)
+                  (tc-macro-proof-set! state scratch-count (+ index 1))))])])]))
+
+(define (scratch-plan-result [type-key : String] [kind : String]) : unit
+  (scratch-plan-result-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    type-key
+    kind))
+
+(define (tc-macro-proof-compare-storage-ensure! [state : TcMacroState]) : unit
+  (if (=
+    (array-length (tc-macro-proof-field state local-alias-names))
+    type-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-macro-state-owner-arena state)]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+      [locals : (__tl_dyn-array i64) (array.make-array i64 type-capacity)]
+      [next : (__tl_dyn-array i64) (array.make-array i64 type-capacity)]
+      [values : (__tl_dyn-array i64) (array.make-array i64 seed-capacity)]
+      [texts : (__tl_dyn-array String) (array.make-array String seed-capacity)]
+      (begin
+        (tc-macro-proof-set! state local-alias-names locals)
+        (tc-macro-proof-set! state next-locals next)
+        (tc-macro-proof-set! state uniform-values values)
+        (tc-macro-proof-set! state inject-texts texts)
+        (tc-type-env-store-restore-after-owner-alloc! previous owner)))))
+
+(define (tc-macro-proof-compare-reset-for-state! [state : TcMacroState]) : unit
+  (begin
+    (tc-macro-proof-set! state first-key -1)
+    (tc-macro-proof-set! state next-id -1)
+    (tc-macro-proof-set! state first-module-id -1)
+    (tc-macro-proof-set! state next-module-id -1)
+    (tc-macro-proof-set! state first-slot -1)
+    (tc-macro-proof-set! state next-slots -1)
+    (tc-macro-proof-set! state identity-count2 0)
+    (tc-macro-proof-set! state active-mask 0)
+    (tc-macro-proof-set! state active-invalid false)
+    (tc-macro-proof-set! state local-ordinal 0)
+    (tc-macro-proof-set! state local-shadow-updated false)
+    (tc-macro-proof-set! state portable-pair false)
+    (tc-macro-proof-set! state local-use false)
+    (tc-macro-proof-set! state fixed-call false)
+    (tc-macro-proof-set! state allow-cleanup false)
+    (tc-macro-proof-set! state checked-context false)
+    (tc-macro-proof-set! state digit-count 0)
+    (tc-macro-proof-set! state overflow-ok false)
+    (tc-macro-proof-set! state conditional-operand false)
+    (tc-macro-proof-set! state shifted false)
+    (tc-macro-proof-set! state has-operands false)
+    (tc-macro-proof-set! state reflection-env false)
+    (tc-macro-proof-set! state negative-literal false)))
+
+(define (scratch-reset-functions-for-state [state : TcMacroState]) : unit
+  (begin
+    (tc-macro-proof-compare-storage-ensure! state)
+    (tc-macro-proof-compare-reset-for-state! state)))
 
 (define (scratch-reset-functions) : unit
-  (begin
-    (set! first-key -1)
-    (set! next-id -1)
-    (set! first-module-id -1)
-    (set! next-module-id -1)
-    (set! first-slot -1)
-    (set! next-slots -1)
-    (set! identity-count2 0)
-    (set! active-mask 0)
-    (set! active-invalid false)
-    (set! local-ordinal 0)
-    (set! local-shadow-updated? false)
-    (set! portable-pair false)
-    (set! local-use false)
-    (set! fixed-call false)
-    (set! allow-cleanup false)
-    (set! checked-context false)
-    (set! digit-count 0)
-    (set! overflow-ok false)
-    (set! conditional-operand false)
-    (set! shifted false)
-    (set! has-operands false)
-    (set! reflection-env false)
-    (set! negative-literal false)))
+  (scratch-reset-functions-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))))
 
-(define (pair-index [left-id : i64] [right-id : i64] [index : i64]) : i64
-  (if (>= index local-ordinal)
+(define (pair-index-for-state
+  [state : TcMacroState]
+  [left-id : i64]
+  [right-id : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-macro-proof-field state local-ordinal))
     -1
     (if (and
-      (= left-id (array-ref local-alias-names index))
-      (= right-id (array-ref next-locals index)))
+      (=
+        left-id
+        (array-ref (tc-macro-proof-field state local-alias-names) index))
+      (= right-id (array-ref (tc-macro-proof-field state next-locals) index)))
       index
-      (pair-index left-id right-id (+ index 1)))))
+      (pair-index-for-state state left-id right-id (+ index 1)))))
+
+(define (lookup-key-id-for-state [state : TcMacroState] [identity : String]) : i64
+  (if (not (tc-macro-installed-source-owner? state))
+    -1
+    (match (ci.intern-lookup identity)
+      [(InternLookupFound source-id)
+        (match (ci.intern-generated-canonical-lookup identity)
+          [(InternLookupFound id) id]
+          [(InternLookupMissing) source-id])]
+      [(InternLookupMissing)
+        (match (ci.intern-generated-canonical-lookup identity)
+          [(InternLookupFound id) id]
+          [(InternLookupMissing) -1])])))
 
 (define (lookup-key-id [identity : String]) : i64
-  (match (ci.intern-lookup identity)
-    [(InternLookupFound source-id)
-      (match (ci.intern-generated-canonical-lookup identity)
-        [(InternLookupFound id) id]
-        [(InternLookupMissing) source-id])]
-    [(InternLookupMissing)
-      (match (ci.intern-generated-canonical-lookup identity)
-        [(InternLookupFound id) id]
-        [(InternLookupMissing) -1])]))
+  (lookup-key-id-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    identity))
 
-(define (slot-id [identity-id : i64]) : i64
+(define (slot-id-for-state [state : TcMacroState] [identity-id : i64]) : i64
   (if (< identity-id 0)
     -1
     (begin
-      (running-identity)
+      (running-identity-for-state state)
       (let
         [cursor : i64 (index-key identity-id)]
         [key : i64 (+ identity-id 1)]
@@ -61559,7 +62533,8 @@
             false
             (< steps store-capacity))
             (let
-              [slot : i64 (array-ref identity-bytes cursor)]
+              [slot : i64
+                (array-ref (tc-macro-proof-field state identity-bytes) cursor)]
               (if (= slot 0)
                 (set! done true)
                 (if (= slot key)
@@ -61571,77 +62546,119 @@
                     (set! steps (+ steps 1)))))))
           out)))))
 
-(define (type-key-id [slot : i64] [index : i64]) : String
+(define (slot-id [identity-id : i64]) : i64
+  (slot-id-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    identity-id))
+
+(define (type-key-id-for-state
+  [state : TcMacroState]
+  [slot : i64]
+  [index : i64]) : String
   (if (not
     (and
       (>= slot 0)
       (< slot store-capacity)
-      (> (array-ref identity-bytes slot) 0)))
+      (> (array-ref (tc-macro-proof-field state identity-bytes) slot) 0)))
     ""
     (let
-      [count : i64 (array-ref operand-count slot)]
+      [count : i64 (array-ref (tc-macro-proof-field state operand-count) slot)]
       (if (and
         (>= count 0)
         (<= count expected-count)
         (>= index 0)
         (< index count)
         (< index expected-count))
-        (array-ref
-          (tc-global-shared-view declared-types)
+        (tc-global-array-element-shared-view
+          (tc-macro-proof-field state declared-types)
+          (+ (* slot expected-count) index))
+        ""))))
+
+(define (type-key-id [slot : i64] [index : i64]) : String
+  (type-key-id-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    slot
+    index))
+
+(define (kind-for-check-for-state
+  [state : TcMacroState]
+  [slot : i64]
+  [index : i64]) : String
+  (if (not
+    (and
+      (>= slot 0)
+      (< slot store-capacity)
+      (> (array-ref (tc-macro-proof-field state identity-bytes) slot) 0)))
+    ""
+    (let
+      [count : i64 (array-ref (tc-macro-proof-field state operand-count) slot)]
+      (if (and
+        (>= count 0)
+        (<= count expected-count)
+        (>= index 0)
+        (< index count)
+        (< index expected-count))
+        (tc-global-array-element-shared-view
+          (tc-macro-proof-field state macro-type-kinds)
           (+ (* slot expected-count) index))
         ""))))
 
 (define (kind-for-check [slot : i64] [index : i64]) : String
-  (if (not
-    (and
-      (>= slot 0)
-      (< slot store-capacity)
-      (> (array-ref identity-bytes slot) 0)))
-    ""
-    (let
-      [count : i64 (array-ref operand-count slot)]
-      (if (and
-        (>= count 0)
-        (<= count expected-count)
-        (>= index 0)
-        (< index count)
-        (< index expected-count))
-        (array-ref
-          (tc-global-shared-view macro-type-kinds)
-          (+ (* slot expected-count) index))
-        ""))))
+  (kind-for-check-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    slot
+    index))
 
-(define (scratch-result [slot : i64] [index : i64]) : unit
-  (if (>= index scratch-count)
+(define (scratch-result-for-state
+  [state : TcMacroState]
+  [slot : i64]
+  [index : i64]) : unit
+  (if (>= index (tc-macro-proof-field state scratch-count))
     unit
     (begin
       (set!
-        (array-ref declared-types (+ (* slot expected-count) index))
-        (text-copy (array-ref expected-key index)))
+        (array-ref
+          (tc-macro-proof-field state declared-types)
+          (+ (* slot expected-count) index))
+        (text-copy-for-state
+          state
+          (array-ref (tc-macro-proof-field state expected-key) index)))
       (set!
-        (array-ref macro-type-kinds (+ (* slot expected-count) index))
-        (text-copy (array-ref expected-kind index)))
-      (scratch-result slot (+ index 1)))))
+        (array-ref
+          (tc-macro-proof-field state macro-type-kinds)
+          (+ (* slot expected-count) index))
+        (text-copy-for-state
+          state
+          (array-ref (tc-macro-proof-field state expected-kind) index)))
+      (scratch-result-for-state state slot (+ index 1)))))
 
-(define (matches-signature [slot : i64] [index : i64] [count : i64]) : bool
+(define (matches-signature-for-state
+  [state : TcMacroState]
+  [slot : i64]
+  [index : i64]
+  [count : i64]) : bool
   (if (>= index count)
     true
     (and
       (string.eq
-        (array-ref declared-types (+ (* slot expected-count) index))
-        (array-ref expected-key index))
+        (array-ref
+          (tc-macro-proof-field state declared-types)
+          (+ (* slot expected-count) index))
+        (array-ref (tc-macro-proof-field state expected-key) index))
       (string.eq
-        (array-ref macro-type-kinds (+ (* slot expected-count) index))
-        (array-ref expected-kind index))
-      (matches-signature slot (+ index 1) count))))
+        (array-ref
+          (tc-macro-proof-field state macro-type-kinds)
+          (+ (* slot expected-count) index))
+        (array-ref (tc-macro-proof-field state expected-kind) index))
+      (matches-signature-for-state state slot (+ index 1) count))))
 
-(define (identity-remap [identity : String]) : unit
+(define (identity-remap-for-state [state : TcMacroState] [identity : String]) : unit
   (let
-    [identity-id : i64 (tc-generated-module-name-id identity)]
+    [identity-id : i64 (tc-macro-owner-generated-name-id state identity)]
     (if (< identity-id 0)
       unit
       (begin
-        (running-identity)
+        (running-identity-for-state state)
         (let
           [cursor : i64 (index-key identity-id)]
           [key : i64 (+ identity-id 1)]
@@ -61651,27 +62668,59 @@
             false
             (< steps store-capacity))
             (let
-              [slot : i64 (array-ref identity-bytes cursor)]
+              [slot : i64
+                (array-ref (tc-macro-proof-field state identity-bytes) cursor)]
               (cond
                 [(= slot 0)
-                  (if (>= (* identity-count 2) store-capacity)
+                  (if (>=
+                    (* (tc-macro-proof-field state identity-count) 2)
+                    store-capacity)
                     (set! done true)
                     (begin
-                      (set! (array-ref identity-bytes cursor) key)
-                      (set! (array-ref operand-count cursor) scratch-count)
-                      (if (< scratch-count 0)
+                      (set!
+                        (array-ref
+                          (tc-macro-proof-field state identity-bytes)
+                          cursor)
+                        key)
+                      (set!
+                        (array-ref
+                          (tc-macro-proof-field state operand-count)
+                          cursor)
+                        (tc-macro-proof-field state scratch-count))
+                      (if (< (tc-macro-proof-field state scratch-count) 0)
                         unit
-                        (scratch-result cursor 0))
-                      (set! identity-count (+ identity-count 1))
+                        (scratch-result-for-state state cursor 0))
+                      (tc-macro-proof-set!
+                        state
+                        identity-count
+                        (+ (tc-macro-proof-field state identity-count) 1))
                       (set! done true)))]
                 [(= slot key)
                   (begin
                     (if (or
-                      (< (array-ref operand-count cursor) 0)
-                      (< scratch-count 0)
-                      (not (= (array-ref operand-count cursor) scratch-count))
-                      (not (matches-signature cursor 0 scratch-count)))
-                      (set! (array-ref operand-count cursor) -1)
+                      (<
+                        (array-ref
+                          (tc-macro-proof-field state operand-count)
+                          cursor)
+                        0)
+                      (< (tc-macro-proof-field state scratch-count) 0)
+                      (not
+                        (=
+                          (array-ref
+                            (tc-macro-proof-field state operand-count)
+                            cursor)
+                          (tc-macro-proof-field state scratch-count)))
+                      (not
+                        (matches-signature-for-state
+                          state
+                          cursor
+                          0
+                          (tc-macro-proof-field state scratch-count))))
+                      (set!
+                        (array-ref
+                          (tc-macro-proof-field state operand-count)
+                          cursor)
+                        -1)
                       unit)
                     (set! done true))]
                 [else
@@ -61680,7 +62729,13 @@
                     (set! steps (+ steps 1)))]))
             unit))))))
 
-(define (tc-proof-reuse-session-identity-preflight-ids?
+(define (identity-remap [identity : String]) : unit
+  (identity-remap-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    identity))
+
+(define (tc-proof-reuse-session-identity-preflight-ids-for-state?
+  [state : TcMacroState]
   [first-id : i64]
   [right-id : i64]) : bool
   (begin
@@ -61688,23 +62743,24 @@
     ;; notes belong to the surrounding declaration comparison and survive a
     ;; preflight refresh; callers use the full session reset once per walk.
     (begin
-      (set! first-key -1)
-      (set! next-id -1)
-      (set! first-slot -1)
-      (set! next-slots -1)
-      (set! identity-count2 0)
-      (set! active-mask 0)
-      (set! active-invalid false))
+      (tc-macro-proof-set! state first-key -1)
+      (tc-macro-proof-set! state next-id -1)
+      (tc-macro-proof-set! state first-slot -1)
+      (tc-macro-proof-set! state next-slots -1)
+      (tc-macro-proof-set! state identity-count2 0)
+      (tc-macro-proof-set! state active-mask 0)
+      (tc-macro-proof-set! state active-invalid false))
     (let
-      [left : i64 (slot-id first-id)]
-      [right : i64 (slot-id right-id)]
+      [left : i64 (slot-id-for-state state first-id)]
+      [right : i64 (slot-id-for-state state right-id)]
       [left-len : i64
         (if (and
           (>= left 0)
           (< left store-capacity)
-          (> (array-ref identity-bytes left) 0))
+          (> (array-ref (tc-macro-proof-field state identity-bytes) left) 0))
           (let
-            [count : i64 (array-ref operand-count left)]
+            [count : i64
+              (array-ref (tc-macro-proof-field state operand-count) left)]
             (if (and (>= count 0) (<= count expected-count))
               count
               -1))
@@ -61713,9 +62769,10 @@
         (if (and
           (>= right 0)
           (< right store-capacity)
-          (> (array-ref identity-bytes right) 0))
+          (> (array-ref (tc-macro-proof-field state identity-bytes) right) 0))
           (let
-            [count : i64 (array-ref operand-count right)]
+            [count : i64
+              (array-ref (tc-macro-proof-field state operand-count) right)]
             (if (and (>= count 0) (<= count expected-count))
               count
               -1))
@@ -61741,10 +62798,10 @@
         ;; kind fact must be present before the injective check can run.
         (while (and ok (< index left-len))
           (let
-            [key : String (type-key-id left index)]
-            [kind : String (kind-for-check left index)]
-            [value : String (type-key-id right index)]
-            [other : String (kind-for-check right index)]
+            [key : String (type-key-id-for-state state left index)]
+            [kind : String (kind-for-check-for-state state left index)]
+            [value : String (type-key-id-for-state state right index)]
+            [other : String (kind-for-check-for-state state right index)]
             (begin
               (if (or
                 (= (string.string-length key) 0)
@@ -61764,52 +62821,84 @@
             (while (and ok (< inner left-len))
               (begin
                 (if (and
-                  (string.eq (type-key-id left outer) (type-key-id left inner))
+                  (string.eq
+                    (type-key-id-for-state state left outer)
+                    (type-key-id-for-state state left inner))
                   (not
                     (string.eq
-                      (type-key-id right outer)
-                      (type-key-id right inner))))
+                      (type-key-id-for-state state right outer)
+                      (type-key-id-for-state state right inner))))
                   (set! ok false)
                   unit)
                 (if (and
                   (string.eq
-                    (type-key-id right outer)
-                    (type-key-id right inner))
+                    (type-key-id-for-state state right outer)
+                    (type-key-id-for-state state right inner))
                   (not
                     (string.eq
-                      (type-key-id left outer)
-                      (type-key-id left inner))))
+                      (type-key-id-for-state state left outer)
+                      (type-key-id-for-state state left inner))))
                   (set! ok false)
                   unit)
                 (set! inner (+ inner 1))))
             (set! outer (+ outer 1))))
         (if ok
           (begin
-            (set! first-key first-id)
-            (set! next-id right-id)
-            (set! first-slot left)
-            (set! next-slots right)
-            (set! identity-count2 left-len)
-            (set! active-mask 0)
-            (set! active-invalid false)
+            (tc-macro-proof-set! state first-key first-id)
+            (tc-macro-proof-set! state next-id right-id)
+            (tc-macro-proof-set! state first-slot left)
+            (tc-macro-proof-set! state next-slots right)
+            (tc-macro-proof-set! state identity-count2 left-len)
+            (tc-macro-proof-set! state active-mask 0)
+            (tc-macro-proof-set! state active-invalid false)
             true)
           (begin
-            (set! active-invalid true)
+            (tc-macro-proof-set! state active-invalid true)
             false))))))
 
-(define (definition-index [value : i64] [text : String]) : bool
-  (if (or active-invalid overflow-ok)
+(define (tc-proof-reuse-session-identity-preflight-ids?
+  [first-id : i64]
+  [right-id : i64]) : bool
+  (tc-proof-reuse-session-identity-preflight-ids-for-state?
+    (tc-job-state-macro-state (tc-serial-job-state))
+    first-id
+    right-id))
+
+(define (definition-index-for-state
+  [state : TcMacroState]
+  [value : i64]
+  [text : String]) : bool
+  (if (or
+    (tc-macro-proof-field state active-invalid)
+    (tc-macro-proof-field state overflow-ok))
     false
-    (if (>= digit-count seed-capacity)
+    (if (>= (tc-macro-proof-field state digit-count) seed-capacity)
       (begin
-        (set! overflow-ok true)
-        (set! active-invalid true)
+        (tc-macro-proof-set! state overflow-ok true)
+        (tc-macro-proof-set! state active-invalid true)
         false)
       (begin
-        (set! (array-ref uniform-values digit-count) value)
-        (set! (array-ref inject-texts digit-count) text)
-        (set! digit-count (+ digit-count 1))
+        (set!
+          (array-ref
+            (tc-macro-proof-field state uniform-values)
+            (tc-macro-proof-field state digit-count))
+          value)
+        (set!
+          (array-ref
+            (tc-macro-proof-field state inject-texts)
+            (tc-macro-proof-field state digit-count))
+          text)
+        (tc-macro-proof-set!
+          state
+          digit-count
+          (+ (tc-macro-proof-field state digit-count) 1))
         true))))
+
+(define (definition-index [value : i64] [text : String]) : bool
+  (definition-index-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    value
+    text))
 
 ;; These cfg-test wrappers preserve white-box proof-state coverage while
 ;; production keeps the single-caller bodies inlined for fixed interner headroom.
@@ -61818,7 +62907,9 @@
   (define (tc-proof-reuse-session-ast-literal-exact?
     [literal : ast.AstLiteral]
     [other : ast.AstLiteral]) : bool
-    (if active-invalid
+    (if (tc-macro-proof-field
+      (tc-job-state-macro-state (tc-serial-job-state))
+      active-invalid)
       false
       (match literal
         [(ast.AstLiteral.Int value text)
@@ -61833,7 +62924,10 @@
             [(ast.AstLiteral.Float repr)
               (if (string.eq text repr)
                 (begin
-                  (set! negative-literal true)
+                  (tc-macro-proof-set!
+                    (tc-job-state-macro-state (tc-serial-job-state))
+                    negative-literal
+                    true)
                   true)
                 false)]
             [_ false])]
@@ -61842,7 +62936,10 @@
             [(ast.AstLiteral.Bool result)
               (if (= value result)
                 (begin
-                  (set! negative-literal true)
+                  (tc-macro-proof-set!
+                    (tc-job-state-macro-state (tc-serial-job-state))
+                    negative-literal
+                    true)
                   true)
                 false)]
             [_ false])]
@@ -61861,7 +62958,10 @@
             [(ast.AstLiteral.String right-id)
               (if (= left-id right-id)
                 (begin
-                  (set! negative-literal true)
+                  (tc-macro-proof-set!
+                    (tc-job-state-macro-state (tc-serial-job-state))
+                    negative-literal
+                    true)
                   true)
                 false)]
             [_ false])]
@@ -61869,21 +62969,34 @@
           (match other
             [(ast.AstLiteral.Unit)
               (begin
-                (set! negative-literal true)
+                (tc-macro-proof-set!
+                  (tc-job-state-macro-state (tc-serial-job-state))
+                  negative-literal
+                  true)
                 true)]
             [_ false])]))))
 
 (cfg
   test
   (define (recorded-maybe-ty) : unit
-    (set! reflection-env true)))
+    (tc-macro-proof-set!
+      (tc-job-state-macro-state (tc-serial-job-state))
+      reflection-env
+      true)))
 
-(define (type-dedup-ok? [kind : String] [index : i64]) : bool
-  (if (>= index digit-count)
+(define (type-dedup-ok-for-state?
+  [state : TcMacroState]
+  [kind : String]
+  [index : i64]) : bool
+  (if (>= index (tc-macro-proof-field state digit-count))
     true
     (let
-      [value : i64 (array-ref uniform-values index)]
-      [text : String (string.copy (& (array-ref inject-texts index)))]
+      [values : (__tl_dyn-array i64)
+        (tc-macro-proof-field state uniform-values)]
+      [texts : (__tl_dyn-array String)
+        (tc-macro-proof-field state inject-texts)]
+      [value : i64 (array-ref values index)]
+      [text : String (string.copy (& (array-ref texts index)))]
       (and
         (if (= (string.string-length kind) 0)
           false
@@ -61937,120 +63050,156 @@
                 text
                 (ast.AstType.Char))]
             [else true]))
-        (type-dedup-ok? kind (+ index 1))))))
+        (type-dedup-ok-for-state? state kind (+ index 1))))))
+
+(define (invalid-keeps-first-for-state [proof-state : TcMacroState]) : bool
+  (if (or
+    (tc-macro-proof-field proof-state active-invalid)
+    (tc-macro-proof-field proof-state overflow-ok)
+    (and
+      (tc-macro-proof-field proof-state portable-pair)
+      (tc-macro-proof-field proof-state local-use))
+    (and
+      (tc-macro-proof-field proof-state portable-pair)
+      (tc-macro-proof-field proof-state fixed-call)
+      (not (tc-macro-proof-field proof-state allow-cleanup)))
+    (< (tc-macro-proof-field proof-state first-key) 0)
+    (< (tc-macro-proof-field proof-state next-id) 0)
+    (< (tc-macro-proof-field proof-state identity-count2) 1)
+    (> (tc-macro-proof-field proof-state identity-count2) expected-count))
+    false
+    (let
+      [index : i64 0]
+      [ok : bool true]
+      (begin
+        ;; The identity metadata table is bounded to sixteen ordered
+        ;; operands.  Inspect only operand bits that exact type comparison
+        ;; actually marked as changed.
+        (while (and ok (< index expected-count))
+          (begin
+            (if (=
+              (bit-and
+                (tc-macro-proof-field proof-state active-mask)
+                (shl 1 index))
+              0)
+              unit
+              (if (let
+                [key : String
+                  (type-key-id-for-state
+                    proof-state
+                    (tc-macro-proof-field proof-state first-slot)
+                    index)]
+                [value : String
+                  (type-key-id-for-state
+                    proof-state
+                    (tc-macro-proof-field proof-state next-slots)
+                    index)]
+                [kind : String
+                  (kind-for-check-for-state
+                    proof-state
+                    (tc-macro-proof-field proof-state first-slot)
+                    index)]
+                [other : String
+                  (kind-for-check-for-state
+                    proof-state
+                    (tc-macro-proof-field proof-state next-slots)
+                    index)]
+                [first : bool
+                  (or (string.eq kind "f32") (string.eq kind "f64"))]
+                [second : bool
+                  (or (string.eq other "f32") (string.eq other "f64"))]
+                [left : bool
+                  (or (string.eq kind "struct") (string.eq kind "enum"))]
+                [right : bool
+                  (or (string.eq other "struct") (string.eq other "enum"))]
+                [result : bool
+                  (or
+                    (string.eq kind "string")
+                    (string.eq kind "bytes")
+                    (string.eq kind "array")
+                    (string.eq kind "dyn-array")
+                    (string.eq kind "box")
+                    (string.eq kind "tuple")
+                    (string.eq kind "struct")
+                    (string.eq kind "enum")
+                    (string.eq kind "expr")
+                    (string.eq kind "expr-list")
+                    (string.eq kind "function")
+                    (string.eq kind "consume-param"))]
+                [saved : bool
+                  (or
+                    (string.eq other "string")
+                    (string.eq other "bytes")
+                    (string.eq other "array")
+                    (string.eq other "dyn-array")
+                    (string.eq other "box")
+                    (string.eq other "tuple")
+                    (string.eq other "struct")
+                    (string.eq other "enum")
+                    (string.eq other "expr")
+                    (string.eq other "expr-list")
+                    (string.eq other "function")
+                    (string.eq other "consume-param"))]
+                [state : bool
+                  (or
+                    (string.eq other "i64")
+                    (string.eq other "i32")
+                    (string.eq other "i16")
+                    (string.eq other "i8")
+                    (string.eq other "u64")
+                    (string.eq other "u32")
+                    (string.eq other "u16")
+                    (string.eq other "u8")
+                    (string.eq other "char"))]
+                (cond
+                  [(or
+                      (= (string.string-length key) 0)
+                      (= (string.string-length value) 0)
+                      (= (string.string-length kind) 0)
+                      (= (string.string-length other) 0))
+                    false]
+                  [(string.eq key value) true]
+                  [(or
+                      (tc-macro-proof-field proof-state checked-context)
+                      first
+                      second
+                      left
+                      right
+                      result
+                      saved
+                      (tc-macro-proof-field proof-state shifted)
+                      (tc-macro-proof-field proof-state has-operands)
+                      (tc-macro-proof-field proof-state reflection-env)
+                      (tc-macro-proof-field proof-state negative-literal)
+                      (and
+                        (> (tc-macro-proof-field proof-state digit-count) 0)
+                        (not state))
+                      (and
+                        (tc-macro-proof-field proof-state conditional-operand)
+                        (not (string.eq kind other))))
+                    false]
+                  [else (type-dedup-ok-for-state? proof-state other 0)]))
+                unit
+                (set! ok false)))
+            (set! index (+ index 1))))
+        ok))))
 
 (cfg
   test
   (define (invalid-keeps-first) : bool
-    (if (or
-      active-invalid
-      overflow-ok
-      (and portable-pair local-use)
-      (and portable-pair fixed-call (not allow-cleanup))
-      (< first-key 0)
-      (< next-id 0)
-      (< identity-count2 1)
-      (> identity-count2 expected-count))
-      false
-      (let
-        [index : i64 0]
-        [ok : bool true]
-        (begin
-          ;; The identity metadata table is bounded to sixteen ordered
-          ;; operands.  Inspect only operand bits that exact type comparison
-          ;; actually marked as changed.
-          (while (and ok (< index expected-count))
-            (begin
-              (if (= (bit-and active-mask (shl 1 index)) 0)
-                unit
-                (if (let
-                  [key : String (type-key-id first-slot index)]
-                  [value : String (type-key-id next-slots index)]
-                  [kind : String (kind-for-check first-slot index)]
-                  [other : String (kind-for-check next-slots index)]
-                  [first : bool
-                    (or (string.eq kind "f32") (string.eq kind "f64"))]
-                  [second : bool
-                    (or (string.eq other "f32") (string.eq other "f64"))]
-                  [left : bool
-                    (or (string.eq kind "struct") (string.eq kind "enum"))]
-                  [right : bool
-                    (or (string.eq other "struct") (string.eq other "enum"))]
-                  [result : bool
-                    (or
-                      (string.eq kind "string")
-                      (string.eq kind "bytes")
-                      (string.eq kind "array")
-                      (string.eq kind "dyn-array")
-                      (string.eq kind "box")
-                      (string.eq kind "tuple")
-                      (string.eq kind "struct")
-                      (string.eq kind "enum")
-                      (string.eq kind "expr")
-                      (string.eq kind "expr-list")
-                      (string.eq kind "function")
-                      (string.eq kind "consume-param"))]
-                  [saved : bool
-                    (or
-                      (string.eq other "string")
-                      (string.eq other "bytes")
-                      (string.eq other "array")
-                      (string.eq other "dyn-array")
-                      (string.eq other "box")
-                      (string.eq other "tuple")
-                      (string.eq other "struct")
-                      (string.eq other "enum")
-                      (string.eq other "expr")
-                      (string.eq other "expr-list")
-                      (string.eq other "function")
-                      (string.eq other "consume-param"))]
-                  [state : bool
-                    (or
-                      (string.eq other "i64")
-                      (string.eq other "i32")
-                      (string.eq other "i16")
-                      (string.eq other "i8")
-                      (string.eq other "u64")
-                      (string.eq other "u32")
-                      (string.eq other "u16")
-                      (string.eq other "u8")
-                      (string.eq other "char"))]
-                  (if (or
-                    (= (string.string-length key) 0)
-                    (= (string.string-length value) 0)
-                    (= (string.string-length kind) 0)
-                    (= (string.string-length other) 0))
-                    false
-                    (if (string.eq key value)
-                      true
-                      (if (or
-                        checked-context
-                        first
-                        second
-                        left
-                        right
-                        result
-                        saved
-                        shifted
-                        has-operands
-                        reflection-env
-                        negative-literal
-                        (and (> digit-count 0) (not state))
-                        (and conditional-operand (not (string.eq kind other))))
-                        false
-                        (type-dedup-ok? other 0)))))
-                  unit
-                  (set! ok false)))
-              (set! index (+ index 1))))
-          ok)))))
+    (invalid-keeps-first-for-state
+      (tc-job-state-macro-state (tc-serial-job-state)))))
 
-(define (exact-name [left-id : i64] [right-id : i64]) : bool
+(define (exact-name-for-state
+  [state : TcMacroState]
+  [left-id : i64]
+  [right-id : i64]) : bool
   (match (or
-    active-invalid
-    (< first-key 0)
-    (< next-id 0)
-    (< identity-count2 1)
-    (> identity-count2 expected-count))
+    (tc-macro-proof-field state active-invalid)
+    (< (tc-macro-proof-field state first-key) 0)
+    (< (tc-macro-proof-field state next-id) 0)
+    (< (tc-macro-proof-field state identity-count2) 1)
+    (> (tc-macro-proof-field state identity-count2) expected-count))
     [true false]
     [false
       (match (= left-id right-id)
@@ -62070,14 +63219,26 @@
                   (=
                     (ci.intern-qualified-base-id left-id)
                     (ci.intern-qualified-base-id right-id))
-                  (= (ci.intern-qualified-module-id left-id) first-key)
-                  (= (ci.intern-qualified-module-id right-id) next-id))
-                (and (= left-id first-key) (= right-id next-id)))
+                  (=
+                    (ci.intern-qualified-module-id left-id)
+                    (tc-macro-proof-field state first-key))
+                  (=
+                    (ci.intern-qualified-module-id right-id)
+                    (tc-macro-proof-field state next-id)))
+                (and
+                  (= left-id (tc-macro-proof-field state first-key))
+                  (= right-id (tc-macro-proof-field state next-id))))
                 [true
                   (begin
-                    (set! portable-pair true)
+                    (tc-macro-proof-set! state portable-pair true)
                     true)]
                 [false false])])])]))
+
+(define (exact-name [left-id : i64] [right-id : i64]) : bool
+  (exact-name-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    left-id
+    right-id))
 
 ;; Referenced names are declaration-local facts, not family identities.  A
 ;; direct per-declaration proof has no sibling declaration available to prove
@@ -62086,34 +63247,59 @@
 ;; helper side-effect free: equal locals continue through the lexical-pair
 ;; bookkeeping in the callers, while no reference can introduce a
 ;; substitution fact.
-(define (qualified-name [left-id : i64] [right-id : i64]) : bool
+(define (qualified-name-for-state
+  [state : TcMacroState]
+  [left-id : i64]
+  [right-id : i64]) : bool
   (and
-    (not active-invalid)
+    (not (tc-macro-proof-field state active-invalid))
     (>= left-id 0)
     (>= right-id 0)
     (ci.intern-renderable-id? left-id)
     (ci.intern-renderable-id? right-id)
     (= left-id right-id)))
 
-(define (pair-id [key : String] [value : String] [index : i64]) : i64
-  (if (>= index identity-count2)
+(define (qualified-name [left-id : i64] [right-id : i64]) : bool
+  (qualified-name-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))
+    left-id
+    right-id))
+
+(define (pair-id-for-state
+  [state : TcMacroState]
+  [key : String]
+  [value : String]
+  [index : i64]) : i64
+  (if (>= index (tc-macro-proof-field state identity-count2))
     -1
     (if (and
-      (string.eq (type-key-id first-slot index) key)
-      (string.eq (type-key-id next-slots index) value))
+      (string.eq
+        (type-key-id-for-state
+          state
+          (tc-macro-proof-field state first-slot)
+          index)
+        key)
+      (string.eq
+        (type-key-id-for-state
+          state
+          (tc-macro-proof-field state next-slots)
+          index)
+        value))
       index
-      (pair-id key value (+ index 1)))))
+      (pair-id-for-state state key value (+ index 1)))))
 
 (define (tc-proof-reuse-session-ast-type-exact?
   [ctx : TcContext]
   [left : ast.AstType]
   [right : ast.AstType]) : bool
   (match (or
-    active-invalid
-    (< first-key 0)
-    (< next-id 0)
-    (< identity-count2 1)
-    (> identity-count2 expected-count))
+    (tc-macro-proof-field (tc-context-macro-state ctx) active-invalid)
+    (< (tc-macro-proof-field (tc-context-macro-state ctx) first-key) 0)
+    (< (tc-macro-proof-field (tc-context-macro-state ctx) next-id) 0)
+    (< (tc-macro-proof-field (tc-context-macro-state ctx) identity-count2) 1)
+    (>
+      (tc-macro-proof-field (tc-context-macro-state ctx) identity-count2)
+      expected-count))
     [true false]
     [false
       (match (or
@@ -62124,7 +63310,10 @@
           (match (ast.ast-type-eq-with-pools? (tc-context-pools ctx) left right)
             [true
               (begin
-                (set! fixed-call true)
+                (tc-macro-proof-set!
+                  (tc-context-macro-state ctx)
+                  fixed-call
+                  true)
                 true)]
             [false
               (let
@@ -62141,26 +63330,52 @@
                 (match (string.eq key value)
                   [true
                     (begin
-                      (set! fixed-call true)
+                      (tc-macro-proof-set!
+                        (tc-context-macro-state ctx)
+                        fixed-call
+                        true)
                       true)]
                   [false
                     (match (and
                       (not
                         (or
-                          active-invalid
-                          (< identity-count2 1)
-                          (> identity-count2 expected-count)
+                          (tc-macro-proof-field
+                            (tc-context-macro-state ctx)
+                            active-invalid)
+                          (<
+                            (tc-macro-proof-field
+                              (tc-context-macro-state ctx)
+                              identity-count2)
+                            1)
+                          (>
+                            (tc-macro-proof-field
+                              (tc-context-macro-state ctx)
+                              identity-count2)
+                            expected-count)
                           (= (string.string-length key) 0)
                           (= (string.string-length value) 0)))
                       (let
-                        [index : i64 (pair-id key value 0)]
+                        [index : i64
+                          (pair-id-for-state
+                            (tc-context-macro-state ctx)
+                            key
+                            value
+                            0)]
                         (if (< index 0)
                           false
                           (begin
-                            (set! portable-pair true)
-                            (set!
+                            (tc-macro-proof-set!
+                              (tc-context-macro-state ctx)
+                              portable-pair
+                              true)
+                            (tc-macro-proof-set!
+                              (tc-context-macro-state ctx)
                               active-mask
-                              (bit-or active-mask (shl 1 index)))
+                              (bit-or
+                                (tc-macro-proof-field
+                                  (tc-context-macro-state ctx)
+                                  active-mask)
+                                (shl 1 index)))
                             true))))
                       [true true]
                       [false
@@ -62280,7 +63495,10 @@
                             (match right
                               [(ast.AstType.Region other result)
                                 (and
-                                  (qualified-name name other)
+                                  (qualified-name-for-state
+                                    (tc-context-macro-state ctx)
+                                    name
+                                    other)
                                   (tc-proof-reuse-session-ast-type-exact?
                                     ctx
                                     (tc-context-type-get ctx inner)
@@ -62290,7 +63508,10 @@
                             (match right
                               [(ast.AstType.Ref other result)
                                 (and
-                                  (qualified-name name other)
+                                  (qualified-name-for-state
+                                    (tc-context-macro-state ctx)
+                                    name
+                                    other)
                                   (tc-proof-reuse-session-ast-type-exact?
                                     ctx
                                     (tc-context-type-get ctx inner)
@@ -62300,7 +63521,10 @@
                             (match right
                               [(ast.AstType.MutRef other result)
                                 (and
-                                  (qualified-name name other)
+                                  (qualified-name-for-state
+                                    (tc-context-macro-state ctx)
+                                    name
+                                    other)
                                   (tc-proof-reuse-session-ast-type-exact?
                                     ctx
                                     (tc-context-type-get ctx inner)
@@ -62420,7 +63644,10 @@
                 (let
                   [ok : bool
                     (and
-                      (qualified-name name name-id)
+                      (qualified-name-for-state
+                        (tc-context-macro-state ctx)
+                        name
+                        name-id)
                       (tc-proof-reuse-session-ast-type-exact? ctx type ty)
                       (= first next)
                       (= second result))]
@@ -62428,22 +63655,57 @@
                     false
                     (and
                       (if (or
-                        active-invalid
-                        local-shadow-updated?
+                        (tc-macro-proof-field
+                          (tc-context-macro-state ctx)
+                          active-invalid)
+                        (tc-macro-proof-field
+                          (tc-context-macro-state ctx)
+                          local-shadow-updated)
                         (< name 0)
                         (< name-id 0))
                         false
-                        (if (>= local-ordinal type-capacity)
+                        (if (>=
+                          (tc-macro-proof-field
+                            (tc-context-macro-state ctx)
+                            local-ordinal)
+                          type-capacity)
                           (begin
-                            (set! local-shadow-updated? true)
-                            (set! active-invalid true)
+                            (tc-macro-proof-set!
+                              (tc-context-macro-state ctx)
+                              local-shadow-updated
+                              true)
+                            (tc-macro-proof-set!
+                              (tc-context-macro-state ctx)
+                              active-invalid
+                              true)
                             false)
                           (begin
                             (set!
-                              (array-ref local-alias-names local-ordinal)
+                              (array-ref
+                                (tc-macro-proof-field
+                                  (tc-context-macro-state ctx)
+                                  local-alias-names)
+                                (tc-macro-proof-field
+                                  (tc-context-macro-state ctx)
+                                  local-ordinal))
                               name)
-                            (set! (array-ref next-locals local-ordinal) name-id)
-                            (set! local-ordinal (+ local-ordinal 1))
+                            (set!
+                              (array-ref
+                                (tc-macro-proof-field
+                                  (tc-context-macro-state ctx)
+                                  next-locals)
+                                (tc-macro-proof-field
+                                  (tc-context-macro-state ctx)
+                                  local-ordinal))
+                              name-id)
+                            (tc-macro-proof-set!
+                              (tc-context-macro-state ctx)
+                              local-ordinal
+                              (+
+                                (tc-macro-proof-field
+                                  (tc-context-macro-state ctx)
+                                  local-ordinal)
+                                1))
                             true)))
                       (tc-proof-reuse-session-ast-param-list-exact?
                         ctx
@@ -62476,7 +63738,10 @@
               (ast.ast-field-def-fallback))
               [(ast.AstFieldDef.Def name-id type saved)
                 (and
-                  (qualified-name name name-id)
+                  (qualified-name-for-state
+                    (tc-context-macro-state ctx)
+                    name
+                    name-id)
                   (tc-proof-reuse-session-ast-type-exact? ctx ty type)
                   (match cleanup
                     [(ast.AstFieldCleanup.No)
@@ -62525,7 +63790,8 @@
 ;; structural prefix/final identities instead of requiring the aggregate id to
 ;; be shared.  Preserve the plain-Var lexical bookkeeping at the root and mark
 ;; the projection as context-sensitive just like the retained StructGet bridge.
-(define (tc-proof-reuse-session-var-name-exact?
+(define (tc-proof-reuse-session-var-name-exact-for-state?
+  [state : TcMacroState]
   [left-id : i64]
   [right-id : i64]) : bool
   (cond
@@ -62537,20 +63803,24 @@
         (ci.intern-dotted? left-id)
         (ci.intern-dotted? right-id))
       (begin
-        (set! checked-context true)
+        (tc-macro-proof-set! state checked-context true)
         (and
-          (tc-proof-reuse-session-var-name-exact?
+          (tc-proof-reuse-session-var-name-exact-for-state?
+            state
             (ci.intern-dotted-prefix-id left-id)
             (ci.intern-dotted-prefix-id right-id))
-          (qualified-name
+          (qualified-name-for-state
+            state
             (ci.intern-dotted-final-id left-id)
             (ci.intern-dotted-final-id right-id))))]
-    [(not (qualified-name left-id right-id)) false]
+    [(not (qualified-name-for-state state left-id right-id)) false]
     [(= left-id right-id)
-      (if (or allow-cleanup (>= (pair-index left-id right-id 0) 0))
+      (if (or
+        (tc-macro-proof-field state allow-cleanup)
+        (>= (pair-index-for-state state left-id right-id 0) 0))
         true
         (begin
-          (set! local-use true)
+          (tc-macro-proof-set! state local-use true)
           true))]
     [else false]))
 
@@ -62568,13 +63838,16 @@
     (ci.intern-renderable-id? left-name-id)
     (not (ci.intern-qualified? left-name-id))
     (ci.intern-dotted? left-name-id)
-    (qualified-name (ci.intern-dotted-final-id left-name-id) right-field-id)
+    (qualified-name-for-state
+      (tc-context-macro-state ctx)
+      (ci.intern-dotted-final-id left-name-id)
+      right-field-id)
     (>= right-receiver-id 0)
     (<
       right-receiver-id
       (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
     (begin
-      (set! checked-context true)
+      (tc-macro-proof-set! (tc-context-macro-state ctx) checked-context true)
       (tc-proof-reuse-session-ast-expr-exact?
         ctx
         (ast.AstExpr.Var (ci.intern-dotted-prefix-id left-name-id))
@@ -62590,13 +63863,16 @@
     (ci.intern-renderable-id? right-name-id)
     (not (ci.intern-qualified? right-name-id))
     (ci.intern-dotted? right-name-id)
-    (qualified-name left-field-id (ci.intern-dotted-final-id right-name-id))
+    (qualified-name-for-state
+      (tc-context-macro-state ctx)
+      left-field-id
+      (ci.intern-dotted-final-id right-name-id))
     (>= left-receiver-id 0)
     (<
       left-receiver-id
       (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
     (begin
-      (set! checked-context true)
+      (tc-macro-proof-set! (tc-context-macro-state ctx) checked-context true)
       (tc-proof-reuse-session-ast-expr-exact?
         ctx
         (tc-context-expr-get ctx left-receiver-id)
@@ -62612,7 +63888,7 @@
   ;; walking; unsupported expression forms fail closed.  Rule 4 vetoes
   ;; changed recorded operands.  Referenced names are exact; only complete
   ;; type-key operand pairs can admit a changed type subtree.
-  (if active-invalid
+  (if (tc-macro-proof-field (tc-context-macro-state ctx) active-invalid)
     false
     (match expr
       ;; Spans are parser metadata and generated modules legitimately carry
@@ -62664,14 +63940,19 @@
           [(ast.AstExpr.Literal literal)
             (match expr
               [(ast.AstExpr.Literal value)
-                (if active-invalid
+                (if (tc-macro-proof-field
+                  (tc-context-macro-state ctx)
+                  active-invalid)
                   false
                   (match value
                     [(ast.AstLiteral.Int value text)
                       (match literal
                         [(ast.AstLiteral.Int result repr)
                           (if (and (= value result) (string.eq text repr))
-                            (definition-index result repr)
+                            (definition-index-for-state
+                              (tc-context-macro-state ctx)
+                              result
+                              repr)
                             false)]
                         [_ false])]
                     [(ast.AstLiteral.Float text)
@@ -62679,7 +63960,10 @@
                         [(ast.AstLiteral.Float repr)
                           (if (string.eq text repr)
                             (begin
-                              (set! negative-literal true)
+                              (tc-macro-proof-set!
+                                (tc-context-macro-state ctx)
+                                negative-literal
+                                true)
                               true)
                             false)]
                         [_ false])]
@@ -62688,7 +63972,10 @@
                         [(ast.AstLiteral.Bool result)
                           (if (= value result)
                             (begin
-                              (set! negative-literal true)
+                              (tc-macro-proof-set!
+                                (tc-context-macro-state ctx)
+                                negative-literal
+                                true)
                               true)
                             false)]
                         [_ false])]
@@ -62699,7 +63986,8 @@
                             [first : i64 (cast value : i64)]
                             [second : i64 (cast result : i64)]
                             (if (= first second)
-                              (definition-index
+                              (definition-index-for-state
+                                (tc-context-macro-state ctx)
                                 second
                                 (string.int->string second))
                               false))]
@@ -62707,23 +63995,41 @@
                     [(ast.AstLiteral.String left-id)
                       (match literal
                         [(ast.AstLiteral.String right-id)
-                          (if allow-cleanup
+                          (if (tc-macro-proof-field
+                            (tc-context-macro-state ctx)
+                            allow-cleanup)
                             (let
                               [left : String (ci.intern-str left-id)]
                               [right : String (ci.intern-str right-id)]
                               [prefix : String
                                 (str_cat.str-cat
                                   (ci.intern-str
-                                    (if (>= first-module-id 0)
-                                      first-module-id
-                                      first-key))
+                                    (if (>=
+                                      (tc-macro-proof-field
+                                        (tc-context-macro-state ctx)
+                                        first-module-id)
+                                      0)
+                                      (tc-macro-proof-field
+                                        (tc-context-macro-state ctx)
+                                        first-module-id)
+                                      (tc-macro-proof-field
+                                        (tc-context-macro-state ctx)
+                                        first-key)))
                                   ".")]
                               [next : String
                                 (str_cat.str-cat
                                   (ci.intern-str
-                                    (if (>= next-module-id 0)
-                                      next-module-id
-                                      next-id))
+                                    (if (>=
+                                      (tc-macro-proof-field
+                                        (tc-context-macro-state ctx)
+                                        next-module-id)
+                                      0)
+                                      (tc-macro-proof-field
+                                        (tc-context-macro-state ctx)
+                                        next-module-id)
+                                      (tc-macro-proof-field
+                                        (tc-context-macro-state ctx)
+                                        next-id)))
                                   ".")]
                               [len : i64 (string.string-length prefix)]
                               [starts? : bool
@@ -62736,7 +64042,10 @@
                                 (if starts?
                                   false
                                   (begin
-                                    (set! negative-literal true)
+                                    (tc-macro-proof-set!
+                                      (tc-context-macro-state ctx)
+                                      negative-literal
+                                      true)
                                     true))
                                 (if (and
                                   starts?
@@ -62744,12 +64053,18 @@
                                     right
                                     (string.replace left prefix next)))
                                   (begin
-                                    (set! portable-pair true)
+                                    (tc-macro-proof-set!
+                                      (tc-context-macro-state ctx)
+                                      portable-pair
+                                      true)
                                     true)
                                   false)))
                             (if (= left-id right-id)
                               (begin
-                                (set! negative-literal true)
+                                (tc-macro-proof-set!
+                                  (tc-context-macro-state ctx)
+                                  negative-literal
+                                  true)
                                 true)
                               false))]
                         [_ false])]
@@ -62757,14 +64072,20 @@
                       (match literal
                         [(ast.AstLiteral.Unit)
                           (begin
-                            (set! negative-literal true)
+                            (tc-macro-proof-set!
+                              (tc-context-macro-state ctx)
+                              negative-literal
+                              true)
                             true)]
                         [_ false])]))]
               [_ false])]
           [(ast.AstExpr.Var name)
             (match expr
               [(ast.AstExpr.Var name-id)
-                (tc-proof-reuse-session-var-name-exact? name-id name)]
+                (tc-proof-reuse-session-var-name-exact-for-state?
+                  (tc-context-macro-state ctx)
+                  name-id
+                  name)]
               [(ast.AstExpr.StructGet left field)
                 (tc-proof-reuse-session-struct-get-left-dotted-exact?
                   ctx
@@ -62778,12 +64099,31 @@
                 (if (not (ctfe_support.ctfe-binop-eq op value))
                   false
                   (begin
-                    (set! conditional-operand true)
+                    (tc-macro-proof-set!
+                      (tc-context-macro-state ctx)
+                      conditional-operand
+                      true)
                     (match op
-                      [(ast.AstBinOp.Eq) (set! has-operands true)]
-                      [(ast.AstBinOp.Ne) (set! has-operands true)]
-                      [(ast.AstBinOp.Shl) (set! shifted true)]
-                      [(ast.AstBinOp.Shr) (set! shifted true)]
+                      [(ast.AstBinOp.Eq)
+                        (tc-macro-proof-set!
+                          (tc-context-macro-state ctx)
+                          has-operands
+                          true)]
+                      [(ast.AstBinOp.Ne)
+                        (tc-macro-proof-set!
+                          (tc-context-macro-state ctx)
+                          has-operands
+                          true)]
+                      [(ast.AstBinOp.Shl)
+                        (tc-macro-proof-set!
+                          (tc-context-macro-state ctx)
+                          shifted
+                          true)]
+                      [(ast.AstBinOp.Shr)
+                        (tc-macro-proof-set!
+                          (tc-context-macro-state ctx)
+                          shifted
+                          true)]
                       [_ unit])
                     (and
                       (tc-proof-reuse-session-ast-expr-id-exact? ctx left first)
@@ -62798,18 +64138,27 @@
                 (if (not (ctfe_support.ctfe-unop-eq op value))
                   false
                   (begin
-                    (set! conditional-operand true)
+                    (tc-macro-proof-set!
+                      (tc-context-macro-state ctx)
+                      conditional-operand
+                      true)
                     (tc-proof-reuse-session-ast-expr-id-exact? ctx inner second)))]
               [_ false])]
           [(ast.AstExpr.Call right params)
             (match expr
               [(ast.AstExpr.Call left exprs)
                 (begin
-                  (set! checked-context true)
+                  (tc-macro-proof-set!
+                    (tc-context-macro-state ctx)
+                    checked-context
+                    true)
                   (if (or
                     (tc-proof-reuse-session-clone-callee-expr-id? ctx left)
                     (tc-proof-reuse-session-clone-callee-expr-id? ctx right))
-                    (set! has-operands true)
+                    (tc-macro-proof-set!
+                      (tc-context-macro-state ctx)
+                      has-operands
+                      true)
                     unit)
                   (and
                     (tc-proof-reuse-session-ast-expr-id-exact? ctx left right)
@@ -62823,10 +64172,16 @@
             (match expr
               [(ast.AstExpr.StructGet left field)
                 (begin
-                  (set! checked-context true)
+                  (tc-macro-proof-set!
+                    (tc-context-macro-state ctx)
+                    checked-context
+                    true)
                   (and
                     (tc-proof-reuse-session-ast-expr-id-exact? ctx left right)
-                    (qualified-name field second)))]
+                    (qualified-name-for-state
+                      (tc-context-macro-state ctx)
+                      field
+                      second)))]
               [(ast.AstExpr.Var name-id)
                 (tc-proof-reuse-session-dotted-left-struct-get-exact?
                   ctx
@@ -62842,7 +64197,7 @@
   [ctx : TcContext]
   [decl : ast.AstDecl]
   [other : ast.AstDecl]) : bool
-  (if active-invalid
+  (if (tc-macro-proof-field (tc-context-macro-state ctx) active-invalid)
     false
     (match decl
       [(ast.AstDecl.DefStruct _ name repr cleanup fields)
@@ -62851,7 +64206,10 @@
             (let
               [ok : bool
                 (and
-                  (exact-name name name-id)
+                  (exact-name-for-state
+                    (tc-context-macro-state ctx)
+                    name
+                    name-id)
                   (match repr
                     [(ast.AstStructRepr.Default)
                       (match value
@@ -62874,7 +64232,10 @@
                 ;; fixed/substituted field types.  Rule 4 consumes this fact;
                 ;; failed/unsupported shapes leave it false.
                 (if ok
-                  (set! allow-cleanup true)
+                  (tc-macro-proof-set!
+                    (tc-context-macro-state ctx)
+                    allow-cleanup
+                    true)
                   unit)
                 ok))]
           [_ false])]
@@ -62882,27 +64243,39 @@
         (match other
           [(ast.AstDecl.DefMacro _ name-id list result value)
             (and
-              (exact-name name name-id)
+              (exact-name-for-state (tc-context-macro-state ctx) name name-id)
               (spec.gen-macro-param-list-eq? params list)
               (ctfe_support.ctfe-type-eq ret result)
               (let
-                [saved : bool allow-cleanup]
+                [saved : bool
+                  (tc-macro-proof-field
+                    (tc-context-macro-state ctx)
+                    allow-cleanup)]
                 [ok : bool false]
                 (begin
-                  (set! allow-cleanup true)
+                  (tc-macro-proof-set!
+                    (tc-context-macro-state ctx)
+                    allow-cleanup
+                    true)
                   (set!
                     ok
                     (tc-proof-reuse-session-ast-expr-id-exact? ctx body value))
-                  (set! allow-cleanup saved)
+                  (tc-macro-proof-set!
+                    (tc-context-macro-state ctx)
+                    allow-cleanup
+                    saved)
                   ok)))]
           [_ false])]
       [(ast.AstDecl.DefFn _ name params ret body meta)
         (match other
           [(ast.AstDecl.DefFn _ name-id list result value saved)
             (and
-              (exact-name name name-id)
+              (exact-name-for-state (tc-context-macro-state ctx) name name-id)
               (let
-                [start : i64 local-ordinal]
+                [start : i64
+                  (tc-macro-proof-field
+                    (tc-context-macro-state ctx)
+                    local-ordinal)]
                 [first : bool
                   (tc-proof-reuse-session-ast-param-list-exact?
                     ctx
@@ -62925,14 +64298,17 @@
                       [_ false])
                     false)]
                 (begin
-                  (set! local-ordinal start)
+                  (tc-macro-proof-set!
+                    (tc-context-macro-state ctx)
+                    local-ordinal
+                    start)
                   (and first second ok))))]
           [_ false])]
       [(ast.AstDecl.Def _ name type body)
         (match other
           [(ast.AstDecl.Def _ name-id ty value)
             (and
-              (exact-name name name-id)
+              (exact-name-for-state (tc-context-macro-state ctx) name name-id)
               (match type
                 [(ast.AstMaybeType.No)
                   (match ty
@@ -62949,7 +64325,10 @@
         (match other
           [(ast.AstDecl.Unsafe right-box)
             (let
-              [saved : bool allow-cleanup]
+              [saved : bool
+                (tc-macro-proof-field
+                  (tc-context-macro-state ctx)
+                  allow-cleanup)]
               [ok : bool
                 (tc-proof-reuse-session-ast-decl-exact?
                   ctx
@@ -62958,7 +64337,10 @@
               (begin
                 ;; Keep the DefStruct exception scoped to a direct declaration;
                 ;; an unsafe wrapper remains concrete-only conservatively.
-                (set! allow-cleanup saved)
+                (tc-macro-proof-set!
+                  (tc-context-macro-state ctx)
+                  allow-cleanup
+                  saved)
                 ok))]
           [_ false])]
       [_ false])))
@@ -62999,75 +64381,100 @@
             (tc-defmacro-fixed-type-params-complete? params (+ index 1) true))
           (tc-defmacro-fixed-type-params-complete? params (+ index 1) seen))])))
 
+(define (tc-macro-abstract-proof-reset-for-state! [state : TcMacroState]) : unit
+  (let
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    (begin
+      (set! abstract.active false)
+      (set! abstract.macro-name "")
+      (set! abstract.param-name "")
+      (set! abstract.kind-mask 0)
+      (set! abstract.cleanup-owning-mask 0)
+      (set! abstract.proof-count 0)
+      (tc-macro-abstract-state-data-set! state abstract)
+      (tc-macro-proof-qualified-reset-for-state! state)
+      (tc-macro-proof-family-reset-for-state! state)
+      (tc-macro-proof-identity-reset-for-state! state)
+      (tc-macro-proof-compare-reset-for-state! state)
+      (cfg test (set! tc-proof-reuse-skips-total 0))
+      (tc-macro-proof-set! state next-skip false))))
+
 (define (tc-macro-abstract-proof-reset!) : unit
-  (begin
-    (set! tc-macro-abstract-proof-count 0)
-    (if (= persistent-arena 0)
+  (tc-macro-abstract-proof-reset-for-state!
+    (tc-job-state-macro-state (tc-serial-job-state))))
+
+(define (tc-macro-abstract-proof-storage-ensure! [state : TcMacroState]) : unit
+  (let
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    (if (= (array-length abstract.proof-macro-keys) abstract.proof-capacity)
       unit
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy persistent-arena))
-        (set! persistent-arena 0)))
-    (set! any-active false)
-    (set! required-count 0)
-    (set! active? false)
-    (set! has-generated-decls false)
-    (set! item-count 0)
-    (set! block-generation -1)
-    (set! table-cell -1)
-    (set! identity-tail-forwarder? false)
-    (set! identity-count 0)
-    (set! generation-cell -1)
-    (set! next-table-id -1)
-    (scratch-reset-context)
-    (cfg test (set! tc-proof-reuse-skips-total 0))
-    (set! next-skip false)
-    (set! active? false)))
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        (begin
+          (set!
+            abstract.proof-macro-keys
+            (array.make-array i64 abstract.proof-capacity))
+          (set!
+            abstract.proof-param-keys
+            (array.make-array i64 abstract.proof-capacity))
+          (set!
+            abstract.proof-kind-masks
+            (array.make-array i64 abstract.proof-capacity))
+          (tc-macro-abstract-state-data-set! state abstract)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
 
 (define (tc-macro-abstract-proof-find
+  [state : TcMacroState]
   [macro-key-id : i64]
   [param-name-id : i64]
   [index : i64]) : i64
-  (if (>= index tc-macro-abstract-proof-count)
-    -1
-    (if (and
-      (= (array-ref tc-macro-abstract-proof-macro-keys index) macro-key-id)
-      (= (array-ref tc-macro-abstract-proof-param-keys index) param-name-id))
-      index
-      (tc-macro-abstract-proof-find macro-key-id param-name-id (+ index 1)))))
+  (let
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    (if (>= index abstract.proof-count)
+      -1
+      (if (and
+        (= (array-ref abstract.proof-macro-keys index) macro-key-id)
+        (= (array-ref abstract.proof-param-keys index) param-name-id))
+        index
+        (tc-macro-abstract-proof-find
+          state
+          macro-key-id
+          param-name-id
+          (+ index 1))))))
 
 (define (tc-macro-abstract-proof-note!
+  [state : TcMacroState]
   [macro-key : String]
   [param-name : String]
   [kind-mask : i64]) : unit
   (let
-    [macro-key-id : i64 (ci.intern macro-key)]
-    [param-name-id : i64 (ci.intern param-name)]
-    [existing : i64 (tc-macro-abstract-proof-find macro-key-id param-name-id 0)]
+    [_ensure : unit (tc-macro-abstract-proof-storage-ensure! state)]
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    [macro-key-id : i64 (tc-macro-identity-intern-for-state state macro-key)]
+    [param-name-id : i64 (tc-macro-identity-intern-for-state state param-name)]
+    [existing : i64
+      (tc-macro-abstract-proof-find state macro-key-id param-name-id 0)]
     (begin
       (if (>= existing 0)
-        (set! (array-ref tc-macro-abstract-proof-kind-masks existing) kind-mask)
-        (if (>= tc-macro-abstract-proof-count tc-macro-abstract-proof-capacity)
+        (set! (array-ref abstract.proof-kind-masks existing) kind-mask)
+        (if (>= abstract.proof-count abstract.proof-capacity)
           unit
           (begin
             (set!
-              (array-ref
-                tc-macro-abstract-proof-macro-keys
-                tc-macro-abstract-proof-count)
+              (array-ref abstract.proof-macro-keys abstract.proof-count)
               macro-key-id)
             (set!
-              (array-ref
-                tc-macro-abstract-proof-param-keys
-                tc-macro-abstract-proof-count)
+              (array-ref abstract.proof-param-keys abstract.proof-count)
               param-name-id)
             (set!
-              (array-ref
-                tc-macro-abstract-proof-kind-masks
-                tc-macro-abstract-proof-count)
+              (array-ref abstract.proof-kind-masks abstract.proof-count)
               kind-mask)
-            (set!
-              tc-macro-abstract-proof-count
-              (+ tc-macro-abstract-proof-count 1)))))
+            (set! abstract.proof-count (+ abstract.proof-count 1)))))
+      (tc-macro-abstract-state-data-set! state abstract)
       (cfg
         compile-profile
         (set!
@@ -63078,33 +64485,45 @@
 ;; compile-profile cfg, and inserting here would shift intern ids between the
 ;; profile and normal compiler builds, breaking emitted-assembly parity.
 (define (tc-macro-abstract-proof-lookup
+  [state : TcMacroState]
   [macro-key : String]
   [param-name : String]) : i64
-  (match (ci.intern-lookup macro-key)
-    [(InternLookupFound macro-key-id)
-      (match (ci.intern-lookup param-name)
-        [(InternLookupFound param-name-id)
-          (let
-            [index : i64
-              (tc-macro-abstract-proof-find macro-key-id param-name-id 0)]
-            (if (>= index 0)
-              (array-ref tc-macro-abstract-proof-kind-masks index)
-              -1))]
-        [(InternLookupMissing) -1])]
-    [(InternLookupMissing) -1]))
+  (let
+    [macro-key-id : i64 (tc-macro-identity-lookup-for-state state macro-key)]
+    [param-name-id : i64 (tc-macro-identity-lookup-for-state state param-name)]
+    (if (or (< macro-key-id 0) (< param-name-id 0))
+      -1
+      (let
+        [index : i64
+          (tc-macro-abstract-proof-find state macro-key-id param-name-id 0)]
+        (if (>= index 0)
+          (array-ref
+            (__tl-project-field
+              (tc-macro-abstract-state-data state)
+              proof-kind-masks)
+            index)
+          -1)))))
 
-(define (tc-macro-abstract-proof-exists-at? [macro-key-id : i64] [index : i64]) : bool
-  (if (>= index tc-macro-abstract-proof-count)
-    false
-    (if (= (array-ref tc-macro-abstract-proof-macro-keys index) macro-key-id)
-      true
-      (tc-macro-abstract-proof-exists-at? macro-key-id (+ index 1)))))
+(define (tc-macro-abstract-proof-exists-at?
+  [state : TcMacroState]
+  [macro-key-id : i64]
+  [index : i64]) : bool
+  (let
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    (if (>= index abstract.proof-count)
+      false
+      (if (= (array-ref abstract.proof-macro-keys index) macro-key-id)
+        true
+        (tc-macro-abstract-proof-exists-at? state macro-key-id (+ index 1))))))
 
-(define (tc-macro-abstract-proof-exists-for-macro? [macro-key : String]) : bool
-  (match (ci.intern-lookup macro-key)
-    [(InternLookupFound macro-key-id)
-      (tc-macro-abstract-proof-exists-at? macro-key-id 0)]
-    [(InternLookupMissing) false]))
+(define (tc-macro-abstract-proof-exists-for-macro?
+  [state : TcMacroState]
+  [macro-key : String]) : bool
+  (let
+    [macro-key-id : i64 (tc-macro-identity-lookup-for-state state macro-key)]
+    (if (< macro-key-id 0)
+      false
+      (tc-macro-abstract-proof-exists-at? state macro-key-id 0))))
 
 (define (tc-macro-abstract-call-id [func : ast.AstExpr] [bound : TcStringList]) : i64
   (let
@@ -63152,20 +64571,24 @@
     (tc-macro-abstract-alias-marker name)))
 
 (define (tc-macro-abstract-param-var?
+  [state : TcMacroState]
   [expr : ast.AstExpr]
   [bound : TcStringList]) : bool
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Var name-id)
       (let
+        [abstract : TcMacroAbstractStateData
+          (tc-macro-abstract-state-data state)]
         [name : String (tc-hygiene-name-text-id name-id)]
         (or
           (and
-            (string.eq name tc-macro-abstract-param-name)
+            (string.eq name abstract.param-name)
             (not (tc-string-list-contains bound name)))
           (tc-macro-abstract-bound-alias? bound name)))]
     [_ false]))
 
 (define (tc-macro-abstract-cleanup-owning-call?
+  [state : TcMacroState]
   [expr : ast.AstExpr]
   [bound : TcStringList]) : bool
   (match (ast.ast-expr-unspan expr)
@@ -63175,23 +64598,28 @@
           (tc-macro-abstract-call-id (ast.ast-node-get func) bound)
           (cbi.compiler-builtin-ctfe-ref 210))
         (= args.len 1)
-        (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound))]
+        (tc-macro-abstract-param-var?
+          state
+          (tc-macro-abstract-arg (& args) 0)
+          bound))]
     [_ false]))
 
 (define (tc-macro-abstract-binding-bound
+  [state : TcMacroState]
   [bound : TcStringList]
   [name-id : i64]
   [init : ast.AstExpr]
   [template? : bool]) : TcStringList
   (let
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
     [next-bound : TcStringList
-      (if (and tc-macro-abstract-active (not template?))
+      (if (and abstract.active (not template?))
         (tc-string-list-cons bound (tc-env-key-name-text name-id))
         (tc-comptime-purity-template-bound template? bound name-id))]
     (if (and
-      tc-macro-abstract-active
+      abstract.active
       (not template?)
-      (tc-macro-abstract-param-var? init bound))
+      (tc-macro-abstract-param-var? state init bound))
       (tc-string-list-cons
         next-bound
         (tc-macro-abstract-alias-marker (tc-env-key-name-text name-id)))
@@ -63244,10 +64672,16 @@
   [kinds : (& kinds ast.AstMacroTypeKindList)]) : i64
   (tc-macro-abstract-kind-list-mask-from kinds 0))
 
-(define (tc-macro-abstract-mask-allows? [allowed : i64]) : bool
-  (= (bit-and tc-macro-abstract-kind-mask (bit-xor allowed -1)) 0))
+(define (tc-macro-abstract-mask-allows? [state : TcMacroState] [allowed : i64]) : bool
+  (=
+    (bit-and
+      (__tl-project-field (tc-macro-abstract-state-data state) kind-mask)
+      (bit-xor allowed -1))
+    0))
 
-(define (tc-macro-abstract-reflection-supported? [call-id : i64]) : bool
+(define (tc-macro-abstract-reflection-supported?
+  [state : TcMacroState]
+  [call-id : i64]) : bool
   (cond
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 46))
@@ -63258,42 +64692,48 @@
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 73))
         (= call-id (cbi.compiler-builtin-ctfe-ref 74)))
-      (tc-macro-abstract-mask-allows? (bit-or (shl 1 19) (shl 1 20)))]
+      (tc-macro-abstract-mask-allows? state (bit-or (shl 1 19) (shl 1 20)))]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 2))
         (= call-id (cbi.compiler-builtin-ctfe-ref 75))
         (= call-id (cbi.compiler-builtin-ctfe-ref 76))
         (= call-id (cbi.compiler-builtin-ctfe-ref 77)))
-      (tc-macro-abstract-mask-allows? (shl 1 19))]
+      (tc-macro-abstract-mask-allows? state (shl 1 19))]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 78))
         (= call-id (cbi.compiler-builtin-ctfe-ref 79))
         (= call-id (cbi.compiler-builtin-ctfe-ref 80))
         (= call-id (cbi.compiler-builtin-ctfe-ref 81)))
-      (tc-macro-abstract-mask-allows? (shl 1 20))]
+      (tc-macro-abstract-mask-allows? state (shl 1 20))]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 82))
         (= call-id (cbi.compiler-builtin-ctfe-ref 84)))
-      (tc-macro-abstract-mask-allows? (bit-or (shl 1 15) (shl 1 16)))]
+      (tc-macro-abstract-mask-allows? state (bit-or (shl 1 15) (shl 1 16)))]
     [(= call-id (cbi.compiler-builtin-ctfe-ref 214))
-      (tc-macro-abstract-mask-allows? (shl 1 28))]
+      (tc-macro-abstract-mask-allows? state (shl 1 28))]
     [(= call-id (cbi.compiler-builtin-ctfe-ref 218))
-      (tc-macro-abstract-mask-allows? (bit-or (shl 1 24) (shl 1 25)))]
+      (tc-macro-abstract-mask-allows? state (bit-or (shl 1 24) (shl 1 25)))]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 85))
         (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
-      (tc-macro-abstract-mask-allows? (shl 1 18))]
+      (tc-macro-abstract-mask-allows? state (shl 1 18))]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 87))
         (= call-id (cbi.compiler-builtin-ctfe-ref 88))
         (= call-id (cbi.compiler-builtin-ctfe-ref 89)))
-      (tc-macro-abstract-mask-allows? (shl 1 17))]
+      (tc-macro-abstract-mask-allows? state (shl 1 17))]
     ;; Kind `array` does not imply a fixed length.
     [(= call-id (cbi.compiler-builtin-ctfe-ref 83)) false]
     ;; No kind proves cleanup ownership, but the true branch of the exact
     ;; `type-cleanup-owning?` predicate does.
     [(= call-id (cbi.compiler-builtin-ctfe-ref 211))
-      (= (bit-and tc-macro-abstract-cleanup-owning-mask 1) 0)]
+      (=
+        (bit-and
+          (__tl-project-field
+            (tc-macro-abstract-state-data state)
+            cleanup-owning-mask)
+          1)
+        0)]
     [else false]))
 
 (define (tc-macro-abstract-required [call-id : i64]) : String
@@ -63334,41 +64774,46 @@
     [else "a stronger type-kind bound"]))
 
 (define (tc-macro-abstract-check-current-call
+  [state : TcMacroState]
   [bound : TcStringList]
   [template? : bool]
   [expr : ast.AstExpr]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcUnit
-  (if (or (not tc-macro-abstract-active) template? (= args.len 0))
-    ResultTcUnit.Ok
-    (let
-      [call-id : i64 (tc-macro-abstract-call-id func bound)]
-      (if (and
-        (or
-          (ctfe_support.ctfe-builtin-reflection-id? call-id)
-          (ctfe_support.ctfe-builtin-offset-of-id? call-id))
-        (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound)
-        (not (tc-macro-abstract-reflection-supported? call-id)))
-        (let
-          [name-id : i64 (tc-expr-var-name-id func)]
-          [call-name : String
-            (if (< name-id 0)
-              "reflection operation"
-              (tc-hygiene-name-text-id name-id))]
-          (ResultTcUnit.Err
-            (tc-locate-error-at-expr
-              expr
-              (str_cat.str-cat
-                "typecheck: macro "
-                (tc-name-slashes-to-dots
-                  (tc-global-shared-view tc-macro-abstract-macro-name))
-                " constrained type operand "
-                (tc-global-shared-view tc-macro-abstract-param-name)
-                " cannot use "
-                call-name
-                "; requires "
-                (tc-macro-abstract-required call-id)))))
-        ResultTcUnit.Ok))))
+  (let
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    (if (or (not abstract.active) template? (= args.len 0))
+      ResultTcUnit.Ok
+      (let
+        [call-id : i64 (tc-macro-abstract-call-id func bound)]
+        (if (and
+          (or
+            (ctfe_support.ctfe-builtin-reflection-id? call-id)
+            (ctfe_support.ctfe-builtin-offset-of-id? call-id))
+          (tc-macro-abstract-param-var?
+            state
+            (tc-macro-abstract-arg (& args) 0)
+            bound)
+          (not (tc-macro-abstract-reflection-supported? state call-id)))
+          (let
+            [name-id : i64 (tc-expr-var-name-id func)]
+            [call-name : String
+              (if (< name-id 0)
+                "reflection operation"
+                (tc-hygiene-name-text-id name-id))]
+            (ResultTcUnit.Err
+              (tc-locate-error-at-expr
+                expr
+                (str_cat.str-cat
+                  "typecheck: macro "
+                  (tc-name-slashes-to-dots abstract.macro-name)
+                  " constrained type operand "
+                  abstract.param-name
+                  " cannot use "
+                  call-name
+                  "; requires "
+                  (tc-macro-abstract-required call-id)))))
+          ResultTcUnit.Ok)))))
 
 (define (tc-macro-abstract-kind-literal [expr : ast.AstExpr]) : TcMacroAbstractGuard
   (match (ast.ast-expr-unspan expr)
@@ -63377,6 +64822,7 @@
     [_ TcMacroAbstractGuard.No]))
 
 (define (tc-macro-abstract-type-kind-param?
+  [state : TcMacroState]
   [expr : ast.AstExpr]
   [bound : TcStringList]) : bool
   (match (ast.ast-expr-unspan expr)
@@ -63386,32 +64832,38 @@
           (tc-macro-abstract-call-id (ast.ast-node-get func) bound)
           (cbi.compiler-builtin-ctfe-ref 71))
         (= args.len 1)
-        (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound))]
+        (tc-macro-abstract-param-var?
+          state
+          (tc-macro-abstract-arg (& args) 0)
+          bound))]
     [_ false]))
 
 (define (tc-macro-abstract-kind-equality
+  [state : TcMacroState]
   [left : ast.AstExpr]
   [right : ast.AstExpr]
   [bound : TcStringList]) : TcMacroAbstractGuard
-  (if (tc-macro-abstract-type-kind-param? left bound)
+  (if (tc-macro-abstract-type-kind-param? state left bound)
     (tc-macro-abstract-kind-literal right)
-    (if (tc-macro-abstract-type-kind-param? right bound)
+    (if (tc-macro-abstract-type-kind-param? state right bound)
       (tc-macro-abstract-kind-literal left)
       TcMacroAbstractGuard.No)))
 
 (define (tc-macro-abstract-guard
+  [state : TcMacroState]
   [cond-expr : ast.AstExpr]
   [bound : TcStringList]) : TcMacroAbstractGuard
   (match (ast.ast-expr-unspan cond-expr)
     [(ast.AstExpr.Binary (ast.AstBinOp.Eq) left right)
       (tc-macro-abstract-kind-equality
+        state
         (ast.ast-node-get left)
         (ast.ast-node-get right)
         bound)]
     [(ast.AstExpr.Call func args)
       (let
         [raw-id : i64 (tc-expr-var-name-id (ast.ast-node-get func))]
-        (if (tc-macro-abstract-cleanup-owning-call? cond-expr bound)
+        (if (tc-macro-abstract-cleanup-owning-call? state cond-expr bound)
           TcMacroAbstractGuard.CleanupOwning
           (if (and
             (= args.len 2)
@@ -63420,6 +64872,7 @@
               (tc-hygiene-name-text-id raw-id)
               (macro-hygiene-global-source-name-id-or raw-id raw-id)))
             (tc-macro-abstract-kind-equality
+              state
               (tc-macro-abstract-arg (& args) 0)
               (tc-macro-abstract-arg (& args) 1)
               bound)
@@ -63435,14 +64888,18 @@
   [kind-mask : i64]
   [expr-id : i64]) : ResultTcUnit
   (let
-    [saved : i64 tc-macro-abstract-kind-mask]
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    [saved : i64 abstract.kind-mask]
     (begin
-      (set! tc-macro-abstract-kind-mask kind-mask)
+      (set! abstract.kind-mask kind-mask)
+      (tc-macro-abstract-state-data-set! state abstract)
       (let
         [result : ResultTcUnit
           (tc-comptime-purity-node-mode ctx env bound chain seen false expr-id)]
         (begin
-          (set! tc-macro-abstract-kind-mask saved)
+          (set! abstract.kind-mask saved)
+          (tc-macro-abstract-state-data-set! state abstract)
           result)))))
 
 (define (tc-macro-abstract-purity-node-with-cleanup-mask
@@ -63454,14 +64911,18 @@
   [cleanup-owning-mask : i64]
   [expr-id : i64]) : ResultTcUnit
   (let
-    [saved : i64 tc-macro-abstract-cleanup-owning-mask]
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    [saved : i64 abstract.cleanup-owning-mask]
     (begin
-      (set! tc-macro-abstract-cleanup-owning-mask cleanup-owning-mask)
+      (set! abstract.cleanup-owning-mask cleanup-owning-mask)
+      (tc-macro-abstract-state-data-set! state abstract)
       (let
         [result : ResultTcUnit
           (tc-comptime-purity-node-mode ctx env bound chain seen false expr-id)]
         (begin
-          (set! tc-macro-abstract-cleanup-owning-mask saved)
+          (set! abstract.cleanup-owning-mask saved)
+          (tc-macro-abstract-state-data-set! state abstract)
           result)))))
 
 (define (tc-comptime-purity-if-mode
@@ -63474,71 +64935,84 @@
   [cond-id : i64]
   [then-id : i64]
   [else-id : i64]) : ResultTcUnit
-  (if (or (not tc-macro-abstract-active) template?)
-    (tc-comptime-purity-node3-mode
-      ctx
-      env
-      bound
-      chain
-      seen
-      template?
-      cond-id
-      then-id
-      else-id)
-    (match (tc-comptime-purity-node-mode ctx env bound chain seen false cond-id)
-      [(ResultTcUnit.Ok)
-        (match (tc-macro-abstract-guard (ast.ast-node-get cond-id) bound)
-          [(TcMacroAbstractGuard.No)
-            (tc-comptime-purity-node2-mode
-              ctx
-              env
-              bound
-              chain
-              seen
-              false
-              then-id
-              else-id)]
-          [(TcMacroAbstractGuard.Kind kind)
-            (let
-              [kind-bit : i64 (tc-macro-abstract-kind-bit kind)]
-              (match (tc-macro-abstract-purity-node-with-mask
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
+    (if (or (not abstract.active) template?)
+      (tc-comptime-purity-node3-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        cond-id
+        then-id
+        else-id)
+      (match (tc-comptime-purity-node-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        false
+        cond-id)
+        [(ResultTcUnit.Ok)
+          (match (tc-macro-abstract-guard
+            state
+            (ast.ast-node-get cond-id)
+            bound)
+            [(TcMacroAbstractGuard.No)
+              (tc-comptime-purity-node2-mode
                 ctx
                 env
                 bound
                 chain
                 seen
-                (bit-and tc-macro-abstract-kind-mask kind-bit)
-                then-id)
-                [(ResultTcUnit.Ok)
-                  (tc-macro-abstract-purity-node-with-mask
-                    ctx
-                    env
-                    bound
-                    chain
-                    seen
-                    (bit-and tc-macro-abstract-kind-mask (bit-xor kind-bit -1))
-                    else-id)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-          [(TcMacroAbstractGuard.CleanupOwning)
-            (match (tc-macro-abstract-purity-node-with-cleanup-mask
-              ctx
-              env
-              bound
-              chain
-              seen
-              (bit-and tc-macro-abstract-cleanup-owning-mask 2)
-              then-id)
-              [(ResultTcUnit.Ok)
-                (tc-macro-abstract-purity-node-with-cleanup-mask
+                false
+                then-id
+                else-id)]
+            [(TcMacroAbstractGuard.Kind kind)
+              (let
+                [kind-bit : i64 (tc-macro-abstract-kind-bit kind)]
+                (match (tc-macro-abstract-purity-node-with-mask
                   ctx
                   env
                   bound
                   chain
                   seen
-                  (bit-and tc-macro-abstract-cleanup-owning-mask 1)
-                  else-id)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
-      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+                  (bit-and abstract.kind-mask kind-bit)
+                  then-id)
+                  [(ResultTcUnit.Ok)
+                    (tc-macro-abstract-purity-node-with-mask
+                      ctx
+                      env
+                      bound
+                      chain
+                      seen
+                      (bit-and abstract.kind-mask (bit-xor kind-bit -1))
+                      else-id)]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+            [(TcMacroAbstractGuard.CleanupOwning)
+              (match (tc-macro-abstract-purity-node-with-cleanup-mask
+                ctx
+                env
+                bound
+                chain
+                seen
+                (bit-and abstract.cleanup-owning-mask 2)
+                then-id)
+                [(ResultTcUnit.Ok)
+                  (tc-macro-abstract-purity-node-with-cleanup-mask
+                    ctx
+                    env
+                    bound
+                    chain
+                    seen
+                    (bit-and abstract.cleanup-owning-mask 1)
+                    else-id)]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))))
 
 (define (tc-check-defmacro-abstract-param
   [ctx : TcContext]
@@ -63549,14 +65023,17 @@
   [kinds : (& kinds ast.AstMacroTypeKindList)]
   [body : ast.AstExpr]) : ResultTcUnit
   (let
-    [saved : TcMacroAbstractState (tc-macro-abstract-state-save)]
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [saved : TcMacroAbstractState (tc-macro-abstract-state-save state)]
     [checked-mask : i64 (tc-macro-abstract-kind-list-mask kinds)]
+    [abstract : TcMacroAbstractStateData (tc-macro-abstract-state-data state)]
     (begin
-      (set! tc-macro-abstract-active true)
-      (set! tc-macro-abstract-macro-name (string.copy (& macro-name)))
-      (set! tc-macro-abstract-param-name (string.copy (& param-name)))
-      (set! tc-macro-abstract-kind-mask checked-mask)
-      (set! tc-macro-abstract-cleanup-owning-mask 3)
+      (set! abstract.active true)
+      (set! abstract.macro-name (string.copy (& macro-name)))
+      (set! abstract.param-name (string.copy (& param-name)))
+      (set! abstract.kind-mask checked-mask)
+      (set! abstract.cleanup-owning-mask 3)
+      (tc-macro-abstract-state-data-set! state abstract)
       (let
         [result : ResultTcUnit
           (tc-comptime-purity-expr
@@ -63569,12 +65046,16 @@
             (tc-string-list-add TcStringList.Nil macro-name)
             body)]
         (begin
-          (tc-macro-abstract-state-restore! saved)
+          (tc-macro-abstract-state-restore! state saved)
           ;; Persist the validated proof used by the generated-declaration
           ;; proof-reuse lane; the abstract result still gates macro acceptance.
           (match result
             [(ResultTcUnit.Ok)
-              (tc-macro-abstract-proof-note! macro-key param-name checked-mask)]
+              (tc-macro-abstract-proof-note!
+                state
+                macro-key
+                param-name
+                checked-mask)]
             [(ResultTcUnit.Err _) unit])
           result)))))
 
@@ -63640,9 +65121,12 @@
     (begin
       (match result
         [(ResultTcUnit.Ok)
-          (if (tc-defmacro-fixed-type-params-complete? (& params) 0 false)
-            (record-count macro-key)
-            unit)]
+          (let
+            [complete? : bool
+              (tc-defmacro-fixed-type-params-complete? (& params) 0 false)]
+            (if complete?
+              (record-count-for-state (tc-context-macro-state ctx) macro-key)
+              unit))]
         [(ResultTcUnit.Err _) unit])
       result)))
 
@@ -64586,48 +66070,68 @@
   [body : ast.AstExpr]) : ResultTcUnit
   (let
     [macro-env : TcTypeEnv
-      (tc-bind-macro-params ctx (tc-macro-helper-env-cached top-env) params)]
-    (match (tc-expr ctx macro-env body)
+      (tc-bind-macro-params
+        ctx
+        (tc-macro-helper-env-cached (tc-context-macro-state ctx) top-env)
+        params)]
+    [expr-result : ResultTcType (tc-expr ctx macro-env body)]
+    (match expr-result
       [(ResultTcType.Ok got)
         (match (tc-check-defmacro-purity ctx macro-env name params body)
           [(ResultTcUnit.Ok)
-            (match (tc-check-defmacro-abstract-type-params
-              ctx
-              macro-env
-              name
-              params
-              body)
-              [(ResultTcUnit.Ok)
-                (match (tc-expect
-                  got
-                  (ast.AstType.Expr)
-                  "typecheck: macro body must return Expr")
-                  [(ResultTcUnit.Ok)
-                    (if (or
-                      (tc-macro-param-list-needs-call-context? params)
-                      (macro-expr-uses-expr-type?
-                        (tc-context-expr-bases ctx)
-                        body))
-                      ResultTcUnit.Ok
-                      (begin
-                        (tc-context-capture-active-pools! ctx)
-                        (match (ctfe_support.compiler-ctfe-eval
-                          body
-                          (tc-ctfe-env-extend-macro-params
-                            ctx
-                            (tc-ctfe-env ctx)
-                            params)
-                          (ctfe_support.ctfe-fuel-limit))
-                          [(ctfe_support.ResultCtfe.Ok value _)
-                            (begin
-                              (tc-context-install-pools! ctx)
-                              (tc-check-defmacro-produced-type ctx ret value))]
-                          [(ctfe_support.ResultCtfe.Err diag)
-                            (ResultTcUnit.Err
-                              (cdiag.compiler-diagnostic-message
-                                (__tl-box-place diag)))])))]
-                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+            (let
+              [abstract-result : ResultTcUnit
+                (tc-check-defmacro-abstract-type-params
+                  ctx
+                  macro-env
+                  name
+                  params
+                  body)]
+              (match abstract-result
+                [(ResultTcUnit.Ok)
+                  (match (tc-expect
+                    got
+                    (ast.AstType.Expr)
+                    "typecheck: macro body must return Expr")
+                    [(ResultTcUnit.Ok)
+                      (let
+                        [needs-context? : bool
+                          (tc-macro-param-list-needs-call-context? params)]
+                        [uses-expr-type? : bool
+                          (macro-expr-uses-expr-type?
+                            (tc-context-expr-bases ctx)
+                            body)]
+                        (if (or needs-context? uses-expr-type?)
+                          ResultTcUnit.Ok
+                          (begin
+                            (tc-context-capture-active-pools! ctx)
+                            (let
+                              [base-definition-env : ctfe_support.CtfeEnv
+                                (tc-ctfe-env ctx)]
+                              [definition-env : ctfe_support.CtfeEnv
+                                (tc-ctfe-env-extend-macro-params
+                                  ctx
+                                  base-definition-env
+                                  params)]
+                              [definition-result : ctfe_support.ResultCtfe
+                                (ctfe_support.compiler-ctfe-eval
+                                  body
+                                  definition-env
+                                  (ctfe_support.ctfe-fuel-limit))]
+                              (match definition-result
+                                [(ctfe_support.ResultCtfe.Ok value _)
+                                  (begin
+                                    (tc-context-install-pools! ctx)
+                                    (tc-check-defmacro-produced-type
+                                      ctx
+                                      ret
+                                      value))]
+                                [(ctfe_support.ResultCtfe.Err diag)
+                                  (ResultTcUnit.Err
+                                    (cdiag.compiler-diagnostic-message
+                                      (__tl-box-place diag)))])))))]
+                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
       [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
@@ -81311,26 +82815,230 @@
   (Some ast.AstDeclList))
 
 (defstruct MacroHygieneEnv
-  (head i64))
+  (head i64)
+  (state TcMacroState))
+
+;; Per-program traversal and CTFE handoff state. These fields have one owner and
+;; lifetime, so keep one flat carrier and avoid compile-time dispatch through
+;; artificial nested sections.
+(defstruct TcMacroWalkStateData
+  (macro-hygiene-env-kinds (__tl_dyn-array i64))
+  (macro-hygiene-env-keys (__tl_dyn-array i64))
+  (macro-hygiene-env-values (__tl_dyn-array i64))
+  (macro-hygiene-env-parents (__tl_dyn-array i64))
+  (macro-hygiene-env-slot-count i64)
+  (macro-hygiene-env-root-depth i64)
+  (macro-hygiene-env-storage-arena i64)
+  (macro-expand-active-module String)
+  (macro-expand-macro-name-set tc_i64_i64_map.Map)
+  (macro-expand-expr-type-macro-name-set tc_i64_i64_map.Map)
+  (macro-expand-ctfe-env-ready bool)
+  (macro-expand-ctfe-env-value ctfe_support.CtfeEnv)
+  (macro-expand-ctfe-env-has-metadata bool)
+  (macro-expand-ctfe-env-owner-arena i64)
+  (macro-expand-ctfe-env-build-generation i64)
+  (macro-expand-ctfe-env-rebuild-pending bool)
+  (ctfe-needs-metadata bool)
+  (ctfe-macro-state ctfe_support.CompilerCtfeMacroState)
+  (macro-live-symbols-ready bool)
+  (macro-live-symbols-value csym.CompilerSymbols)
+  (macro-live-registries-cell (__tl_dyn-array csym.CompilerRegistries))
+  (macro-live-symbols-fallback bool)
+  (macro-live-registries-ready bool)
+  (macro-live-registries-fallback bool)
+  (macro-live-symbols-last-insert-index i64)
+  (macro-live-symbols-arena i64)
+  (macro-live-symbols-retired-arena i64)
+  (macro-live-prescan-ready bool)
+  (macro-live-prescan-has-defmacro bool)
+  (macro-live-prescan-expr-type-names TcNameIdList)
+  (macro-live-prescan-needs-expansion bool)
+  (macro-live-prescan-summary-import bool)
+  (macro-live-prescan-visible-names TcNameIdList)
+  (macro-expand-scratch-enabled bool)
+  (macro-expand-scratch-arena i64)
+  (macro-decl-generation-arena i64)
+  (macro-decl-generation-retired-arena i64)
+  (macro-decl-generation-batch-size i64)
+  (macro-decl-generation-batch-used i64)
+  (macro-splice-generation-arena i64)
+  (macro-splice-generation-retired-arena i64)
+  (macro-decl-generation-escape-capacity i64)
+  (macro-decl-generation-escape-kinds (__tl_dyn-array i64))
+  (macro-decl-generation-escape-keys (__tl_dyn-array i64))
+  (macro-decl-generation-escape-count i64)
+  (macro-decl-generation-escape-overflow bool)
+  (macro-decl-generation-active bool)
+  (macro-expand-program-structurally-changed bool)
+  (macro-active-decl-owner-id i64)
+  (macro-expand-stdlib-tlci-route-active bool)
+  (dotted-macro-journal-pools (__tl_dyn-array ast.AstNodePoolContext))
+  (dotted-macro-journal-ids (__tl_dyn-array i64))
+  (dotted-macro-journal-exprs (__tl_dyn-array ast.AstExpr))
+  (dotted-macro-journal-len i64)
+  (dotted-macro-journal-depth i64))
+
+(define (tc-macro-walk-state-new) : TcMacroWalkStateData
+  (TcMacroWalkStateData
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    0
+    0
+    0
+    ""
+    (tc_i64_i64_map.with-capacity 128)
+    (tc_i64_i64_map.with-capacity 128)
+    false
+    (ctfe_support.ctfe-env-empty)
+    false
+    0
+    0
+    false
+    true
+    (ctfe_support.compiler-ctfe-macro-state-new)
+    false
+    (csym.compiler-symbols-empty)
+    (make-array (csym.compiler-registries-empty))
+    false
+    false
+    true
+    0
+    0
+    0
+    false
+    false
+    (TcNameIdList.Nil)
+    false
+    false
+    (TcNameIdList.Nil)
+    false
+    0
+    0
+    0
+    32
+    0
+    0
+    0
+    32
+    (array.make-array i64 32)
+    (array.make-array i64 32)
+    0
+    false
+    false
+    false
+    cbi.compiler-builtin-id-fix-empty
+    false
+    (array.make-array ast.AstNodePoolContext 0)
+    (array.make-array i64 0)
+    (array.make-array ast.AstExpr 0)
+    0
+    0))
+
+(define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64 (tc-macro-state-slot-address state tc-macro-state-slot-walk)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroWalkStateData)
+          (array.make-array TcMacroWalkStateData 1)]
+        [_init : unit (set! (array-ref cell 0) (tc-macro-walk-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr TcMacroWalkStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set! state tc-macro-state-slot-walk next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-walk-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast state 3 tc-macro-walk-state-address-initialize))
+
+(define (tc-macro-walk-state-data [state : TcMacroState]) : TcMacroWalkStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-walk-state-address state) : u64)
+        : (Ptr TcMacroWalkStateData)))))
+
+(define (tc-macro-walk-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroWalkStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-walk-state-address state) : u64)
+        : (MutPtr TcMacroWalkStateData))
+      data)))
+
+(defmacro (tc-macro-walk-field [state : Expr] [field : Expr]) : Expr
+  `(__tl-project-field (tc-macro-walk-state-data ,state) ,field))
+
+(defmacro (tc-macro-walk-set! [state : Expr] [field : Expr] [value : Expr]) : Expr
+  `(let
+    [data : TcMacroWalkStateData (tc-macro-walk-state-data ,state)]
+    (begin
+      (__tl-project-set-field data ,field ,value)
+      (tc-macro-walk-state-data-set! ,state data))))
+
+(define (tc-macro-ctfe-state [state : TcMacroState]) : ctfe_support.CompilerCtfeMacroState
+  (tc-macro-walk-field state ctfe-macro-state))
+
+(define (tc-context-macro-state [ctx : TcContext]) : TcMacroState
+  (tc-job-state-macro-state (tc-context-job-state ctx)))
+
+(define (tc-context-ctfe-macro-state [ctx : TcContext]) : ctfe_support.CompilerCtfeMacroState
+  (tc-macro-ctfe-state (tc-context-macro-state ctx)))
+
+(define (tc-macro-state-bind-source-names!
+  [state : TcMacroState]
+  [source-names : ci.InternSourceNameSessionHandle]) : unit
+  (tc-macro-state-slot-address-set! state 13 source-names.address))
+
+(define (tc-macro-state-source-names-initialize [state : TcMacroState]) : ci.InternSourceNameSessionHandle
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-capture-active-handle)]
+    (begin
+      ;; Compatibility-only lazy binding for serial/test adapters. The
+      ;; production entry binds its explicit source-name owner before any
+      ;; macro cache can be touched.
+      (tc-macro-state-bind-source-names! state source-names)
+      source-names)))
+
+(define (tc-macro-state-source-names [state : TcMacroState]) : ci.InternSourceNameSessionHandle
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.InternSourceNameSessionHandle (tc-macro-state-slot-address state 13))]
+    (if (> source-names.address 0)
+      source-names
+      (tc-macro-state-source-names-initialize state))))
+
+(define (tc-macro-state-source-name-table-id [state : TcMacroState]) : i64
+  (ci.intern-source-name-session-handle-table-id
+    (tc-macro-state-source-names state)))
+
+(define (tc-macro-state-source-name-reset-generation [state : TcMacroState]) : i64
+  (ci.intern-source-name-session-handle-reset-generation
+    (tc-macro-state-source-names state)))
+
+(define (tc-macro-state-source-name-session [state : TcMacroState]) : ci.InternSourceNameSession
+  (ci.intern-source-name-session-handle-session
+    (tc-macro-state-source-names state)))
 
 ;; Hygiene environments are immutable snapshots into this dense append-only
 ;; store. A branch extends a retained head without copying or mutating its
 ;; parent, so sibling expression/type/pattern walks remain isolated.
-(define macro-hygiene-env-kinds : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define macro-hygiene-env-keys : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define macro-hygiene-env-values : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define macro-hygiene-env-parents : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define macro-hygiene-env-slot-count : i64
-  0)
-(define macro-hygiene-env-root-depth : i64
-  0)
-(define macro-hygiene-env-storage-arena : i64
-  0)
-
 (defenum MacroMaybeHygieneName
   (No)
   (Some i64))
@@ -81353,70 +83061,54 @@
 (defenum MacroHygienePatternList
   (PatternList ast.AstPatternList MacroHygieneEnv))
 
-(define macro-expand-active-module : String
-  "")
-
 ;; Set of macro (and compat-guard) names callable in the program. Used as a
 ;; cheap pre-filter in the macro-use detector so the common case (a plain
 ;; function call whose name is not a macro) avoids the allocating module-key
 ;; lookup in `macro-call-decl`. Populated once per expansion run.
-(define macro-expand-macro-name-set : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 128))
-
 ;; Exact module-qualified macro identities whose transformer bodies can call
 ;; `expr-type`. Only those macros need fixed `Expr` operands to carry produced
 ;; type metadata. Keep the hot per-call membership check ID-keyed: the former
 ;; TcStringList compared module/name strings linearly for every expansion.
-(define macro-expand-expr-type-macro-name-set : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 16))
-
 ;; Cached CTFE base environment (reflection + layout metadata) for the current
 ;; expansion run. `macro-expand-call` rebuilt this via `tc-ctfe-env` -- which runs
 ;; `ctfe-reflections-from-program` over the WHOLE program (O(program)) -- on EVERY
 ;; macro call, costing ~150MB per call on a self-compile. Reuse it across the
 ;; run unless a splice materializes a reflection-relevant nominal declaration.
-(define macro-expand-ctfe-env-ready : bool
-  false)
-(define macro-expand-ctfe-env-value : ctfe_support.CtfeEnv
-  (ctfe_support.ctfe-env-empty))
-
 ;; Whether the cached CTFE env was built with the full reflection/layout metadata
 ;; (plan P2). The cache is built once per expansion run and reused across every
 ;; in-pass splice rebuild, but a run whose first build did not need metadata
 ;; caches an empty env; a later rebuild that does need metadata must not reuse
 ;; that empty env. Guarded by macro-expand-ctfe-env-build-once!.
-(define macro-expand-ctfe-env-has-metadata : bool
-  false)
-
 ;; Metadata vectors can grow after a splice. Keep those allocations in the
 ;; arena that owns the initial cache instead of whichever short-lived macro
 ;; generation happens to request the extension.
-(define macro-expand-ctfe-env-owner-arena : i64
-  0)
-(define macro-expand-ctfe-env-build-generation : i64
-  0)
-(define macro-expand-ctfe-env-rebuild-pending : bool
-  false)
-
-(define (compiler-typecheck-ctfe-env-cache-clear!) : unit
+(define (compiler-typecheck-ctfe-env-cache-clear! [state : TcMacroState]) : unit
   (begin
-    (set! macro-expand-ctfe-env-ready false)
-    (set! macro-expand-ctfe-env-has-metadata false)
-    (set! macro-expand-ctfe-env-owner-arena 0)
-    (set! macro-expand-ctfe-env-build-generation 0)
-    (set! macro-expand-ctfe-env-rebuild-pending false)
-    (set! macro-expand-ctfe-env-value (ctfe_support.ctfe-env-empty))))
+    (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
+    (tc-macro-walk-set! state macro-expand-ctfe-env-has-metadata false)
+    (tc-macro-walk-set! state macro-expand-ctfe-env-owner-arena 0)
+    (tc-macro-walk-set! state macro-expand-ctfe-env-build-generation 0)
+    (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending false)
+    (tc-macro-walk-set!
+      state
+      macro-expand-ctfe-env-value
+      (ctfe_support.ctfe-env-empty))))
 
-(define (compiler-typecheck-ctfe-env-cache-clear-for-splice! [_reason : i64]) : unit
+(define (compiler-typecheck-ctfe-env-cache-clear-for-splice!
+  [state : TcMacroState]
+  [_reason : i64]) : unit
   (begin
     (cfg
       compile-profile
       (compiler-tc-walk-ctfe-clear-reason-note! _reason)
       unit)
-    (set! macro-expand-ctfe-env-ready false)
-    (set! macro-expand-ctfe-env-has-metadata false)
-    (set! macro-expand-ctfe-env-rebuild-pending true)
-    (set! macro-expand-ctfe-env-value (ctfe_support.ctfe-env-empty))))
+    (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
+    (tc-macro-walk-set! state macro-expand-ctfe-env-has-metadata false)
+    (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending true)
+    (tc-macro-walk-set!
+      state
+      macro-expand-ctfe-env-value
+      (ctfe_support.ctfe-env-empty))))
 
 (defenum CompilerCtfeSpliceExtensionResult
   (Extended)
@@ -81624,105 +83316,118 @@
   [isolated-generated-module? : bool]
   [registries : csym.CompilerRegistries]
   [prior-build-generation : i64]) : CompilerCtfeSpliceExtensionResult
-  (cond
-    [(not ctfe-needs-metadata) CompilerCtfeSpliceExtensionResult.NoMetadata]
-    [(not (= prior-build-generation macro-expand-ctfe-env-build-generation))
-      CompilerCtfeSpliceExtensionResult.AlreadyCurrent]
-    [(and
-        macro-expand-ctfe-env-ready
-        macro-expand-ctfe-env-has-metadata
-        (not (= macro-expand-ctfe-env-owner-arena 0)))
-      (let
-        [layouts : ctfe_support.CtfeLayoutInfoList
-          (ctfe_support.ctfe-env-layouts
-            (tc-global-shared-view macro-expand-ctfe-env-value))]
-        [reflections : ctfe_support.CtfeReflectInfoList
-          (ctfe_support.ctfe-env-reflections
-            (tc-global-shared-view macro-expand-ctfe-env-value))]
-        [needed : i64 (ctfe_support.ctfe-metadata-decl-capacity decls)]
-        (if (compiler-typecheck-ctfe-splice-append-safe?
-          ctx
-          decls
-          paths
-          module-id
-          isolated-generated-module?
-          registries
-          layouts
-          reflections)
-          (let
-            [required-layouts : i64 (+ layouts.len needed)]
-            [required-reflections : i64 (+ reflections.len needed)]
-            [grew? : bool
-              (or
-                (> required-layouts (array.length layouts.slots))
-                (> required-reflections (array.length reflections.slots)))]
-            [previous-arena : i64 (arena.tl_arena_current)]
-            [_profile-start : unit
-              (cfg
-                compile-profile
-                (compiler-tc-walk-ctfe-extension-start!)
-                unit)]
-            [_switch-owner : unit
-              (unsafe
-                (arena.tl_arena_set
-                  (tc-type-env-store-owner-current-head
-                    macro-expand-ctfe-env-owner-arena)))]
-            [grown-layouts : ctfe_support.CtfeLayoutInfoList
-              (ctfe_support.ctfe-layout-info-list-ensure-capacity
-                layouts
-                required-layouts)]
-            [grown-reflections : ctfe_support.CtfeReflectInfoList
-              (ctfe_support.ctfe-reflect-info-list-ensure-capacity
-                reflections
-                required-reflections)]
-            [next-layouts : ctfe_support.CtfeLayoutInfoList
-              (tc-ctfe-layouts-from-decls
-                ctx
-                decls
-                module
-                module-id
-                grown-layouts)]
-            [next-reflections : ctfe_support.CtfeReflectInfoList
-              (ctfe_support.ctfe-reflections-from-decls
-                decls
-                module
-                module-id
-                grown-reflections)]
-            (begin
-              (set!
-                macro-expand-ctfe-env-value
-                (ctfe_support.ctfe-env-with-metadata-and-pools
-                  next-layouts
-                  next-reflections
-                  (ctfe_support.ctfe-env-pools
-                    (tc-global-shared-view macro-expand-ctfe-env-value))))
-              (tc-type-env-store-restore-after-owner-alloc!
-                previous-arena
-                macro-expand-ctfe-env-owner-arena)
-              (if grew?
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    (cond
+      [(not (tc-macro-walk-field state ctfe-needs-metadata))
+        CompilerCtfeSpliceExtensionResult.NoMetadata]
+      [(not
+          (=
+            prior-build-generation
+            (tc-macro-walk-field state macro-expand-ctfe-env-build-generation)))
+        CompilerCtfeSpliceExtensionResult.AlreadyCurrent]
+      [(and
+          (tc-macro-walk-field state macro-expand-ctfe-env-ready)
+          (tc-macro-walk-field state macro-expand-ctfe-env-has-metadata)
+          (not
+            (= (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena) 0)))
+        (let
+          [layouts : ctfe_support.CtfeLayoutInfoList
+            (ctfe_support.ctfe-env-layouts
+              (tc-macro-walk-field state macro-expand-ctfe-env-value))]
+          [reflections : ctfe_support.CtfeReflectInfoList
+            (ctfe_support.ctfe-env-reflections
+              (tc-macro-walk-field state macro-expand-ctfe-env-value))]
+          [needed : i64 (ctfe_support.ctfe-metadata-decl-capacity decls)]
+          (if (compiler-typecheck-ctfe-splice-append-safe?
+            ctx
+            decls
+            paths
+            module-id
+            isolated-generated-module?
+            registries
+            layouts
+            reflections)
+            (let
+              [required-layouts : i64 (+ layouts.len needed)]
+              [required-reflections : i64 (+ reflections.len needed)]
+              [grew? : bool
+                (or
+                  (> required-layouts (array.length layouts.slots))
+                  (> required-reflections (array.length reflections.slots)))]
+              [previous-arena : i64 (arena.tl_arena_current)]
+              [_profile-start : unit
                 (cfg
                   compile-profile
-                  (compiler-tc-walk-ctfe-extension-reject-note! 3)
+                  (compiler-tc-walk-ctfe-extension-start!)
+                  unit)]
+              [_switch-owner : unit
+                (unsafe
+                  (arena.tl_arena_set
+                    (tc-type-env-store-owner-current-head
+                      (tc-macro-walk-field
+                        state
+                        macro-expand-ctfe-env-owner-arena))))]
+              [grown-layouts : ctfe_support.CtfeLayoutInfoList
+                (ctfe_support.ctfe-layout-info-list-ensure-capacity
+                  layouts
+                  required-layouts)]
+              [grown-reflections : ctfe_support.CtfeReflectInfoList
+                (ctfe_support.ctfe-reflect-info-list-ensure-capacity
+                  reflections
+                  required-reflections)]
+              [next-layouts : ctfe_support.CtfeLayoutInfoList
+                (tc-ctfe-layouts-from-decls
+                  ctx
+                  decls
+                  module
+                  module-id
+                  grown-layouts)]
+              [next-reflections : ctfe_support.CtfeReflectInfoList
+                (ctfe_support.ctfe-reflections-from-decls
+                  decls
+                  module
+                  module-id
+                  grown-reflections)]
+              (begin
+                (tc-macro-walk-set!
+                  state
+                  macro-expand-ctfe-env-value
+                  (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
+                    next-layouts
+                    next-reflections
+                    (ctfe_support.ctfe-env-pools
+                      (tc-macro-walk-field state macro-expand-ctfe-env-value))
+                    (ctfe_support.ctfe-env-source-names
+                      (tc-macro-walk-field state macro-expand-ctfe-env-value))
+                    (tc-macro-ctfe-state state)))
+                (tc-type-env-store-restore-after-owner-alloc!
+                  previous-arena
+                  (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))
+                (if grew?
+                  (cfg
+                    compile-profile
+                    (compiler-tc-walk-ctfe-extension-reject-note! 3)
+                    unit)
                   unit)
-                unit)
+                (cfg
+                  compile-profile
+                  (compiler-tc-walk-ctfe-extension-finish!)
+                  unit)
+                CompilerCtfeSpliceExtensionResult.Extended))
+            (begin
               (cfg
                 compile-profile
-                (compiler-tc-walk-ctfe-extension-finish!)
+                (compiler-tc-walk-ctfe-extension-reject-note! 1)
                 unit)
-              CompilerCtfeSpliceExtensionResult.Extended))
-          (begin
-            (cfg
-              compile-profile
-              (compiler-tc-walk-ctfe-extension-reject-note! 1)
-              unit)
-            CompilerCtfeSpliceExtensionResult.SemanticRejected)))]
-    [else
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-walk-ctfe-extension-reject-note! 2)
-          unit)
-        CompilerCtfeSpliceExtensionResult.CacheUnavailable)]))
+              CompilerCtfeSpliceExtensionResult.SemanticRejected)))]
+      [else
+        (begin
+          (cfg
+            compile-profile
+            (compiler-tc-walk-ctfe-extension-reject-note! 2)
+            unit)
+          CompilerCtfeSpliceExtensionResult.CacheUnavailable)])))
 
 ;; Build the CTFE base env (reflection + layout metadata) once per expansion run
 ;; and reuse it across in-pass splice rebuilds (plan P2). Append-safe reflection
@@ -81733,38 +83438,56 @@
 ;; rebased onto the active pools (cheap); a full build otherwise costs ~150MB.
 (define (macro-expand-ctfe-env-build-once! [ctx : TcContext]) : unit
   (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
     [reuse? : bool
       (and
-        macro-expand-ctfe-env-ready
-        (or (not ctfe-needs-metadata) macro-expand-ctfe-env-has-metadata))]
+        (tc-macro-walk-field state macro-expand-ctfe-env-ready)
+        (or
+          (not (tc-macro-walk-field state ctfe-needs-metadata))
+          (tc-macro-walk-field state macro-expand-ctfe-env-has-metadata)))]
     (if reuse?
-      (set! macro-expand-ctfe-env-value (tc-ctfe-env ctx))
+      unit
       (let
-        [_rebuild? : bool macro-expand-ctfe-env-rebuild-pending]
+        [_rebuild? : bool
+          (tc-macro-walk-field state macro-expand-ctfe-env-rebuild-pending)]
         [_profile-start : unit
           (cfg compile-profile (compiler-tc-walk-ctfe-build-start!) unit)]
         [previous-arena : i64 (arena.tl_arena_current)]
         [owner-arena : i64
-          (if (= macro-expand-ctfe-env-owner-arena 0)
+          (if (=
+            (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena)
+            0)
             (tc-type-env-store-owner-root previous-arena)
-            macro-expand-ctfe-env-owner-arena)]
+            (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))]
         [_switch-owner : unit
           (unsafe
             (arena.tl_arena_set
               (tc-type-env-store-owner-current-head owner-arena)))]
         (begin
-          (set! macro-expand-ctfe-env-ready false)
-          (set! macro-expand-ctfe-env-owner-arena owner-arena)
-          (set! macro-expand-ctfe-env-value (tc-ctfe-env ctx))
+          (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
+          (tc-macro-walk-set!
+            state
+            macro-expand-ctfe-env-owner-arena
+            owner-arena)
+          (tc-macro-walk-set!
+            state
+            macro-expand-ctfe-env-value
+            (tc-ctfe-env ctx))
           (tc-type-env-store-restore-after-owner-alloc!
             previous-arena
             owner-arena)
-          (set! macro-expand-ctfe-env-has-metadata ctfe-needs-metadata)
-          (set! macro-expand-ctfe-env-ready true)
-          (set!
+          (tc-macro-walk-set!
+            state
+            macro-expand-ctfe-env-has-metadata
+            (tc-macro-walk-field state ctfe-needs-metadata))
+          (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
+          (tc-macro-walk-set!
+            state
             macro-expand-ctfe-env-build-generation
-            (+ macro-expand-ctfe-env-build-generation 1))
-          (set! macro-expand-ctfe-env-rebuild-pending false)
+            (+
+              (tc-macro-walk-field state macro-expand-ctfe-env-build-generation)
+              1))
+          (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending false)
           (cfg
             compile-profile
             (compiler-tc-walk-ctfe-build-finish! _rebuild?)
@@ -81774,7 +83497,9 @@
   [ctx : TcContext]
   [reason : i64]) : unit
   (begin
-    (compiler-typecheck-ctfe-env-cache-clear-for-splice! reason)
+    (compiler-typecheck-ctfe-env-cache-clear-for-splice!
+      (tc-context-macro-state ctx)
+      reason)
     ;; Rebuild at the fallback boundary. Deferring this until an incidental
     ;; later macro could leave a terminal clear unpaired in the profile and
     ;; makes the actual whole-program rescan invisible to the splice reason.
@@ -81784,68 +83509,51 @@
 ;; Generated modules extend the symbol table at its logical end, keeping every
 ;; prior handle stable. Arbitrary declaration splices and freshly loaded source
 ;; files retain the conservative whole-program rebuild fallback.
-(define macro-live-symbols-ready : bool
-  false)
-(define macro-live-symbols-value : csym.CompilerSymbols
-  (csym.compiler-symbols-empty))
-(define macro-live-registries-cell : (__tl_dyn-array csym.CompilerRegistries)
-  (make-array (csym.compiler-registries-empty)))
-(define macro-live-symbols-fallback : bool
-  false)
-(define macro-live-registries-ready : bool
-  false)
-(define macro-live-registries-fallback : bool
-  true)
-(define macro-live-symbols-last-insert-index : i64
-  0)
-
 ;; TcContext values intentionally share the live macro registry's arena-backed
 ;; tables so append-only splices become visible to an in-flight expansion. Raw
 ;; pointer copy is confined to this cache boundary: ordinary source must borrow
 ;; non-Copy globals, while this internal view has the same lifetime as the live
 ;; macro arena and is cleared before that arena is destroyed.
-(define (macro-live-registries-shared-view) : csym.CompilerRegistries
-  (unsafe
-    (ptr-read
-      (ptr-cast
-        (array-data macro-live-registries-cell)
-        : (Ptr csym.CompilerRegistries)))))
+(define (macro-live-registries-shared-view [state : TcMacroState]) : csym.CompilerRegistries
+  (let
+    [cell : (__tl_dyn-array csym.CompilerRegistries)
+      (tc-macro-walk-field state macro-live-registries-cell)]
+    (unsafe
+      (ptr-read (ptr-cast (array-data cell) : (Ptr csym.CompilerRegistries))))))
 
 ;; Whole-program symbol/registry rebuilds replace the previous tables, but the
 ;; ordinary compile arena retains every obsolete generation until process exit.
 ;; Keep those tables in one independently owned arena so a successful rebuild
 ;; can retire its predecessor without putting the longer-lived macro output or
 ;; top environments in the same lifetime domain.
-(define macro-live-symbols-arena : i64
-  0)
-(define macro-live-symbols-retired-arena : i64
-  0)
-
-(define (macro-live-symbols-reset!) : unit
+(define (macro-live-symbols-reset! [state : TcMacroState]) : unit
   (begin
-    (set! macro-live-symbols-ready false)
-    (set! macro-live-symbols-fallback false)
-    (set! macro-live-registries-ready false)
-    (set! macro-live-registries-fallback true)))
+    (tc-macro-walk-set! state macro-live-symbols-ready false)
+    (tc-macro-walk-set! state macro-live-symbols-fallback false)
+    (tc-macro-walk-set! state macro-live-registries-ready false)
+    (tc-macro-walk-set! state macro-live-registries-fallback true)))
 
-(define (macro-live-symbols-clear!) : unit
+(define (macro-live-symbols-clear! [state : TcMacroState]) : unit
   (let
-    [current : i64 macro-live-symbols-arena]
-    [retired : i64 macro-live-symbols-retired-arena]
+    [current : i64 (tc-macro-walk-field state macro-live-symbols-arena)]
+    [retired : i64 (tc-macro-walk-field state macro-live-symbols-retired-arena)]
     (begin
-      (set! macro-live-symbols-ready false)
-      (set! macro-live-symbols-fallback false)
-      (set! macro-live-registries-ready false)
-      (set! macro-live-registries-fallback true)
-      (set! macro-live-symbols-value (csym.compiler-symbols-empty))
+      (tc-macro-walk-set! state macro-live-symbols-ready false)
+      (tc-macro-walk-set! state macro-live-symbols-fallback false)
+      (tc-macro-walk-set! state macro-live-registries-ready false)
+      (tc-macro-walk-set! state macro-live-registries-fallback true)
+      (tc-macro-walk-set!
+        state
+        macro-live-symbols-value
+        (csym.compiler-symbols-empty))
       (set!
-        (array-ref macro-live-registries-cell 0)
+        (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
         (csym.compiler-registries-empty))
       ;; The completed expansion no longer has a consumer for either retained
       ;; generation. Release both here instead of carrying their raw handles
       ;; into the next independent typecheck entry.
-      (set! macro-live-symbols-arena 0)
-      (set! macro-live-symbols-retired-arena 0)
+      (tc-macro-walk-set! state macro-live-symbols-arena 0)
+      (tc-macro-walk-set! state macro-live-symbols-retired-arena 0)
       (if (= current 0)
         unit
         (macro-generation-destroy! current))
@@ -81857,28 +83565,34 @@
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice
 ;; may have introduced a name the reused symbols would resolve differently, so
 ;; drop the reuse conservatively.
-(define (macro-live-symbols-invalidate!) : unit
-  (set! macro-live-symbols-fallback true))
+(define (macro-live-symbols-invalidate! [state : TcMacroState]) : unit
+  (tc-macro-walk-set! state macro-live-symbols-fallback true))
 
-(define (macro-live-registries-invalidate!) : unit
-  (set! macro-live-registries-fallback true))
+(define (macro-live-registries-invalidate! [state : TcMacroState]) : unit
+  (tc-macro-walk-set! state macro-live-registries-fallback true))
 
 (define (macro-live-symbols-insert-decls!
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [module-id : i64]) : bool
-  (if (and macro-live-symbols-ready (not macro-live-symbols-fallback))
+  (if (and
+    (tc-macro-walk-field state macro-live-symbols-ready)
+    (not (tc-macro-walk-field state macro-live-symbols-fallback)))
     (let
       [append-index : i64
         (csym.compiler-symbols-decl-count
-          (tc-global-shared-view macro-live-symbols-value))]
+          (tc-macro-walk-field state macro-live-symbols-value))]
       (match (csym.compiler-symbols-insert-decls
-        (tc-global-shared-view macro-live-symbols-value)
+        (tc-macro-walk-field state macro-live-symbols-value)
         decls
         module-id)
         [(csym.ResultCompilerSymbols.Ok symbols)
           (begin
-            (set! macro-live-symbols-value symbols)
-            (set! macro-live-symbols-last-insert-index append-index)
+            (tc-macro-walk-set! state macro-live-symbols-value symbols)
+            (tc-macro-walk-set!
+              state
+              macro-live-symbols-last-insert-index
+              append-index)
             true)]
         [(csym.ResultCompilerSymbols.Err _) false]))
     false))
@@ -81975,38 +83689,46 @@
 ;; takes the fresh-symbol fallback. Generated modules use the append companion
 ;; below so symbol and registry owner handles share one stable index space.
 (define (macro-live-registries-insert-decls!
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [insertion-index : i64]
   [module-id : i64]) : bool
   (match (csym.compiler-registries-insert-decls
-    (macro-live-registries-shared-view)
+    (macro-live-registries-shared-view state)
     decls
     paths
     insertion-index
     module-id)
     [(csym.ResultCompilerRegistries.Ok registries)
       (begin
-        (set! (array-ref macro-live-registries-cell 0) registries)
-        (set! macro-live-registries-ready true)
-        (set! macro-live-registries-fallback false)
+        (set!
+          (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
+          registries)
+        (tc-macro-walk-set! state macro-live-registries-ready true)
+        (tc-macro-walk-set! state macro-live-registries-fallback false)
         true)]
     [(csym.ResultCompilerRegistries.Err _) false]))
 
 (define (macro-live-registries-append-decls!
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [module-id : i64]) : bool
-  (if (and macro-live-registries-ready (not macro-live-registries-fallback))
+  (if (and
+    (tc-macro-walk-field state macro-live-registries-ready)
+    (not (tc-macro-walk-field state macro-live-registries-fallback)))
     (match (csym.compiler-registries-append-decls
-      (macro-live-registries-shared-view)
+      (macro-live-registries-shared-view state)
       decls
       paths
-      macro-live-symbols-last-insert-index
+      (tc-macro-walk-field state macro-live-symbols-last-insert-index)
       module-id)
       [(csym.ResultCompilerRegistries.Ok registries)
         (begin
-          (set! (array-ref macro-live-registries-cell 0) registries)
+          (set!
+            (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
+            registries)
           true)]
       [(csym.ResultCompilerRegistries.Err _) false])
     false))
@@ -82016,12 +83738,16 @@
 ;; from a fresh build propagate as ResultCompilerSymbols.Err; the registries are
 ;; read back from the macro-live registry cell by the caller.
 (define (macro-live-registries-build-current
+  [state : TcMacroState]
   [program : ast.AstProgram]
   [symbols : csym.CompilerSymbols]) : csym.ResultCompilerRegistries
-  (if (and macro-live-registries-ready (not macro-live-registries-fallback))
+  (if (and
+    (tc-macro-walk-field state macro-live-registries-ready)
+    (not (tc-macro-walk-field state macro-live-registries-fallback)))
     (begin
       (cfg compile-profile (compiler-tc-macro-profile-note-live-registry-reuse))
-      (csym.ResultCompilerRegistries.Ok (macro-live-registries-shared-view)))
+      (csym.ResultCompilerRegistries.Ok
+        (macro-live-registries-shared-view state)))
     (begin
       (cfg
         compile-profile
@@ -82029,11 +83755,15 @@
       (match (csym.build-compiler-registries-with-symbols program symbols)
         [(csym.ResultCompilerRegistries.Ok registries)
           (begin
-            (set! (array-ref macro-live-registries-cell 0) registries)
-            (set! macro-live-registries-ready true)
-            (set! macro-live-registries-fallback false)
+            (set!
+              (array-ref
+                (tc-macro-walk-field state macro-live-registries-cell)
+                0)
+              registries)
+            (tc-macro-walk-set! state macro-live-registries-ready true)
+            (tc-macro-walk-set! state macro-live-registries-fallback false)
             (csym.ResultCompilerRegistries.Ok
-              (macro-live-registries-shared-view)))]
+              (macro-live-registries-shared-view state)))]
         [(csym.ResultCompilerRegistries.Err message)
           (csym.ResultCompilerRegistries.Err message)]))))
 
@@ -82050,6 +83780,7 @@
             (/ decl-count 4))))]))
 
 (define (macro-live-symbols-build-fresh-current
+  [state : TcMacroState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]) : csym.ResultCompilerSymbols
   (begin
@@ -82059,15 +83790,19 @@
       paths
       (macro-live-symbols-reserved-capacity program))
       [(csym.ResultCompilerSymbolsDiagnostic.Ok symbols)
-        (match (macro-live-registries-build-current program symbols)
+        (match (macro-live-registries-build-current state program symbols)
           [(csym.ResultCompilerRegistries.Ok registries)
             (begin
-              (set! macro-live-symbols-value symbols)
-              (set! (array-ref macro-live-registries-cell 0) registries)
-              (set! macro-live-symbols-ready true)
-              (set! macro-live-symbols-fallback false)
+              (tc-macro-walk-set! state macro-live-symbols-value symbols)
+              (set!
+                (array-ref
+                  (tc-macro-walk-field state macro-live-registries-cell)
+                  0)
+                registries)
+              (tc-macro-walk-set! state macro-live-symbols-ready true)
+              (tc-macro-walk-set! state macro-live-symbols-fallback false)
               (csym.ResultCompilerSymbols.Ok
-                (tc-global-shared-view macro-live-symbols-value)))]
+                (tc-macro-walk-field state macro-live-symbols-value)))]
           [(csym.ResultCompilerRegistries.Err message)
             (csym.ResultCompilerSymbols.Err message)])]
       [(csym.ResultCompilerSymbolsDiagnostic.Err diag)
@@ -82075,6 +83810,7 @@
           (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))
 
 (define (macro-live-symbols-build-fresh
+  [state : TcMacroState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]) : csym.ResultCompilerSymbols
   (let
@@ -82085,9 +83821,10 @@
         (arena.tl_arena_set next-arena))]
     ;; A reused registry can still point into the previous symbols arena. Keep
     ;; the generation self-contained so retiring it cannot strand those maps.
-    [_rebuild-registries : unit (set! macro-live-registries-fallback true)]
+    [_rebuild-registries : unit
+      (tc-macro-walk-set! state macro-live-registries-fallback true)]
     [built : csym.ResultCompilerSymbols
-      (macro-live-symbols-build-fresh-current program paths)]
+      (macro-live-symbols-build-fresh-current state program paths)]
     [next-head : i64 (arena.tl_arena_current)]
     (begin
       (unsafe
@@ -82095,12 +83832,17 @@
       (match built
         [(csym.ResultCompilerSymbols.Ok symbols)
           (let
-            [previous : i64 macro-live-symbols-arena]
-            [retired : i64 macro-live-symbols-retired-arena]
+            [previous : i64
+              (tc-macro-walk-field state macro-live-symbols-arena)]
+            [retired : i64
+              (tc-macro-walk-field state macro-live-symbols-retired-arena)]
             (begin
-              (set! macro-live-symbols-arena next-head)
-              (set! macro-live-symbols-retired-arena previous)
-              (macro-expand-allocation-profile-snapshot! retired)
+              (tc-macro-walk-set! state macro-live-symbols-arena next-head)
+              (tc-macro-walk-set!
+                state
+                macro-live-symbols-retired-arena
+                previous)
+              (macro-expand-allocation-profile-snapshot! state retired)
               (if (= retired 0)
                 unit
                 (unsafe
@@ -82116,22 +83858,30 @@
               (csym.ResultCompilerSymbols.Err stable-message)))]))))
 
 (define (macro-live-symbols-build-or-reuse!
+  [state : TcMacroState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]) : csym.ResultCompilerSymbols
-  (if (and macro-live-symbols-ready (not macro-live-symbols-fallback))
+  (if (and
+    (tc-macro-walk-field state macro-live-symbols-ready)
+    (not (tc-macro-walk-field state macro-live-symbols-fallback)))
     (begin
       (cfg compile-profile (compiler-tc-macro-profile-note-live-reuse))
       (match (macro-live-registries-build-current
+        state
         program
-        (tc-global-shared-view macro-live-symbols-value))
+        (tc-macro-walk-field state macro-live-symbols-value))
         [(csym.ResultCompilerRegistries.Ok registries)
           (begin
-            (set! (array-ref macro-live-registries-cell 0) registries)
+            (set!
+              (array-ref
+                (tc-macro-walk-field state macro-live-registries-cell)
+                0)
+              registries)
             (csym.ResultCompilerSymbols.Ok
-              (tc-global-shared-view macro-live-symbols-value)))]
+              (tc-macro-walk-field state macro-live-symbols-value)))]
         [(csym.ResultCompilerRegistries.Err message)
           (csym.ResultCompilerSymbols.Err message)]))
-    (macro-live-symbols-build-fresh program paths)))
+    (macro-live-symbols-build-fresh state program paths)))
 
 ;; Hoisted whole-program macro prescans. macro-program-has-defmacro?,
 ;; macro-collect-expr-type-macro-names, macro-program-needs-expansion?,
@@ -82143,36 +83893,30 @@
 ;; declarations mid-walk -- the walk recomputes the prescan there (via
 ;; macro-live-symbols-invalidate! + macro-live-prescan-ensure!), matching the
 ;; symbols cache lifecycle.
-(define macro-live-prescan-ready : bool
-  false)
-(define macro-live-prescan-has-defmacro : bool
-  false)
-(define macro-live-prescan-expr-type-names : TcNameIdList
-  (TcNameIdList.Nil))
-(define macro-live-prescan-needs-expansion : bool
-  false)
-(define macro-live-prescan-summary-import : bool
-  false)
-(define macro-live-prescan-visible-names : TcNameIdList
-  (TcNameIdList.Nil))
+(define (macro-live-prescan-reset! [state : TcMacroState]) : unit
+  (tc-macro-walk-set! state macro-live-prescan-ready false))
 
-(define (macro-live-prescan-reset!) : unit
-  (set! macro-live-prescan-ready false))
-
-(define (macro-live-prescan-ensure-current! [decls : ast.AstDeclList]) : unit
+(define (macro-live-prescan-ensure-current!
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : unit
   (let
     [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
     [has-defmacro : bool (macro-program-has-defmacro? decls)]
     [needs-expansion : bool (macro-program-needs-expansion? expr-bases decls)]
     (begin
-      (set! macro-live-prescan-has-defmacro has-defmacro)
-      (set!
+      (tc-macro-walk-set! state macro-live-prescan-has-defmacro has-defmacro)
+      (tc-macro-walk-set!
+        state
         macro-live-prescan-expr-type-names
         (if has-defmacro
           (macro-collect-expr-type-macro-names expr-bases decls)
           (TcNameIdList.Nil)))
-      (set! macro-live-prescan-needs-expansion needs-expansion)
-      (set!
+      (tc-macro-walk-set!
+        state
+        macro-live-prescan-needs-expansion
+        needs-expansion)
+      (tc-macro-walk-set!
+        state
         macro-live-prescan-summary-import
         (and
           (not has-defmacro)
@@ -82189,92 +83933,107 @@
       ;; splices add no new defmacros), so it is stable across the walk, exactly
       ;; like macro-live-prescan-visible-names; recomputed together on the
       ;; non-inert splice fallback (macro-live-symbols-fallback).
-      (ctfe_support.ctfe-module-macro-export-reset!)
-      (set!
+      (ctfe_support.ctfe-module-macro-export-reset-for-state!
+        (tc-macro-ctfe-state state))
+      (tc-macro-walk-set!
+        state
         macro-live-prescan-visible-names
-        (macro-collect-visible-macro-names decls))
-      (set! macro-live-prescan-ready true))))
+        (macro-collect-visible-macro-names state decls))
+      (tc-macro-walk-set! state macro-live-prescan-ready true))))
 
-(define (macro-live-prescan-ensure-fresh! [decls : ast.AstDeclList]) : unit
-  (if macro-expand-scratch-enabled
+(define (macro-live-prescan-ensure-fresh!
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : unit
+  (if (tc-macro-walk-field state macro-expand-scratch-enabled)
     (let
       [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (macro-expand-scratch-arena-get)]
+      [scratch : i64 (macro-expand-scratch-arena-get state)]
       (begin
         (unsafe
           (arena.tl_arena_set scratch))
-        (macro-live-prescan-ensure-current! decls)
-        (set! macro-expand-scratch-arena (arena.tl_arena_current))
+        (macro-live-prescan-ensure-current! state decls)
+        (tc-macro-walk-set!
+          state
+          macro-expand-scratch-arena
+          (arena.tl_arena_current))
         (unsafe
           (arena.tl_arena_set enclosing))))
-    (macro-live-prescan-ensure-current! decls)))
+    (macro-live-prescan-ensure-current! state decls)))
 
-(define (macro-live-prescan-ensure! [decls : ast.AstDeclList]) : unit
-  (if (and macro-live-prescan-ready (not macro-live-symbols-fallback))
+(define (macro-live-prescan-ensure!
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : unit
+  (if (and
+    (tc-macro-walk-field state macro-live-prescan-ready)
+    (not (tc-macro-walk-field state macro-live-symbols-fallback)))
     unit
-    (macro-live-prescan-ensure-fresh! decls)))
+    (macro-live-prescan-ensure-fresh! state decls)))
 
 ;; Publish a generated declaration segment directly into the hoisted prescan.
 ;; The splice walk will visit the delta itself, so this updates only the
 ;; whole-program facts and name sets that later declarations consult.
 (define (macro-live-prescan-append-decls!
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [module-id : i64]) : unit
   (let
     [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
     [delta-has-defmacro : bool (macro-program-has-defmacro? decls)]
     (begin
-      (set!
+      (tc-macro-walk-set!
+        state
         macro-live-prescan-has-defmacro
-        (or macro-live-prescan-has-defmacro delta-has-defmacro))
-      (set!
+        (or
+          (tc-macro-walk-field state macro-live-prescan-has-defmacro)
+          delta-has-defmacro))
+      (tc-macro-walk-set!
+        state
         macro-live-prescan-needs-expansion
         (or
-          macro-live-prescan-needs-expansion
+          (tc-macro-walk-field state macro-live-prescan-needs-expansion)
           (macro-program-needs-expansion? expr-bases decls)))
-      (set!
+      (tc-macro-walk-set!
+        state
         macro-live-prescan-summary-import
         (or
-          macro-live-prescan-summary-import
+          (tc-macro-walk-field state macro-live-prescan-summary-import)
           (macro-program-has-summary-macro-import? decls)))
       (if delta-has-defmacro
         (begin
-          (set!
+          (tc-macro-walk-set!
+            state
             macro-live-prescan-expr-type-names
             (macro-collect-expr-type-macro-names-in
               expr-bases
               decls
               module-id
-              macro-live-prescan-expr-type-names))
-          (set!
+              (tc-macro-walk-field state macro-live-prescan-expr-type-names)))
+          (tc-macro-walk-set!
+            state
             macro-live-prescan-visible-names
             (macro-collect-macro-names-in
+              state
               decls
               module-id
-              macro-live-prescan-visible-names))
+              (tc-macro-walk-field state macro-live-prescan-visible-names)))
           (macro-expand-set-expr-type-macro-names!
-            macro-live-prescan-expr-type-names)
-          (macro-expand-set-macro-names! macro-live-prescan-visible-names))
+            state
+            (tc-macro-walk-field state macro-live-prescan-expr-type-names))
+          (macro-expand-set-macro-names!
+            state
+            (tc-macro-walk-field state macro-live-prescan-visible-names)))
         unit)
-      (set! macro-live-prescan-ready true))))
+      (tc-macro-walk-set! state macro-live-prescan-ready true))))
 
 ;; Whether the current compile needs the CTFE reflection/layout metadata at all
 ;; (i.e. the program contains a `(type T)` literal). Set per compile at the top of
 ;; macro-expand-program; when false, tc-ctfe-env returns an empty env and skips
 ;; the whole-program metadata build. Defaults true (build) for safety.
-(define ctfe-needs-metadata : bool
-  true)
-
 ;; Macro expansion builds whole-program symbols, registries, top-env spines,
 ;; prescan lists, and splice-rebuild contexts that are dead once the final
 ;; expanded program has been produced. Keep that compiler-only state in a
 ;; scratch arena so it can be released at the macro/typecheck boundary while
 ;; final AST nodes and the CTFE env stay in their existing owners.
-(define macro-expand-scratch-enabled : bool
-  false)
-(define macro-expand-scratch-arena : i64
-  0)
-
 ;; R3-P1: a firing declaration's expansion allocates superseded intermediate
 ;; forms -- hygiene copies and re-walk products -- into the ambient macro
 ;; arena, where they stay live for the whole walk and are only reclaimed by the
@@ -82300,28 +84059,20 @@
 ;; (measured mean 45 KB per firing declaration, so ~1.4 MB per live batch at
 ;; 32) against a 225 MB owner. Retention is bounded by 2 batches, not by the
 ;; walk.
-(define macro-decl-generation-arena : i64
-  0)
-(define macro-decl-generation-retired-arena : i64
-  0)
-(define macro-decl-generation-batch-size : i64
-  32)
-(define macro-decl-generation-batch-used : i64
-  0)
-
 ;; Make `next` the live generation and destroy the one retired a batch ago.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for
 ;; everything later allocated in it (#5599). `macro-decl-generation-arena`
 ;; tracks the generation's newest HEAD, not its `make` root, so the destroy
 ;; walks the whole overflow chain instead of leaking every grown segment.
-(define (macro-decl-generation-rotate! [next : i64]) : unit
+(define (macro-decl-generation-rotate! [state : TcMacroState] [next : i64]) : unit
   (let
-    [previous : i64 macro-decl-generation-arena]
-    [retired : i64 macro-decl-generation-retired-arena]
+    [previous : i64 (tc-macro-walk-field state macro-decl-generation-arena)]
+    [retired : i64
+      (tc-macro-walk-field state macro-decl-generation-retired-arena)]
     (begin
-      (set! macro-decl-generation-arena next)
-      (set! macro-decl-generation-retired-arena previous)
+      (tc-macro-walk-set! state macro-decl-generation-arena next)
+      (tc-macro-walk-set! state macro-decl-generation-retired-arena previous)
       (if (= retired 0)
         unit
         (macro-generation-destroy! retired)))))
@@ -82329,20 +84080,23 @@
 ;: The arena this declaration's expansion runs in: the live generation while
 ;: its batch has room, otherwise a fresh one (which retires the batch before
 ;: last).
-(define (macro-decl-generation-enter!) : i64
+(define (macro-decl-generation-enter! [state : TcMacroState]) : i64
   (if (and
-    (not (= macro-decl-generation-arena 0))
-    (< macro-decl-generation-batch-used macro-decl-generation-batch-size))
+    (not (= (tc-macro-walk-field state macro-decl-generation-arena) 0))
+    (<
+      (tc-macro-walk-field state macro-decl-generation-batch-used)
+      (tc-macro-walk-field state macro-decl-generation-batch-size)))
     (begin
-      (set!
+      (tc-macro-walk-set!
+        state
         macro-decl-generation-batch-used
-        (+ macro-decl-generation-batch-used 1))
-      macro-decl-generation-arena)
+        (+ (tc-macro-walk-field state macro-decl-generation-batch-used) 1))
+      (tc-macro-walk-field state macro-decl-generation-arena))
     (let
       [next : i64 (arena.tl_arena_make)]
       (begin
-        (macro-decl-generation-rotate! next)
-        (set! macro-decl-generation-batch-used 1)
+        (macro-decl-generation-rotate! state next)
+        (tc-macro-walk-set! state macro-decl-generation-batch-used 1)
         next))))
 
 ;; R3-P2b: import-placeholder expansions get their OWN two-generation ring, not
@@ -82369,11 +84123,6 @@
 ;; State that outlives the reset -- the two generated-module/decls memos, which
 ;; are per-RUN, not per-splice -- is not covered by the cadence argument and is
 ;; handled explicitly by the escape list below.
-(define macro-splice-generation-arena : i64
-  0)
-(define macro-splice-generation-retired-arena : i64
-  0)
-
 ;: R3-P2c backstop. Every generation destroy in the walk goes through here
 ;: first: if the process-global pool context still aliases cells this
 ;: generation owns, reseat it into base-arena-owned cells before the pages go
@@ -82391,14 +84140,15 @@
       (unsafe
         (arena.tl_arena_destroy generation)))))
 
-(define (macro-splice-generation-enter!) : i64
+(define (macro-splice-generation-enter! [state : TcMacroState]) : i64
   (let
-    [previous : i64 macro-splice-generation-arena]
-    [retired : i64 macro-splice-generation-retired-arena]
+    [previous : i64 (tc-macro-walk-field state macro-splice-generation-arena)]
+    [retired : i64
+      (tc-macro-walk-field state macro-splice-generation-retired-arena)]
     [next : i64 (arena.tl_arena_make)]
     (begin
-      (set! macro-splice-generation-arena next)
-      (set! macro-splice-generation-retired-arena previous)
+      (tc-macro-walk-set! state macro-splice-generation-arena next)
+      (tc-macro-walk-set! state macro-splice-generation-retired-arena previous)
       (if (= retired 0)
         unit
         (macro-generation-destroy! retired))
@@ -82406,17 +84156,20 @@
 
 ;: True while either ring holds a live generation, i.e. while an "allocate into
 ;: whatever arena is current" cache can capture per-declaration storage.
-(define (macro-generation-any-live?) : bool
+(define (macro-generation-any-live? [state : TcMacroState]) : bool
   (not
-    (and (= macro-decl-generation-arena 0) (= macro-splice-generation-arena 0))))
+    (and
+      (= (tc-macro-walk-field state macro-decl-generation-arena) 0)
+      (= (tc-macro-walk-field state macro-splice-generation-arena) 0))))
 
-(define (macro-splice-generations-release!) : unit
+(define (macro-splice-generations-release! [state : TcMacroState]) : unit
   (let
-    [current : i64 macro-splice-generation-arena]
-    [retired : i64 macro-splice-generation-retired-arena]
+    [current : i64 (tc-macro-walk-field state macro-splice-generation-arena)]
+    [retired : i64
+      (tc-macro-walk-field state macro-splice-generation-retired-arena)]
     (begin
-      (set! macro-splice-generation-arena 0)
-      (set! macro-splice-generation-retired-arena 0)
+      (tc-macro-walk-set! state macro-splice-generation-arena 0)
+      (tc-macro-walk-set! state macro-splice-generation-retired-arena 0)
       (if (= current 0)
         unit
         (macro-generation-destroy! current))
@@ -82446,62 +84199,52 @@
 ;; Fail-closed on overflow: a declaration that records more entries than this
 ;; list holds cannot have all of them persisted, so its generation is orphaned
 ;; instead of destroyed. That leaks one generation and is the safe direction.
-(define macro-decl-generation-escape-capacity : i64
-  32)
-(define macro-decl-generation-escape-kinds : (__tl_dyn-array i64)
-  (array.make-array i64 32))
-(define macro-decl-generation-escape-keys : (__tl_dyn-array i64)
-  (array.make-array i64 32))
-(define macro-decl-generation-escape-count : i64
-  0)
-(define macro-decl-generation-escape-overflow : bool
-  false)
-
 ;; True only while a declaration's expansion is running with its generation
 ;; current. Every other memo put already lands in a long-lived arena.
-(define macro-decl-generation-active : bool
-  false)
-
-(define (macro-decl-generation-escape-reset!) : unit
+(define (macro-decl-generation-escape-reset! [state : TcMacroState]) : unit
   (begin
-    (set! macro-decl-generation-escape-count 0)
-    (set! macro-decl-generation-escape-overflow false)))
+    (tc-macro-walk-set! state macro-decl-generation-escape-count 0)
+    (tc-macro-walk-set! state macro-decl-generation-escape-overflow false)))
 
 ;: Record that memo `kind` (1 = generated-module memo, 2 = generated-decls memo)
 ;: now holds declaration lists owned by the live declaration generation.
-(define (macro-decl-generation-escape-note! [kind : i64] [key : i64]) : unit
-  (if (not macro-decl-generation-active)
+(define (macro-decl-generation-escape-note!
+  [state : TcMacroState]
+  [kind : i64]
+  [key : i64]) : unit
+  (if (not (tc-macro-walk-field state macro-decl-generation-active))
     unit
     (if (>=
-      macro-decl-generation-escape-count
-      macro-decl-generation-escape-capacity)
-      (set! macro-decl-generation-escape-overflow true)
-      (begin
-        (set!
-          (array-ref
-            macro-decl-generation-escape-kinds
-            macro-decl-generation-escape-count)
-          kind)
-        (set!
-          (array-ref
-            macro-decl-generation-escape-keys
-            macro-decl-generation-escape-count)
-          key)
-        (set!
-          macro-decl-generation-escape-count
-          (+ macro-decl-generation-escape-count 1))))))
+      (tc-macro-walk-field state macro-decl-generation-escape-count)
+      (tc-macro-walk-field state macro-decl-generation-escape-capacity))
+      (tc-macro-walk-set! state macro-decl-generation-escape-overflow true)
+      (let
+        [count : i64
+          (tc-macro-walk-field state macro-decl-generation-escape-count)]
+        [kinds : (__tl_dyn-array i64)
+          (tc-macro-walk-field state macro-decl-generation-escape-kinds)]
+        [keys : (__tl_dyn-array i64)
+          (tc-macro-walk-field state macro-decl-generation-escape-keys)]
+        (begin
+          (set! (array-ref kinds count) kind)
+          (set! (array-ref keys count) key)
+          (tc-macro-walk-set!
+            state
+            macro-decl-generation-escape-count
+            (+ count 1)))))))
 
-(define (macro-decl-generations-release!) : unit
+(define (macro-decl-generations-release! [state : TcMacroState]) : unit
   (let
-    [current : i64 macro-decl-generation-arena]
-    [retired : i64 macro-decl-generation-retired-arena]
+    [current : i64 (tc-macro-walk-field state macro-decl-generation-arena)]
+    [retired : i64
+      (tc-macro-walk-field state macro-decl-generation-retired-arena)]
     (begin
-      (set! macro-decl-generation-arena 0)
-      (set! macro-decl-generation-retired-arena 0)
-      (set! macro-decl-generation-batch-used 0)
-      (set! macro-decl-generation-active false)
-      (macro-decl-generation-escape-reset!)
-      (macro-splice-generations-release!)
+      (tc-macro-walk-set! state macro-decl-generation-arena 0)
+      (tc-macro-walk-set! state macro-decl-generation-retired-arena 0)
+      (tc-macro-walk-set! state macro-decl-generation-batch-used 0)
+      (tc-macro-walk-set! state macro-decl-generation-active false)
+      (macro-decl-generation-escape-reset! state)
+      (macro-splice-generations-release! state)
       (if (= current 0)
         unit
         (macro-generation-destroy! current))
@@ -82515,53 +84258,55 @@
 ;; shared declarations.  This is deliberately independent of dispatch counts:
 ;; declaration/import splices, generated-file loads, compatibility rewrites,
 ;; and post-walk generated-declaration normalization all note the same signal.
-(define macro-expand-program-structurally-changed : bool
-  false)
 (cfg
   compile-profile
   (define macro-expand-program-structural-change-reasons : i64
     0))
 
-(define (macro-expand-program-structural-change-reset!) : unit
+(define (macro-expand-program-structural-change-reset! [state : TcMacroState]) : unit
   (begin
-    (set! macro-expand-program-structurally-changed false)
+    (tc-macro-walk-set! state macro-expand-program-structurally-changed false)
     (cfg
       compile-profile
       (set! macro-expand-program-structural-change-reasons 0))))
 
-(define (macro-expand-program-structural-change-note! [_reason : i64]) : unit
+(define (macro-expand-program-structural-change-note!
+  [state : TcMacroState]
+  [_reason : i64]) : unit
   (begin
-    (set! macro-expand-program-structurally-changed true)
+    (tc-macro-walk-set! state macro-expand-program-structurally-changed true)
     (cfg
       compile-profile
       (set!
         macro-expand-program-structural-change-reasons
         (bit-or macro-expand-program-structural-change-reasons _reason)))))
 
-(define (macro-expand-program-structurally-changed?) : bool
-  macro-expand-program-structurally-changed)
+(define (macro-expand-program-structurally-changed? [state : TcMacroState]) : bool
+  (tc-macro-walk-field state macro-expand-program-structurally-changed))
 
 (cfg
   compile-profile
   (define (macro-expand-program-structural-change-reasons-value) : i64
     macro-expand-program-structural-change-reasons))
 
-(define (macro-expand-scratch-begin!) : unit
-  (set! macro-expand-scratch-enabled true))
+(define (macro-expand-scratch-begin! [state : TcMacroState]) : unit
+  (tc-macro-walk-set! state macro-expand-scratch-enabled true))
 
-(define (macro-expand-scratch-arena-get) : i64
-  (if (= macro-expand-scratch-arena 0)
+(define (macro-expand-scratch-arena-get [state : TcMacroState]) : i64
+  (if (= (tc-macro-walk-field state macro-expand-scratch-arena) 0)
     (let
       [scratch : i64 (arena.tl_arena_make)]
       (begin
-        (set! macro-expand-scratch-arena scratch)
+        (tc-macro-walk-set! state macro-expand-scratch-arena scratch)
         scratch))
-    macro-expand-scratch-arena))
+    (tc-macro-walk-field state macro-expand-scratch-arena)))
 
 ;; Emit the dominant macro-expansion owners at the last boundary where all of
 ;; them are simultaneously live. The control query makes this a single cold
 ;; branch when profiling is disabled; allocator hot paths remain untouched.
-(define (macro-expand-allocation-profile-snapshot! [reclaiming-symbols : i64]) : unit
+(define (macro-expand-allocation-profile-snapshot!
+  [state : TcMacroState]
+  [reclaiming-symbols : i64]) : unit
   (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
     unit
     (begin
@@ -82574,17 +84319,17 @@
         2
         "typecheck.macro.peak"
         "macro-scratch"
-        macro-expand-scratch-arena)
+        (tc-macro-walk-field state macro-expand-scratch-arena))
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
         "macro-symbols-current"
-        macro-live-symbols-arena)
+        (tc-macro-walk-field state macro-live-symbols-arena))
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
         "macro-symbols-retired"
-        macro-live-symbols-retired-arena)
+        (tc-macro-walk-field state macro-live-symbols-retired-arena))
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -82594,7 +84339,9 @@
         2
         "typecheck.macro.peak"
         "macro-hygiene-cache"
-        tc-hygiene-module-env-cache-arena)
+        (__tl-project-field
+          (tc-macro-module-env-state-data state)
+          hygiene-cache-arena))
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -82642,48 +84389,30 @@
         (ci.intern-persistent-arena-handle))
       unit)))
 
-(define (macro-expand-scratch-clear-owned-caches!) : unit
+(define (macro-expand-scratch-clear-owned-caches! [state : TcMacroState]) : unit
   (begin
-    (set! macro-expand-active-module "")
-    (macro-expand-set-macro-names! (TcNameIdList.Nil))
-    (set!
-      macro-expand-expr-type-macro-name-set
-      (tc_i64_i64_map.with-capacity 16))
-    (macro-live-symbols-clear!)
-    (macro-live-prescan-reset!)
-    (set! macro-live-prescan-has-defmacro false)
-    (set! macro-live-prescan-expr-type-names (TcNameIdList.Nil))
-    (set! macro-live-prescan-needs-expansion false)
-    (set! macro-live-prescan-summary-import false)
-    (set! macro-live-prescan-visible-names (TcNameIdList.Nil))
-    (ctfe_support.ctfe-module-macro-export-reset!)
-    (macro-generated-module-memo-reset!)
-    (macro-generated-decls-memo-reset!)
-    (tc-macro-helper-env-cache-reset!)
-    (tc-macro-module-env-cache-clear!)
+    (tc-macro-walk-set! state macro-expand-active-module "")
+    (macro-expand-set-macro-names! state (TcNameIdList.Nil))
+    (macro-expand-set-expr-type-macro-names! state (TcNameIdList.Nil))
+    (macro-live-symbols-clear! state)
+    (macro-live-prescan-reset! state)
+    (ctfe_support.ctfe-module-macro-export-reset-for-state!
+      (tc-macro-ctfe-state state))
+    (macro-generated-module-memo-reset! state)
+    (macro-generated-decls-memo-reset! state)
+    (tc-macro-helper-env-cache-reset! state)
+    (tc-macro-module-env-cache-clear! state)
     (tc-nominal-owner-cache-reset!)
-    (macro-alias-derived-cache-reset!)
-    (set! tc-hygiene-active-top-env-ready false)
-    (set! tc-hygiene-active-top-env (tc-empty-type-env))
-    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-    (if (= tc-hygiene-module-env-cache-arena 0)
-      unit
-      (begin
-        (if (= (arena.tl_arena_current) tc-hygiene-module-env-cache-arena)
-          (unsafe
-            (arena.tl_arena_set ast.node-pool-base-arena))
-          unit)
-        (unsafe
-          (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
-        (set! tc-hygiene-module-env-cache-arena 0)))))
+    (macro-alias-derived-cache-reset-for-state! state)
+    (tc-hygiene-module-env-cache-release! state)))
 
-(define (macro-expand-scratch-release!) : unit
-  (if (= macro-expand-scratch-arena 0)
+(define (macro-expand-scratch-release! [state : TcMacroState]) : unit
+  (if (= (tc-macro-walk-field state macro-expand-scratch-arena) 0)
     (begin
-      (set! macro-expand-scratch-enabled false)
-      (macro-decl-generations-release!))
+      (tc-macro-walk-set! state macro-expand-scratch-enabled false)
+      (macro-decl-generations-release! state))
     (let
-      [scratch : i64 macro-expand-scratch-arena]
+      [scratch : i64 (tc-macro-walk-field state macro-expand-scratch-arena)]
       [current : i64 (arena.tl_arena_current)]
       [home : i64
         (if (= current scratch)
@@ -82692,10 +84421,10 @@
       (begin
         (unsafe
           (arena.tl_arena_set home))
-        (set! macro-expand-scratch-enabled false)
-        (set! macro-expand-scratch-arena 0)
-        (macro-expand-scratch-clear-owned-caches!)
-        (macro-decl-generations-release!)
+        (tc-macro-walk-set! state macro-expand-scratch-enabled false)
+        (tc-macro-walk-set! state macro-expand-scratch-arena 0)
+        (macro-expand-scratch-clear-owned-caches! state)
+        (macro-decl-generations-release! state)
         ;; Macro timing entries were emitted before this boundary and live in
         ;; scratch. Clear the global before destroying their backing storage so
         ;; a later lowering-time declaration macro starts from a valid list.
@@ -83608,10 +85337,11 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : unit
   (let
+    [macro-state : TcMacroState (tc-job-state-macro-state state)]
     [enclosing : i64 (arena.tl_arena_current)]
     [storage : i64
-      (if macro-expand-scratch-enabled
-        (macro-expand-scratch-arena-get)
+      (if (tc-macro-walk-field macro-state macro-expand-scratch-enabled)
+        (macro-expand-scratch-arena-get macro-state)
         enclosing)]
     (begin
       (unsafe
@@ -83625,8 +85355,11 @@
             paths)]
         [storage-head : i64 (arena.tl_arena_current)]
         (begin
-          (if macro-expand-scratch-enabled
-            (set! macro-expand-scratch-arena storage-head)
+          (if (tc-macro-walk-field macro-state macro-expand-scratch-enabled)
+            (tc-macro-walk-set!
+              macro-state
+              macro-expand-scratch-arena
+              storage-head)
             unit)
           (unsafe
             (arena.tl_arena_set enclosing))
@@ -83831,8 +85564,9 @@
   [middle : ast.AstDeclList]
   [middle-paths : ast.AstDeclPathList]) : unit
   (let
+    [macro-state : TcMacroState (tc-job-state-macro-state state)]
     [enclosing : i64 (arena.tl_arena_current)]
-    [storage : i64 (macro-expand-scratch-arena-get)]
+    [storage : i64 (macro-expand-scratch-arena-get macro-state)]
     (begin
       (unsafe
         (arena.tl_arena_set storage))
@@ -83840,7 +85574,10 @@
         state
         middle
         middle-paths)
-      (set! macro-expand-scratch-arena (arena.tl_arena_current))
+      (tc-macro-walk-set!
+        macro-state
+        macro-expand-scratch-arena
+        (arena.tl_arena_current))
       (unsafe
         (arena.tl_arena_set enclosing)))))
 
@@ -84646,7 +86383,7 @@
     [out-rev : ast.AstDeclList prefix-rev]
     [out-paths-rev : ast.AstDeclPathList prefix-paths-rev]
     (begin
-      (macro-expand-scratch-begin!)
+      (macro-expand-scratch-begin! (tc-job-state-macro-state state))
       (macro-segmented-program-begin!
         state
         out-rev
@@ -84760,7 +86497,8 @@
                           (set! iter rest)
                           (set! iter-index (+ iter-index 1)))]))
                   (macro-segmented-program-end! state)
-                  (macro-expand-scratch-release!)
+                  (macro-expand-scratch-release!
+                    (tc-job-state-macro-state state))
                   (and
                     initial-ok
                     first-splice-ok
@@ -84777,11 +86515,13 @@
       unit
       (io.panic "typecheck: segmented macro program boundary smoke failed"))))
 
-(define (macro-expand-scratch-program [decls : ast.AstDeclList]) : ast.AstProgram
-  (if macro-expand-scratch-enabled
+(define (macro-expand-scratch-program
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : ast.AstProgram
+  (if (tc-macro-walk-field state macro-expand-scratch-enabled)
     (let
       [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64 (macro-expand-scratch-arena-get)]
+      [storage : i64 (macro-expand-scratch-arena-get state)]
       (begin
         (unsafe
           (arena.tl_arena_set storage))
@@ -84789,16 +86529,16 @@
           [program : ast.AstProgram (ast.ast-program decls)]
           [storage-head : i64 (arena.tl_arena_current)]
           (begin
-            (set! macro-expand-scratch-arena storage-head)
+            (tc-macro-walk-set! state macro-expand-scratch-arena storage-head)
             (unsafe
               (arena.tl_arena_set enclosing))
             program))))
     (ast.ast-program decls)))
 
-(define macro-active-decl-owner-id : i64
-  -1)
-
-(define (macro-paths-for-decls [decls : ast.AstDeclList] [path : String]) : ast.AstDeclPathList
+(define (macro-paths-for-decls
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]
+  [path : String]) : ast.AstDeclPathList
   (let
     [out : ast.AstDeclPathList
       (ast.ast-decl-path-list-with-capacity (ast.ast-decl-list-len (& decls)))]
@@ -84810,8 +86550,8 @@
           (ast.ast-decl-path-list-push-with-owner-id
             (&mut out)
             path
-            (if (>= macro-active-decl-owner-id 0)
-              macro-active-decl-owner-id
+            (if (>= (tc-macro-walk-field state macro-active-decl-owner-id) 0)
+              (tc-macro-walk-field state macro-active-decl-owner-id)
               cbi.compiler-builtin-id-fix-empty))
           (set! index (+ index 1))))
       out)))
@@ -85077,7 +86817,8 @@
               (begin
                 (if (ast.ast-macro-type-kind-list-empty? (& type-kinds))
                   unit
-                  (scratch-plan-result
+                  (scratch-plan-result-for-state
+                    (tc-context-macro-state ctx)
                     (ctfe_support.ctfe-type-key-with-reflections-and-pools
                       (tc-context-pools ctx)
                       (ctfe_support.ctfe-reflect-info-list-empty)
@@ -85285,7 +87026,7 @@
   (begin
     ;; The scratch belongs to exactly one identity assembly. Failed key
     ;; construction must not leak operands into a later successful call.
-    (scratch-reset-context)
+    (scratch-reset-context-for-state (tc-context-macro-state ctx))
     (match (macro-identity-key-params
       ctx
       decls
@@ -85303,13 +87044,13 @@
             (str_cat.str-cat definition-module ":" macro-name "(" arg-key ")")]
           (begin
             (if (tc-defmacro-fixed-type-params-complete? (& params) 0 false)
-              (identity-remap identity)
+              (identity-remap-for-state (tc-context-macro-state ctx) identity)
               unit)
-            (scratch-reset-context)
+            (scratch-reset-context-for-state (tc-context-macro-state ctx))
             (spec.ResultGenKey.Ok identity fuel)))]
       [(spec.ResultGenKey.Err diag)
         (begin
-          (scratch-reset-context)
+          (scratch-reset-context-for-state (tc-context-macro-state ctx))
           (spec.ResultGenKey.Err diag))])))
 
 (define (macro-decls-generated-key [identity : String]) : String
@@ -85788,11 +87529,6 @@
 ;; authoritative. This replaces the replay-compare/fingerprint
 ;; machinery: a memoized module is never re-expanded, so there is nothing to
 ;; compare.
-(define macro-generated-module-memo-capacity : i64
-  4096)
-(define macro-generated-module-memo-keys : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-
 (defenum MacroGeneratedCatalogClosure
   (Full))
 
@@ -85809,51 +87545,149 @@
     ast.AstDeclList
     MacroGeneratedCatalogClosure))
 
-(define macro-generated-module-memo-catalog-entries : (__tl_dyn-array
-    MacroGeneratedModuleCatalogEntry)
-  (array.make-array MacroGeneratedModuleCatalogEntry 4096))
-(define macro-generated-module-memo-count : i64
-  0)
-(define macro-generated-module-memo-generation : i64
-  -1)
-(define macro-generated-module-memo-ready : bool
-  false)
+(defstruct TcMacroGeneratedModuleStateData
+  (capacity i64)
+  (keys (__tl_dyn-array i64))
+  (catalog-entries (__tl_dyn-array MacroGeneratedModuleCatalogEntry))
+  (count i64)
+  (owner-table-id i64)
+  (owner-reset-generation i64)
+  (ready bool))
 
-(define (macro-generated-module-memo-reset!) : unit
-  (set! macro-generated-module-memo-ready false))
+(define (tc-macro-generated-module-state-new) : TcMacroGeneratedModuleStateData
+  (TcMacroGeneratedModuleStateData
+    4096
+    (array.make-array i64 0)
+    (array.make-array MacroGeneratedModuleCatalogEntry 0)
+    0
+    -1
+    -1
+    false))
 
-(define (macro-generated-module-memo-ensure!) : unit
-  (if (if macro-generated-module-memo-ready
-    (= macro-generated-module-memo-generation (ci.intern-generation))
-    false)
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (while (< i macro-generated-module-memo-capacity)
-          (begin
-            (set! (array-ref macro-generated-module-memo-keys i) 0)
-            (set!
-              (array-ref macro-generated-module-memo-catalog-entries i)
-              (MacroGeneratedModuleCatalogEntry.Empty))
-            (set! i (+ i 1))))
-        (set! macro-generated-module-memo-count 0)
-        (set! macro-generated-module-memo-generation (ci.intern-generation))
-        (set! macro-generated-module-memo-ready true)))))
+(define (tc-macro-generated-module-state-address-initialize
+  [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-generated-module)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroGeneratedModuleStateData)
+          (array.make-array TcMacroGeneratedModuleStateData 1)]
+        [_init : unit
+          (set! (array-ref cell 0) (tc-macro-generated-module-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast
+                  (array-data cell)
+                  : (Ptr TcMacroGeneratedModuleStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-generated-module
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
 
-(define (macro-generated-module-memo-bucket [identity-id : i64]) : i64
-  (bit-and
-    (* identity-id 2654435761)
-    (- macro-generated-module-memo-capacity 1)))
+(define (tc-macro-generated-module-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    4
+    tc-macro-generated-module-state-address-initialize))
 
-(define (macro-generated-identity-id [identity : String]) : i64
-  (tc-generated-module-name-id identity))
+(define (tc-macro-generated-module-state-data [state : TcMacroState]) : TcMacroGeneratedModuleStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-generated-module-state-address state) : u64)
+        : (Ptr TcMacroGeneratedModuleStateData)))))
+
+(define (tc-macro-generated-module-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroGeneratedModuleStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-generated-module-state-address state) : u64)
+        : (MutPtr TcMacroGeneratedModuleStateData))
+      data)))
+
+(define (macro-generated-module-memo-reset! [state : TcMacroState]) : unit
+  (let
+    [memo : TcMacroGeneratedModuleStateData
+      (tc-macro-generated-module-state-data state)]
+    (begin
+      (set! memo.ready false)
+      (tc-macro-generated-module-state-data-set! state memo))))
+
+(define (macro-generated-module-memo-ensure! [state : TcMacroState]) : unit
+  (let
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    [memo : TcMacroGeneratedModuleStateData
+      (tc-macro-generated-module-state-data state)]
+    (if (and
+      memo.ready
+      (= memo.owner-table-id table-id)
+      (= memo.owner-reset-generation reset-generation))
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [_allocate : unit
+          (if (= (array-length memo.keys) memo.capacity)
+            unit
+            (begin
+              (set! memo.keys (array.make-array i64 memo.capacity))
+              (set!
+                memo.catalog-entries
+                (array.make-array
+                  MacroGeneratedModuleCatalogEntry
+                  memo.capacity))))]
+        [i : i64 0]
+        (begin
+          (while (< i memo.capacity)
+            (begin
+              (set! (array-ref memo.keys i) 0)
+              (set!
+                (array-ref memo.catalog-entries i)
+                (MacroGeneratedModuleCatalogEntry.Empty))
+              (set! i (+ i 1))))
+          (set! memo.count 0)
+          (set! memo.owner-table-id table-id)
+          (set! memo.owner-reset-generation reset-generation)
+          (set! memo.ready true)
+          (tc-macro-generated-module-state-data-set! state memo)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+
+(define (macro-generated-module-memo-bucket
+  [state : TcMacroState]
+  [identity-id : i64]) : i64
+  (let
+    [memo : TcMacroGeneratedModuleStateData
+      (tc-macro-generated-module-state-data state)]
+    (bit-and (* identity-id 2654435761) (- memo.capacity 1))))
+
+(define (macro-generated-identity-id [state : TcMacroState] [identity : String]) : i64
+  (tc-macro-identity-intern-for-state state identity))
 
 ;; Store the first canonical catalog for an identity. Re-storing an equal
 ;; identity preserves its immutable catalog, provenance, validation, and closure
 ;; state while refreshing only the current materialized summary. The shortcut
 ;; normally makes the insertion path run once per identity for the whole program.
 (define (macro-generated-module-memo-put!
+  [state : TcMacroState]
   [identity : String]
   [target-id : i64]
   [summary : ast.AstDeclList]
@@ -85861,172 +87695,150 @@
   [generator : String]
   [import-path : String]) : unit
   (let
-    [identity-id : i64 (macro-generated-identity-id identity)]
+    [identity-id : i64 (macro-generated-identity-id state identity)]
     ;; R3-P2b: the stored lists and provenance strings are built from whatever
     ;; arena is current, which under a declaration generation is that
     ;; declaration's. Note the key so the copy-out re-persists this entry into
     ;; the pool's base arena before the generation dies.
-    [_escape : unit (macro-decl-generation-escape-note! 1 (+ identity-id 1))]
-    (begin
-      (macro-generated-module-memo-ensure!)
-      (if (>=
-        (* macro-generated-module-memo-count 2)
-        macro-generated-module-memo-capacity)
-        unit
-        (let
-          [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
-          [key : i64 (+ identity-id 1)]
-          [steps : i64 0]
-          [done : bool false]
-          (begin
-            (while (if done
-              false
-              (< steps macro-generated-module-memo-capacity))
-              (let
-                [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
-                (if (= slot 0)
+    [_escape : unit
+      (macro-decl-generation-escape-note! state 1 (+ identity-id 1))]
+    [_ensure : unit (macro-generated-module-memo-ensure! state)]
+    [memo : TcMacroGeneratedModuleStateData
+      (tc-macro-generated-module-state-data state)]
+    (if (>= (* memo.count 2) memo.capacity)
+      unit
+      (let
+        [cursor : i64 (macro-generated-module-memo-bucket state identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps memo.capacity))
+            (let
+              [slot : i64 (array-ref memo.keys cursor)]
+              (if (= slot 0)
+                (begin
+                  (set! (array-ref memo.keys cursor) key)
+                  (set!
+                    (array-ref memo.catalog-entries cursor)
+                    (MacroGeneratedModuleCatalogEntry.Catalog
+                      target-id
+                      catalog
+                      generator
+                      import-path
+                      summary
+                      (MacroGeneratedCatalogClosure.Full)))
+                  (set! memo.count (+ memo.count 1))
+                  (set! done true))
+                (if (= slot key)
                   (begin
-                    (set!
-                      (array-ref macro-generated-module-memo-keys cursor)
-                      key)
-                    (set!
-                      (array-ref
-                        macro-generated-module-memo-catalog-entries
-                        cursor)
-                      (MacroGeneratedModuleCatalogEntry.Catalog
-                        target-id
-                        catalog
-                        generator
-                        import-path
-                        summary
-                        (MacroGeneratedCatalogClosure.Full)))
-                    (set!
-                      macro-generated-module-memo-count
-                      (+ macro-generated-module-memo-count 1))
-                    (set! done true))
-                  (if (= slot key)
-                    (begin
-                      ;; A same-identity catalog is immutable. Syntax-sensitive
-                      ;; calls bypass the shortcut and retain the existing
-                      ;; incompatible-output diagnostic instead of replacing it.
-                      (match (tc-global-array-element-shared-view
-                        macro-generated-module-memo-catalog-entries
-                        cursor)
-                        [(MacroGeneratedModuleCatalogEntry.Catalog
+                    ;; A same-identity catalog is immutable. Syntax-sensitive
+                    ;; calls bypass the shortcut and retain the existing
+                    ;; incompatible-output diagnostic instead of replacing it.
+                    (match (tc-global-array-element-shared-view
+                      memo.catalog-entries
+                      cursor)
+                      [(MacroGeneratedModuleCatalogEntry.Catalog
+                          entry-target
+                          entry-catalog
+                          entry-generator
+                          entry-path
+                          _
+                          closure)
+                        (set!
+                          (array-ref memo.catalog-entries cursor)
+                          (MacroGeneratedModuleCatalogEntry.Catalog
                             entry-target
                             entry-catalog
                             entry-generator
                             entry-path
-                            _
-                            closure)
-                          (set!
-                            (array-ref
-                              macro-generated-module-memo-catalog-entries
-                              cursor)
-                            (MacroGeneratedModuleCatalogEntry.Catalog
-                              entry-target
-                              entry-catalog
-                              entry-generator
-                              entry-path
-                              summary
-                              closure))]
-                        [(MacroGeneratedModuleCatalogEntry.Empty) unit])
-                      (set! done true))
-                    (begin
-                      (set!
-                        cursor
-                        (bit-and
-                          (+ cursor 1)
-                          (- macro-generated-module-memo-capacity 1)))
-                      (set! steps (+ steps 1)))))))
-            unit))))))
+                            summary
+                            closure))]
+                      [(MacroGeneratedModuleCatalogEntry.Empty) unit])
+                    (set! done true))
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) (- memo.capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          (tc-macro-generated-module-state-data-set! state memo))))))
 
 ;; Retrieve the export-summary (materialized module decl list) recorded for an
 ;; identity, or the empty list when the identity is not (yet) memoized. Used by
 ;; env-extend-with-module to fold an already-materialized module into the live
 ;; top-env without a whole-program rebuild (plan P2).
-(define (macro-generated-module-memo-get-summary [identity : String]) : ast.AstDeclList
+(define (macro-generated-module-memo-get-summary
+  [state : TcMacroState]
+  [identity : String]) : ast.AstDeclList
   (let
-    [identity-id : i64 (macro-generated-identity-id identity)]
+    [identity-id : i64 (macro-generated-identity-id state identity)]
+    [_ensure : unit (macro-generated-module-memo-ensure! state)]
+    [memo : TcMacroGeneratedModuleStateData
+      (tc-macro-generated-module-state-data state)]
+    [cursor : i64 (macro-generated-module-memo-bucket state identity-id)]
+    [key : i64 (+ identity-id 1)]
+    [steps : i64 0]
+    [out : ast.AstDeclList (ast.ast-decl-list-new)]
+    [done : bool false]
     (begin
-      (macro-generated-module-memo-ensure!)
-      (let
-        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
-        [key : i64 (+ identity-id 1)]
-        [steps : i64 0]
-        [out : ast.AstDeclList (ast.ast-decl-list-new)]
-        [done : bool false]
-        (begin
-          (while (if done
-            false
-            (< steps macro-generated-module-memo-capacity))
-            (let
-              [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
-              (if (= slot 0)
-                (set! done true)
-                (if (= slot key)
-                  (begin
-                    (match (tc-global-array-element-shared-view
-                      macro-generated-module-memo-catalog-entries
-                      cursor)
-                      [(MacroGeneratedModuleCatalogEntry.Catalog
-                          _
-                          _
-                          _
-                          _
-                          summary
-                          _)
-                        (set! out summary)]
-                      [(MacroGeneratedModuleCatalogEntry.Empty) unit])
-                    (set! done true))
-                  (begin
-                    (set!
-                      cursor
-                      (bit-and
-                        (+ cursor 1)
-                        (- macro-generated-module-memo-capacity 1)))
-                    (set! steps (+ steps 1)))))))
-          out)))))
+      (while (if done
+        false
+        (< steps memo.capacity))
+        (let
+          [slot : i64 (array-ref memo.keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (= slot key)
+              (begin
+                (match (tc-global-array-element-shared-view
+                  memo.catalog-entries
+                  cursor)
+                  [(MacroGeneratedModuleCatalogEntry.Catalog _ _ _ _ summary _)
+                    (set! out summary)]
+                  [(MacroGeneratedModuleCatalogEntry.Empty) unit])
+                (set! done true))
+              (begin
+                (set! cursor (bit-and (+ cursor 1) (- memo.capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
 
 ;; Retrieve the immutable full catalog for a canonical identity. It is separate
 ;; from the materialized summary so later demand selection can reuse parsed
 ;; declarations without re-running CTFE or reconstructing them from a program.
-(define (macro-generated-module-memo-get-catalog [identity : String]) : MacroGeneratedModuleCatalogEntry
+(define (macro-generated-module-memo-get-catalog
+  [state : TcMacroState]
+  [identity : String]) : MacroGeneratedModuleCatalogEntry
   (let
-    [identity-id : i64 (macro-generated-identity-id identity)]
+    [identity-id : i64 (macro-generated-identity-id state identity)]
+    [_ensure : unit (macro-generated-module-memo-ensure! state)]
+    [memo : TcMacroGeneratedModuleStateData
+      (tc-macro-generated-module-state-data state)]
+    [cursor : i64 (macro-generated-module-memo-bucket state identity-id)]
+    [key : i64 (+ identity-id 1)]
+    [steps : i64 0]
+    [out : MacroGeneratedModuleCatalogEntry
+      (MacroGeneratedModuleCatalogEntry.Empty)]
+    [done : bool false]
     (begin
-      (macro-generated-module-memo-ensure!)
-      (let
-        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
-        [key : i64 (+ identity-id 1)]
-        [steps : i64 0]
-        [out : MacroGeneratedModuleCatalogEntry
-          (MacroGeneratedModuleCatalogEntry.Empty)]
-        [done : bool false]
-        (begin
-          (while (if done
-            false
-            (< steps macro-generated-module-memo-capacity))
-            (let
-              [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
-              (if (= slot 0)
-                (set! done true)
-                (if (= slot key)
-                  (begin
-                    (set!
-                      out
-                      (tc-global-array-element-shared-view
-                        macro-generated-module-memo-catalog-entries
-                        cursor))
-                    (set! done true))
-                  (begin
-                    (set!
-                      cursor
-                      (bit-and
-                        (+ cursor 1)
-                        (- macro-generated-module-memo-capacity 1)))
-                    (set! steps (+ steps 1)))))))
-          out)))))
+      (while (if done
+        false
+        (< steps memo.capacity))
+        (let
+          [slot : i64 (array-ref memo.keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (= slot key)
+              (begin
+                (set!
+                  out
+                  (tc-global-array-element-shared-view
+                    memo.catalog-entries
+                    cursor))
+                (set! done true))
+              (begin
+                (set! cursor (bit-and (+ cursor 1) (- memo.capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
 
 (defenum MacroMaybeSpliceDecls
   (No)
@@ -86043,131 +87855,206 @@
 ;; the context rebuild entirely); an incompatible payload errors exactly like
 ;; gen-register-generated-decl. Same lifecycle as the module memo: reset per
 ;; program, self-clears on intern-generation change.
-(define macro-generated-decls-memo-capacity : i64
-  1024)
-(define macro-generated-decls-memo-keys : (__tl_dyn-array i64)
-  (array.make-array i64 1024))
-(define macro-generated-decls-memo-decls : (__tl_dyn-array ast.AstDeclList)
-  (array.make-array ast.AstDeclList 1024))
-(define macro-generated-decls-memo-count : i64
-  0)
-(define macro-generated-decls-memo-generation : i64
-  -1)
-(define macro-generated-decls-memo-ready : bool
-  false)
+(defstruct TcMacroGeneratedDeclsStateData
+  (capacity i64)
+  (keys (__tl_dyn-array i64))
+  (decls (__tl_dyn-array ast.AstDeclList))
+  (count i64)
+  (owner-table-id i64)
+  (owner-reset-generation i64)
+  (ready bool))
 
-(define (macro-generated-decls-memo-reset!) : unit
-  (set! macro-generated-decls-memo-ready false))
+(define (tc-macro-generated-decls-state-new) : TcMacroGeneratedDeclsStateData
+  (TcMacroGeneratedDeclsStateData
+    1024
+    (array.make-array i64 0)
+    (array.make-array ast.AstDeclList 0)
+    0
+    -1
+    -1
+    false))
 
-(define (macro-generated-decls-memo-ensure!) : unit
-  (if (if macro-generated-decls-memo-ready
-    (= macro-generated-decls-memo-generation (ci.intern-generation))
-    false)
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (while (< i macro-generated-decls-memo-capacity)
-          (begin
-            (set! (array-ref macro-generated-decls-memo-keys i) 0)
-            (set!
-              (array-ref macro-generated-decls-memo-decls i)
-              (ast.ast-decl-list-new))
-            (set! i (+ i 1))))
-        (set! macro-generated-decls-memo-count 0)
-        (set! macro-generated-decls-memo-generation (ci.intern-generation))
-        (set! macro-generated-decls-memo-ready true)))))
-
-(define (macro-generated-decls-memo-bucket [identity-id : i64]) : i64
-  (bit-and (* identity-id 2654435761) (- macro-generated-decls-memo-capacity 1)))
-
-(define (macro-generated-decls-memo-get [identity : String]) : MacroMaybeSpliceDecls
+(define (tc-macro-generated-decls-state-address-initialize
+  [state : TcMacroState]) : i64
   (let
-    [identity-id : i64 (macro-generated-identity-id identity)]
-    (begin
-      (macro-generated-decls-memo-ensure!)
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-generated-decls)]
+    (if (> address 0)
+      address
       (let
-        [cursor : i64 (macro-generated-decls-memo-bucket identity-id)]
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroGeneratedDeclsStateData)
+          (array.make-array TcMacroGeneratedDeclsStateData 1)]
+        [_init : unit
+          (set! (array-ref cell 0) (tc-macro-generated-decls-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast
+                  (array-data cell)
+                  : (Ptr TcMacroGeneratedDeclsStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-generated-decls
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-generated-decls-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    5
+    tc-macro-generated-decls-state-address-initialize))
+
+(define (tc-macro-generated-decls-state-data [state : TcMacroState]) : TcMacroGeneratedDeclsStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-generated-decls-state-address state) : u64)
+        : (Ptr TcMacroGeneratedDeclsStateData)))))
+
+(define (tc-macro-generated-decls-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroGeneratedDeclsStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-generated-decls-state-address state) : u64)
+        : (MutPtr TcMacroGeneratedDeclsStateData))
+      data)))
+
+(define (macro-generated-decls-memo-reset! [state : TcMacroState]) : unit
+  (let
+    [memo : TcMacroGeneratedDeclsStateData
+      (tc-macro-generated-decls-state-data state)]
+    (begin
+      (set! memo.ready false)
+      (tc-macro-generated-decls-state-data-set! state memo))))
+
+(define (macro-generated-decls-memo-ensure! [state : TcMacroState]) : unit
+  (let
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    [memo : TcMacroGeneratedDeclsStateData
+      (tc-macro-generated-decls-state-data state)]
+    (if (and
+      memo.ready
+      (= memo.owner-table-id table-id)
+      (= memo.owner-reset-generation reset-generation))
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [_allocate : unit
+          (if (= (array-length memo.keys) memo.capacity)
+            unit
+            (begin
+              (set! memo.keys (array.make-array i64 memo.capacity))
+              (set! memo.decls (array.make-array ast.AstDeclList memo.capacity))))]
+        [i : i64 0]
+        (begin
+          (while (< i memo.capacity)
+            (begin
+              (set! (array-ref memo.keys i) 0)
+              (set! (array-ref memo.decls i) (ast.ast-decl-list-new))
+              (set! i (+ i 1))))
+          (set! memo.count 0)
+          (set! memo.owner-table-id table-id)
+          (set! memo.owner-reset-generation reset-generation)
+          (set! memo.ready true)
+          (tc-macro-generated-decls-state-data-set! state memo)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+
+(define (macro-generated-decls-memo-bucket
+  [state : TcMacroState]
+  [identity-id : i64]) : i64
+  (let
+    [memo : TcMacroGeneratedDeclsStateData
+      (tc-macro-generated-decls-state-data state)]
+    (bit-and (* identity-id 2654435761) (- memo.capacity 1))))
+
+(define (macro-generated-decls-memo-get
+  [state : TcMacroState]
+  [identity : String]) : MacroMaybeSpliceDecls
+  (let
+    [identity-id : i64 (macro-generated-identity-id state identity)]
+    [_ensure : unit (macro-generated-decls-memo-ensure! state)]
+    [memo : TcMacroGeneratedDeclsStateData
+      (tc-macro-generated-decls-state-data state)]
+    [cursor : i64 (macro-generated-decls-memo-bucket state identity-id)]
+    [key : i64 (+ identity-id 1)]
+    [steps : i64 0]
+    [out : MacroMaybeSpliceDecls (MacroMaybeSpliceDecls.No)]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps memo.capacity))
+        (let
+          [slot : i64 (array-ref memo.keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (= slot key)
+              (begin
+                (set!
+                  out
+                  (MacroMaybeSpliceDecls.Some
+                    (tc-global-array-element-shared-view memo.decls cursor)))
+                (set! done true))
+              (begin
+                (set! cursor (bit-and (+ cursor 1) (- memo.capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
+
+(define (macro-generated-decls-memo-put!
+  [state : TcMacroState]
+  [identity : String]
+  [decls : ast.AstDeclList]) : unit
+  (let
+    [identity-id : i64 (macro-generated-identity-id state identity)]
+    ;; R3-P2b: see macro-generated-module-memo-put!.
+    [_escape : unit
+      (macro-decl-generation-escape-note! state 2 (+ identity-id 1))]
+    [_ensure : unit (macro-generated-decls-memo-ensure! state)]
+    [memo : TcMacroGeneratedDeclsStateData
+      (tc-macro-generated-decls-state-data state)]
+    (if (>= (* memo.count 2) memo.capacity)
+      unit
+      (let
+        [cursor : i64 (macro-generated-decls-memo-bucket state identity-id)]
         [key : i64 (+ identity-id 1)]
         [steps : i64 0]
-        [out : MacroMaybeSpliceDecls (MacroMaybeSpliceDecls.No)]
         [done : bool false]
         (begin
           (while (if done
             false
-            (< steps macro-generated-decls-memo-capacity))
+            (< steps memo.capacity))
             (let
-              [slot : i64 (array-ref macro-generated-decls-memo-keys cursor)]
+              [slot : i64 (array-ref memo.keys cursor)]
               (if (= slot 0)
-                (set! done true)
+                (begin
+                  (set! (array-ref memo.keys cursor) key)
+                  (set! (array-ref memo.decls cursor) decls)
+                  (set! memo.count (+ memo.count 1))
+                  (set! done true))
                 (if (= slot key)
                   (begin
-                    (set!
-                      out
-                      (MacroMaybeSpliceDecls.Some
-                        (tc-global-array-element-shared-view
-                          macro-generated-decls-memo-decls
-                          cursor)))
+                    (set! (array-ref memo.decls cursor) decls)
                     (set! done true))
                   (begin
-                    (set!
-                      cursor
-                      (bit-and
-                        (+ cursor 1)
-                        (- macro-generated-decls-memo-capacity 1)))
+                    (set! cursor (bit-and (+ cursor 1) (- memo.capacity 1)))
                     (set! steps (+ steps 1)))))))
-          out)))))
-
-(define (macro-generated-decls-memo-put!
-  [identity : String]
-  [decls : ast.AstDeclList]) : unit
-  (let
-    [identity-id : i64 (macro-generated-identity-id identity)]
-    ;; R3-P2b: see macro-generated-module-memo-put!.
-    [_escape : unit (macro-decl-generation-escape-note! 2 (+ identity-id 1))]
-    (begin
-      (macro-generated-decls-memo-ensure!)
-      (if (>=
-        (* macro-generated-decls-memo-count 2)
-        macro-generated-decls-memo-capacity)
-        unit
-        (let
-          [cursor : i64 (macro-generated-decls-memo-bucket identity-id)]
-          [key : i64 (+ identity-id 1)]
-          [steps : i64 0]
-          [done : bool false]
-          (begin
-            (while (if done
-              false
-              (< steps macro-generated-decls-memo-capacity))
-              (let
-                [slot : i64 (array-ref macro-generated-decls-memo-keys cursor)]
-                (if (= slot 0)
-                  (begin
-                    (set!
-                      (array-ref macro-generated-decls-memo-keys cursor)
-                      key)
-                    (set!
-                      (array-ref macro-generated-decls-memo-decls cursor)
-                      decls)
-                    (set!
-                      macro-generated-decls-memo-count
-                      (+ macro-generated-decls-memo-count 1))
-                    (set! done true))
-                  (if (= slot key)
-                    (begin
-                      (set!
-                        (array-ref macro-generated-decls-memo-decls cursor)
-                        decls)
-                      (set! done true))
-                    (begin
-                      (set!
-                        cursor
-                        (bit-and
-                          (+ cursor 1)
-                          (- macro-generated-decls-memo-capacity 1)))
-                      (set! steps (+ steps 1)))))))
-            unit))))))
+          (tc-macro-generated-decls-state-data-set! state memo))))))
 
 ;; R3-P2b: move one memoized declaration list out of the live declaration
 ;; generation and into the pool's base arena, in place, with the caller's id
@@ -86208,6 +88095,7 @@
           [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)])])))
 
 (define (macro-generated-module-memo-persist-entry!
+  [state : TcMacroState]
   [key : i64]
   [pools : ast.AstNodePoolContext]
   [shared-expr-base : i64]
@@ -86215,21 +88103,23 @@
   [expr-map : (__tl_dyn-array i32)]
   [type-map : (__tl_dyn-array i32)]) : unit
   (let
-    [cursor : i64 (macro-generated-module-memo-bucket (- key 1))]
+    [memo : TcMacroGeneratedModuleStateData
+      (tc-macro-generated-module-state-data state)]
+    [cursor : i64 (macro-generated-module-memo-bucket state (- key 1))]
     [steps : i64 0]
     [done : bool false]
     (begin
       (while (if done
         false
-        (< steps macro-generated-module-memo-capacity))
+        (< steps memo.capacity))
         (let
-          [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
+          [slot : i64 (array-ref memo.keys cursor)]
           (if (= slot 0)
             (set! done true)
             (if (= slot key)
               (begin
                 (match (tc-global-array-element-shared-view
-                  macro-generated-module-memo-catalog-entries
+                  memo.catalog-entries
                   cursor)
                   [(MacroGeneratedModuleCatalogEntry.Catalog
                       target-id
@@ -86263,9 +88153,7 @@
                       [owned-path : String (string.copy (& import-path))]
                       [_store : unit
                         (set!
-                          (array-ref
-                            macro-generated-module-memo-catalog-entries
-                            cursor)
+                          (array-ref memo.catalog-entries cursor)
                           (MacroGeneratedModuleCatalogEntry.Catalog
                             target-id
                             owned-catalog
@@ -86281,15 +88169,12 @@
                   [(MacroGeneratedModuleCatalogEntry.Empty) unit])
                 (set! done true))
               (begin
-                (set!
-                  cursor
-                  (bit-and
-                    (+ cursor 1)
-                    (- macro-generated-module-memo-capacity 1)))
+                (set! cursor (bit-and (+ cursor 1) (- memo.capacity 1)))
                 (set! steps (+ steps 1)))))))
       unit)))
 
 (define (macro-generated-decls-memo-persist-entry!
+  [state : TcMacroState]
   [key : i64]
   [pools : ast.AstNodePoolContext]
   [shared-expr-base : i64]
@@ -86297,15 +88182,17 @@
   [expr-map : (__tl_dyn-array i32)]
   [type-map : (__tl_dyn-array i32)]) : unit
   (let
-    [cursor : i64 (macro-generated-decls-memo-bucket (- key 1))]
+    [memo : TcMacroGeneratedDeclsStateData
+      (tc-macro-generated-decls-state-data state)]
+    [cursor : i64 (macro-generated-decls-memo-bucket state (- key 1))]
     [steps : i64 0]
     [done : bool false]
     (begin
       (while (if done
         false
-        (< steps macro-generated-decls-memo-capacity))
+        (< steps memo.capacity))
         (let
-          [slot : i64 (array-ref macro-generated-decls-memo-keys cursor)]
+          [slot : i64 (array-ref memo.keys cursor)]
           (if (= slot 0)
             (set! done true)
             (if (= slot key)
@@ -86313,24 +88200,16 @@
                 [owned : ast.AstDeclList
                   (macro-decl-generation-persist-decls
                     pools
-                    (tc-global-array-element-shared-view
-                      macro-generated-decls-memo-decls
-                      cursor)
+                    (tc-global-array-element-shared-view memo.decls cursor)
                     shared-expr-base
                     shared-type-base
                     expr-map
                     type-map)]
                 (begin
-                  (set!
-                    (array-ref macro-generated-decls-memo-decls cursor)
-                    owned)
+                  (set! (array-ref memo.decls cursor) owned)
                   (set! done true)))
               (begin
-                (set!
-                  cursor
-                  (bit-and
-                    (+ cursor 1)
-                    (- macro-generated-decls-memo-capacity 1)))
+                (set! cursor (bit-and (+ cursor 1) (- memo.capacity 1)))
                 (set! steps (+ steps 1)))))))
       unit)))
 
@@ -86338,6 +88217,7 @@
 ;: the survivor's copy-out, with the same maps, and leaves the pool's base arena
 ;: head published.
 (define (macro-decl-generation-escapes-persist!
+  [state : TcMacroState]
   [pools : ast.AstNodePoolContext]
   [shared-expr-base : i64]
   [shared-type-base : i64]
@@ -86346,14 +88226,20 @@
   [splice? : bool]) : unit
   (let
     [index : i64 0]
+    [count : i64 (tc-macro-walk-field state macro-decl-generation-escape-count)]
+    [kinds : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-decl-generation-escape-kinds)]
+    [keys : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-decl-generation-escape-keys)]
     (begin
-      (while (< index macro-decl-generation-escape-count)
+      (while (< index count)
         (let
-          [kind : i64 (array-ref macro-decl-generation-escape-kinds index)]
-          [key : i64 (array-ref macro-decl-generation-escape-keys index)]
+          [kind : i64 (array-ref kinds index)]
+          [key : i64 (array-ref keys index)]
           (begin
             (if (= kind 1)
               (macro-generated-module-memo-persist-entry!
+                state
                 key
                 pools
                 shared-expr-base
@@ -86361,6 +88247,7 @@
                 expr-map
                 type-map)
               (macro-generated-decls-memo-persist-entry!
+                state
                 key
                 pools
                 shared-expr-base
@@ -86372,14 +88259,14 @@
       ;; holds has entries this pass could not reach, so its generation must not
       ;; be destroyed. Orphan it -- the next enter cuts a fresh arena and the
       ;; ring never sees this one again.
-      (if macro-decl-generation-escape-overflow
+      (if (tc-macro-walk-field state macro-decl-generation-escape-overflow)
         (if splice?
-          (set! macro-splice-generation-arena 0)
+          (tc-macro-walk-set! state macro-splice-generation-arena 0)
           (begin
-            (set! macro-decl-generation-arena 0)
-            (set! macro-decl-generation-batch-used 0)))
+            (tc-macro-walk-set! state macro-decl-generation-arena 0)
+            (tc-macro-walk-set! state macro-decl-generation-batch-used 0)))
         unit)
-      (macro-decl-generation-escape-reset!))))
+      (macro-decl-generation-escape-reset! state))))
 
 ;; Structural equality between two Decls-macro splices, mirroring the
 ;; per-declaration gen-decl-eq? comparison gen-register-generated-decl applies
@@ -86433,17 +88320,18 @@
 ;; incompatible repeat errors with the same diagnostic gen-normalize's registry
 ;; would produce.
 (define (macro-decls-splice-with-memo
+  [state : TcMacroState]
   [identity : String]
   [wrapped : ast.AstDeclList]
   [decl-path : String]
   [call-expr : ast.AstExpr]) : ResultMacroDeclExpansion
-  (match (macro-generated-decls-memo-get identity)
+  (match (macro-generated-decls-memo-get state identity)
     [(MacroMaybeSpliceDecls.No)
       (begin
-        (macro-generated-decls-memo-put! identity wrapped)
+        (macro-generated-decls-memo-put! state identity wrapped)
         (ResultMacroDeclExpansion.Ok
           wrapped
-          (macro-paths-for-decls wrapped decl-path)))]
+          (macro-paths-for-decls state wrapped decl-path)))]
     [(MacroMaybeSpliceDecls.Some existing)
       (if (macro-generated-decls-splice-equal? existing wrapped)
         (ResultMacroDeclExpansion.Ok
@@ -88294,6 +90182,7 @@
             "typecheck: Decls macro transformer did not produce Expr")))]))
 
 (define (macro-hygiene-ctfe-output
+  [state : TcMacroState]
   [expr-bases : i64]
   [value : ctfe_support.CompilerCtfeValue]
   [hygiene : MacroHygieneContext]
@@ -88302,14 +90191,14 @@
   (match value
     [(ctfe_support.CompilerCtfeValue.Expr node produced)
       (begin
-        (macro-hygiene-env-root-begin!)
+        (macro-hygiene-env-root-begin! state)
         (let
           [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases node)]
           [param-env : MacroHygieneEnv
             (macro-hygiene-output-macro-param-env
               (& params)
               0
-              (macro-hygiene-env-empty))]
+              (macro-hygiene-env-empty state))]
           [output-env : MacroHygieneEnv
             (macro-hygiene-output-decl-env expr param-env)]
           [out : ctfe_support.CompilerCtfeValue
@@ -88322,27 +90211,32 @@
                 depth)
               produced)]
           (begin
-            (macro-hygiene-env-root-finish!)
+            (macro-hygiene-env-root-finish! state)
             out)))]
     [_ value]))
 
 (define (macro-collect-decl-name
+  [state : TcMacroState]
   [decl : ast.AstDecl]
   [module-id : i64]
   [acc : TcNameIdList]) : TcNameIdList
   (match decl
     [(ast.AstDecl.DefMacro decl-meta name _ _ _)
       (begin
-        (ctfe_support.ctfe-module-macro-export-add-id! module-id name)
+        (ctfe_support.ctfe-module-macro-export-add-id-for-state!
+          (tc-macro-ctfe-state state)
+          module-id
+          name)
         (tc-name-id-list-add acc name))]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-collect-decl-name (__tl-box-place inner-box) module-id acc)]
+      (macro-collect-decl-name state (__tl-box-place inner-box) module-id acc)]
     [_ acc]))
 
 ;; Index cursor rather than `ast-decl-list-step`: the module arm reads one id
 ;; out of the row and the other arm hands the row to `macro-collect-decl-name`,
 ;; so the step result's 144 B and its row copy are both pure overhead.
 (define (macro-collect-macro-names-in
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [module-id : i64]
   [acc : TcNameIdList]) : TcNameIdList
@@ -88368,6 +90262,7 @@
               (set!
                 out
                 (macro-collect-decl-name
+                  state
                   (array-ref decl-slots (+ decl-offset index))
                   cur-module-id
                   out))])
@@ -88375,11 +90270,17 @@
       out)))
 
 (define (macro-collect-macro-names
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [acc : TcNameIdList]) : TcNameIdList
-  (macro-collect-macro-names-in decls cbi.compiler-builtin-id-fix-empty acc))
+  (macro-collect-macro-names-in
+    state
+    decls
+    cbi.compiler-builtin-id-fix-empty
+    acc))
 
 (define (macro-collect-surface-decl-name
+  [state : TcMacroState]
   [decl : cload.CompilerLoadSurfaceDecl]
   [acc : TcNameIdList]) : TcNameIdList
   (match decl.kind
@@ -88388,11 +90289,15 @@
         [module-id : i64 decl.module]
         [name-id : i64 decl.name]
         (begin
-          (ctfe_support.ctfe-module-macro-export-add-id! module-id name-id)
+          (ctfe_support.ctfe-module-macro-export-add-id-for-state!
+            (tc-macro-ctfe-state state)
+            module-id
+            name-id)
           (tc-name-id-list-add acc name-id)))]
     [_ acc]))
 
 (define (macro-collect-surface-decl-names
+  [state : TcMacroState]
   [decls : cload.CompilerLoadSurfaceDeclList]
   [acc : TcNameIdList]) : TcNameIdList
   (let
@@ -88404,12 +90309,14 @@
           (set!
             out
             (macro-collect-surface-decl-name
+              state
               (cload.compiler-load-surface-decl-list-at decls index)
               out))
           (set! index (+ index 1))))
       out)))
 
 (define (macro-collect-surface-summary-macro-names
+  [state : TcMacroState]
   [summaries : cload.CompilerLoadSurfaceSummaryList]
   [acc : TcNameIdList]) : TcNameIdList
   (let
@@ -88423,6 +90330,7 @@
           (set!
             out
             (macro-collect-surface-decl-names
+              state
               (__tl-project-field
                 (cload.compiler-load-surface-summary-list-at summaries index)
                 decls)
@@ -88430,50 +90338,89 @@
           (set! index (+ index 1))))
       out)))
 
-(define (macro-collect-visible-macro-names [decls : ast.AstDeclList]) : TcNameIdList
+(define (macro-collect-visible-macro-names
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : TcNameIdList
   (macro-collect-surface-summary-macro-names
+    state
     (cload.compiler-load-surface-summaries)
-    (macro-collect-macro-names decls (TcNameIdList.Nil))))
+    (macro-collect-macro-names state decls (TcNameIdList.Nil))))
 
 (define (macro-name-set-add-all
+  [state : TcMacroState]
   [names : TcNameIdList]
   [set : (&mut set tc_i64_i64_map.Map)]) : unit
   (let
     [cursor : TcNameIdList names]
     (while (not (tc-name-id-list-empty? cursor))
       (begin
+        (if (tc_i64_i64_map.needs-grow? set)
+          (let
+            [previous : i64 (arena.tl_arena_current)]
+            [owner : i64 (tc-macro-state-owner-arena state)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set
+                  (tc-type-env-store-owner-current-head owner)))
+              (tc_i64_i64_map.grow! set)
+              (tc-type-env-store-restore-after-owner-alloc! previous owner)))
+          unit)
         (tc_i64_i64_map.insert-ref! set (tc-name-id-list-head cursor) 1)
         (set! cursor (tc-name-id-list-rest cursor))))))
 
-(define (macro-name-set-from-list [names : TcNameIdList]) : tc_i64_i64_map.Map
-  (let
-    [set : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 128)]
-    (begin
-      (macro-name-set-add-all names (&mut set))
-      set)))
+(define (macro-name-set-rebuild!
+  [state : TcMacroState]
+  [names : TcNameIdList]
+  [set : (&mut set tc_i64_i64_map.Map)]) : unit
+  (begin
+    (tc_i64_i64_map.clear-ref! set)
+    (macro-name-set-add-all state names set)))
 
-(define (macro-ctfe-visible-name-set-add-all [names : TcNameIdList]) : unit
+(define (macro-ctfe-visible-name-set-add-all
+  [state : TcMacroState]
+  [names : TcNameIdList]) : unit
   (let
     [cursor : TcNameIdList names]
     (while (not (tc-name-id-list-empty? cursor))
       (begin
-        (ctfe_support.ctfe-visible-macro-name-add!
+        (ctfe_support.ctfe-visible-macro-name-add-for-state!
+          (tc-macro-ctfe-state state)
           (tc-name-id-list-head cursor))
         (set! cursor (tc-name-id-list-rest cursor))))))
 
-(define (macro-expand-set-macro-names! [names : TcNameIdList]) : unit
-  (begin
-    (set! macro-expand-macro-name-set (macro-name-set-from-list names))
-    (ctfe_support.ctfe-visible-macro-names-reset!)
-    (macro-ctfe-visible-name-set-add-all names)))
+(define (macro-expand-set-macro-names!
+  [state : TcMacroState]
+  [names : TcNameIdList]) : unit
+  (let
+    [set : tc_i64_i64_map.Map
+      (tc-macro-walk-field state macro-expand-macro-name-set)]
+    (begin
+      (macro-name-set-rebuild! state names (&mut set))
+      (tc-macro-walk-set! state macro-expand-macro-name-set set)
+      (ctfe_support.ctfe-visible-macro-names-reset-for-state!
+        (tc-macro-ctfe-state state))
+      (macro-ctfe-visible-name-set-add-all state names))))
 
-(define (macro-expand-set-expr-type-macro-names! [names : TcNameIdList]) : unit
-  (set! macro-expand-expr-type-macro-name-set (macro-name-set-from-list names)))
+(define (macro-expand-set-expr-type-macro-names!
+  [state : TcMacroState]
+  [names : TcNameIdList]) : unit
+  (let
+    [set : tc_i64_i64_map.Map
+      (tc-macro-walk-field state macro-expand-expr-type-macro-name-set)]
+    (begin
+      (macro-name-set-rebuild! state names (&mut set))
+      (tc-macro-walk-set! state macro-expand-expr-type-macro-name-set set))))
 
-(define (macro-expand-expr-type-macro? [module-id : i64] [name-id : i64]) : bool
-  (tc_i64_i64_map.contains?
-    (& macro-expand-expr-type-macro-name-set)
-    (csym.compiler-symbol-module-key-id-by-id module-id name-id)))
+(define (macro-expand-expr-type-macro?
+  [state : TcMacroState]
+  [module-id : i64]
+  [name-id : i64]) : bool
+  (let
+    [names : tc_i64_i64_map.Map
+      (tc-macro-walk-field state macro-expand-expr-type-macro-name-set)]
+    (tc_i64_i64_map.contains?
+      (& names)
+      (csym.compiler-symbol-module-key-id-by-id module-id name-id))))
 
 (define (macro-surface-decl-macro-in-module?
   [decl : cload.CompilerLoadSurfaceDecl]
@@ -88576,47 +90523,136 @@
   (Miss)
   (Hit MacroMaybeDecl))
 
-(define macro-surface-call-decl-cache-capacity : i64
-  8192)
-(define macro-surface-call-decl-cache-module-keys : (__tl_dyn-array i64)
-  (array.make-array i64 8192))
-(define macro-surface-call-decl-cache-base-keys : (__tl_dyn-array i64)
-  (array.make-array i64 8192))
-(define macro-surface-call-decl-cache-values : (__tl_dyn-array MacroMaybeDecl)
-  (array.make-array MacroMaybeDecl 8192))
-(define macro-surface-call-decl-cache-count : i64
-  0)
-(define macro-surface-call-decl-cache-generation : i64
-  -1)
-(define macro-surface-call-decl-cache-ready : bool
-  false)
+(defstruct TcMacroSurfaceCallStateData
+  (capacity i64)
+  (module-keys (__tl_dyn-array i64))
+  (base-keys (__tl_dyn-array i64))
+  (values (__tl_dyn-array MacroMaybeDecl))
+  (count i64)
+  (owner-table-id i64)
+  (owner-reset-generation i64)
+  (ready bool))
 
-(define (macro-surface-call-decl-cache-reset!) : unit
-  (set! macro-surface-call-decl-cache-ready false))
+(define (tc-macro-surface-call-state-new) : TcMacroSurfaceCallStateData
+  (TcMacroSurfaceCallStateData
+    8192
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array MacroMaybeDecl 0)
+    0
+    -1
+    -1
+    false))
 
-(define (macro-surface-call-decl-cache-ensure!) : unit
-  (if (if macro-surface-call-decl-cache-ready
-    (= macro-surface-call-decl-cache-generation (ci.intern-generation))
-    false)
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (while (< i macro-surface-call-decl-cache-capacity)
-          (begin
-            (set! (array-ref macro-surface-call-decl-cache-module-keys i) 0)
-            (set! i (+ i 1))))
-        (set! macro-surface-call-decl-cache-count 0)
-        (set! macro-surface-call-decl-cache-generation (ci.intern-generation))
-        (set! macro-surface-call-decl-cache-ready true)))))
+(define (tc-macro-surface-call-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-surface-call)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroSurfaceCallStateData)
+          (array.make-array TcMacroSurfaceCallStateData 1)]
+        [_init : unit
+          (set! (array-ref cell 0) (tc-macro-surface-call-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr TcMacroSurfaceCallStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-surface-call
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-surface-call-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    6
+    tc-macro-surface-call-state-address-initialize))
+
+(define (tc-macro-surface-call-state-data [state : TcMacroState]) : TcMacroSurfaceCallStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-surface-call-state-address state) : u64)
+        : (Ptr TcMacroSurfaceCallStateData)))))
+
+(define (tc-macro-surface-call-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroSurfaceCallStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-surface-call-state-address state) : u64)
+        : (MutPtr TcMacroSurfaceCallStateData))
+      data)))
+
+(define (macro-surface-call-decl-cache-reset! [state : TcMacroState]) : unit
+  (let
+    [cache : TcMacroSurfaceCallStateData
+      (tc-macro-surface-call-state-data state)]
+    (begin
+      (set! cache.ready false)
+      (tc-macro-surface-call-state-data-set! state cache))))
+
+(define (macro-surface-call-decl-cache-ensure! [state : TcMacroState]) : unit
+  (let
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    [cache : TcMacroSurfaceCallStateData
+      (tc-macro-surface-call-state-data state)]
+    (if (and
+      cache.ready
+      (= cache.owner-table-id table-id)
+      (= cache.owner-reset-generation reset-generation))
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [i : i64 0]
+        (begin
+          (if (= (array.length cache.module-keys) 0)
+            (begin
+              (set! cache.module-keys (array.make-array i64 cache.capacity))
+              (set! cache.base-keys (array.make-array i64 cache.capacity))
+              (set!
+                cache.values
+                (array.make-array MacroMaybeDecl cache.capacity)))
+            unit)
+          (while (< i cache.capacity)
+            (begin
+              (set! (array-ref cache.module-keys i) 0)
+              (set! i (+ i 1))))
+          (set! cache.count 0)
+          (set! cache.owner-table-id table-id)
+          (set! cache.owner-reset-generation reset-generation)
+          (set! cache.ready true)
+          (tc-macro-surface-call-state-data-set! state cache)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
 
 (define (macro-surface-call-decl-cache-bucket [module-id : i64] [base-id : i64]) : i64
-  (bit-and
-    (+ (* module-id 2654435761) (* base-id 40503))
-    (- macro-surface-call-decl-cache-capacity 1)))
+  (bit-and (+ (* module-id 2654435761) (* base-id 40503)) 8191))
 
-(define (macro-surface-call-decl-cache-get [module-id : i64] [base-id : i64]) : MacroSurfaceCallDeclCacheLookup
+(define (macro-surface-call-decl-cache-get
+  [state : TcMacroState]
+  [module-id : i64]
+  [base-id : i64]) : MacroSurfaceCallDeclCacheLookup
   (let
+    [cache : TcMacroSurfaceCallStateData
+      (tc-macro-surface-call-state-data state)]
     [cursor : i64 (macro-surface-call-decl-cache-bucket module-id base-id)]
     [module-key : i64 (+ module-id 1)]
     [base-key : i64 (+ base-id 1)]
@@ -88627,88 +90663,64 @@
     (begin
       (while (if done
         false
-        (< steps macro-surface-call-decl-cache-capacity))
+        (< steps cache.capacity))
         (let
-          [slot : i64
-            (array-ref macro-surface-call-decl-cache-module-keys cursor)]
+          [slot : i64 (array-ref cache.module-keys cursor)]
           (if (= slot 0)
             (set! done true)
             (if (and
               (= slot module-key)
-              (=
-                (array-ref macro-surface-call-decl-cache-base-keys cursor)
-                base-key))
+              (= (array-ref cache.base-keys cursor) base-key))
               (begin
                 (set!
                   out
                   (MacroSurfaceCallDeclCacheLookup.Hit
-                    (tc-global-array-element-shared-view
-                      macro-surface-call-decl-cache-values
-                      cursor)))
+                    (tc-global-array-element-shared-view cache.values cursor)))
                 (set! done true))
               (begin
-                (set!
-                  cursor
-                  (bit-and
-                    (+ cursor 1)
-                    (- macro-surface-call-decl-cache-capacity 1)))
+                (set! cursor (bit-and (+ cursor 1) (- cache.capacity 1)))
                 (set! steps (+ steps 1)))))))
       out)))
 
 (define (macro-surface-call-decl-cache-put!
+  [state : TcMacroState]
   [module-id : i64]
   [base-id : i64]
   [value : MacroMaybeDecl]) : unit
-  (if (>=
-    (* macro-surface-call-decl-cache-count 2)
-    macro-surface-call-decl-cache-capacity)
-    unit
-    (let
-      [cursor : i64 (macro-surface-call-decl-cache-bucket module-id base-id)]
-      [module-key : i64 (+ module-id 1)]
-      [base-key : i64 (+ base-id 1)]
-      [steps : i64 0]
-      [done : bool false]
-      (begin
-        (while (if done
-          false
-          (< steps macro-surface-call-decl-cache-capacity))
-          (let
-            [slot : i64
-              (array-ref macro-surface-call-decl-cache-module-keys cursor)]
-            (if (= slot 0)
-              (begin
-                (set!
-                  (array-ref macro-surface-call-decl-cache-module-keys cursor)
-                  module-key)
-                (set!
-                  (array-ref macro-surface-call-decl-cache-base-keys cursor)
-                  base-key)
-                (set!
-                  (array-ref macro-surface-call-decl-cache-values cursor)
-                  value)
-                (set!
-                  macro-surface-call-decl-cache-count
-                  (+ macro-surface-call-decl-cache-count 1))
-                (set! done true))
-              (if (and
-                (= slot module-key)
-                (=
-                  (array-ref macro-surface-call-decl-cache-base-keys cursor)
-                  base-key))
+  (let
+    [cache : TcMacroSurfaceCallStateData
+      (tc-macro-surface-call-state-data state)]
+    (if (>= (* cache.count 2) cache.capacity)
+      unit
+      (let
+        [cursor : i64 (macro-surface-call-decl-cache-bucket module-id base-id)]
+        [module-key : i64 (+ module-id 1)]
+        [base-key : i64 (+ base-id 1)]
+        [steps : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps cache.capacity))
+            (let
+              [slot : i64 (array-ref cache.module-keys cursor)]
+              (if (= slot 0)
                 (begin
-                  (set!
-                    (array-ref macro-surface-call-decl-cache-values cursor)
-                    value)
+                  (set! (array-ref cache.module-keys cursor) module-key)
+                  (set! (array-ref cache.base-keys cursor) base-key)
+                  (set! (array-ref cache.values cursor) value)
+                  (set! cache.count (+ cache.count 1))
                   (set! done true))
-                (begin
-                  (set!
-                    cursor
-                    (bit-and
-                      (+ cursor 1)
-                      (- macro-surface-call-decl-cache-capacity 1)))
-                  (set! steps (+ steps 1)))))))
-        unit))))
+                (if (and
+                  (= slot module-key)
+                  (= (array-ref cache.base-keys cursor) base-key))
+                  (begin
+                    (set! (array-ref cache.values cursor) value)
+                    (set! done true))
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) (- cache.capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          (tc-macro-surface-call-state-data-set! state cache))))))
 
 (define (macro-surface-decl-call-decl-in-module
   [decl : cload.CompilerLoadSurfaceDecl]
@@ -88799,6 +90811,7 @@
       (MacroMaybeDecl.No))))
 
 (define (macro-surface-call-decl-fill-in-module
+  [state : TcMacroState]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
   (let
@@ -88823,7 +90836,7 @@
             body)]
         [(MacroMaybeDecl.No) (MacroMaybeDecl.No)])]
     (begin
-      (macro-surface-call-decl-cache-put! target-module-id base-id result)
+      (macro-surface-call-decl-cache-put! state target-module-id base-id result)
       result)))
 
 ;; R3-P2 hardening of R3-P1's residual hazard class (its section 6.1: "a
@@ -88848,29 +90861,37 @@
 ;; untouched; only the enum cell moves. Redirected only while a generation is
 ;; live, so every non-generational caller keeps its existing owner.
 (define (macro-surface-call-decl-in-module
+  [state : TcMacroState]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
   (begin
-    (macro-surface-call-decl-cache-ensure!)
-    (match (macro-surface-call-decl-cache-get target-module-id base-id)
+    (macro-surface-call-decl-cache-ensure! state)
+    (match (macro-surface-call-decl-cache-get state target-module-id base-id)
       [(MacroSurfaceCallDeclCacheLookup.Hit cached) cached]
       [(MacroSurfaceCallDeclCacheLookup.Miss)
-        (if (not (macro-generation-any-live?))
-          (macro-surface-call-decl-fill-in-module target-module-id base-id)
+        (if (not (macro-generation-any-live? state))
+          (macro-surface-call-decl-fill-in-module
+            state
+            target-module-id
+            base-id)
           (let
             [enclosing : i64 (arena.tl_arena_current)]
-            [scratch : i64 (macro-expand-scratch-arena-get)]
+            [scratch : i64 (macro-expand-scratch-arena-get state)]
             (begin
               (unsafe
                 (arena.tl_arena_set scratch))
               (let
                 [out : MacroMaybeDecl
                   (macro-surface-call-decl-fill-in-module
+                    state
                     target-module-id
                     base-id)]
                 [scratch-head : i64 (arena.tl_arena_current)]
                 (begin
-                  (set! macro-expand-scratch-arena scratch-head)
+                  (tc-macro-walk-set!
+                    state
+                    macro-expand-scratch-arena
+                    scratch-head)
                   (unsafe
                     (arena.tl_arena_set enclosing))
                   out)))))])))
@@ -89331,50 +91352,62 @@
 (define (macro-hygiene-env-output-flat-import-flag) : i64
   4)
 
-(define (macro-hygiene-env-empty) : MacroHygieneEnv
-  (MacroHygieneEnv -1))
+(define (macro-hygiene-env-empty [state : TcMacroState]) : MacroHygieneEnv
+  (MacroHygieneEnv -1 state))
 
 (define (macro-hygiene-env-head [env : MacroHygieneEnv]) : i64
   env.head)
 
-(define (macro-hygiene-env-reset!) : unit
-  (set! macro-hygiene-env-slot-count 0))
+(define (macro-hygiene-env-reset! [state : TcMacroState]) : unit
+  (tc-macro-walk-set! state macro-hygiene-env-slot-count 0))
 
-(define (macro-hygiene-env-root-begin!) : unit
+(define (macro-hygiene-env-root-begin! [state : TcMacroState]) : unit
   (begin
     ;; Transformer evaluation can recursively expand another macro while the
     ;; caller still retains snapshot heads. Reuse slots only at the outermost
     ;; root; nested roots append until their caller has finished.
-    (if (= macro-hygiene-env-root-depth 0)
-      (macro-hygiene-env-reset!)
+    (if (= (tc-macro-walk-field state macro-hygiene-env-root-depth) 0)
+      (macro-hygiene-env-reset! state)
       unit)
-    (set! macro-hygiene-env-root-depth (+ macro-hygiene-env-root-depth 1))))
+    (tc-macro-walk-set!
+      state
+      macro-hygiene-env-root-depth
+      (+ (tc-macro-walk-field state macro-hygiene-env-root-depth) 1))))
 
-(define (macro-hygiene-env-root-finish!) : unit
-  (if (> macro-hygiene-env-root-depth 0)
-    (set! macro-hygiene-env-root-depth (- macro-hygiene-env-root-depth 1))
+(define (macro-hygiene-env-root-finish! [state : TcMacroState]) : unit
+  (if (> (tc-macro-walk-field state macro-hygiene-env-root-depth) 0)
+    (tc-macro-walk-set!
+      state
+      macro-hygiene-env-root-depth
+      (- (tc-macro-walk-field state macro-hygiene-env-root-depth) 1))
     (io.panic "typecheck: macro hygiene root depth underflow")))
 
-(define (macro-hygiene-env-storage-handle) : i64
+(define (macro-hygiene-env-storage-handle [state : TcMacroState]) : i64
   (begin
-    (if (= macro-hygiene-env-storage-arena 0)
+    (if (= (tc-macro-walk-field state macro-hygiene-env-storage-arena) 0)
       (begin
         ;; The retained slot table is small (thousands of 32-byte entries in a
         ;; self-compile), so avoid the default arena's larger virtual reservation.
-        (set! macro-hygiene-env-storage-arena (arena.tl_arena_make_small))
+        (tc-macro-walk-set!
+          state
+          macro-hygiene-env-storage-arena
+          (arena.tl_arena_make_small))
         (ast.compiler-arena-debug-protect-never-reset!
-          macro-hygiene-env-storage-arena))
+          (tc-macro-walk-field state macro-hygiene-env-storage-arena)))
       unit)
-    macro-hygiene-env-storage-arena))
+    (tc-macro-walk-field state macro-hygiene-env-storage-arena)))
 
-(define (macro-hygiene-env-storage-restore! [previous : i64] [storage : i64]) : unit
+(define (macro-hygiene-env-storage-restore!
+  [state : TcMacroState]
+  [previous : i64]
+  [storage : i64]) : unit
   (let
     [head : i64 (arena.tl_arena_current)]
     (begin
       ;; Large array growth can advance the arena to a new segment. Retain that
       ;; newest head, and keep it active when the caller was already allocating
       ;; in this owner, rather than restoring a stale pre-growth handle.
-      (set! macro-hygiene-env-storage-arena head)
+      (tc-macro-walk-set! state macro-hygiene-env-storage-arena head)
       (unsafe
         (arena.tl_arena_set
           (if (= previous storage)
@@ -89390,10 +91423,11 @@
   [src-keys : (& src-keys (__tl_dyn-array i64))]
   [src-values : (& src-values (__tl_dyn-array i64))]
   [src-parents : (& src-parents (__tl_dyn-array i64))]
+  [slot-count : i64]
   [index : i64]) : unit
   (let
     [i : i64 index]
-    (while (< i macro-hygiene-env-slot-count)
+    (while (< i slot-count)
       (begin
         (set! (array-ref dst-kinds i) (array-ref src-kinds i))
         (set! (array-ref dst-keys i) (array-ref src-keys i))
@@ -89401,134 +91435,154 @@
         (set! (array-ref dst-parents i) (array-ref src-parents i))
         (set! i (+ i 1))))))
 
-(define (macro-hygiene-env-ensure-capacity!) : unit
-  (if (< macro-hygiene-env-slot-count (array.length macro-hygiene-env-keys))
-    unit
-    (let
-      [old-capacity : i64 (array.length macro-hygiene-env-keys)]
-      [next-capacity : i64
-        (if (< old-capacity 1)
-          64
-          (* old-capacity 2))]
-      [previous-arena : i64 (arena.tl_arena_current)]
-      [storage : i64 (macro-hygiene-env-storage-handle)]
-      (begin
-        ;; Snapshots can cross every scratch rewind involved in an expansion.
-        ;; Allocate initial storage and every growth in one retained arena, then
-        ;; restore the caller's active owner.
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [next-kinds : (__tl_dyn-array i64)
-            (array.make-array i64 next-capacity)]
-          [next-keys : (__tl_dyn-array i64)
-            (array.make-array i64 next-capacity)]
-          [next-values : (__tl_dyn-array i64)
-            (array.make-array i64 next-capacity)]
-          [next-parents : (__tl_dyn-array i64)
-            (array.make-array i64 next-capacity)]
-          (begin
-            (macro-hygiene-env-grow-copy!
-              next-kinds
-              next-keys
-              next-values
-              next-parents
-              (& macro-hygiene-env-kinds)
-              (& macro-hygiene-env-keys)
-              (& macro-hygiene-env-values)
-              (& macro-hygiene-env-parents)
-              0)
-            (set! macro-hygiene-env-kinds next-kinds)
-            (set! macro-hygiene-env-keys next-keys)
-            (set! macro-hygiene-env-values next-values)
-            (set! macro-hygiene-env-parents next-parents)
-            (macro-hygiene-env-storage-restore! previous-arena storage)))))))
+(define (macro-hygiene-env-ensure-capacity! [state : TcMacroState]) : unit
+  (let
+    [slot-count : i64 (tc-macro-walk-field state macro-hygiene-env-slot-count)]
+    [old-kinds : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-kinds)]
+    [old-keys : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-keys)]
+    [old-values : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-values)]
+    [old-parents : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-parents)]
+    (if (< slot-count (array.length old-keys))
+      unit
+      (let
+        [old-capacity : i64 (array.length old-keys)]
+        [next-capacity : i64
+          (if (< old-capacity 1)
+            64
+            (* old-capacity 2))]
+        [previous-arena : i64 (arena.tl_arena_current)]
+        [storage : i64 (macro-hygiene-env-storage-handle state)]
+        (begin
+          ;; Snapshots can cross every scratch rewind involved in an expansion.
+          ;; Allocate initial storage and every growth in one retained arena, then
+          ;; restore the caller's active owner.
+          (unsafe
+            (arena.tl_arena_set storage))
+          (let
+            [next-kinds : (__tl_dyn-array i64)
+              (array.make-array i64 next-capacity)]
+            [next-keys : (__tl_dyn-array i64)
+              (array.make-array i64 next-capacity)]
+            [next-values : (__tl_dyn-array i64)
+              (array.make-array i64 next-capacity)]
+            [next-parents : (__tl_dyn-array i64)
+              (array.make-array i64 next-capacity)]
+            (begin
+              (macro-hygiene-env-grow-copy!
+                next-kinds
+                next-keys
+                next-values
+                next-parents
+                (& old-kinds)
+                (& old-keys)
+                (& old-values)
+                (& old-parents)
+                slot-count
+                0)
+              (tc-macro-walk-set! state macro-hygiene-env-kinds next-kinds)
+              (tc-macro-walk-set! state macro-hygiene-env-keys next-keys)
+              (tc-macro-walk-set! state macro-hygiene-env-values next-values)
+              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents)
+              (macro-hygiene-env-storage-restore! state previous-arena storage))))))))
 
 (define (macro-hygiene-env-push
   [kind : i64]
   [env : MacroHygieneEnv]
   [key-id : i64]
   [value-id : i64]) : MacroHygieneEnv
-  (begin
-    (macro-hygiene-env-ensure-capacity!)
-    (let
-      [index : i64 macro-hygiene-env-slot-count]
-      [stored-kind : i64
-        (if (or
-          (= kind (macro-hygiene-env-output-flat-import-kind))
-          (macro-hygiene-env-has-output-flat-import? env))
-          (bit-or kind (macro-hygiene-env-output-flat-import-flag))
-          kind)]
-      (begin
-        (set! (array-ref macro-hygiene-env-kinds index) stored-kind)
-        (set! (array-ref macro-hygiene-env-keys index) key-id)
-        (set! (array-ref macro-hygiene-env-values index) value-id)
-        (set!
-          (array-ref macro-hygiene-env-parents index)
-          (macro-hygiene-env-head env))
-        (set! macro-hygiene-env-slot-count (+ macro-hygiene-env-slot-count 1))
-        (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
-        (MacroHygieneEnv index)))))
+  (let
+    [state : TcMacroState env.state]
+    [_ensure : unit (macro-hygiene-env-ensure-capacity! state)]
+    [kinds : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-kinds)]
+    [keys : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-keys)]
+    [values : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-values)]
+    [parents : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-parents)]
+    [index : i64 (tc-macro-walk-field state macro-hygiene-env-slot-count)]
+    [stored-kind : i64
+      (if (or
+        (= kind (macro-hygiene-env-output-flat-import-kind))
+        (macro-hygiene-env-has-output-flat-import? env))
+        (bit-or kind (macro-hygiene-env-output-flat-import-flag))
+        kind)]
+    (begin
+      (set! (array-ref kinds index) stored-kind)
+      (set! (array-ref keys index) key-id)
+      (set! (array-ref values index) value-id)
+      (set! (array-ref parents index) (macro-hygiene-env-head env))
+      (tc-macro-walk-set! state macro-hygiene-env-slot-count (+ index 1))
+      (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
+      (MacroHygieneEnv index state))))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
   (let
+    [state : TcMacroState env.state]
+    [keys : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-keys)]
+    [values : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-values)]
+    [parents : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-parents)]
     [cursor : i64 (macro-hygiene-env-head env)]
-    [out : MacroMaybeHygieneName (MacroMaybeHygieneName.No)]
-    [done : bool false]
     (begin
       (cfg compile-profile (compiler-tc-macro-hygiene-note-lookup!))
-      (while (and (not done) (>= cursor 0))
+      (while (>= cursor 0)
         (begin
           (cfg compile-profile (compiler-tc-macro-hygiene-note-lookup-step!))
-          (if (= (array-ref macro-hygiene-env-keys cursor) name-id)
-            (begin
-              (set!
-                out
-                (MacroMaybeHygieneName.Some
-                  (array-ref macro-hygiene-env-values cursor)))
-              (set! done true))
-            (set! cursor (array-ref macro-hygiene-env-parents cursor)))))
-      out)))
+          (if (= (array-ref keys cursor) name-id)
+            (return (MacroMaybeHygieneName.Some (array-ref values cursor)))
+            (set! cursor (array-ref parents cursor)))))
+      (MacroMaybeHygieneName.No))))
 
 (define (macro-hygiene-env-lookup-pattern-name
   [env : MacroHygieneEnv]
   [name-id : i64]) : MacroMaybeHygieneName
   (let
+    [state : TcMacroState env.state]
+    [kinds : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-kinds)]
+    [keys : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-keys)]
+    [values : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-values)]
+    [parents : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-parents)]
     [cursor : i64 (macro-hygiene-env-head env)]
-    [out : MacroMaybeHygieneName (MacroMaybeHygieneName.No)]
-    [done : bool false]
     (begin
       (cfg compile-profile (compiler-tc-macro-hygiene-note-pattern-lookup!))
-      (while (and (not done) (>= cursor 0))
+      (while (>= cursor 0)
         (begin
           (cfg
             compile-profile
             (compiler-tc-macro-hygiene-note-pattern-lookup-step!))
           (if (and
             (=
-              (bit-and
-                (array-ref macro-hygiene-env-kinds cursor)
-                (macro-hygiene-env-kind-mask))
+              (bit-and (array-ref kinds cursor) (macro-hygiene-env-kind-mask))
               (macro-hygiene-env-pattern-name-kind))
-            (= (array-ref macro-hygiene-env-keys cursor) name-id))
-            (begin
-              (set!
-                out
-                (MacroMaybeHygieneName.Some
-                  (array-ref macro-hygiene-env-values cursor)))
-              (set! done true))
-            (set! cursor (array-ref macro-hygiene-env-parents cursor)))))
-      out)))
+            (= (array-ref keys cursor) name-id))
+            (return (MacroMaybeHygieneName.Some (array-ref values cursor)))
+            (set! cursor (array-ref parents cursor)))))
+      (MacroMaybeHygieneName.No))))
 
 (define (macro-hygiene-env-has-output-flat-import? [env : MacroHygieneEnv]) : bool
   (let
+    [state : TcMacroState env.state]
+    [kinds : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-env-kinds)]
     [head : i64 (macro-hygiene-env-head env)]
     (and
       (>= head 0)
       (not
         (=
           (bit-and
-            (array-ref macro-hygiene-env-kinds head)
+            (array-ref kinds head)
             (macro-hygiene-env-output-flat-import-flag))
           0)))))
 
@@ -90043,59 +92097,128 @@
 ;; descendant subgraph is marked shared as well: even a child with one incoming
 ;; AST edge is observed twice through a shared parent and must not retain the
 ;; hygiene environment from the first occurrence.
-(define macro-hygiene-produced-active : bool
-  false)
-(define macro-hygiene-produced-floor : i64
-  0)
-(define macro-hygiene-produced-limit : i64
-  0)
-(define macro-hygiene-produced-refcounts : (__tl_dyn-array i64)
-  (array.make-array i64 1))
+(defstruct TcMacroHygieneProducedStateData
+  (active bool)
+  (floor i64)
+  (limit i64)
+  (refcounts (__tl_dyn-array i64)))
+
+(define (tc-macro-hygiene-produced-state-new) : TcMacroHygieneProducedStateData
+  (TcMacroHygieneProducedStateData false 0 0 (array.make-array i64 0)))
+
+(define (tc-macro-hygiene-produced-state-address-initialize
+  [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-hygiene-produced)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroHygieneProducedStateData)
+          (array.make-array TcMacroHygieneProducedStateData 1)]
+        [_init : unit
+          (set! (array-ref cell 0) (tc-macro-hygiene-produced-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast
+                  (array-data cell)
+                  : (Ptr TcMacroHygieneProducedStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-hygiene-produced
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-hygiene-produced-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    7
+    tc-macro-hygiene-produced-state-address-initialize))
+
+(define (tc-macro-hygiene-produced-state-data [state : TcMacroState]) : TcMacroHygieneProducedStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-hygiene-produced-state-address state) : u64)
+        : (Ptr TcMacroHygieneProducedStateData)))))
+
+(define (tc-macro-hygiene-produced-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroHygieneProducedStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-hygiene-produced-state-address state) : u64)
+        : (MutPtr TcMacroHygieneProducedStateData))
+      data)))
 
 (define (macro-hygiene-produced-eval-start-with-pools!
+  [state : TcMacroState]
   [pools : ast.AstNodePoolContext]) : unit
-  (begin
-    (set! macro-hygiene-produced-active false)
-    (set!
-      macro-hygiene-produced-floor
-      (ast.ast-node-pool-context-expr-len pools))))
+  (let
+    [produced : TcMacroHygieneProducedStateData
+      (tc-macro-hygiene-produced-state-data state)]
+    (begin
+      (set! produced.active false)
+      (set! produced.floor (ast.ast-node-pool-context-expr-len pools))
+      (tc-macro-hygiene-produced-state-data-set! state produced))))
 
-(define (macro-hygiene-produced-eval-start! [env : ctfe_support.CtfeEnv]) : unit
+(define (macro-hygiene-produced-eval-start!
+  [state : TcMacroState]
+  [env : ctfe_support.CtfeEnv]) : unit
   (macro-hygiene-produced-eval-start-with-pools!
+    state
     (ctfe_support.ctfe-env-syntax-pool-context env)))
 
-(define (macro-hygiene-produced-refcounts-ensure! [needed : i64]) : unit
-  (if (<= needed (array.length macro-hygiene-produced-refcounts))
-    unit
-    (let
-      [capacity : i64 (array.length macro-hygiene-produced-refcounts)]
-      (begin
-        (while (< capacity needed)
-          (set! capacity (* capacity 2)))
-        (let
-          [previous-arena : i64 (arena.tl_arena_current)]
-          (begin
-            ;; The side table is reused across transformer calls and can outlive
-            ;; a per-declaration scratch reset.
-            (unsafe
-              (arena.tl_arena_set (cload.compiler-load-provenance-arena)))
-            (set!
-              macro-hygiene-produced-refcounts
-              (array.make-array i64 capacity))
-            (unsafe
-              (arena.tl_arena_set previous-arena))))))))
+(define (macro-hygiene-produced-refcounts-ensure!
+  [state : TcMacroState]
+  [needed : i64]) : unit
+  (let
+    [produced : TcMacroHygieneProducedStateData
+      (tc-macro-hygiene-produced-state-data state)]
+    (if (<= needed (array.length produced.refcounts))
+      unit
+      (let
+        [capacity : i64
+          (if (= (array.length produced.refcounts) 0)
+            1
+            (array.length produced.refcounts))]
+        (begin
+          (while (< capacity needed)
+            (set! capacity (* capacity 2)))
+          (let
+            [previous-arena : i64 (arena.tl_arena_current)]
+            [owner : i64 (tc-macro-state-owner-arena state)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set
+                  (tc-type-env-store-owner-current-head owner)))
+              (set! produced.refcounts (array.make-array i64 capacity))
+              (tc-macro-hygiene-produced-state-data-set! state produced)
+              (tc-type-env-store-restore-after-owner-alloc!
+                previous-arena
+                owner))))))))
 
 (define (macro-hygiene-produced-note-id!
+  [produced : TcMacroHygieneProducedStateData]
   [expr-bases : i64]
   [expr-id : i64]
   [shared-path? : bool]) : unit
-  (if (or
-    (< expr-id macro-hygiene-produced-floor)
-    (>= expr-id macro-hygiene-produced-limit))
+  (if (or (< expr-id produced.floor) (>= expr-id produced.limit))
     unit
     (let
-      [index : i64 (- expr-id macro-hygiene-produced-floor)]
-      [old : i64 (array-ref macro-hygiene-produced-refcounts index)]
+      [index : i64 (- expr-id produced.floor)]
+      [old : i64 (array-ref produced.refcounts index)]
       [next : i64
         (if shared-path?
           2
@@ -90105,13 +92228,15 @@
       (if (= old next)
         unit
         (begin
-          (set! (array-ref macro-hygiene-produced-refcounts index) next)
+          (set! (array-ref produced.refcounts index) next)
           (macro-hygiene-produced-note-children!
+            produced
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases expr-id)
             (= next 2)))))))
 
 (define (macro-hygiene-produced-note-expr-list!
+  [produced : TcMacroHygieneProducedStateData]
   [expr-bases : i64]
   [exprs : ast.AstExprList]
   [shared-path? : bool]) : unit
@@ -90120,12 +92245,14 @@
     (while (< index exprs.len)
       (begin
         (macro-hygiene-produced-note-id!
+          produced
           expr-bases
           (ast.ast-expr-list-get (& exprs) index 0)
           shared-path?)
         (set! index (+ index 1))))))
 
 (define (macro-hygiene-produced-note-let-bindings!
+  [produced : TcMacroHygieneProducedStateData]
   [expr-bases : i64]
   [bindings : ast.AstLetBindingList]
   [shared-path? : bool]) : unit
@@ -90138,10 +92265,15 @@
           index
           (ast.ast-let-binding-fallback))
           [(ast.AstLetBinding.Binding _ _ init-box)
-            (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)])
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              init-box
+              shared-path?)])
         (set! index (+ index 1))))))
 
 (define (macro-hygiene-produced-note-arms!
+  [produced : TcMacroHygieneProducedStateData]
   [expr-bases : i64]
   [arms : ast.AstMatchArmList]
   [shared-path? : bool]) : unit
@@ -90154,10 +92286,15 @@
           index
           (ast.ast-match-arm-fallback))
           [(ast.AstMatchArm.Arm _ body-box)
-            (macro-hygiene-produced-note-id! expr-bases body-box shared-path?)])
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              body-box
+              shared-path?)])
         (set! index (+ index 1))))))
 
 (define (macro-hygiene-produced-note-resource-bindings!
+  [produced : TcMacroHygieneProducedStateData]
   [expr-bases : i64]
   [bindings : ast.AstResourceBindingList]
   [shared-path? : bool]) : unit
@@ -90171,109 +92308,248 @@
           (ast.ast-resource-binding-fallback))
           [(ast.AstResourceBinding.Binding _ init-box cleanup-box _)
             (begin
-              (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)
               (macro-hygiene-produced-note-id!
+                produced
+                expr-bases
+                init-box
+                shared-path?)
+              (macro-hygiene-produced-note-id!
+                produced
                 expr-bases
                 cleanup-box
                 shared-path?))])
         (set! index (+ index 1))))))
 
 (define (macro-hygiene-produced-note-children!
+  [produced : TcMacroHygieneProducedStateData]
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [shared-path? : bool]) : unit
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     ;; A provenance marker encloses syntax that was already hygienized by the
     ;; expansion which produced it, or caller syntax intentionally captured by
     ;; a later expansion.  It is an ownership boundary for this hygiene pass.
     [(ast.AstExpr.MacroExpansion _ _ _) unit]
     [(ast.AstExpr.Binary _ left-box right-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases left-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases right-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          left-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          right-box
+          shared-path?))]
     [(ast.AstExpr.Unary _ inner-box)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     [(ast.AstExpr.Call func-box args)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases func-box shared-path?)
-        (macro-hygiene-produced-note-expr-list! expr-bases args shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          func-box
+          shared-path?)
+        (macro-hygiene-produced-note-expr-list!
+          produced
+          expr-bases
+          args
+          shared-path?))]
     [(ast.AstExpr.BracketClause items)
-      (macro-hygiene-produced-note-expr-list! expr-bases items shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        items
+        shared-path?)]
     [(ast.AstExpr.If cond-box then-box else-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases cond-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases then-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases else-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          cond-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          then-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          else-box
+          shared-path?))]
     [(ast.AstExpr.Let payload)
       (match (__tl-box-place payload)
         [(ast.AstLet.Let bindings body-box)
           (begin
             (macro-hygiene-produced-note-let-bindings!
+              produced
               expr-bases
               bindings
               shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))])]
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              body-box
+              shared-path?))])]
     [(ast.AstExpr.Lambda payload)
       (match (__tl-box-place payload)
         [(ast.AstLambda.Lambda _ _ body-box)
-          (macro-hygiene-produced-note-id! expr-bases body-box shared-path?)])]
+          (macro-hygiene-produced-note-id!
+            produced
+            expr-bases
+            body-box
+            shared-path?)])]
     [(ast.AstExpr.Tuple exprs)
-      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        exprs
+        shared-path?)]
     [(ast.AstExpr.TupleRef tuple-box _)
-      (macro-hygiene-produced-note-id! expr-bases tuple-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        tuple-box
+        shared-path?)]
     [(ast.AstExpr.Array exprs)
-      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        exprs
+        shared-path?)]
     [(ast.AstExpr.DynArray exprs)
-      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        exprs
+        shared-path?)]
     [(ast.AstExpr.MakeArray _ len-box)
-      (macro-hygiene-produced-note-id! expr-bases len-box shared-path?)]
+      (macro-hygiene-produced-note-id! produced expr-bases len-box shared-path?)]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          array-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          index-box
+          shared-path?))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          array-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          index-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          value-box
+          shared-path?))]
     [(ast.AstExpr.ArrayTake array-box live-box index-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases live-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          array-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          live-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          index-box
+          shared-path?))]
     [(ast.AstExpr.FixedArrayTake array-box index-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          array-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          index-box
+          shared-path?))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          array-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          value-box
+          shared-path?))]
     [(ast.AstExpr.StringRef string-box index-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases string-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          string-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          index-box
+          shared-path?))]
     [(ast.AstExpr.While cond-box body-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases cond-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          cond-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          body-box
+          shared-path?))]
     [(ast.AstExpr.ForOwnedState payload)
       (begin
         (macro-hygiene-produced-note-id!
+          produced
           expr-bases
           (ast.ast-for-owned-state-source-name (& payload))
           shared-path?)
         (macro-hygiene-produced-note-id!
+          produced
           expr-bases
           (ast.ast-for-owned-state-index-name (& payload))
           shared-path?)
         (macro-hygiene-produced-note-id!
+          produced
           expr-bases
           (ast.ast-for-owned-state-source (& payload))
           shared-path?)
         (macro-hygiene-produced-note-id!
+          produced
           expr-bases
           (ast.ast-for-owned-state-body (& payload))
           shared-path?))]
@@ -90282,67 +92558,130 @@
         [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
         (begin
           (macro-hygiene-produced-note-id!
+            produced
             expr-bases
             (ast.ast-for-owned-step-source-name (& payload))
             shared-path?)
           (macro-hygiene-produced-note-id!
+            produced
             expr-bases
             (ast.ast-for-owned-step-index-name (& payload))
             shared-path?)
           (macro-hygiene-produced-note-id!
+            produced
             expr-bases
             (ast.ast-for-owned-step-binding-name (& payload))
             shared-path?)
           (when
             (>= expected-type 0)
             (macro-hygiene-produced-note-id!
+              produced
               expr-bases
               expected-type
               shared-path?))
           (macro-hygiene-produced-note-id!
+            produced
             expr-bases
             (ast.ast-for-owned-step-done-name (& payload))
             shared-path?)
           (macro-hygiene-produced-note-id!
+            produced
             expr-bases
             (ast.ast-for-owned-step-body (& payload))
             shared-path?)))]
     [(ast.AstExpr.Begin exprs)
-      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        exprs
+        shared-path?)]
     [(ast.AstExpr.Unsafe exprs)
-      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        exprs
+        shared-path?)]
     [(ast.AstExpr.Set _ value-box)
-      (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        value-box
+        shared-path?)]
     [(ast.AstExpr.Ann inner-box _)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     [(ast.AstExpr.Cast inner-box _)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     [(ast.AstExpr.Borrow _ _ place-box)
-      (macro-hygiene-produced-note-id! expr-bases place-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        place-box
+        shared-path?)]
     [(ast.AstExpr.Match payload)
       (match (__tl-box-place payload)
         [(ast.AstMatch.Match scrutinee-box arms)
           (begin
             (macro-hygiene-produced-note-id!
+              produced
               expr-bases
               scrutinee-box
               shared-path?)
-            (macro-hygiene-produced-note-arms! expr-bases arms shared-path?))])]
+            (macro-hygiene-produced-note-arms!
+              produced
+              expr-bases
+              arms
+              shared-path?))])]
     [(ast.AstExpr.Foreach payload)
       (match (__tl-box-place payload)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
           (begin
-            (macro-hygiene-produced-note-id! expr-bases start-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases end-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))])]
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              start-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              end-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              body-box
+              shared-path?))])]
     [(ast.AstExpr.SpmdReduce payload)
       (match (__tl-box-place payload)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (begin
-            (macro-hygiene-produced-note-id! expr-bases start-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases end-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))])]
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              start-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              end-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              init-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              value-box
+              shared-path?))])]
     [(ast.AstExpr.SpmdScan payload)
       (match (__tl-box-place payload)
         [(ast.AstSpmdScan.Scan
@@ -90357,146 +92696,339 @@
             value-box
             body-box)
           (begin
-            (macro-hygiene-produced-note-id! expr-bases start-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases end-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)
-            (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))])]
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              start-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              end-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              init-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              value-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              produced
+              expr-bases
+              body-box
+              shared-path?))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases lane-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          value-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          lane-box
+          shared-path?))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases lane-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          value-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          lane-box
+          shared-path?))]
     [(ast.AstExpr.StructGet receiver-box _)
-      (macro-hygiene-produced-note-id! expr-bases receiver-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        receiver-box
+        shared-path?)]
     [(ast.AstExpr.StructSet receiver-box _ value-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases receiver-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          receiver-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          value-box
+          shared-path?))]
     [(ast.AstExpr.WithRegion _ body)
-      (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        body
+        shared-path?)]
     [(ast.AstExpr.WithEscape scratch-box body)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases scratch-box shared-path?)
-        (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          scratch-box
+          shared-path?)
+        (macro-hygiene-produced-note-expr-list!
+          produced
+          expr-bases
+          body
+          shared-path?))]
     [(ast.AstExpr.WithScratch body)
-      (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        body
+        shared-path?)]
     [(ast.AstExpr.InArena arena-box body)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases arena-box shared-path?)
-        (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          arena-box
+          shared-path?)
+        (macro-hygiene-produced-note-expr-list!
+          produced
+          expr-bases
+          body
+          shared-path?))]
     [(ast.AstExpr.WithResource payload)
       (match (__tl-box-place payload)
         [(ast.AstWithResource.WithResource bindings body)
           (begin
             (macro-hygiene-produced-note-resource-bindings!
+              produced
               expr-bases
               bindings
               shared-path?)
             (macro-hygiene-produced-note-expr-list!
+              produced
               expr-bases
               body
               shared-path?))])]
     [(ast.AstExpr.Box inner-box)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     [(ast.AstExpr.BoxGet inner-box)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     [(ast.AstExpr.BoxTake inner-box)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     [(ast.AstExpr.BoxSet inner-box value-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          inner-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          value-box
+          shared-path?))]
     [(ast.AstExpr.Comptime inner-box)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     ;; Quote payloads intentionally stay opaque to this hygiene walker.
     [(ast.AstExpr.Try inner-box)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     [(ast.AstExpr.Return inner-box)
-      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        inner-box
+        shared-path?)]
     [(ast.AstExpr.PtrNullCheck ptr-box)
-      (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)]
+      (macro-hygiene-produced-note-id! produced expr-bases ptr-box shared-path?)]
     [(ast.AstExpr.PtrAddrOf place-box)
-      (macro-hygiene-produced-note-id! expr-bases place-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        place-box
+        shared-path?)]
     [(ast.AstExpr.PtrRead ptr-box)
-      (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)]
+      (macro-hygiene-produced-note-id! produced expr-bases ptr-box shared-path?)]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          ptr-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          value-box
+          shared-path?))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases offset-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          ptr-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          offset-box
+          shared-path?))]
     [(ast.AstExpr.PtrCast ptr-box _)
-      (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)]
+      (macro-hygiene-produced-note-id! produced expr-bases ptr-box shared-path?)]
     [(ast.AstExpr.PtrToInt ptr-box)
-      (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)]
+      (macro-hygiene-produced-note-id! produced expr-bases ptr-box shared-path?)]
     [(ast.AstExpr.IntToPtr value-box _)
-      (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        value-box
+        shared-path?)]
     [(ast.AstExpr.StringData string-box)
-      (macro-hygiene-produced-note-id! expr-bases string-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        string-box
+        shared-path?)]
     [(ast.AstExpr.StringFromBytes ptr-box len-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases len-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          ptr-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          len-box
+          shared-path?))]
     [(ast.AstExpr.ArrayData array-box)
-      (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        array-box
+        shared-path?)]
     [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases leaf-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases subleaf-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          leaf-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          subleaf-box
+          shared-path?))]
     [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases leaf-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases subleaf-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          leaf-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          subleaf-box
+          shared-path?))]
     [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases leaf-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases subleaf-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          leaf-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          subleaf-box
+          shared-path?))]
     [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
       (begin
-        (macro-hygiene-produced-note-id! expr-bases leaf-box shared-path?)
-        (macro-hygiene-produced-note-id! expr-bases subleaf-box shared-path?))]
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          leaf-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          subleaf-box
+          shared-path?))]
     [(ast.AstExpr.Xgetbv index-box)
-      (macro-hygiene-produced-note-id! expr-bases index-box shared-path?)]
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        index-box
+        shared-path?)]
     [(ast.AstExpr.Syscall args)
-      (macro-hygiene-produced-note-expr-list! expr-bases args shared-path?)]
+      (macro-hygiene-produced-note-expr-list!
+        produced
+        expr-bases
+        args
+        shared-path?)]
     [_ unit]))
 
-(define (macro-hygiene-produced-prepare! [expr-bases : i64] [root-id : i64]) : unit
-  (begin
-    (set! macro-hygiene-produced-limit (ast.ast-node-pool-len))
-    (if (or
-      (< macro-hygiene-produced-floor 0)
-      (> macro-hygiene-produced-floor macro-hygiene-produced-limit))
-      (set! macro-hygiene-produced-active false)
-      (let
-        [needed : i64
-          (- macro-hygiene-produced-limit macro-hygiene-produced-floor)]
-        [index : i64 0]
+(define (macro-hygiene-produced-prepare!
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [root-id : i64]) : unit
+  (let
+    [produced : TcMacroHygieneProducedStateData
+      (tc-macro-hygiene-produced-state-data state)]
+    (begin
+      (set! produced.limit (ast.ast-node-pool-len))
+      (tc-macro-hygiene-produced-state-data-set! state produced)
+      (if (or (< produced.floor 0) (> produced.floor produced.limit))
         (begin
-          (macro-hygiene-produced-refcounts-ensure! needed)
-          (while (< index needed)
-            (begin
-              (set! (array-ref macro-hygiene-produced-refcounts index) 0)
-              (set! index (+ index 1))))
-          (set! macro-hygiene-produced-active true)
-          (macro-hygiene-produced-note-id! expr-bases root-id false))))))
+          (set! produced.active false)
+          (tc-macro-hygiene-produced-state-data-set! state produced))
+        (let
+          [needed : i64 (- produced.limit produced.floor)]
+          [index : i64 0]
+          (begin
+            (macro-hygiene-produced-refcounts-ensure! state needed)
+            (set! produced (tc-macro-hygiene-produced-state-data state))
+            (while (< index needed)
+              (begin
+                (set! (array-ref produced.refcounts index) 0)
+                (set! index (+ index 1))))
+            (set! produced.active true)
+            (tc-macro-hygiene-produced-state-data-set! state produced)
+            (macro-hygiene-produced-note-id! produced expr-bases root-id false)))))))
 
-(define (macro-hygiene-produced-owned? [expr-id : i64]) : bool
-  (and
-    macro-hygiene-produced-active
-    (>= expr-id macro-hygiene-produced-floor)
-    (< expr-id macro-hygiene-produced-limit)
-    (=
-      (array-ref
-        macro-hygiene-produced-refcounts
-        (- expr-id macro-hygiene-produced-floor))
-      1)))
+(define (macro-hygiene-produced-owned? [state : TcMacroState] [expr-id : i64]) : bool
+  (let
+    [produced : TcMacroHygieneProducedStateData
+      (tc-macro-hygiene-produced-state-data state)]
+    (and
+      produced.active
+      (>= expr-id produced.floor)
+      (< expr-id produced.limit)
+      (= (array-ref produced.refcounts (- expr-id produced.floor)) 1))))
 
 (define (macro-hygiene-expr-list
   [expr-bases : i64]
@@ -91090,7 +93622,7 @@
         (macro-hygiene-expr-inner expr-bases expr env macro-name depth)]
       [reuse? : bool
         (and
-          (macro-hygiene-produced-owned? expr-id)
+          (macro-hygiene-produced-owned? env.state expr-id)
           (= (+ result 1) (ast.ast-node-pool-len)))]
       [out : i64
         (if reuse?
@@ -91124,12 +93656,15 @@
   [depth : i64]) : i64
   (begin
     (cfg compile-profile (compiler-tc-walk-hygiene-start!))
-    (macro-hygiene-produced-prepare! expr-bases expr-id)
+    (macro-hygiene-produced-prepare! env.state expr-bases expr-id)
     (let
       [result : i64
         (macro-hygiene-expr expr-bases expr-id env macro-name depth)]
+      [produced : TcMacroHygieneProducedStateData
+        (tc-macro-hygiene-produced-state-data env.state)]
       (begin
-        (set! macro-hygiene-produced-active false)
+        (set! produced.active false)
+        (tc-macro-hygiene-produced-state-data-set! env.state produced)
         (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
         result))))
 
@@ -91914,98 +94449,185 @@
 ;; prevents every later query from rescanning that module while still allowing
 ;; a subsequently materialized lazy-import stub to replace it. Inserts stop at
 ;; half load -- only memoization, never correctness, degrades.
-(define macro-alias-cache-capacity : i64
-  16384)
-(define macro-alias-cache-module-keys : (__tl_dyn-array i64)
-  (array.make-array i64 16384))
-(define macro-alias-cache-qualifier-keys : (__tl_dyn-array i64)
-  (array.make-array i64 16384))
-(define macro-alias-cache-values : (__tl_dyn-array i64)
-  (array.make-array i64 16384))
-(define macro-alias-cache-count : i64
-  0)
-(define macro-alias-cache-generation : i64
-  -1)
-(define macro-alias-cache-ready : bool
-  false)
+(defstruct TcMacroImportIndexStateData
+  (alias-module-keys (__tl_dyn-array i64))
+  (alias-qualifier-keys (__tl_dyn-array i64))
+  (alias-values (__tl_dyn-array i64))
+  (unqualified-module-keys (__tl_dyn-array i64))
+  (unqualified-name-keys (__tl_dyn-array i64))
+  (unqualified-values (__tl_dyn-array i64))
+  (flat-module-keys (__tl_dyn-array i64))
+  (flat-values (__tl_dyn-array MacroFlatImportTargetList))
+  ;; Scalar slots, kept in shared storage so nested index builders can update
+  ;; them without a process-global selector or copying the state carrier.
+  ;; 0..10 alias, 11..14 unqualified, 15..22 flat-import targets.
+  (control (__tl_dyn-array i64)))
 
-;; Eager-index state (see macro-alias-cache-build!): built records that the
-;; one-pass index ran for this generation; complete records that every aliased
-;; import fit under the half-load insert cap, making a table miss a definitive
-;; "no alias import" answer.
-(define macro-alias-cache-built : bool
-  false)
-(define macro-alias-cache-built-segmented : bool
-  false)
-(define macro-alias-cache-complete : bool
-  false)
-(define macro-alias-cache-built-decl-count : i64
-  -1)
-(define macro-alias-cache-built-decl-offset : i64
-  -1)
-(define macro-alias-cache-built-decl-slots-addr : i64
-  -1)
-(define macro-alias-cache-built-end-module-id : i64
-  -1)
-(define macro-unqualified-import-cache-capacity : i64
-  65536)
-(define macro-unqualified-import-cache-count : i64
-  0)
-(define macro-unqualified-import-cache-generation : i64
-  -1)
-(define macro-unqualified-import-cache-ready : bool
-  false)
-(define macro-flat-import-target-cache-capacity : i64
-  1024)
-(define macro-flat-import-target-cache-module-keys : (__tl_dyn-array i64)
-  (array.make-array i64 1024))
-(define macro-flat-import-target-cache-values : (__tl_dyn-array
-    MacroFlatImportTargetList)
-  (array.make-array MacroFlatImportTargetList 1024))
-(define macro-flat-import-target-cache-count : i64
-  0)
-(define macro-flat-import-target-cache-generation : i64
-  -1)
-(define macro-flat-import-target-cache-ready : bool
-  false)
+(define (tc-macro-import-index-state-new) : TcMacroImportIndexStateData
+  (let
+    [control : (__tl_dyn-array i64) (array.make-array i64 23)]
+    (begin
+      (set! (array-ref control 1) -1)
+      (set! (array-ref control 2) -1)
+      (set! (array-ref control 7) -1)
+      (set! (array-ref control 8) -1)
+      (set! (array-ref control 9) -1)
+      (set! (array-ref control 10) -1)
+      (set! (array-ref control 12) -1)
+      (set! (array-ref control 13) -1)
+      (set! (array-ref control 16) -1)
+      (set! (array-ref control 17) -1)
+      (set! (array-ref control 21) -1)
+      (set! (array-ref control 22) -1)
+      (TcMacroImportIndexStateData
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array MacroFlatImportTargetList 0)
+        control))))
 
-;; Eager-index state: built records the one-pass build ran this generation;
-;; complete records every module fit under the half-load insert cap, making a
-;; table miss a definitive "no flat imports" answer.
-(define macro-flat-import-target-cache-built : bool
-  false)
-(define macro-flat-import-target-cache-complete : bool
-  false)
-(define macro-flat-import-target-cache-built-decl-count : i64
-  -1)
-(define macro-flat-import-target-cache-built-decl-offset : i64
-  -1)
-
-(define (macro-unqualified-import-cache-storage-ensure!) : unit
-  (if (=
-    (array-length
-      (__tl-project-field
-        tc-lazy-global-table-state
-        macro-unqualified-import-cache-module-keys))
-    macro-unqualified-import-cache-capacity)
-    unit
-    (let
-      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
-      (in-arena
-        owner
+(define (tc-macro-import-index-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-import-index)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroImportIndexStateData)
+          (array.make-array TcMacroImportIndexStateData 1)]
+        [_init : unit
+          (set! (array-ref cell 0) (tc-macro-import-index-state-new))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr TcMacroImportIndexStateData))))
+            : i64)]
         (begin
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            macro-unqualified-import-cache-module-keys
-            (array.make-array i64 macro-unqualified-import-cache-capacity))
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            macro-unqualified-import-cache-name-keys
-            (array.make-array i64 macro-unqualified-import-cache-capacity))
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            macro-unqualified-import-cache-values
-            (array.make-array i64 macro-unqualified-import-cache-capacity)))))))
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-import-index
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-import-index-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    8
+    tc-macro-import-index-state-address-initialize))
+
+(define (tc-macro-import-index-state-data [state : TcMacroState]) : TcMacroImportIndexStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-import-index-state-address state) : u64)
+        : (Ptr TcMacroImportIndexStateData)))))
+
+(define (tc-macro-import-index-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroImportIndexStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-import-index-state-address state) : u64)
+        : (MutPtr TcMacroImportIndexStateData))
+      data)))
+
+(defmacro (tc-macro-import-index-control [state : Expr] [index : Expr]) : Expr
+  `(array-ref
+    (unsafe
+      (ptr-read
+        (ptr-offset
+          (int->ptr
+            (cast (tc-macro-import-index-state-address ,state) : u64)
+            : (Ptr (__tl_dyn-array i64)))
+          8)))
+    ,index))
+
+(define (tc-macro-import-index-control-set!
+  [state : TcMacroState]
+  [index : i64]
+  [value : i64]) : unit
+  (set!
+    (array-ref
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr
+              (cast (tc-macro-import-index-state-address state) : u64)
+              : (Ptr (__tl_dyn-array i64)))
+            8)))
+      index)
+    value))
+
+(defmacro (tc-macro-import-index-array [state : Expr] [field : Expr]) : Expr
+  (match field
+    [(comptime.Expr.Var name)
+      (let
+        [index : i64
+          (match name
+            ["alias-module-keys" 0]
+            ["alias-qualifier-keys" 1]
+            ["alias-values" 2]
+            ["unqualified-module-keys" 3]
+            ["unqualified-name-keys" 4]
+            ["unqualified-values" 5]
+            ["flat-module-keys" 6]
+            ["flat-values" 7]
+            [_ -1])]
+        (if (< index 0)
+          (if (string.eq name "field")
+            `(unsafe
+              (ptr-read
+                (int->ptr
+                  (cast (tc-macro-import-index-state-address ,state) : u64)
+                  : (Ptr (__tl_dyn-array i64)))))
+            (comptime.comptime-error
+              (comptime.string-append "unknown macro import index array: " name)))
+          (if (string.eq name "flat-values")
+            `(unsafe
+              (ptr-read
+                (ptr-offset
+                  (int->ptr
+                    (cast (tc-macro-import-index-state-address ,state) : u64)
+                    : (Ptr (__tl_dyn-array MacroFlatImportTargetList)))
+                  7)))
+            `(unsafe
+              (ptr-read
+                (ptr-offset
+                  (int->ptr
+                    (cast (tc-macro-import-index-state-address ,state) : u64)
+                    : (Ptr (__tl_dyn-array i64)))
+                  ,(comptime.expr-int index)))))))]
+    [_ (comptime.comptime-error "macro import index expects a field name")]))
+
+(define (macro-unqualified-import-cache-storage-ensure! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroImportIndexStateData
+      (tc-macro-import-index-state-data state)]
+    (if (= (array-length data.unqualified-module-keys) 65536)
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+          (set! data.unqualified-module-keys (array.make-array i64 65536))
+          (set! data.unqualified-name-keys (array.make-array i64 65536))
+          (set! data.unqualified-values (array.make-array i64 65536))
+          (tc-macro-import-index-state-data-set! state data)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
 
 (define (tc-unused-unsafe-storage-lifetime-fill!
   [state : TcUnusedUnsafeState]
@@ -92317,6 +94939,8 @@
   (let
     [caller : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
+    [proof-state : TcMacroState
+      (tc-job-state-macro-state (tc-serial-job-state))]
     [initially-lazy? : bool
       (and
         (=
@@ -92375,30 +94999,7 @@
           (array-length
             (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
           0)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              macro-abstract-proof-qualified-keys))
-          0)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-module-keys))
-          0)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-name-keys))
-          0)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-values))
-          0))]
+        (= (array-length (tc-macro-proof-field proof-state qualified-keys)) 0))]
     [_set-scratch : unit
       (unsafe
         (arena.set! scratch))]
@@ -92409,8 +95010,7 @@
     [_lazy-import : unit (tc-lazy-import-stub-storage-ensure!)]
     [_layout : unit (tc-agg-layout-cache-table-storage-ensure!)]
     [_macro-proof : unit
-      (tc-macro-abstract-proof-qualified-key-storage-ensure!)]
-    [_macro-import : unit (macro-unqualified-import-cache-storage-ensure!)]
+      (tc-macro-abstract-proof-qualified-key-storage-ensure! proof-state)]
     [restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [exact-capacities? : bool
       (and
@@ -92467,29 +95067,8 @@
             (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
           tc-agg-layout-cache-capacity)
         (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              macro-abstract-proof-qualified-keys))
-          requested-capacity)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-module-keys))
-          macro-unqualified-import-cache-capacity)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-name-keys))
-          macro-unqualified-import-cache-capacity)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-values))
-          macro-unqualified-import-cache-capacity))]
+          (array-length (tc-macro-proof-field proof-state qualified-keys))
+          requested-capacity))]
     (begin
       (unsafe
         (arena.set! caller))
@@ -92530,19 +95109,8 @@
           0)
         (TcAggLayoutCacheSlot.Empty))
       (set!
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            macro-abstract-proof-qualified-keys)
-          0)
+        (array-ref (tc-macro-proof-field proof-state qualified-keys) 0)
         "tc-lazy-table-storage")
-      (set!
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            macro-unqualified-import-cache-module-keys)
-          0)
-        43)
       (let
         [survived? : bool
           (and
@@ -92583,19 +95151,8 @@
               [(TcAggLayoutCacheSlot.Empty) true]
               [_ false])
             (string.eq
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  macro-abstract-proof-qualified-keys)
-                0)
-              "tc-lazy-table-storage")
-            (=
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  macro-unqualified-import-cache-module-keys)
-                0)
-              43))]
+              (array-ref (tc-macro-proof-field proof-state qualified-keys) 0)
+              "tc-lazy-table-storage"))]
         (begin
           (set!
             (array-ref
@@ -92627,19 +95184,8 @@
               0)
             0)
           (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                macro-abstract-proof-qualified-keys)
-              0)
+            (array-ref (tc-macro-proof-field proof-state qualified-keys) 0)
             "")
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                macro-unqualified-import-cache-module-keys)
-              0)
-            0)
           (let
             [unused-unsafe-lifetime? : bool
               (tc-unused-unsafe-storage-lifetime-ok?)]
@@ -92664,58 +95210,711 @@
 ;; builds). macro-expand-program and the REPL typecheck entry reset it at the
 ;; same per-program boundary that resets the CTFE-env and clone-able caches;
 ;; the intern generation gate additionally covers intern-reset! boundaries.
-(define (macro-alias-derived-cache-reset!) : unit
+(define (macro-alias-derived-cache-reset-for-state! [state : TcMacroState]) : unit
   (begin
     (tc-module-decl-index-reset!)
     (tc-program-enum-index-reset!)
-    (set! macro-alias-cache-ready false)
-    (set! macro-unqualified-import-cache-ready false)
-    (set! macro-flat-import-target-cache-ready false)
-    (macro-surface-call-decl-cache-reset!)
+    (tc-macro-import-index-control-set! state 3 0)
+    (tc-macro-import-index-control-set! state 14 0)
+    (tc-macro-import-index-control-set! state 18 0)
+    (macro-surface-call-decl-cache-reset! state)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-source-dotted-full-path-key-cache-reset!)
     (tc-source-qualified-variant-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
 
+;; Standalone callers and focused smoke tests use the serial compatibility job.
+(define (macro-alias-derived-cache-reset!) : unit
+  (macro-alias-derived-cache-reset-for-state!
+    (tc-job-state-macro-state (tc-serial-job-state))))
+
 (define (macro-alias-cache-reset!) : unit
   (macro-alias-derived-cache-reset!))
 
-(define (macro-unqualified-import-cache-ensure!) : unit
-  (begin
-    (macro-unqualified-import-cache-storage-ensure!)
-    (if (if macro-unqualified-import-cache-ready
-      (= macro-unqualified-import-cache-generation (ci.intern-generation))
-      false)
-      unit
-      (let
-        [i : i64 0]
-        (begin
-          (while (< i macro-unqualified-import-cache-capacity)
-            (begin
-              (set!
-                (array-ref
-                  (__tl-project-field
-                    tc-lazy-global-table-state
-                    macro-unqualified-import-cache-module-keys)
-                  i)
-                0)
-              (set! i (+ i 1))))
-          (set! macro-unqualified-import-cache-count 0)
+;; Deterministic A/B interleaving probe for the job-owned macro and CTFE state.
+;; It exercises independent writes, A-only resets, and lazy table allocation
+;; without relying on an active-state selector.
+(cfg
+  test
+  (define (tc-macro-state-isolation-ok?) : bool
+    (let
+      [_installed-ready : unit
+        (if (= (ci.intern-generation) 0)
+          (ci.intern-reset!)
+          unit)]
+      [job-a : TcJobState (tc-job-state-new)]
+      [job-b : TcJobState (tc-job-state-new)]
+      [state-a : TcMacroState (tc-job-state-macro-state job-a)]
+      [state-b : TcMacroState (tc-job-state-macro-state job-b)]
+      [installed-table-id : i64 (ci.intern-active-table-id)]
+      [installed-generation : i64 (ci.intern-generation)]
+      [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [module-id-a : i64 (ci.intern-compat-state-intern intern-a "same-module")]
+      [name-id-a : i64 (ci.intern-compat-state-intern intern-a "same-name")]
+      [module-id-b : i64 (ci.intern-compat-state-intern intern-b "same-module")]
+      [name-id-b : i64 (ci.intern-compat-state-intern intern-b "same-name")]
+      [source-names-a : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state intern-a)]
+      [source-names-b : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state intern-b)]
+      [installed-generated-identity-before : i64
+        (match (ci.intern-generated-canonical-lookup
+          "tc-macro-state-isolation-owner-only")
+          [(InternLookupFound id) (+ id 1)]
+          [(InternLookupMissing) 0])]
+      [initially-lazy? : bool
+        (and
+          (= (tc-macro-state-slot-address state-a tc-macro-state-slot-walk) 0)
+          (=
+            (tc-macro-state-slot-address state-a tc-macro-state-slot-abstract)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-a
+              tc-macro-state-slot-proof-reuse)
+            0)
+          (=
+            (tc-macro-state-slot-address state-a tc-macro-state-slot-identity)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-a
+              tc-macro-state-slot-generated-decls)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-a
+              tc-macro-state-slot-surface-call)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-a
+              tc-macro-state-slot-import-index)
+            0)
+          (= (tc-macro-state-slot-address state-b tc-macro-state-slot-walk) 0)
+          (=
+            (tc-macro-state-slot-address state-b tc-macro-state-slot-abstract)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-b
+              tc-macro-state-slot-proof-reuse)
+            0)
+          (=
+            (tc-macro-state-slot-address state-b tc-macro-state-slot-identity)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-b
+              tc-macro-state-slot-generated-decls)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-b
+              tc-macro-state-slot-surface-call)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-b
+              tc-macro-state-slot-import-index)
+            0))]
+      [ok : bool initially-lazy?]
+      (begin
+        (tc-macro-state-bind-source-names! state-a source-names-a)
+        (tc-macro-state-bind-source-names! state-b source-names-b)
+        (let
+          [journal-mark-a : i64 (tc-dotted-macro-journal-start! state-a)]
+          [journal-mark-b : i64 (tc-dotted-macro-journal-start! state-b)]
+          (begin
+            (tc-dotted-macro-journal-restore-to! state-a journal-mark-a)
+            (set!
+              ok
+              (and
+                ok
+                (= journal-mark-a 0)
+                (= journal-mark-b 0)
+                (= (tc-macro-walk-field state-a dotted-macro-journal-depth) 0)
+                (= (tc-macro-walk-field state-b dotted-macro-journal-depth) 1)))
+            (tc-dotted-macro-journal-restore-to! state-b journal-mark-b)))
+        (set!
+          ok
+          (and
+            ok
+            (= module-id-a module-id-b)
+            (= name-id-a name-id-b)
+            (not
+              (=
+                (ci.intern-compat-state-table-id intern-a)
+                (ci.intern-compat-state-table-id intern-b)))))
+        ;; Interleave live-walk state and dense hygiene environments.
+        (tc-macro-walk-set! state-a macro-expand-active-module "isolation-a")
+        (tc-macro-walk-set! state-b macro-expand-active-module "isolation-b")
+        (macro-hygiene-env-root-begin! state-a)
+        (macro-hygiene-env-root-begin! state-b)
+        (let
+          [env-a : MacroHygieneEnv
+            (macro-hygiene-env-bind-raw (macro-hygiene-env-empty state-a) 71 81)]
+          [env-b : MacroHygieneEnv
+            (macro-hygiene-env-bind-raw (macro-hygiene-env-empty state-b) 71 91)]
+          (begin
+            (set!
+              ok
+              (and
+                ok
+                (match (macro-hygiene-env-lookup env-a 71)
+                  [(MacroMaybeHygieneName.Some value) (= value 81)]
+                  [_ false])
+                (match (macro-hygiene-env-lookup env-b 71)
+                  [(MacroMaybeHygieneName.Some value) (= value 91)]
+                  [_ false])))
+            (macro-hygiene-env-root-finish! state-a)
+            (macro-hygiene-env-root-finish! state-b)))
+        ;; Interleave the large lazy import and surface memo tables.
+        (macro-unqualified-import-cache-ensure! state-a)
+        (macro-unqualified-import-cache-put! state-a module-id-a name-id-a 301)
+        (macro-unqualified-import-cache-ensure! state-b)
+        (macro-unqualified-import-cache-put! state-b module-id-b name-id-b 401)
+        (macro-alias-cache-ensure! state-a)
+        (macro-alias-cache-put! state-a module-id-a name-id-a 302)
+        (macro-alias-cache-ensure! state-b)
+        (macro-alias-cache-put! state-b module-id-b name-id-b 402)
+        (macro-flat-import-target-cache-ensure! state-a)
+        (macro-flat-import-target-cache-put!
+          state-a
+          module-id-a
+          (macro-flat-import-target-list-add
+            (macro-flat-import-target-list-empty)
+            303))
+        (macro-flat-import-target-cache-ensure! state-b)
+        (macro-flat-import-target-cache-put!
+          state-b
+          module-id-b
+          (macro-flat-import-target-list-add
+            (macro-flat-import-target-list-empty)
+            403))
+        (macro-surface-call-decl-cache-ensure! state-a)
+        (macro-surface-call-decl-cache-put! state-a 501 601 (MacroMaybeDecl.No))
+        (macro-surface-call-decl-cache-ensure! state-b)
+        (macro-surface-call-decl-cache-put! state-b 501 601 (MacroMaybeDecl.No))
+        (set!
+          ok
+          (and
+            ok
+            (=
+              (macro-unqualified-import-cache-get state-a module-id-a name-id-a)
+              301)
+            (=
+              (macro-unqualified-import-cache-get state-b module-id-b name-id-b)
+              401)
+            (= (macro-alias-cache-get state-a module-id-a name-id-a) 302)
+            (= (macro-alias-cache-get state-b module-id-b name-id-b) 402)
+            (match (macro-flat-import-target-cache-get state-a module-id-a)
+              [(MacroFlatImportTargetCacheLookup.Hit targets)
+                (and (= targets.len 1) (= (array-ref targets.slots 0) 303))]
+              [_ false])
+            (match (macro-flat-import-target-cache-get state-b module-id-b)
+              [(MacroFlatImportTargetCacheLookup.Hit targets)
+                (and (= targets.len 1) (= (array-ref targets.slots 0) 403))]
+              [_ false])
+            (match (macro-surface-call-decl-cache-get state-a 501 601)
+              [(MacroSurfaceCallDeclCacheLookup.Hit (MacroMaybeDecl.No)) true]
+              [_ false])
+            (match (macro-surface-call-decl-cache-get state-b 501 601)
+              [(MacroSurfaceCallDeclCacheLookup.Hit (MacroMaybeDecl.No)) true]
+              [_ false])))
+        ;; Interleave generated-declaration and abstract-proof memos.
+        (macro-generated-decls-memo-put!
+          state-a
+          "tc-macro-state-isolation"
+          (ast.ast-decl-list-new))
+        (macro-generated-decls-memo-put!
+          state-b
+          "tc-macro-state-isolation"
+          (ast.ast-decl-list-new))
+        (macro-generated-module-memo-put!
+          state-a
+          "tc-macro-state-isolation-module"
+          901
+          (ast.ast-decl-list-new)
+          (ast.ast-decl-list-new)
+          "isolation-generator-a"
+          "isolation-a.tl")
+        (macro-generated-module-memo-put!
+          state-b
+          "tc-macro-state-isolation-module"
+          902
+          (ast.ast-decl-list-new)
+          (ast.ast-decl-list-new)
+          "isolation-generator-b"
+          "isolation-b.tl")
+        (tc-macro-identity-intern-for-state
+          state-a
+          "tc-macro-state-isolation-owner-only")
+        (set!
+          ok
+          (and
+            ok
+            (>=
+              (tc-macro-identity-lookup-for-state
+                state-a
+                "tc-macro-state-isolation-owner-only")
+              0)
+            (<
+              (tc-macro-identity-lookup-for-state
+                state-b
+                "tc-macro-state-isolation-owner-only")
+              0)
+            (=
+              (tc-macro-identity-lookup-for-state
+                state-a
+                "tc-macro-state-isolation")
+              (tc-macro-identity-lookup-for-state
+                state-b
+                "tc-macro-state-isolation"))))
+        (tc-macro-abstract-proof-note! state-a "isolation-macro" "T" 1)
+        (tc-macro-abstract-proof-note! state-b "isolation-macro" "T" 2)
+        ;; The complete-proof registry, generated family rows, identity metadata,
+        ;; and exact-comparison scratch share equal numeric IDs across distinct
+        ;; source-name owners without consulting or replacing the installed
+        ;; compatibility state.
+        (record-count-for-state state-a "isolation-complete-a")
+        (record-count-for-state state-b "isolation-complete-b")
+        (running-identity-for-state state-a)
+        (running-identity-for-state state-b)
+        (let
+          [identity-a-first : i64 (index-key module-id-a)]
+          [identity-a-next : i64 (index-key name-id-a)]
+          [identity-b-first : i64 (index-key module-id-b)]
+          [identity-b-next : i64 (index-key name-id-b)]
+          [family-a : i64 (bucket-name "isolation-generator" "item")]
+          [family-b : i64 (bucket-name "isolation-generator" "item")]
+          (begin
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a identity-bytes)
+                identity-a-first)
+              (+ module-id-a 1))
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a identity-bytes)
+                identity-a-next)
+              (+ name-id-a 1))
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b identity-bytes)
+                identity-b-first)
+              (+ module-id-b 1))
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b identity-bytes)
+                identity-b-next)
+              (+ name-id-b 1))
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a operand-count)
+                identity-a-first)
+              1)
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a operand-count)
+                identity-a-next)
+              1)
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b operand-count)
+                identity-b-first)
+              1)
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b operand-count)
+                identity-b-next)
+              1)
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a declared-types)
+                (* identity-a-first expected-count))
+              "i64")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a declared-types)
+                (* identity-a-next expected-count))
+              "u8")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a macro-type-kinds)
+                (* identity-a-first expected-count))
+              "i64")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a macro-type-kinds)
+                (* identity-a-next expected-count))
+              "u8")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b declared-types)
+                (* identity-b-first expected-count))
+              "bool")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b declared-types)
+                (* identity-b-next expected-count))
+              "String")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b macro-type-kinds)
+                (* identity-b-first expected-count))
+              "bool")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b macro-type-kinds)
+                (* identity-b-next expected-count))
+              "string")
+            (scratch-reset-functions-for-state state-a)
+            (scratch-reset-functions-for-state state-b)
+            (map-ready-cell-for-state state-a)
+            (map-ready-cell-for-state state-b)
+            (set!
+              (array-ref (tc-macro-proof-field state-a function-names) family-a)
+              "isolation-generator")
+            (set!
+              (array-ref (tc-macro-proof-field state-a local-names) family-a)
+              "item")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-a storage-identity-vars)
+                family-a)
+              111)
+            (set!
+              (array-ref (tc-macro-proof-field state-b function-names) family-b)
+              "isolation-generator")
+            (set!
+              (array-ref (tc-macro-proof-field state-b local-names) family-b)
+              "item")
+            (set!
+              (array-ref
+                (tc-macro-proof-field state-b storage-identity-vars)
+                family-b)
+              222)
+            (set!
+              ok
+              (and
+                ok
+                (tc-proof-reuse-session-identity-preflight-ids-for-state?
+                  state-a
+                  module-id-a
+                  name-id-a)
+                (tc-proof-reuse-session-identity-preflight-ids-for-state?
+                  state-b
+                  module-id-b
+                  name-id-b)
+                (complete-key-for-state state-a "isolation-complete-a")
+                (not (complete-key-for-state state-a "isolation-complete-b"))
+                (complete-key-for-state state-b "isolation-complete-b")
+                (not (complete-key-for-state state-b "isolation-complete-a"))
+                (=
+                  (array-ref
+                    (tc-macro-proof-field state-a storage-identity-vars)
+                    family-a)
+                  111)
+                (=
+                  (array-ref
+                    (tc-macro-proof-field state-b storage-identity-vars)
+                    family-b)
+                  222)
+                (= (tc-macro-proof-field state-a first-slot) identity-a-first)
+                (= (tc-macro-proof-field state-b first-slot) identity-b-first)))))
+        (set!
+          ok
+          (and
+            ok
+            (match (macro-generated-decls-memo-get
+              state-a
+              "tc-macro-state-isolation")
+              [(MacroMaybeSpliceDecls.Some decls)
+                (= (ast.ast-decl-list-len (& decls)) 0)]
+              [_ false])
+            (match (macro-generated-decls-memo-get
+              state-b
+              "tc-macro-state-isolation")
+              [(MacroMaybeSpliceDecls.Some decls)
+                (= (ast.ast-decl-list-len (& decls)) 0)]
+              [_ false])
+            (match (macro-generated-module-memo-get-catalog
+              state-a
+              "tc-macro-state-isolation-module")
+              [(MacroGeneratedModuleCatalogEntry.Catalog target _ _ _ _ _)
+                (= target 901)]
+              [_ false])
+            (match (macro-generated-module-memo-get-catalog
+              state-b
+              "tc-macro-state-isolation-module")
+              [(MacroGeneratedModuleCatalogEntry.Catalog target _ _ _ _ _)
+                (= target 902)]
+              [_ false])
+            (= (tc-macro-abstract-proof-lookup state-a "isolation-macro" "T") 1)
+            (= (tc-macro-abstract-proof-lookup state-b "isolation-macro" "T") 2)))
+        ;; Independent live-symbol generations and declaration/splice rings must
+        ;; survive another job's reset and destroy cadence.
+        (let
+          [empty-program : ast.AstProgram
+            (ast.ast-program (ast.ast-decl-list-new))]
+          [empty-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+          [symbols-a : csym.ResultCompilerSymbols
+            (macro-live-symbols-build-fresh state-a empty-program empty-paths)]
+          [symbols-b : csym.ResultCompilerSymbols
+            (macro-live-symbols-build-fresh state-b empty-program empty-paths)]
+          [decl-arena-a : i64 (macro-decl-generation-enter! state-a)]
+          [decl-arena-b : i64 (macro-decl-generation-enter! state-b)]
+          [splice-arena-a : i64 (macro-splice-generation-enter! state-a)]
+          [splice-arena-b : i64 (macro-splice-generation-enter! state-b)]
+          [enclosing : i64 (arena.tl_arena_current)]
+          [_switch-b : unit
+            (unsafe
+              (arena.tl_arena_set decl-arena-b))]
+          [job-b-generation-text : String "job-b-generation"]
+          [owned-by-b : String (string.copy (& job-b-generation-text))]
+          [_restore : unit
+            (unsafe
+              (arena.tl_arena_set enclosing))]
+          (begin
+            (macro-live-symbols-clear! state-a)
+            (macro-decl-generations-release! state-a)
+            (set!
+              ok
+              (and
+                ok
+                (match symbols-a
+                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [_ false])
+                (match symbols-b
+                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [_ false])
+                (not (= decl-arena-a decl-arena-b))
+                (not (= splice-arena-a splice-arena-b))
+                (=
+                  (tc-macro-walk-field state-b macro-decl-generation-arena)
+                  decl-arena-b)
+                (=
+                  (tc-macro-walk-field state-b macro-splice-generation-arena)
+                  splice-arena-b)
+                (tc-macro-walk-field state-b macro-live-symbols-ready)
+                (string.eq owned-by-b "job-b-generation")))))
+        ;; CTFE result markers and export maps share the same job capability.
+        (ctfe_support.ctfe-module-macro-export-reset-for-state!
+          (tc-macro-ctfe-state state-a))
+        (ctfe_support.ctfe-module-macro-export-reset-for-state!
+          (tc-macro-ctfe-state state-b))
+        (ctfe_support.ctfe-module-macro-export-add-id-for-state!
+          (tc-macro-ctfe-state state-a)
+          701
+          801)
+        (ctfe_support.ctfe-module-macro-export-add-id-for-state!
+          (tc-macro-ctfe-state state-b)
+          702
+          802)
+        (ctfe_support.ctfe-result-hygiene-free-note-for-state!
+          (tc-macro-ctfe-state state-a)
+          17)
+        (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
+          (tc-macro-ctfe-state state-b))
+        (let
+          [failed : ctfe_support.ResultCtfe
+            (ctfe_support.compiler-ctfe-eval
+              (ast.AstExpr.Literal (ast.AstLiteral.Float "not-a-float"))
+              (ctfe_support.ctfe-env-empty-with-pools-and-source-names-and-macro-state
+                (ast.ast-node-pool-context-capture-active)
+                source-names-a
+                (tc-macro-ctfe-state state-a))
+              8)]
           (set!
-            macro-unqualified-import-cache-generation
-            (ci.intern-generation))
-          (set! macro-unqualified-import-cache-ready true))))))
+            ok
+            (and
+              ok
+              (match failed
+                [(ctfe_support.ResultCtfe.Err _) true]
+                [_ false]))))
+        (set!
+          ok
+          (and
+            ok
+            (ctfe_support.ctfe-module-macro-export-id-for-state?
+              (tc-macro-ctfe-state state-a)
+              701
+              801)
+            (not
+              (ctfe_support.ctfe-module-macro-export-id-for-state?
+                (tc-macro-ctfe-state state-b)
+                701
+                801))
+            (=
+              (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
+                (tc-macro-ctfe-state state-a))
+              17)
+            (=
+              (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
+                (tc-macro-ctfe-state state-b))
+              -1)))
+        ;; Reset only A. B's import, surface, proof, generated memo, live walk,
+        ;; and CTFE export must all remain intact.
+        (macro-alias-derived-cache-reset-for-state! state-a)
+        (macro-generated-module-memo-reset! state-a)
+        (macro-generated-decls-memo-reset! state-a)
+        (tc-macro-identity-reset-for-state! state-a)
+        (tc-macro-abstract-proof-reset-for-state! state-a)
+        (ctfe_support.ctfe-module-macro-export-reset-for-state!
+          (tc-macro-ctfe-state state-a))
+        (macro-unqualified-import-cache-ensure! state-a)
+        (macro-alias-cache-ensure! state-a)
+        (macro-flat-import-target-cache-ensure! state-a)
+        (macro-surface-call-decl-cache-ensure! state-a)
+        (set!
+          ok
+          (and
+            ok
+            (=
+              (macro-unqualified-import-cache-get state-a module-id-a name-id-a)
+              -2)
+            (=
+              (macro-unqualified-import-cache-get state-b module-id-b name-id-b)
+              401)
+            (= (macro-alias-cache-get state-a module-id-a name-id-a) -2)
+            (= (macro-alias-cache-get state-b module-id-b name-id-b) 402)
+            (match (macro-flat-import-target-cache-get state-a module-id-a)
+              [(MacroFlatImportTargetCacheLookup.Missing) true]
+              [_ false])
+            (match (macro-flat-import-target-cache-get state-b module-id-b)
+              [(MacroFlatImportTargetCacheLookup.Hit targets)
+                (and (= targets.len 1) (= (array-ref targets.slots 0) 403))]
+              [_ false])
+            (match (macro-surface-call-decl-cache-get state-a 501 601)
+              [(MacroSurfaceCallDeclCacheLookup.Miss) true]
+              [_ false])
+            (match (macro-surface-call-decl-cache-get state-b 501 601)
+              [(MacroSurfaceCallDeclCacheLookup.Hit (MacroMaybeDecl.No)) true]
+              [_ false])
+            (=
+              (tc-macro-abstract-proof-lookup state-a "isolation-macro" "T")
+              -1)
+            (= (tc-macro-abstract-proof-lookup state-b "isolation-macro" "T") 2)
+            (not (complete-key-for-state state-a "isolation-complete-a"))
+            (complete-key-for-state state-b "isolation-complete-b")
+            (not (tc-macro-proof-field state-a has-generated-decls))
+            (=
+              (array-ref
+                (tc-macro-proof-field state-b storage-identity-vars)
+                (bucket-name "isolation-generator" "item"))
+              222)
+            (= (slot-id-for-state state-b module-id-b) (index-key module-id-b))
+            (=
+              (tc-macro-proof-field state-b first-slot)
+              (index-key module-id-b))
+            (match (macro-generated-decls-memo-get
+              state-b
+              "tc-macro-state-isolation")
+              [(MacroMaybeSpliceDecls.Some decls)
+                (= (ast.ast-decl-list-len (& decls)) 0)]
+              [_ false])
+            (match (macro-generated-module-memo-get-catalog
+              state-a
+              "tc-macro-state-isolation-module")
+              [(MacroGeneratedModuleCatalogEntry.Empty) true]
+              [_ false])
+            (match (macro-generated-module-memo-get-catalog
+              state-b
+              "tc-macro-state-isolation-module")
+              [(MacroGeneratedModuleCatalogEntry.Catalog target _ _ _ _ _)
+                (= target 902)]
+              [_ false])
+            (string.eq
+              (tc-macro-walk-field state-a macro-expand-active-module)
+              "isolation-a")
+            (string.eq
+              (tc-macro-walk-field state-b macro-expand-active-module)
+              "isolation-b")
+            (ctfe_support.ctfe-module-macro-export-id-for-state?
+              (tc-macro-ctfe-state state-b)
+              702
+              802)
+            (not
+              (ctfe_support.ctfe-module-macro-export-id-for-state?
+                (tc-macro-ctfe-state state-a)
+                701
+                801))
+            (<
+              (tc-macro-identity-lookup-for-state
+                state-a
+                "tc-macro-state-isolation-owner-only")
+              0)
+            (>=
+              (tc-macro-identity-lookup-for-state
+                state-b
+                "tc-macro-state-isolation")
+              0)
+            (=
+              (match (ci.intern-generated-canonical-lookup
+                "tc-macro-state-isolation-owner-only")
+                [(InternLookupFound id) (+ id 1)]
+                [(InternLookupMissing) 0])
+              installed-generated-identity-before)
+            (= (ci.intern-active-table-id) installed-table-id)
+            (= (ci.intern-generation) installed-generation)))
+        (macro-live-symbols-clear! state-b)
+        (macro-decl-generations-release! state-b)
+        ok))))
+
+(define (macro-unqualified-import-cache-initialize! [state : TcMacroState]) : unit
+  (begin
+    (macro-unqualified-import-cache-storage-ensure! state)
+    (let
+      [table-id : i64 (tc-macro-state-source-name-table-id state)]
+      [reset-generation : i64
+        (tc-macro-state-source-name-reset-generation state)]
+      (if (and
+        (= (tc-macro-import-index-control state 14) 1)
+        (= (tc-macro-import-index-control state 12) table-id)
+        (= (tc-macro-import-index-control state 13) reset-generation))
+        unit
+        (let
+          [i : i64 0]
+          (begin
+            (while (< i 65536)
+              (begin
+                (set!
+                  (array-ref
+                    (tc-macro-import-index-array state unqualified-module-keys)
+                    i)
+                  0)
+                (set! i (+ i 1))))
+            (tc-macro-import-index-control-set! state 11 0)
+            (tc-macro-import-index-control-set! state 12 table-id)
+            (tc-macro-import-index-control-set! state 13 reset-generation)
+            (tc-macro-import-index-control-set! state 14 1)))))))
+
+(define (macro-unqualified-import-cache-ensure! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroImportIndexStateData
+      (tc-macro-import-index-state-data state)]
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    (if (and
+      (= (array-ref data.control 14) 1)
+      (= (array-ref data.control 12) table-id)
+      (= (array-ref data.control 13) reset-generation))
+      unit
+      (macro-unqualified-import-cache-initialize! state))))
 
 (define (macro-unqualified-import-cache-bucket
   [module-id : i64]
   [name-id : i64]) : i64
-  (bit-and
-    (+ (* module-id 2654435761) (* name-id 40503))
-    (- macro-unqualified-import-cache-capacity 1)))
+  (bit-and (+ (* module-id 2654435761) (* name-id 40503)) 65535))
 
 ;; Returns the cached target module id, -1 for "no imported macro", or -2 when
 ;; absent.
-(define (macro-unqualified-import-cache-get [module-id : i64] [name-id : i64]) : i64
+(define (macro-unqualified-import-cache-get
+  [state : TcMacroState]
+  [module-id : i64]
+  [name-id : i64]) : i64
   (let
     [cursor : i64 (macro-unqualified-import-cache-bucket module-id name-id)]
     [module-key : i64 (+ module-id 1)]
@@ -92726,13 +95925,11 @@
     (begin
       (while (if done
         false
-        (< steps macro-unqualified-import-cache-capacity))
+        (< steps 65536))
         (let
           [slot : i64
             (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                macro-unqualified-import-cache-module-keys)
+              (tc-macro-import-index-array state unqualified-module-keys)
               cursor)]
           (if (= slot 0)
             (set! done true)
@@ -92740,36 +95937,27 @@
               (= slot module-key)
               (=
                 (array-ref
-                  (__tl-project-field
-                    tc-lazy-global-table-state
-                    macro-unqualified-import-cache-name-keys)
+                  (tc-macro-import-index-array state unqualified-name-keys)
                   cursor)
                 name-key))
               (begin
                 (set!
                   out
                   (array-ref
-                    (__tl-project-field
-                      tc-lazy-global-table-state
-                      macro-unqualified-import-cache-values)
+                    (tc-macro-import-index-array state unqualified-values)
                     cursor))
                 (set! done true))
               (begin
-                (set!
-                  cursor
-                  (bit-and
-                    (+ cursor 1)
-                    (- macro-unqualified-import-cache-capacity 1)))
+                (set! cursor (bit-and (+ cursor 1) 65535))
                 (set! steps (+ steps 1)))))))
       out)))
 
 (define (macro-unqualified-import-cache-put!
+  [state : TcMacroState]
   [module-id : i64]
   [name-id : i64]
   [value : i64]) : unit
-  (if (>=
-    (* macro-unqualified-import-cache-count 2)
-    macro-unqualified-import-cache-capacity)
+  (if (>= (* (tc-macro-import-index-control state 11) 2) 65536)
     unit
     (let
       [cursor : i64 (macro-unqualified-import-cache-bucket module-id name-id)]
@@ -92780,84 +95968,104 @@
       (begin
         (while (if done
           false
-          (< steps macro-unqualified-import-cache-capacity))
+          (< steps 65536))
           (let
             [slot : i64
               (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  macro-unqualified-import-cache-module-keys)
+                (tc-macro-import-index-array state unqualified-module-keys)
                 cursor)]
             (if (= slot 0)
               (begin
                 (set!
                   (array-ref
-                    (__tl-project-field
-                      tc-lazy-global-table-state
-                      macro-unqualified-import-cache-module-keys)
+                    (tc-macro-import-index-array state unqualified-module-keys)
                     cursor)
                   module-key)
                 (set!
                   (array-ref
-                    (__tl-project-field
-                      tc-lazy-global-table-state
-                      macro-unqualified-import-cache-name-keys)
+                    (tc-macro-import-index-array state unqualified-name-keys)
                     cursor)
                   name-key)
                 (set!
                   (array-ref
-                    (__tl-project-field
-                      tc-lazy-global-table-state
-                      macro-unqualified-import-cache-values)
+                    (tc-macro-import-index-array state unqualified-values)
                     cursor)
                   value)
-                (set!
-                  macro-unqualified-import-cache-count
-                  (+ macro-unqualified-import-cache-count 1))
+                (tc-macro-import-index-control-set!
+                  state
+                  11
+                  (+ (tc-macro-import-index-control state 11) 1))
                 (set! done true))
               (if (and
                 (= slot module-key)
                 (=
                   (array-ref
-                    (__tl-project-field
-                      tc-lazy-global-table-state
-                      macro-unqualified-import-cache-name-keys)
+                    (tc-macro-import-index-array state unqualified-name-keys)
                     cursor)
                   name-key))
                 (set! done true)
                 (begin
-                  (set!
-                    cursor
-                    (bit-and
-                      (+ cursor 1)
-                      (- macro-unqualified-import-cache-capacity 1)))
+                  (set! cursor (bit-and (+ cursor 1) 65535))
                   (set! steps (+ steps 1)))))))
         unit))))
 
-(define (macro-flat-import-target-cache-ensure!) : unit
-  (if (if macro-flat-import-target-cache-ready
-    (= macro-flat-import-target-cache-generation (ci.intern-generation))
-    false)
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (while (< i macro-flat-import-target-cache-capacity)
-          (begin
-            (set! (array-ref macro-flat-import-target-cache-module-keys i) 0)
-            (set! i (+ i 1))))
-        (set! macro-flat-import-target-cache-count 0)
-        (set! macro-flat-import-target-cache-generation (ci.intern-generation))
-        (set! macro-flat-import-target-cache-built false)
-        (set! macro-flat-import-target-cache-complete false)
-        (set! macro-flat-import-target-cache-ready true)))))
+(define (macro-flat-import-target-cache-initialize! [state : TcMacroState]) : unit
+  (let
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    [data : TcMacroImportIndexStateData
+      (tc-macro-import-index-state-data state)]
+    (if (and
+      (= (array-ref data.control 18) 1)
+      (= (array-ref data.control 16) table-id)
+      (= (array-ref data.control 17) reset-generation))
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [i : i64 0]
+        (begin
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+          (if (= (array-length data.flat-module-keys) 0)
+            (begin
+              (set! data.flat-module-keys (array.make-array i64 1024))
+              (set!
+                data.flat-values
+                (array.make-array MacroFlatImportTargetList 1024)))
+            unit)
+          (while (< i 1024)
+            (begin
+              (set! (array-ref data.flat-module-keys i) 0)
+              (set! i (+ i 1))))
+          (set! (array-ref data.control 15) 0)
+          (set! (array-ref data.control 16) table-id)
+          (set! (array-ref data.control 17) reset-generation)
+          (set! (array-ref data.control 18) 1)
+          (set! (array-ref data.control 19) 0)
+          (set! (array-ref data.control 20) 0)
+          (tc-macro-import-index-state-data-set! state data)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+
+(define (macro-flat-import-target-cache-ensure! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroImportIndexStateData
+      (tc-macro-import-index-state-data state)]
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    (if (and
+      (= (array-ref data.control 18) 1)
+      (= (array-ref data.control 16) table-id)
+      (= (array-ref data.control 17) reset-generation))
+      unit
+      (macro-flat-import-target-cache-initialize! state))))
 
 (define (macro-flat-import-target-cache-bucket [module-id : i64]) : i64
-  (bit-and
-    (* module-id 2654435761)
-    (- macro-flat-import-target-cache-capacity 1)))
+  (bit-and (* module-id 2654435761) 1023))
 
-(define (macro-flat-import-target-cache-get [module-id : i64]) : MacroFlatImportTargetCacheLookup
+(define (macro-flat-import-target-cache-get
+  [state : TcMacroState]
+  [module-id : i64]) : MacroFlatImportTargetCacheLookup
   (let
     [cursor : i64 (macro-flat-import-target-cache-bucket module-id)]
     [module-key : i64 (+ module-id 1)]
@@ -92868,10 +96076,12 @@
     (begin
       (while (if done
         false
-        (< steps macro-flat-import-target-cache-capacity))
+        (< steps 1024))
         (let
           [slot : i64
-            (array-ref macro-flat-import-target-cache-module-keys cursor)]
+            (array-ref
+              (tc-macro-import-index-array state flat-module-keys)
+              cursor)]
           (if (= slot 0)
             (set! done true)
             (if (= slot module-key)
@@ -92880,24 +96090,19 @@
                   out
                   (MacroFlatImportTargetCacheLookup.Hit
                     (tc-global-array-element-shared-view
-                      macro-flat-import-target-cache-values
+                      (tc-macro-import-index-array state flat-values)
                       cursor)))
                 (set! done true))
               (begin
-                (set!
-                  cursor
-                  (bit-and
-                    (+ cursor 1)
-                    (- macro-flat-import-target-cache-capacity 1)))
+                (set! cursor (bit-and (+ cursor 1) 1023))
                 (set! steps (+ steps 1)))))))
       out)))
 
 (define (macro-flat-import-target-cache-put!
+  [state : TcMacroState]
   [module-id : i64]
   [targets : MacroFlatImportTargetList]) : unit
-  (if (>=
-    (* macro-flat-import-target-cache-count 2)
-    macro-flat-import-target-cache-capacity)
+  (if (>= (* (tc-macro-import-index-control state 15) 2) 1024)
     unit
     (let
       [cursor : i64 (macro-flat-import-target-cache-bucket module-id)]
@@ -92907,30 +96112,33 @@
       (begin
         (while (if done
           false
-          (< steps macro-flat-import-target-cache-capacity))
+          (< steps 1024))
           (let
             [slot : i64
-              (array-ref macro-flat-import-target-cache-module-keys cursor)]
+              (array-ref
+                (tc-macro-import-index-array state flat-module-keys)
+                cursor)]
             (if (= slot 0)
               (begin
                 (set!
-                  (array-ref macro-flat-import-target-cache-module-keys cursor)
+                  (array-ref
+                    (tc-macro-import-index-array state flat-module-keys)
+                    cursor)
                   module-key)
                 (set!
-                  (array-ref macro-flat-import-target-cache-values cursor)
+                  (array-ref
+                    (tc-macro-import-index-array state flat-values)
+                    cursor)
                   targets)
-                (set!
-                  macro-flat-import-target-cache-count
-                  (+ macro-flat-import-target-cache-count 1))
+                (tc-macro-import-index-control-set!
+                  state
+                  15
+                  (+ (tc-macro-import-index-control state 15) 1))
                 (set! done true))
               (if (= slot module-key)
                 (set! done true)
                 (begin
-                  (set!
-                    cursor
-                    (bit-and
-                      (+ cursor 1)
-                      (- macro-flat-import-target-cache-capacity 1)))
+                  (set! cursor (bit-and (+ cursor 1) 1023))
                   (set! steps (+ steps 1)))))))
         unit))))
 
@@ -93009,6 +96217,7 @@
 ;; Overwrite the stored list for a module id already present in the table
 ;; (macro-flat-import-target-cache-put! keeps existing entries untouched).
 (define (macro-flat-import-target-cache-overwrite!
+  [state : TcMacroState]
   [module-id : i64]
   [targets : MacroFlatImportTargetList]) : unit
   (let
@@ -93019,24 +96228,24 @@
     (begin
       (while (if done
         false
-        (< steps macro-flat-import-target-cache-capacity))
+        (< steps 1024))
         (let
           [slot : i64
-            (array-ref macro-flat-import-target-cache-module-keys cursor)]
+            (array-ref
+              (tc-macro-import-index-array state flat-module-keys)
+              cursor)]
           (if (= slot module-key)
             (begin
               (set!
-                (array-ref macro-flat-import-target-cache-values cursor)
+                (array-ref
+                  (tc-macro-import-index-array state flat-values)
+                  cursor)
                 targets)
               (set! done true))
             (if (= slot 0)
               (set! done true)
               (begin
-                (set!
-                  cursor
-                  (bit-and
-                    (+ cursor 1)
-                    (- macro-flat-import-target-cache-capacity 1)))
+                (set! cursor (bit-and (+ cursor 1) 1023))
                 (set! steps (+ steps 1)))))))
       unit)))
 
@@ -93048,7 +96257,9 @@
 ;; macro-flat-import-targets-from-list exactly. If the table's half-load insert
 ;; cap is hit, complete stays false and misses fall back to the exact scan, so
 ;; only memoization -- never correctness -- degrades.
-(define (macro-flat-import-target-cache-build! [decls : ast.AstDeclList]) : unit
+(define (macro-flat-import-target-cache-build!
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : unit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
@@ -93078,19 +96289,22 @@
                           (if (= target-module cur-module-id)
                             unit
                             (match (macro-flat-import-target-cache-get
+                              state
                               cur-module-id)
                               [(MacroFlatImportTargetCacheLookup.Hit existing)
                                 (macro-flat-import-target-cache-overwrite!
+                                  state
                                   cur-module-id
                                   (macro-flat-import-target-list-add
                                     existing
                                     target-module))]
                               [(MacroFlatImportTargetCacheLookup.Missing)
                                 (if (>=
-                                  (* macro-flat-import-target-cache-count 2)
-                                  macro-flat-import-target-cache-capacity)
+                                  (* (tc-macro-import-index-control state 15) 2)
+                                  1024)
                                   (set! truncated true)
                                   (macro-flat-import-target-cache-put!
+                                    state
                                     cur-module-id
                                     (macro-flat-import-target-list-add
                                       (macro-flat-import-target-list-empty)
@@ -93101,12 +96315,18 @@
               [_ unit])
             unit)
           (set! i (+ i 1))))
-      (set! macro-flat-import-target-cache-built true)
-      (set!
-        macro-flat-import-target-cache-built-decl-count
+      (tc-macro-import-index-control-set! state 19 1)
+      (tc-macro-import-index-control-set!
+        state
+        21
         (ast.ast-decl-list-len (& decls)))
-      (set! macro-flat-import-target-cache-built-decl-offset decls.offset)
-      (set! macro-flat-import-target-cache-complete (not truncated)))))
+      (tc-macro-import-index-control-set! state 22 decls.offset)
+      (tc-macro-import-index-control-set!
+        state
+        20
+        (if truncated
+          0
+          1)))))
 
 ;; R3-P1: this cache outlives the declaration whose expansion first populated
 ;; it, but its per-module lists are built from whatever arena happens to be
@@ -93118,43 +96338,48 @@
 ;; destroyed. Only redirected while a generation is live, so every non-
 ;; generational caller keeps its existing owner.
 (define (macro-flat-import-targets
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [current-module-id : i64]) : MacroFlatImportTargetList
-  (if (not (macro-generation-any-live?))
-    (macro-flat-import-targets-into-current decls current-module-id)
+  (if (not (macro-generation-any-live? state))
+    (macro-flat-import-targets-into-current state decls current-module-id)
     (let
       [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (macro-expand-scratch-arena-get)]
+      [scratch : i64 (macro-expand-scratch-arena-get state)]
       (begin
         (unsafe
           (arena.tl_arena_set scratch))
         (let
           [out : MacroFlatImportTargetList
-            (macro-flat-import-targets-into-current decls current-module-id)]
+            (macro-flat-import-targets-into-current
+              state
+              decls
+              current-module-id)]
           [scratch-head : i64 (arena.tl_arena_current)]
           (begin
-            (set! macro-expand-scratch-arena scratch-head)
+            (tc-macro-walk-set! state macro-expand-scratch-arena scratch-head)
             (unsafe
               (arena.tl_arena_set enclosing))
             out))))))
 
 (define (macro-flat-import-targets-into-current
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [current-module-id : i64]) : MacroFlatImportTargetList
   (begin
-    (macro-flat-import-target-cache-ensure!)
-    (if macro-flat-import-target-cache-built
+    (macro-flat-import-target-cache-ensure! state)
+    (if (= (tc-macro-import-index-control state 19) 1)
       unit
-      (macro-flat-import-target-cache-build! decls))
-    (match (macro-flat-import-target-cache-get current-module-id)
+      (macro-flat-import-target-cache-build! state decls))
+    (match (macro-flat-import-target-cache-get state current-module-id)
       [(MacroFlatImportTargetCacheLookup.Hit targets) targets]
       [(MacroFlatImportTargetCacheLookup.Missing)
         (if (and
-          macro-flat-import-target-cache-complete
+          (= (tc-macro-import-index-control state 20) 1)
           (=
-            macro-flat-import-target-cache-built-decl-count
+            (tc-macro-import-index-control state 21)
             (ast.ast-decl-list-len (& decls)))
-          (= macro-flat-import-target-cache-built-decl-offset decls.offset))
+          (= (tc-macro-import-index-control state 22) decls.offset))
           (macro-flat-import-target-list-empty)
           (let
             [targets : MacroFlatImportTargetList
@@ -93164,35 +96389,71 @@
                 cbi.compiler-builtin-id-fix-empty
                 (macro-flat-import-target-list-empty))]
             (begin
-              (macro-flat-import-target-cache-put! current-module-id targets)
+              (macro-flat-import-target-cache-put!
+                state
+                current-module-id
+                targets)
               targets)))])))
 
-(define (macro-alias-cache-ensure!) : unit
-  (if (if macro-alias-cache-ready
-    (= macro-alias-cache-generation (ci.intern-generation))
-    false)
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (while (< i macro-alias-cache-capacity)
-          (begin
-            (set! (array-ref macro-alias-cache-module-keys i) 0)
-            (set! i (+ i 1))))
-        (set! macro-alias-cache-count 0)
-        (set! macro-alias-cache-generation (ci.intern-generation))
-        (set! macro-alias-cache-built false)
-        (set! macro-alias-cache-built-segmented false)
-        (set! macro-alias-cache-complete false)
-        (set! macro-alias-cache-ready true)))))
+(define (macro-alias-cache-initialize! [state : TcMacroState]) : unit
+  (let
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    [data : TcMacroImportIndexStateData
+      (tc-macro-import-index-state-data state)]
+    (if (and
+      (= (array-ref data.control 3) 1)
+      (= (array-ref data.control 1) table-id)
+      (= (array-ref data.control 2) reset-generation))
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [i : i64 0]
+        (begin
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+          (if (= (array-length data.alias-module-keys) 0)
+            (begin
+              (set! data.alias-module-keys (array.make-array i64 16384))
+              (set! data.alias-qualifier-keys (array.make-array i64 16384))
+              (set! data.alias-values (array.make-array i64 16384)))
+            unit)
+          (while (< i 16384)
+            (begin
+              (set! (array-ref data.alias-module-keys i) 0)
+              (set! i (+ i 1))))
+          (set! (array-ref data.control 0) 0)
+          (set! (array-ref data.control 1) table-id)
+          (set! (array-ref data.control 2) reset-generation)
+          (set! (array-ref data.control 3) 1)
+          (set! (array-ref data.control 4) 0)
+          (set! (array-ref data.control 5) 0)
+          (set! (array-ref data.control 6) 0)
+          (tc-macro-import-index-state-data-set! state data)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+
+(define (macro-alias-cache-ensure! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroImportIndexStateData
+      (tc-macro-import-index-state-data state)]
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    (if (and
+      (= (array-ref data.control 3) 1)
+      (= (array-ref data.control 1) table-id)
+      (= (array-ref data.control 2) reset-generation))
+      unit
+      (macro-alias-cache-initialize! state))))
 
 (define (macro-alias-cache-bucket [module-id : i64] [qualifier-id : i64]) : i64
-  (bit-and
-    (+ (* module-id 2654435761) qualifier-id)
-    (- macro-alias-cache-capacity 1)))
+  (bit-and (+ (* module-id 2654435761) qualifier-id) 16383))
 
 ;; Returns the cached value for `(module-id, qualifier-id)`, or -2 when absent.
-(define (macro-alias-cache-get [module-id : i64] [qualifier-id : i64]) : i64
+(define (macro-alias-cache-get
+  [state : TcMacroState]
+  [module-id : i64]
+  [qualifier-id : i64]) : i64
   (let
     [cursor : i64 (macro-alias-cache-bucket module-id qualifier-id)]
     [module-key : i64 (+ module-id 1)]
@@ -93203,31 +96464,39 @@
     (begin
       (while (if done
         false
-        (< steps macro-alias-cache-capacity))
+        (< steps 16384))
         (let
-          [slot : i64 (array-ref macro-alias-cache-module-keys cursor)]
+          [slot : i64
+            (array-ref
+              (tc-macro-import-index-array state alias-module-keys)
+              cursor)]
           (if (= slot 0)
             (set! done true)
             (if (and
               (= slot module-key)
               (=
-                (array-ref macro-alias-cache-qualifier-keys cursor)
+                (array-ref
+                  (tc-macro-import-index-array state alias-qualifier-keys)
+                  cursor)
                 qualifier-key))
               (begin
-                (set! out (array-ref macro-alias-cache-values cursor))
+                (set!
+                  out
+                  (array-ref
+                    (tc-macro-import-index-array state alias-values)
+                    cursor))
                 (set! done true))
               (begin
-                (set!
-                  cursor
-                  (bit-and (+ cursor 1) (- macro-alias-cache-capacity 1)))
+                (set! cursor (bit-and (+ cursor 1) 16383))
                 (set! steps (+ steps 1)))))))
       out)))
 
 (define (macro-alias-cache-put!
+  [state : TcMacroState]
   [module-id : i64]
   [qualifier-id : i64]
   [value : i64]) : unit
-  (if (>= (* macro-alias-cache-count 2) macro-alias-cache-capacity)
+  (if (>= (* (tc-macro-import-index-control state 0) 2) 16384)
     unit
     (let
       [cursor : i64 (macro-alias-cache-bucket module-id qualifier-id)]
@@ -93238,43 +96507,65 @@
       (begin
         (while (if done
           false
-          (< steps macro-alias-cache-capacity))
+          (< steps 16384))
           (let
-            [slot : i64 (array-ref macro-alias-cache-module-keys cursor)]
+            [slot : i64
+              (array-ref
+                (tc-macro-import-index-array state alias-module-keys)
+                cursor)]
             (if (= slot 0)
               (begin
                 (set!
-                  (array-ref macro-alias-cache-module-keys cursor)
+                  (array-ref
+                    (tc-macro-import-index-array state alias-module-keys)
+                    cursor)
                   module-key)
                 (set!
-                  (array-ref macro-alias-cache-qualifier-keys cursor)
+                  (array-ref
+                    (tc-macro-import-index-array state alias-qualifier-keys)
+                    cursor)
                   qualifier-key)
-                (set! (array-ref macro-alias-cache-values cursor) value)
-                (set! macro-alias-cache-count (+ macro-alias-cache-count 1))
+                (set!
+                  (array-ref
+                    (tc-macro-import-index-array state alias-values)
+                    cursor)
+                  value)
+                (tc-macro-import-index-control-set!
+                  state
+                  0
+                  (+ (tc-macro-import-index-control state 0) 1))
                 (set! done true))
               (if (and
                 (= slot module-key)
                 (=
-                  (array-ref macro-alias-cache-qualifier-keys cursor)
+                  (array-ref
+                    (tc-macro-import-index-array state alias-qualifier-keys)
+                    cursor)
                   qualifier-key))
                 (begin
                   (let
-                    [existing : i64 (array-ref macro-alias-cache-values cursor)]
+                    [existing : i64
+                      (array-ref
+                        (tc-macro-import-index-array state alias-values)
+                        cursor)]
                     (if (and
                       (or (= value -3) (>= value 0))
                       (or (< existing 0) (= existing qualifier-id))
                       (not (= value existing)))
-                      (set! (array-ref macro-alias-cache-values cursor) value)
+                      (set!
+                        (array-ref
+                          (tc-macro-import-index-array state alias-values)
+                          cursor)
+                        value)
                       unit))
                   (set! done true))
                 (begin
-                  (set!
-                    cursor
-                    (bit-and (+ cursor 1) (- macro-alias-cache-capacity 1)))
+                  (set! cursor (bit-and (+ cursor 1) 16383))
                   (set! steps (+ steps 1)))))))
         unit))))
 
 (define (macro-alias-cache-index-range!
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [start : i64]
   [count : i64]
@@ -93306,10 +96597,14 @@
                           [(ast.AstMaybeModuleName.Some target) target]
                           [(ast.AstMaybeModuleName.No) alias])]
                       (if (>=
-                        (* macro-alias-cache-count 2)
-                        macro-alias-cache-capacity)
-                        (set! macro-alias-cache-complete false)
-                        (macro-alias-cache-put! cur-module-id alias target-id)))]
+                        (* (tc-macro-import-index-control state 0) 2)
+                        16384)
+                        (tc-macro-import-index-control-set! state 6 0)
+                        (macro-alias-cache-put!
+                          state
+                          cur-module-id
+                          alias
+                          target-id)))]
                   [(ast.AstMaybeImportAlias.No) unit])]
               [_ unit])
             unit)
@@ -93320,6 +96615,7 @@
 ;; program order. Index it back-to-front without constructing the large
 ;; generic segmented iterator result for every declaration.
 (define (macro-alias-cache-index-reverse-range!
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [start : i64]
   [start-module-id : i64]) : i64
@@ -93347,10 +96643,14 @@
                           [(ast.AstMaybeModuleName.Some target) target]
                           [(ast.AstMaybeModuleName.No) alias])]
                       (if (>=
-                        (* macro-alias-cache-count 2)
-                        macro-alias-cache-capacity)
-                        (set! macro-alias-cache-complete false)
-                        (macro-alias-cache-put! cur-module-id alias target-id)))]
+                        (* (tc-macro-import-index-control state 0) 2)
+                        16384)
+                        (tc-macro-import-index-control-set! state 6 0)
+                        (macro-alias-cache-put!
+                          state
+                          cur-module-id
+                          alias
+                          target-id)))]
                   [(ast.AstMaybeImportAlias.No) unit])]
               [_ unit])
             unit)
@@ -93366,41 +96666,48 @@
 ;; hundreds of times. One pass makes every later query O(1); if the table's
 ;; half-load insert cap is ever hit, complete stays false and misses fall back
 ;; to the exact scan, so only memoization -- never correctness -- degrades.
-(define (macro-alias-cache-build! [decls : ast.AstDeclList]) : unit
+(define (macro-alias-cache-build!
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : unit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     (begin
-      (set! macro-alias-cache-complete true)
-      (set!
-        macro-alias-cache-built-end-module-id
+      (tc-macro-import-index-control-set! state 6 1)
+      (tc-macro-import-index-control-set!
+        state
+        10
         (macro-alias-cache-index-range!
+          state
           decls
           0
           count
           cbi.compiler-builtin-id-fix-empty))
-      (set! macro-alias-cache-built true)
-      (set! macro-alias-cache-built-segmented false)
-      (set! macro-alias-cache-built-decl-count count)
-      (set! macro-alias-cache-built-decl-offset decls.offset)
-      (set!
-        macro-alias-cache-built-decl-slots-addr
+      (tc-macro-import-index-control-set! state 4 1)
+      (tc-macro-import-index-control-set! state 5 0)
+      (tc-macro-import-index-control-set! state 7 count)
+      (tc-macro-import-index-control-set! state 8 decls.offset)
+      (tc-macro-import-index-control-set!
+        state
+        9
         (macro-decl-list-slots-data-addr decls)))))
 
-(define (macro-alias-cache-build-segmented! [state : TcJobState]) : unit
+(define (macro-alias-cache-build-segmented! [job-state : TcJobState]) : unit
   (let
-    [count : i64 (macro-segmented-program-decl-count state)]
+    [state : TcMacroState (tc-job-state-macro-state job-state)]
+    [count : i64 (macro-segmented-program-decl-count job-state)]
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
-        (tc-job-state-macro-program-view-address state))]
+        (tc-job-state-macro-program-view-address job-state))]
     [prefix : ast.AstDeclList data.prefix-rev]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [node-address : i64 data.head]
     [node-index : i64 data.cursor]
     (begin
-      (set! macro-alias-cache-complete true)
+      (tc-macro-import-index-control-set! state 6 1)
       (set!
         cur-module-id
         (macro-alias-cache-index-reverse-range!
+          state
           prefix
           (- (ast.ast-decl-list-len (& prefix)) 1)
           cur-module-id))
@@ -93413,18 +96720,19 @@
             (set!
               cur-module-id
               (macro-alias-cache-index-range!
+                state
                 decls
                 node-index
                 (ast.ast-decl-list-len (& decls))
                 cur-module-id))
             (set! node-address node.next)
             (set! node-index 0))))
-      (set! macro-alias-cache-built-end-module-id cur-module-id)
-      (set! macro-alias-cache-built true)
-      (set! macro-alias-cache-built-segmented true)
-      (set! macro-alias-cache-built-decl-count count)
-      (set! macro-alias-cache-built-decl-offset -1)
-      (set! macro-alias-cache-built-decl-slots-addr 0))))
+      (tc-macro-import-index-control-set! state 10 cur-module-id)
+      (tc-macro-import-index-control-set! state 4 1)
+      (tc-macro-import-index-control-set! state 5 1)
+      (tc-macro-import-index-control-set! state 7 count)
+      (tc-macro-import-index-control-set! state 8 -1)
+      (tc-macro-import-index-control-set! state 9 0))))
 
 ;; Macro expansion appends generated declarations to the active program view.
 ;; Keep the eager index synchronized once per larger view. When the backing
@@ -93432,42 +96740,48 @@
 ;; in that case rebuild the index once over the replacement view rather than
 ;; making every later miss rescan it. Smaller/offset views remain transient and
 ;; retain the exact fallback below.
-(define (macro-alias-cache-adopt-larger-view! [decls : ast.AstDeclList]) : unit
+(define (macro-alias-cache-adopt-larger-view!
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : unit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     (if (and
-      (= macro-alias-cache-built-decl-offset decls.offset)
-      (> count macro-alias-cache-built-decl-count))
+      (= (tc-macro-import-index-control state 8) decls.offset)
+      (> count (tc-macro-import-index-control state 7)))
       (if (=
-        macro-alias-cache-built-decl-slots-addr
+        (tc-macro-import-index-control state 9)
         (macro-decl-list-slots-data-addr decls))
         (begin
-          (set!
-            macro-alias-cache-built-end-module-id
+          (tc-macro-import-index-control-set!
+            state
+            10
             (macro-alias-cache-index-range!
+              state
               decls
-              macro-alias-cache-built-decl-count
+              (tc-macro-import-index-control state 7)
               count
-              macro-alias-cache-built-end-module-id))
-          (set! macro-alias-cache-built-decl-count count))
+              (tc-macro-import-index-control state 10)))
+          (tc-macro-import-index-control-set! state 7 count))
         (begin
-          (set! macro-alias-cache-ready false)
-          (macro-alias-cache-ensure!)
-          (macro-alias-cache-build! decls)))
+          (tc-macro-import-index-control-set! state 3 0)
+          (macro-alias-cache-ensure! state)
+          (macro-alias-cache-build! state decls)))
       unit)))
 
 (define (macro-import-alias-target-cached-id
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [current-module-id : i64]
   [qualifier-id : i64]) : TcMaybeNameId
   (begin
-    (macro-alias-cache-ensure!)
-    (if macro-alias-cache-built
+    (macro-alias-cache-ensure! state)
+    (if (= (tc-macro-import-index-control state 4) 1)
       unit
-      (macro-alias-cache-build! decls))
-    (macro-alias-cache-adopt-larger-view! decls)
+      (macro-alias-cache-build! state decls))
+    (macro-alias-cache-adopt-larger-view! state decls)
     (let
-      [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
+      [cached : i64
+        (macro-alias-cache-get state current-module-id qualifier-id)]
       (cond
         [(= cached -3)
           (match (tc-lazy-import-stub-target-indexed
@@ -93476,6 +96790,7 @@
             [(TcMaybeNameId.Some target-id)
               (begin
                 (macro-alias-cache-put!
+                  state
                   current-module-id
                   qualifier-id
                   (if (= target-id qualifier-id)
@@ -93490,6 +96805,7 @@
             [(TcMaybeNameId.Some target-id)
               (begin
                 (macro-alias-cache-put!
+                  state
                   current-module-id
                   qualifier-id
                   (if (= target-id qualifier-id)
@@ -93505,6 +96821,7 @@
                 [(TcMaybeNameId.Some target-id)
                   (begin
                     (macro-alias-cache-put!
+                      state
                       current-module-id
                       qualifier-id
                       (if (= target-id qualifier-id)
@@ -93513,7 +96830,11 @@
                     (TcMaybeNameId.Some target-id))]
                 [(TcMaybeNameId.No)
                   (begin
-                    (macro-alias-cache-put! current-module-id qualifier-id -1)
+                    (macro-alias-cache-put!
+                      state
+                      current-module-id
+                      qualifier-id
+                      -1)
                     (TcMaybeNameId.No))])])]
         [(< cached 0) (TcMaybeNameId.No)]
         [(= cached qualifier-id)
@@ -93523,6 +96844,7 @@
             [(TcMaybeNameId.Some target-id)
               (begin
                 (macro-alias-cache-put!
+                  state
                   current-module-id
                   qualifier-id
                   (if (= target-id qualifier-id)
@@ -93538,6 +96860,7 @@
                 [(TcMaybeNameId.Some target-id)
                   (begin
                     (macro-alias-cache-put!
+                      state
                       current-module-id
                       qualifier-id
                       (if (= target-id qualifier-id)
@@ -93546,7 +96869,11 @@
                     (TcMaybeNameId.Some target-id))]
                 [(TcMaybeNameId.No)
                   (begin
-                    (macro-alias-cache-put! current-module-id qualifier-id -3)
+                    (macro-alias-cache-put!
+                      state
+                      current-module-id
+                      qualifier-id
+                      -3)
                     (TcMaybeNameId.Some cached))])])]
         [else (TcMaybeNameId.Some cached)]))))
 
@@ -93556,19 +96883,26 @@
   [current-module-id : i64]
   [qualifier-id : i64]) : TcMaybeNameId
   (let
-    [state : TcJobState (tc-context-job-state ctx)]
+    [job-state : TcJobState (tc-context-job-state ctx)]
+    [state : TcMacroState (tc-context-macro-state ctx)]
     (begin
-      (if (macro-segmented-program-active? state)
+      (if (macro-segmented-program-active? job-state)
         (begin
-          (macro-alias-cache-ensure!)
-          (if (and macro-alias-cache-built macro-alias-cache-built-segmented)
+          (macro-alias-cache-ensure! state)
+          (if (and
+            (= (tc-macro-import-index-control state 4) 1)
+            (= (tc-macro-import-index-control state 5) 1))
             unit
             (begin
-              (set! macro-alias-cache-ready false)
-              (macro-alias-cache-ensure!)
-              (macro-alias-cache-build-segmented! state))))
+              (tc-macro-import-index-control-set! state 3 0)
+              (macro-alias-cache-ensure! state)
+              (macro-alias-cache-build-segmented! job-state))))
         unit)
-      (macro-import-alias-target-cached-id decls current-module-id qualifier-id))))
+      (macro-import-alias-target-cached-id
+        state
+        decls
+        current-module-id
+        qualifier-id))))
 
 (define (macro-resolve-qualified-module-id
   [ctx : TcContext]
@@ -93642,7 +96976,10 @@
               (ctfe_support.ctfe-diagnostic-at-expr
                 call-expr
                 (macro-missing-macro-message name))))])
-      (match (macro-surface-call-decl-in-module target-module-id base-id)
+      (match (macro-surface-call-decl-in-module
+        (tc-context-macro-state ctx)
+        target-module-id
+        base-id)
         [(MacroMaybeDecl.Some
             macro-name
             def-module
@@ -93784,51 +97121,110 @@
   [_call-expr : ast.AstExpr]) : ResultMacroCallDecl
   (macro-prelude-resolve (tc-context-symbols ctx) lookup-name-id))
 
-(define macro-stdlib-result-identity-table-id : i64
-  -1)
-(define macro-stdlib-result-identity-generation : i64
-  -1)
-(define macro-stdlib-result-identity-pool-len : i64
-  -1)
-(define macro-stdlib-result-module-id : i64
-  -1)
-(define macro-stdlib-result-macro-id : i64
-  -1)
+(defstruct TcMacroResultIdentityStateData
+  (table-id i64)
+  (reset-generation i64)
+  (source-count i64)
+  (module-id i64)
+  (macro-id i64))
 
-(define (macro-stdlib-result-identity-ensure!) : unit
+(define (tc-macro-result-identity-state-address-initialize
+  [state : TcMacroState]) : i64
   (let
-    [table-id : i64 (ci.intern-active-table-id)]
-    [generation : i64 (ci.intern-generation)]
-    [pool-len : i64 (ci.intern-pool-len)]
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-result-identity)]
+    (if (> address 0)
+      address
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array TcMacroResultIdentityStateData)
+          (array.make-array TcMacroResultIdentityStateData 1)]
+        [_init : unit
+          (set!
+            (array-ref cell 0)
+            (TcMacroResultIdentityStateData -1 -1 -1 -1 -1))]
+        [next : i64
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast
+                  (array-data cell)
+                  : (Ptr TcMacroResultIdentityStateData))))
+            : i64)]
+        (begin
+          (tc-macro-state-slot-address-set!
+            state
+            tc-macro-state-slot-result-identity
+            next)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          next)))))
+
+(define (tc-macro-result-identity-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    9
+    tc-macro-result-identity-state-address-initialize))
+
+(define (tc-macro-result-identity-state-data [state : TcMacroState]) : TcMacroResultIdentityStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (tc-macro-result-identity-state-address state) : u64)
+        : (Ptr TcMacroResultIdentityStateData)))))
+
+(define (tc-macro-result-identity-state-data-set!
+  [state : TcMacroState]
+  [data : TcMacroResultIdentityStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (tc-macro-result-identity-state-address state) : u64)
+        : (MutPtr TcMacroResultIdentityStateData))
+      data)))
+
+(define (macro-stdlib-result-identity-ensure! [state : TcMacroState]) : unit
+  (let
+    [session : ci.InternSourceNameSession
+      (tc-macro-state-source-name-session state)]
+    [identity : TcMacroResultIdentityStateData
+      (tc-macro-result-identity-state-data state)]
     (if (and
-      (= macro-stdlib-result-identity-table-id table-id)
-      (= macro-stdlib-result-identity-generation generation)
-      (= macro-stdlib-result-identity-pool-len pool-len))
+      (= identity.table-id session.table-id)
+      (= identity.reset-generation session.reset-generation)
+      (= identity.source-count session.source-count))
       unit
       (begin
         (set!
-          macro-stdlib-result-module-id
-          (match (ci.intern-lookup "stdlib.result")
+          identity.module-id
+          (match (ci.intern-source-name-session-lookup session "stdlib.result")
             [(ci.InternLookupFound module-id) module-id]
             [(ci.InternLookupMissing) -1]))
         (set!
-          macro-stdlib-result-macro-id
-          (match (ci.intern-lookup "result")
+          identity.macro-id
+          (match (ci.intern-source-name-session-lookup session "result")
             [(ci.InternLookupFound macro-id) macro-id]
             [(ci.InternLookupMissing) -1]))
-        (set! macro-stdlib-result-identity-table-id table-id)
-        (set! macro-stdlib-result-identity-generation generation)
-        (set! macro-stdlib-result-identity-pool-len pool-len)))))
+        (set! identity.table-id session.table-id)
+        (set! identity.reset-generation session.reset-generation)
+        (set! identity.source-count session.source-count)
+        (tc-macro-result-identity-state-data-set! state identity)))))
 
 (define (macro-refresh-stdlib-result-surface-if-needed!
   [ctx : TcContext]
   [target-module-id : i64]
   [lookup-name-id : i64]) : unit
-  (begin
-    (macro-stdlib-result-identity-ensure!)
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [_ensure : unit (macro-stdlib-result-identity-ensure! state)]
+    [identity : TcMacroResultIdentityStateData
+      (tc-macro-result-identity-state-data state)]
     (if (and
-      (= target-module-id macro-stdlib-result-module-id)
-      (= lookup-name-id macro-stdlib-result-macro-id))
+      (= target-module-id identity.module-id)
+      (= lookup-name-id identity.macro-id))
       (match (cload.compiler-load-surface-summary-find-module target-module-id)
         [(CompilerLoadSomeSurfaceSummary summary)
           (begin
@@ -93844,7 +97240,7 @@
             ;; reads the retained body through ast-node-get, so publish that updated
             ;; context before materializing the macro declaration.
             (tc-context-install-pools! ctx)
-            (macro-surface-call-decl-cache-reset!))]
+            (macro-surface-call-decl-cache-reset! (tc-context-macro-state ctx)))]
         [(CompilerLoadNoSurfaceSummary) unit])
       unit)))
 
@@ -93883,7 +97279,10 @@
               ret
               body))]
         [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])
-      (match (macro-surface-call-decl-in-module target-module-id lookup-name-id)
+      (match (macro-surface-call-decl-in-module
+        (tc-context-macro-state ctx)
+        target-module-id
+        lookup-name-id)
         [(MacroMaybeDecl.Some
             macro-name
             def-module
@@ -93906,6 +97305,7 @@
               target-module-id
               lookup-name-id)
             (match (macro-surface-call-decl-in-module
+              (tc-context-macro-state ctx)
               target-module-id
               lookup-name-id)
               [(MacroMaybeDecl.Some
@@ -93984,20 +97384,27 @@
   [lookup-name-id : i64]
   [call-expr : ast.AstExpr]) : ResultMacroCallDecl
   (begin
-    (macro-unqualified-import-cache-ensure!)
+    (macro-unqualified-import-cache-ensure! (tc-context-macro-state ctx))
     (let
       [cached : i64
-        (macro-unqualified-import-cache-get module-id lookup-name-id)]
+        (macro-unqualified-import-cache-get
+          (tc-context-macro-state ctx)
+          module-id
+          lookup-name-id)]
       [target : i64
         (if (= cached -2)
           (let
             [resolved : i64
               (macro-unqualified-imported-call-target-from-imports
                 ctx
-                (macro-flat-import-targets decls module-id)
+                (macro-flat-import-targets
+                  (tc-context-macro-state ctx)
+                  decls
+                  module-id)
                 lookup-name-id)]
             (begin
               (macro-unqualified-import-cache-put!
+                (tc-context-macro-state ctx)
                 module-id
                 lookup-name-id
                 resolved)
@@ -94058,7 +97465,10 @@
               ret
               body))]
         [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])
-      (match (macro-surface-call-decl-in-module module-id lookup-name-id)
+      (match (macro-surface-call-decl-in-module
+        (tc-context-macro-state ctx)
+        module-id
+        lookup-name-id)
         [(MacroMaybeDecl.Some
             macro-name
             def-module
@@ -94923,7 +98333,8 @@
   (if (tc-type-eq resolved-expected (ast.AstType.Expr))
     ResultMacroCheck.Ok
     (let
-      [journal-mark : i64 (tc-dotted-macro-journal-start!)]
+      [macro-state : TcMacroState (tc-context-macro-state ctx)]
+      [journal-mark : i64 (tc-dotted-macro-journal-start! macro-state)]
       [result : ResultMacroCheck
         (match (tc-expr-with-expected-or-actual ctx env arg resolved-expected)
           [(ResultTcType.Ok actual)
@@ -94949,7 +98360,7 @@
                         "typecheck: macro operand typecheck failed: "
                         message))))))])]
       (begin
-        (tc-dotted-macro-journal-restore-to! journal-mark)
+        (tc-dotted-macro-journal-restore-to! macro-state journal-mark)
         result))))
 
 (define (macro-operand-bracket-clause? [arg : ast.AstExpr]) : bool
@@ -96066,9 +99477,6 @@
 ;; index and terminal shell state for the mapping lifetime. Loader provenance
 ;; is per compilation session: embedded source and byte-identical disk source
 ;; may enter this branch, while modified or otherwise untrusted roots cannot.
-(define macro-expand-stdlib-tlci-route-active : bool
-  false)
-
 (cfg
   embedded-stdlib-tlci
   (define (macro-expand-stdlib-tlci-catalog-lookup-cached [name : String]) : embedded_tlci.CompilerEmbeddedStdlibTlciLookup
@@ -96084,6 +99492,7 @@
           lookup)))))
 
 (define (macro-note-stdlib-tlci-route
+  [state : TcMacroState]
   [definition-module : String]
   ;; lint-allow: unused-variable -- used by embedded-stdlib-tlci builds.
   [macro-name : String]) : unit
@@ -96091,7 +99500,7 @@
     (ctfe_support.ctfe-string-prefix? definition-module "stdlib.")
     (ctfe_support.ctfe-string-prefix? macro-name "stdlib."))
     (if (and
-      macro-expand-stdlib-tlci-route-active
+      (tc-macro-walk-field state macro-expand-stdlib-tlci-route-active)
       (cload.compiler-load-embedded-stdlib-module-id? definition-module))
       (begin
         (cfg
@@ -96153,7 +99562,7 @@
 ;; an entry that commits a result was a compiled native body and an entry
 ;; that commits nothing (a registration shell) falls back to interpretation.
 ;; No per-identity list is needed. Refs #5212, #5213.
-(define macro-stdlib-tlci-native-cookie : i64
+(define (macro-stdlib-tlci-native-cookie) : i64
   0x1cf1)
 
 ;; #5926: production-route sustained stress telemetry. The declarations only
@@ -96409,13 +99818,14 @@
           (if (not ok)
             MacroNativeStdlibTlciResult.No
             (begin
-              (embedded_tlci.compiler-comptime-host-session-open!
+              (embedded_tlci.compiler-comptime-host-session-open-with-macro-state!
                 host-pools
                 operands
                 count
                 (ctfe_support.ctfe-fuel-limit)
-                macro-stdlib-tlci-native-cookie
-                (ctfe_support.ctfe-env-reflections env))
+                (macro-stdlib-tlci-native-cookie)
+                (ctfe_support.ctfe-env-reflections env)
+                (ctfe_support.ctfe-env-macro-state env))
               (cfg
                 compile-profile
                 (compiler-tc-stdlib-tlci-entry-invoke-start!))
@@ -96423,7 +99833,7 @@
                 [dispatch-result : tlci_loader_support.ResultTlciMacroDispatch
                   (embedded_tlci.compiler-embedded-stdlib-tlci-session-dispatch
                     resolved
-                    macro-stdlib-tlci-native-cookie)]
+                    (macro-stdlib-tlci-native-cookie))]
                 (begin
                   (cfg
                     compile-profile
@@ -96589,7 +99999,10 @@
     [env : ctfe_support.CtfeEnv]
     [call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
     (if (or
-      (not macro-expand-stdlib-tlci-route-active)
+      (not
+        (tc-macro-walk-field
+          (tc-context-macro-state ctx)
+          macro-expand-stdlib-tlci-route-active))
       (not (cload.compiler-load-embedded-stdlib-module-id? definition-module)))
       MacroNativeStdlibTlciResult.No
       (let
@@ -96636,14 +100049,15 @@
     MacroNativeStdlibTlciResult.No))
 
 (define (macro-result-provenance-reset-with-captured-body!
+  [state : ctfe_support.CompilerCtfeMacroState]
   [captured-body? : bool]) : unit
   (begin
-    (ctfe_support.ctfe-result-macro-provenance-reset!)
+    (ctfe_support.ctfe-result-macro-provenance-reset-for-state! state)
     ;; A transformer can splice a captured operand without reconstructing its
     ;; call nodes. Preserve that input provenance so a nested macro is rewalked
     ;; in the lexical environment introduced by the generated syntax.
     (if captured-body?
-      (ctfe_support.ctfe-result-may-contain-macro-note!)
+      (ctfe_support.ctfe-result-may-contain-macro-note-for-state! state)
       unit)))
 
 (defenum MacroDirectStdlibTlciResult
@@ -96723,7 +100137,10 @@
     [expanded-args : ast.AstExprList]
     [call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
     (if (or
-      (not macro-expand-stdlib-tlci-route-active)
+      (not
+        (tc-macro-walk-field
+          (tc-context-macro-state ctx)
+          macro-expand-stdlib-tlci-route-active))
       (> params.len 8)
       (not (cload.compiler-load-embedded-stdlib-module-id? fallback-module)))
       MacroDirectStdlibTlciResult.No
@@ -96749,6 +100166,7 @@
                     expanded-args
                     (tc-ctfe-env ctx)
                     (macro-expand-expr-type-macro?
+                      (tc-context-macro-state ctx)
                       fallback-module-id
                       macro-name-id)
                     call-expr)]
@@ -96765,15 +100183,19 @@
                     base-env
                     syntax-pools)
                   (begin
-                    (ctfe_support.ctfe-result-hygiene-free-reset!)
+                    (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
+                      (tc-context-ctfe-macro-state ctx))
                     (macro-result-provenance-reset-with-captured-body!
+                      (tc-context-ctfe-macro-state ctx)
                       (macro-binding-prefix-transformer?
                         ctx
                         fallback-module
                         fallback-module-id
                         macro-name-id
                         params))
-                    (macro-hygiene-produced-eval-start-with-pools! syntax-pools)
+                    (macro-hygiene-produced-eval-start-with-pools!
+                      (tc-context-macro-state ctx)
+                      syntax-pools)
                     (cfg
                       compile-profile
                       (compiler-tc-walk-native-dispatch-start!))
@@ -96808,6 +100230,7 @@
                                   compiler-tc-macro-stdlib-tlci-direct-expr-results
                                   1))
                               (compiler-tc-macro-profile-finish
+                                (tc-context-macro-state ctx)
                                 (ci.intern-composite-pair-id
                                   fallback-module-id
                                   macro-name-id)
@@ -96822,6 +100245,7 @@
                           (cfg
                             compile-profile
                             (compiler-tc-macro-profile-finish
+                              (tc-context-macro-state ctx)
                               (ci.intern-composite-pair-id
                                 fallback-module-id
                                 macro-name-id)
@@ -96912,9 +100336,12 @@
   [expanded-args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
   (begin
-    (ctfe_support.ctfe-result-hygiene-free-reset!)
-    (macro-result-provenance-reset-with-captured-body! captured-body?)
-    (macro-hygiene-produced-eval-start! env)
+    (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
+      (tc-context-ctfe-macro-state ctx))
+    (macro-result-provenance-reset-with-captured-body!
+      (tc-context-ctfe-macro-state ctx)
+      captured-body?)
+    (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
     (cfg compile-profile (compiler-tc-macro-profile-start))
     (match (ctfe_support.ctfe-eval-node
       body
@@ -96929,6 +100356,7 @@
           (cfg
             compile-profile
             (compiler-tc-macro-profile-finish
+              (tc-context-macro-state ctx)
               (ci.intern-composite-pair-id fallback-module-id macro-name-id)
               macro-name
               expanded-args))
@@ -96938,6 +100366,7 @@
           (cfg
             compile-profile
             (compiler-tc-macro-profile-finish
+              (tc-context-macro-state ctx)
               (ci.intern-composite-pair-id fallback-module-id macro-name-id)
               macro-name
               expanded-args))
@@ -96969,7 +100398,10 @@
           params
           expanded-args
           (tc-ctfe-env ctx)
-          (macro-expand-expr-type-macro? fallback-module-id macro-name-id)
+          (macro-expand-expr-type-macro?
+            (tc-context-macro-state ctx)
+            fallback-module-id
+            macro-name-id)
           call-expr)]
       (begin
         (cfg compile-profile (compiler-tc-walk-bind-params-finish!))
@@ -97006,15 +100438,17 @@
         ;; Both routes publish per-transformer syntax metadata. Reset before
         ;; native dispatch as well as before an interpreted fallback so an
         ;; earlier expansion cannot leak either marker into this result.
-        (ctfe_support.ctfe-result-hygiene-free-reset!)
+        (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
+          (tc-context-ctfe-macro-state ctx))
         (macro-result-provenance-reset-with-captured-body!
+          (tc-context-ctfe-macro-state ctx)
           (macro-binding-prefix-transformer?
             ctx
             fallback-module
             fallback-module-id
             macro-name-id
             params))
-        (macro-hygiene-produced-eval-start! env)
+        (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
         (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
         (cfg compile-profile (compiler-tc-macro-profile-start))
         (match (let
@@ -97036,6 +100470,7 @@
               (cfg
                 compile-profile
                 (compiler-tc-macro-profile-finish
+                  (tc-context-macro-state ctx)
                   (ci.intern-composite-pair-id fallback-module-id macro-name-id)
                   macro-name
                   expanded-args))
@@ -97045,13 +100480,17 @@
               (cfg
                 compile-profile
                 (compiler-tc-macro-profile-finish
+                  (tc-context-macro-state ctx)
                   (ci.intern-composite-pair-id fallback-module-id macro-name-id)
                   macro-name
                   expanded-args))
               (ResultMacroValueEnv.Err (box diag)))]
           [(MacroNativeStdlibTlciResult.No)
             (begin
-              (macro-note-stdlib-tlci-route fallback-module macro-name)
+              (macro-note-stdlib-tlci-route
+                (tc-context-macro-state ctx)
+                fallback-module
+                macro-name)
               (macro-eval-transformer-interpreted-with-env
                 ctx
                 fallback-module-id
@@ -97068,7 +100507,10 @@
                 env))]
           [(MacroNativeStdlibTlciResult.Shell)
             (begin
-              (macro-note-stdlib-tlci-route fallback-module macro-name)
+              (macro-note-stdlib-tlci-route
+                (tc-context-macro-state ctx)
+                fallback-module
+                macro-name)
               (macro-eval-transformer-interpreted-with-env
                 ctx
                 fallback-module-id
@@ -97899,12 +101341,15 @@
   [depth : i64]
   [expr-id : i64]) : ResultMacroExpr
   (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
     ;; A transformer result may live in its scratch pool rather than `ctx`.
     ;; Capture the installed table after evaluation and keep it for this
     ;; read-only fire scan.
     [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
     [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
-    (if (not (ctfe_support.ctfe-result-may-contain-macro?))
+    (if (not
+      (ctfe_support.ctfe-result-may-contain-macro-for-state?
+        (tc-macro-ctfe-state state)))
       (begin
         (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
         (cfg compile-profile (compiler-tc-walk-note-rewalk-provenance-skip!))
@@ -97913,7 +101358,7 @@
         ;; pool before that scratch storage is released.
         (ResultMacroExpr.Ok (ast.ast-node-push expr)))
       (let
-        [fires : bool (macro-expr-might-fire? expr-bases expr)]
+        [fires : bool (macro-expr-might-fire? state expr-bases expr)]
         (begin
           (cfg
             compile-profile
@@ -97990,16 +101435,19 @@
                         (+ depth 1)
                         (if (=
                           expanded
-                          (ctfe_support.ctfe-result-hygiene-free-node-id))
+                          (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
+                            (tc-context-ctfe-macro-state ctx)))
                           expanded
                           (begin
-                            (macro-hygiene-env-root-begin!)
+                            (macro-hygiene-env-root-begin!
+                              (tc-context-macro-state ctx))
                             (let
                               [out : i64
                                 (macro-hygiene-produced-expr
                                   expr-bases
                                   expanded
-                                  (macro-hygiene-env-empty)
+                                  (macro-hygiene-env-empty
+                                    (tc-context-macro-state ctx))
                                   (MacroHygieneContext
                                     macro-name-id
                                     definition-module-id
@@ -98007,7 +101455,8 @@
                                     (tc-context-symbols ctx))
                                   (+ depth 1))]
                               (begin
-                                (macro-hygiene-env-root-finish!)
+                                (macro-hygiene-env-root-finish!
+                                  (tc-context-macro-state ctx))
                                 out)))))]
                     (begin
                       (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
@@ -98039,16 +101488,19 @@
                         (+ depth 1)
                         (if (=
                           expanded
-                          (ctfe_support.ctfe-result-hygiene-free-node-id))
+                          (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
+                            (tc-context-ctfe-macro-state ctx)))
                           expanded
                           (begin
-                            (macro-hygiene-env-root-begin!)
+                            (macro-hygiene-env-root-begin!
+                              (tc-context-macro-state ctx))
                             (let
                               [out : i64
                                 (macro-hygiene-produced-expr
                                   expr-bases
                                   expanded
-                                  (macro-hygiene-env-empty)
+                                  (macro-hygiene-env-empty
+                                    (tc-context-macro-state ctx))
                                   (MacroHygieneContext
                                     macro-name-id
                                     definition-module-id
@@ -98056,7 +101508,8 @@
                                     (tc-context-symbols ctx))
                                   (+ depth 1))]
                               (begin
-                                (macro-hygiene-env-root-finish!)
+                                (macro-hygiene-env-root-finish!
+                                  (tc-context-macro-state ctx))
                                 out)))))]
                     (begin
                       (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
@@ -98224,7 +101677,10 @@
           [body-fires : bool
             (if (<= index first-fire-index)
               (= index first-fire-index)
-              (macro-expr-might-fire? (tc-context-expr-bases ctx) body))]
+              (macro-expr-might-fire?
+                (tc-context-macro-state ctx)
+                (tc-context-expr-bases ctx)
+                body))]
           (if (not body-fires)
             (match (macro-expand-node-with-fire-decision
               ctx
@@ -98550,7 +102006,11 @@
   (begin
     (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
     (let
-      [fires : bool (macro-expr-might-fire? (tc-context-expr-bases ctx) expr)]
+      [fires : bool
+        (macro-expr-might-fire?
+          (tc-context-macro-state ctx)
+          (tc-context-expr-bases ctx)
+          expr)]
       (if (or (not fires) (< (macro-expand-depth-limit) depth))
         (if (not fires)
           (ResultMacroExpr.Ok (ast.ast-node-push expr))
@@ -98575,7 +102035,11 @@
   [expr-id : i64]) : ResultMacroExpr
   (let
     [expr : ast.AstExpr (ast.ast-node-get expr-id)]
-    [fires : bool (macro-expr-might-fire? (tc-context-expr-bases ctx) expr)]
+    [fires : bool
+      (macro-expr-might-fire?
+        (tc-context-macro-state ctx)
+        (tc-context-expr-bases ctx)
+        expr)]
     (macro-expand-node-with-fire-decision
       ctx
       env
@@ -98608,7 +102072,8 @@
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr (ast.ast-node-get func-box)]
-        [callee-maybe-macro : bool (macro-call-callee-maybe-macro? func)]
+        [callee-maybe-macro : bool
+          (macro-call-callee-maybe-macro? (tc-context-macro-state ctx) func)]
         (if callee-maybe-macro
           (match (macro-call-decl ctx func decls expr)
             [(ResultMacroCallDecl.Ok maybe-decl)
@@ -98753,6 +102218,7 @@
           (let
             [first-fire-index : i64
               (macro-match-arms-first-fire-index
+                (tc-context-macro-state ctx)
                 (tc-context-expr-bases ctx)
                 arms)]
             (match (macro-expand-node ctx env decls depth scrut-box)
@@ -99299,35 +102765,66 @@
             [(ResultMacroDecl.Err diag) (ResultMacroDecl.Err diag)]))]
       [_ (ResultMacroDecl.Ok decl)])))
 
-(define (macro-single-decl-expansion [decl : ast.AstDecl] [path : String]) : ResultMacroDeclExpansion
+(define (macro-single-decl-expansion
+  [state : TcMacroState]
+  [decl : ast.AstDecl]
+  [path : String]) : ResultMacroDeclExpansion
   (ResultMacroDeclExpansion.Ok
     (ast.ast-decl-cons decl (ast.ast-decl-list-new))
     (macro-paths-for-decls
+      state
       (ast.ast-decl-cons decl (ast.ast-decl-list-new))
       path)))
 
-(define (tc-macro-module-env-cache-lookup [module-id : i64] [index : i64]) : TcMaybeTypeEnv
-  (if (>= index tc-macro-module-env-cache-len)
-    (TcMaybeTypeEnv.No)
-    (if (= (array-ref tc-macro-module-env-cache-module-ids index) module-id)
-      (TcMaybeTypeEnv.Some (array-ref tc-macro-module-env-cache-values index))
-      (tc-macro-module-env-cache-lookup module-id (+ index 1)))))
+(define (tc-macro-module-env-cache-storage-ensure! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (if (= (array-length data.macro-cache-module-ids) data.macro-cache-capacity)
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        (begin
+          (set!
+            data.macro-cache-module-ids
+            (array.make-array i64 data.macro-cache-capacity))
+          (set!
+            data.macro-cache-values
+            (array.make-array TcTypeEnv data.macro-cache-capacity))
+          (tc-macro-module-env-state-data-set! state data)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
 
-(define (tc-macro-module-env-cache-insert! [module-id : i64] [env : TcTypeEnv]) : unit
-  (if (< tc-macro-module-env-cache-len tc-macro-module-env-cache-capacity)
-    (begin
-      (set!
-        (array-ref
-          tc-macro-module-env-cache-module-ids
-          tc-macro-module-env-cache-len)
-        module-id)
-      (set!
-        (array-ref
-          tc-macro-module-env-cache-values
-          tc-macro-module-env-cache-len)
-        env)
-      (set! tc-macro-module-env-cache-len (+ tc-macro-module-env-cache-len 1)))
-    unit))
+(define (tc-macro-module-env-cache-lookup
+  [state : TcMacroState]
+  [module-id : i64]
+  [index : i64]) : TcMaybeTypeEnv
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (if (>= index data.macro-cache-len)
+      (TcMaybeTypeEnv.No)
+      (if (= (array-ref data.macro-cache-module-ids index) module-id)
+        (TcMaybeTypeEnv.Some (array-ref data.macro-cache-values index))
+        (tc-macro-module-env-cache-lookup state module-id (+ index 1))))))
+
+(define (tc-macro-module-env-cache-insert!
+  [state : TcMacroState]
+  [module-id : i64]
+  [env : TcTypeEnv]) : unit
+  (let
+    [_ensure : unit (tc-macro-module-env-cache-storage-ensure! state)]
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    (if (< data.macro-cache-len data.macro-cache-capacity)
+      (begin
+        (set!
+          (array-ref data.macro-cache-module-ids data.macro-cache-len)
+          module-id)
+        (set! (array-ref data.macro-cache-values data.macro-cache-len) env)
+        (set! data.macro-cache-len (+ data.macro-cache-len 1))
+        (tc-macro-module-env-state-data-set! state data))
+      unit)))
 
 (define (tc-macro-module-local-env-id
   [ctx : TcContext]
@@ -99335,18 +102832,21 @@
   [module : String]
   [module-id : i64]) : ResultTcEnv
   (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
     [store-handle : i64 top-env.store]
     [head : i64 top-env.head]
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
     (begin
       (if (and
-        (= tc-macro-module-env-cache-store store-handle)
-        (= tc-macro-module-env-cache-head head))
+        (= data.macro-cache-store store-handle)
+        (= data.macro-cache-head head))
         unit
         (begin
-          (set! tc-macro-module-env-cache-store store-handle)
-          (set! tc-macro-module-env-cache-head head)
-          (set! tc-macro-module-env-cache-len 0)))
-      (match (tc-macro-module-env-cache-lookup module-id 0)
+          (set! data.macro-cache-store store-handle)
+          (set! data.macro-cache-head head)
+          (set! data.macro-cache-len 0)
+          (tc-macro-module-env-state-data-set! state data)))
+      (match (tc-macro-module-env-cache-lookup state module-id 0)
         [(TcMaybeTypeEnv.Some env) (ResultTcEnv.Ok env)]
         [(TcMaybeTypeEnv.No)
           ;; The persistent environment store allocates appended nodes in the
@@ -99356,7 +102856,7 @@
           (match (tc-module-local-env-id ctx top-env module module-id)
             [(ResultTcEnv.Ok env)
               (begin
-                (tc-macro-module-env-cache-insert! module-id env)
+                (tc-macro-module-env-cache-insert! state module-id env)
                 (ResultTcEnv.Ok env))]
             [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))))
 
@@ -99579,11 +103079,25 @@
                         (__tl-box-place span))]
                     (ResultMacroDeclExpansion.Ok
                       expanded
-                      (macro-paths-for-decls expanded decl-path)))]
+                      (macro-paths-for-decls
+                        (tc-context-macro-state ctx)
+                        expanded
+                        decl-path)))]
                 [(TcMaybeNameId.No)
-                  (macro-single-decl-expansion decl decl-path)])]
-            [_ (macro-single-decl-expansion decl decl-path)])]
-        [_ (macro-single-decl-expansion decl decl-path)])]
+                  (macro-single-decl-expansion
+                    (tc-context-macro-state ctx)
+                    decl
+                    decl-path)])]
+            [_
+              (macro-single-decl-expansion
+                (tc-context-macro-state ctx)
+                decl
+                decl-path)])]
+        [_
+          (macro-single-decl-expansion
+            (tc-context-macro-state ctx)
+            decl
+            decl-path)])]
     (begin
       (tc-macro-call-site-state-restore-active-decl! site-state previous-active)
       result)))
@@ -99648,6 +103162,7 @@
     [(ResultMacroDeclExpansion.Err _) decls]))
 
 (define (macro-call-not-macro-message
+  [ctx : TcContext]
   [decls : ast.AstDeclList]
   [module-id : i64]
   [name-id : i64]) : String
@@ -99657,7 +103172,11 @@
       (str_cat.str-cat
         "typecheck: module-scope macro call does not name a macro: "
         name)]
-    (match (tc-source-dotted-alias-target-id decls module-id name-id)
+    (match (tc-source-dotted-alias-target-id
+      (tc-context-macro-state ctx)
+      decls
+      module-id
+      name-id)
       [(TcMaybeNameId.Some target-module-id)
         (let
           [macro-name : String
@@ -99674,6 +103193,7 @@
       [(TcMaybeNameId.No) default-message])))
 
 (define (macro-call-not-macro-diag
+  [ctx : TcContext]
   [decls : ast.AstDeclList]
   [module-id : i64]
   [call-expr : ast.AstExpr]) : cdiag.CompilerDiagnostic
@@ -99683,7 +103203,7 @@
       [(ast.AstExpr.Call head-id _)
         (match (ast.ast-expr-unspan (ast.ast-node-get head-id))
           [(ast.AstExpr.Var name-id)
-            (macro-call-not-macro-message decls module-id name-id)]
+            (macro-call-not-macro-message ctx decls module-id name-id)]
           [_ "typecheck: module-scope macro call has a non-symbol head"])]
       [_ "typecheck: module-scope macro placeholder is not a call"])))
 
@@ -99698,6 +103218,7 @@
       " has incompatible payload")))
 
 (define (macro-materialized-record-result
+  [state : TcMacroState]
   [identity : String]
   [target-module-id : i64]
   [summary : ast.AstDeclList]
@@ -99717,6 +103238,7 @@
               ;; in the ordinary parent walk exactly once. Record the complete
               ;; module list separately from the mutable materialized summary.
               (macro-generated-module-memo-put!
+                state
                 identity
                 target-module-id
                 summary
@@ -99777,6 +103299,7 @@
         (ast.ast-decl-module-id target-module-id)
         generated-body)]
     (macro-materialized-record-result
+      (tc-context-macro-state ctx)
       identity
       target-module-id
       materialized
@@ -99828,7 +103351,10 @@
                           existing-body)]
                       (ResultMacroDeclExpansion.Ok
                         expanded
-                        (macro-paths-for-decls expanded decl-path)))]
+                        (macro-paths-for-decls
+                          (tc-context-macro-state ctx)
+                          expanded
+                          decl-path)))]
                   [(CompilerSomeString message)
                     (ResultMacroDeclExpansion.Err
                       (box (macro-generated-import-diag span message)))])])
@@ -99858,7 +103384,10 @@
                             existing-body)]
                         (ResultMacroDeclExpansion.Ok
                           expanded
-                          (macro-paths-for-decls expanded decl-path)))]
+                          (macro-paths-for-decls
+                            (tc-context-macro-state ctx)
+                            expanded
+                            decl-path)))]
                     [(CompilerSomeString message)
                       (ResultMacroDeclExpansion.Err
                         (box (macro-generated-import-diag span message)))])]
@@ -99882,7 +103411,10 @@
                             existing-body)]
                         (ResultMacroDeclExpansion.Ok
                           expanded
-                          (macro-paths-for-decls expanded decl-path)))]
+                          (macro-paths-for-decls
+                            (tc-context-macro-state ctx)
+                            expanded
+                            decl-path)))]
                     [(CompilerSomeString message)
                       (ResultMacroDeclExpansion.Err
                         (box (macro-generated-import-diag span message)))])]
@@ -99911,7 +103443,10 @@
                                 span)))]
                         (ResultMacroDeclExpansion.Ok
                           expanded
-                          (macro-paths-for-decls expanded decl-path)))]
+                          (macro-paths-for-decls
+                            (tc-context-macro-state ctx)
+                            expanded
+                            decl-path)))]
                     [(CompilerSomeString message)
                       (ResultMacroDeclExpansion.Err
                         (box (macro-generated-import-diag span message)))])])))]
@@ -99936,7 +103471,10 @@
                         span)))]
                 (ResultMacroDeclExpansion.Ok
                   expanded
-                  (macro-paths-for-decls expanded decl-path)))]
+                  (macro-paths-for-decls
+                    (tc-context-macro-state ctx)
+                    expanded
+                    decl-path)))]
             [(CompilerSomeString message)
               (ResultMacroDeclExpansion.Err
                 (box (macro-generated-import-diag span message)))])]))))
@@ -100193,6 +103731,7 @@
                                           (parser.compiler-parse-dispatch-env)]
                                         (match (macro-decls-from-ctfe-value
                                           (macro-hygiene-ctfe-output
+                                            (tc-context-macro-state call-ctx)
                                             (ast.ast-node-pool-active-expr-segment-bases)
                                             value
                                             (MacroHygieneContext
@@ -100245,6 +103784,8 @@
                                                   (macro-expr-span-or-zero
                                                     call-expr))]
                                               (macro-decls-splice-with-memo
+                                                (tc-context-macro-state
+                                                  call-ctx)
                                                 identity
                                                 wrapped
                                                 decl-path
@@ -100272,6 +103813,7 @@
                     (ResultMacroDeclExpansion.Err
                       (box
                         (macro-call-not-macro-diag
+                          ctx
                           orig-decls
                           module-id
                           call-expr)))]))]
@@ -100369,6 +103911,7 @@
                                   [shortcut-catalog : MacroGeneratedModuleCatalogEntry
                                     (if shortcut-safe?
                                       (macro-generated-module-memo-get-catalog
+                                        (tc-context-macro-state call-ctx)
                                         identity)
                                       (MacroGeneratedModuleCatalogEntry.Empty))]
                                   (match shortcut-catalog
@@ -100415,6 +103958,7 @@
                                           (ResultMacroDeclExpansion.Ok
                                             expanded
                                             (macro-paths-for-decls
+                                              (tc-context-macro-state call-ctx)
                                               expanded
                                               decl-path))))]
                                     [(MacroGeneratedModuleCatalogEntry.Empty)
@@ -100449,6 +103993,8 @@
                                                 (parser.compiler-parse-dispatch-env)]
                                               (match (macro-module-decls-from-ctfe-value
                                                 (macro-hygiene-ctfe-output
+                                                  (tc-context-macro-state
+                                                    call-ctx)
                                                   (ast.ast-node-pool-active-expr-segment-bases)
                                                   value
                                                   (MacroHygieneContext
@@ -100514,6 +104060,7 @@
                     (ResultMacroDeclExpansion.Err
                       (box
                         (macro-call-not-macro-diag
+                          ctx
                           orig-decls
                           module-id
                           call-expr)))]))]
@@ -100553,7 +104100,9 @@
           (match kind
             [(ast.AstImportKind.Macro call-id context)
               (begin
-                (macro-expand-program-structural-change-note! 2)
+                (macro-expand-program-structural-change-note!
+                  (tc-context-macro-state ctx)
+                  2)
                 (macro-expand-module-import
                   ctx
                   top-env
@@ -100567,7 +104116,9 @@
                   decl-path))]
             [(ast.AstImportKind.MacroDecls call-id context)
               (begin
-                (macro-expand-program-structural-change-note! 2)
+                (macro-expand-program-structural-change-note!
+                  (tc-context-macro-state ctx)
+                  2)
                 (macro-expand-decls-splice
                   ctx
                   top-env
@@ -100577,7 +104128,11 @@
                   call-id
                   context
                   decl-path))]
-            [_ (macro-single-decl-expansion decl decl-path)])]
+            [_
+              (macro-single-decl-expansion
+                (tc-context-macro-state ctx)
+                decl
+                decl-path)])]
         [_
           (let
             [decl-ctx : TcContext
@@ -100589,10 +104144,15 @@
             [uses-macro : bool
               (macro-decl-uses-macro? decl-ctx orig-decls template)]
             (if (not uses-macro)
-              (macro-single-decl-expansion decl decl-path)
+              (macro-single-decl-expansion
+                (tc-context-macro-state ctx)
+                decl
+                decl-path)
               (begin
                 (if (macro-decl-expansion-can-change-program? decl)
-                  (macro-expand-program-structural-change-note! 1)
+                  (macro-expand-program-structural-change-note!
+                    (tc-context-macro-state ctx)
+                    1)
                   unit)
                 (match (macro-expand-decl
                   decl-ctx
@@ -100601,6 +104161,7 @@
                   template)
                   [(ResultMacroDecl.Ok expanded)
                     (macro-single-decl-expansion
+                      (tc-context-macro-state ctx)
                       (ast.ast-decl-with-meta (ast.ast-decl-meta decl) expanded)
                       decl-path)]
                   [(ResultMacroDecl.Err diag)
@@ -100774,7 +104335,11 @@
   [decl-path : String]
   [splice? : bool]) : ResultMacroDeclExpansion
   (if (not
-    (and macro-expand-scratch-enabled (ast.ast-node-pool-has-active-context?)))
+    (and
+      (tc-macro-walk-field
+        (tc-context-macro-state ctx)
+        macro-expand-scratch-enabled)
+      (ast.ast-node-pool-has-active-context?)))
     (begin
       (cfg compile-profile (compiler-tc-walk-decl-generation-skip!))
       (macro-expand-decl-with-path
@@ -100787,6 +104352,7 @@
         decl
         decl-path))
     (let
+      [macro-state : TcMacroState (tc-context-macro-state ctx)]
       [enclosing : i64 (arena.tl_arena_current)]
       [entry-base-arena : i64 (ast.ast-node-pool-base-arena-handle)]
       [entry-expr-len : i64 (ast.ast-node-pool-len)]
@@ -100802,15 +104368,15 @@
           0)]
       [generation : i64
         (if splice?
-          (macro-splice-generation-enter!)
-          (macro-decl-generation-enter!))]
+          (macro-splice-generation-enter! macro-state)
+          (macro-decl-generation-enter! macro-state))]
       [_profile-live-after-enter : i64
         (cfg compile-profile (profile.alloc-live) 0)]
       ;; R3-P2b: whatever this expansion records in a splice memo is noted and
       ;; re-persisted below. The window is exactly the expansion call -- a memo
       ;; put from anywhere else already lands in a long-lived arena and must not
       ;; be re-persisted with these maps.
-      [_escape-reset : unit (macro-decl-generation-escape-reset!)]
+      [_escape-reset : unit (macro-decl-generation-escape-reset! macro-state)]
       [_enter : unit
         (unsafe
           (arena.tl_arena_set generation))]
@@ -100818,7 +104384,8 @@
         (cfg compile-profile (arena.tl_region_mark) 0)]
       [_profile-raw-start-live : i64
         (cfg compile-profile (profile.alloc-live) 0)]
-      [_escape-open : unit (set! macro-decl-generation-active true)]
+      [_escape-open : unit
+        (tc-macro-walk-set! macro-state macro-decl-generation-active true)]
       ;; R3-P2c: publish which generation is live, so anything that installs a
       ;; pool context from inside this expansion is repaired at the destroy.
       [_witness-on : unit
@@ -100852,7 +104419,8 @@
               _profile-generation-mark)
             0)
           0)]
-      [_escape-close : unit (set! macro-decl-generation-active false)]
+      [_escape-close : unit
+        (tc-macro-walk-set! macro-state macro-decl-generation-active false)]
       [_witness-off : unit (ast.ast-node-pool-context-transient-witness! 0)]
       ;; Clamped: the walk never truncates the pool below the length it entered
       ;; with, but a base above the live length would make the id map read out
@@ -100888,8 +104456,14 @@
       ;; grow a sibling chain the retiring destroy never reaches (H4).
       [_track-head : unit
         (if splice?
-          (set! macro-splice-generation-arena (arena.tl_arena_current))
-          (set! macro-decl-generation-arena (arena.tl_arena_current)))]
+          (tc-macro-walk-set!
+            macro-state
+            macro-splice-generation-arena
+            (arena.tl_arena_current))
+          (tc-macro-walk-set!
+            macro-state
+            macro-decl-generation-arena
+            (arena.tl_arena_current)))]
       ;; The expansion can install a different pool context -- captured CTFE
       ;; syntax pools rebase the active pools -- so the context to append into
       ;; must be re-read HERE. Carrying a context across the call and installing
@@ -100928,6 +104502,7 @@
           type-map)]
       [_escapes : unit
         (macro-decl-generation-escapes-persist!
+          macro-state
           pools
           shared-expr-base
           shared-type-base
@@ -101078,6 +104653,7 @@
 ;; emitted in the caller's module. Decls macros use `generated:` keys and never
 ;; satisfy macro-module-generated-key?, so they stay on the full-rebuild path.
 (define (macro-generated-module-extension
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [importer-module-id : i64]) : MacroMaybeGeneratedModuleExtension
   (match (ast.ast-decl-list-step decls)
@@ -101089,7 +104665,7 @@
             [(CompilerSomeString identity)
               (let
                 [summary : ast.AstDeclList
-                  (macro-generated-module-memo-get-summary identity)]
+                  (macro-generated-module-memo-get-summary state identity)]
                 [marker : ast.AstDeclList
                   (macro-generated-module-marker-in
                     decls
@@ -101220,13 +104796,18 @@
                   base-id))))])]
     [_ TcMaybeNameId.No]))
 
-(define (macro-call-callee-maybe-macro? [func : ast.AstExpr]) : bool
+(define (macro-call-callee-maybe-macro?
+  [state : TcMacroState]
+  [func : ast.AstExpr]) : bool
   (match (macro-call-callee-base-name-id func)
     [(TcMaybeNameId.Some base-id)
-      (or
-        (tc_i64_i64_map.contains? (& macro-expand-macro-name-set) base-id)
-        (= base-id cbi.compiler-builtin-id-fix-when)
-        (= base-id cbi.compiler-builtin-id-fix-unless))]
+      (let
+        [names : tc_i64_i64_map.Map
+          (tc-macro-walk-field state macro-expand-macro-name-set)]
+        (or
+          (tc_i64_i64_map.contains? (& names) base-id)
+          (= base-id cbi.compiler-builtin-id-fix-when)
+          (= base-id cbi.compiler-builtin-id-fix-unless)))]
     [TcMaybeNameId.No
       (match (macro-call-callee-name func)
         [(TcMaybeString.Some name) (macro-call-name-maybe-macro? name)]
@@ -101243,7 +104824,7 @@
       ;; alias/module resolution. This keeps value-heavy dotted imports such as
       ;; `string.length` on the cheap path while still resolving qualified macro
       ;; calls through `macro-call-decl`.
-      (if (macro-call-callee-maybe-macro? func)
+      (if (macro-call-callee-maybe-macro? (tc-context-macro-state ctx) func)
         (match (macro-call-decl ctx func decls call-expr)
           [(ResultMacroCallDecl.Ok maybe)
             (match maybe
@@ -101558,11 +105139,13 @@
 ;; asks for an operand's type changes how that call is evaluated, not how the
 ;; call is represented, so expr-type macros use the same syntactic call gate.
 (define (macro-expr-list-might-fire?
+  [state : TcMacroState]
   [expr-bases : i64]
   [exprs : ast.AstExprList]) : bool
-  (macro-expr-list-might-fire-at? expr-bases (& exprs) 0))
+  (macro-expr-list-might-fire-at? state expr-bases (& exprs) 0))
 
 (define (macro-expr-list-might-fire-at?
+  [state : TcMacroState]
   [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
@@ -101570,18 +105153,21 @@
     false
     (or
       (macro-expr-might-fire?
+        state
         expr-bases
         (ast.ast-expr-segment-bases-get
           expr-bases
           (ast.ast-expr-list-get exprs index 0)))
-      (macro-expr-list-might-fire-at? expr-bases exprs (+ index 1)))))
+      (macro-expr-list-might-fire-at? state expr-bases exprs (+ index 1)))))
 
 (define (macro-let-binding-list-might-fire?
+  [state : TcMacroState]
   [expr-bases : i64]
   [bindings : ast.AstLetBindingList]) : bool
-  (macro-let-binding-list-might-fire-at? expr-bases (& bindings) 0))
+  (macro-let-binding-list-might-fire-at? state expr-bases (& bindings) 0))
 
 (define (macro-let-binding-list-might-fire-at?
+  [state : TcMacroState]
   [expr-bases : i64]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]) : bool
@@ -101596,23 +105182,27 @@
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
           (or
-            (macro-expr-might-fire? expr-bases init)
+            (macro-expr-might-fire? state expr-bases init)
             (macro-let-binding-list-might-fire-at?
+              state
               expr-bases
               bindings
               (+ index 1))))])))
 
 (define (macro-match-arms-might-fire?
+  [state : TcMacroState]
   [expr-bases : i64]
   [arms : ast.AstMatchArmList]) : bool
-  (not (= (macro-match-arms-first-fire-index expr-bases arms) -1)))
+  (not (= (macro-match-arms-first-fire-index state expr-bases arms) -1)))
 
 (define (macro-match-arms-first-fire-index
+  [state : TcMacroState]
   [expr-bases : i64]
   [arms : ast.AstMatchArmList]) : i64
-  (macro-match-arms-first-fire-index-at expr-bases (& arms) 0))
+  (macro-match-arms-first-fire-index-at state expr-bases (& arms) 0))
 
 (define (macro-match-arms-first-fire-index-at
+  [state : TcMacroState]
   [expr-bases : i64]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : i64
@@ -101623,16 +105213,22 @@
         (let
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
-          (if (macro-expr-might-fire? expr-bases body)
+          (if (macro-expr-might-fire? state expr-bases body)
             index
-            (macro-match-arms-first-fire-index-at expr-bases arms (+ index 1))))])))
+            (macro-match-arms-first-fire-index-at
+              state
+              expr-bases
+              arms
+              (+ index 1))))])))
 
 (define (macro-resource-binding-list-might-fire?
+  [state : TcMacroState]
   [expr-bases : i64]
   [bindings : ast.AstResourceBindingList]) : bool
-  (macro-resource-binding-list-might-fire-at? expr-bases (& bindings) 0))
+  (macro-resource-binding-list-might-fire-at? state expr-bases (& bindings) 0))
 
 (define (macro-resource-binding-list-might-fire-at?
+  [state : TcMacroState]
   [expr-bases : i64]
   [bindings : (& bindings ast.AstResourceBindingList)]
   [index : i64]) : bool
@@ -101649,19 +105245,24 @@
           [cleanup : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases cleanup-box)]
           (or
-            (macro-expr-might-fire? expr-bases init)
-            (macro-expr-might-fire? expr-bases cleanup)
+            (macro-expr-might-fire? state expr-bases init)
+            (macro-expr-might-fire? state expr-bases cleanup)
             (macro-resource-binding-list-might-fire-at?
+              state
               expr-bases
               bindings
               (+ index 1))))])))
 
-(define (macro-expr-might-fire? [expr-bases : i64] [expr : ast.AstExpr]) : bool
+(define (macro-expr-might-fire?
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [expr : ast.AstExpr]) : bool
   (begin
     (cfg compile-profile (compiler-tc-walk-note-fire-touch!))
-    (macro-expr-might-fire-uncounted? expr-bases expr)))
+    (macro-expr-might-fire-uncounted? state expr-bases expr)))
 
 (define (macro-expr-might-fire-uncounted?
+  [state : TcMacroState]
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
   (match expr
@@ -101669,9 +105270,10 @@
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (macro-expr-might-fire?
+        state
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Literal _) false]
@@ -101681,11 +105283,11 @@
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         (or
-          (macro-call-callee-maybe-macro? func)
-          (macro-expr-might-fire? expr-bases func)
-          (macro-expr-list-might-fire? expr-bases args)))]
+          (macro-call-callee-maybe-macro? state func)
+          (macro-expr-might-fire? state expr-bases func)
+          (macro-expr-list-might-fire? state expr-bases args)))]
     [(ast.AstExpr.BracketClause items)
-      (macro-expr-list-might-fire? expr-bases items)]
+      (macro-expr-list-might-fire? state expr-bases items)]
     [(ast.AstExpr.Binary _ left-box right-box)
       (let
         [left : ast.AstExpr
@@ -101693,13 +105295,13 @@
         [right : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases right-box)]
         (or
-          (macro-expr-might-fire? expr-bases left)
-          (macro-expr-might-fire? expr-bases right)))]
+          (macro-expr-might-fire? state expr-bases left)
+          (macro-expr-might-fire? state expr-bases right)))]
     [(ast.AstExpr.Unary _ inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : ast.AstExpr
@@ -101709,9 +105311,9 @@
         [else-branch : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases else-branch-box)]
         (or
-          (macro-expr-might-fire? expr-bases cond)
-          (macro-expr-might-fire? expr-bases then-branch)
-          (macro-expr-might-fire? expr-bases else-branch)))]
+          (macro-expr-might-fire? state expr-bases cond)
+          (macro-expr-might-fire? state expr-bases then-branch)
+          (macro-expr-might-fire? state expr-bases else-branch)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -101719,16 +105321,17 @@
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (macro-let-binding-list-might-fire? expr-bases bindings)
-              (macro-expr-might-fire? expr-bases body)))])]
+              (macro-let-binding-list-might-fire? state expr-bases bindings)
+              (macro-expr-might-fire? state expr-bases body)))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body-box)
           (let
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (macro-expr-might-fire? expr-bases body))])]
-    [(ast.AstExpr.Tuple exprs) (macro-expr-list-might-fire? expr-bases exprs)]
+            (macro-expr-might-fire? state expr-bases body))])]
+    [(ast.AstExpr.Tuple exprs)
+      (macro-expr-list-might-fire? state expr-bases exprs)]
     [(ast.AstExpr.TupleRef tuple-box index-box)
       (let
         [tuple : ast.AstExpr
@@ -101736,15 +105339,16 @@
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (macro-expr-might-fire? expr-bases tuple)
-          (macro-expr-might-fire? expr-bases index)))]
-    [(ast.AstExpr.Array exprs) (macro-expr-list-might-fire? expr-bases exprs)]
+          (macro-expr-might-fire? state expr-bases tuple)
+          (macro-expr-might-fire? state expr-bases index)))]
+    [(ast.AstExpr.Array exprs)
+      (macro-expr-list-might-fire? state expr-bases exprs)]
     [(ast.AstExpr.DynArray exprs)
-      (macro-expr-list-might-fire? expr-bases exprs)]
+      (macro-expr-list-might-fire? state expr-bases exprs)]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
-        (macro-expr-might-fire? expr-bases len))]
+        (macro-expr-might-fire? state expr-bases len))]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (let
         [array : ast.AstExpr
@@ -101752,8 +105356,8 @@
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (macro-expr-might-fire? expr-bases array)
-          (macro-expr-might-fire? expr-bases index)))]
+          (macro-expr-might-fire? state expr-bases array)
+          (macro-expr-might-fire? state expr-bases index)))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : ast.AstExpr
@@ -101763,9 +105367,9 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (macro-expr-might-fire? expr-bases array)
-          (macro-expr-might-fire? expr-bases index)
-          (macro-expr-might-fire? expr-bases value)))]
+          (macro-expr-might-fire? state expr-bases array)
+          (macro-expr-might-fire? state expr-bases index)
+          (macro-expr-might-fire? state expr-bases value)))]
     [(ast.AstExpr.ArrayTake array-box live-box index-box)
       (let
         [array : ast.AstExpr
@@ -101775,15 +105379,17 @@
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (macro-expr-might-fire? expr-bases array)
-          (macro-expr-might-fire? expr-bases live)
-          (macro-expr-might-fire? expr-bases index)))]
+          (macro-expr-might-fire? state expr-bases array)
+          (macro-expr-might-fire? state expr-bases live)
+          (macro-expr-might-fire? state expr-bases index)))]
     [(ast.AstExpr.FixedArrayTake array-box index-box)
       (or
         (macro-expr-might-fire?
+          state
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases array-box))
         (macro-expr-might-fire?
+          state
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases index-box)))]
     [(ast.AstExpr.ArrayPush array-box value-box)
@@ -101793,16 +105399,16 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (macro-expr-might-fire? expr-bases array)
-          (macro-expr-might-fire? expr-bases value)))]
+          (macro-expr-might-fire? state expr-bases array)
+          (macro-expr-might-fire? state expr-bases value)))]
     [(ast.AstExpr.StringRef str-box index-box)
       (let
         [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (macro-expr-might-fire? expr-bases str)
-          (macro-expr-might-fire? expr-bases index)))]
+          (macro-expr-might-fire? state expr-bases str)
+          (macro-expr-might-fire? state expr-bases index)))]
     [(ast.AstExpr.While cond-box body-box)
       (let
         [cond : ast.AstExpr
@@ -101810,8 +105416,8 @@
         [body : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases body-box)]
         (or
-          (macro-expr-might-fire? expr-bases cond)
-          (macro-expr-might-fire? expr-bases body)))]
+          (macro-expr-might-fire? state expr-bases cond)
+          (macro-expr-might-fire? state expr-bases body)))]
     [(ast.AstExpr.ForOwnedState payload)
       (let
         [source : ast.AstExpr
@@ -101823,8 +105429,8 @@
             expr-bases
             (ast.ast-for-owned-state-body (& payload)))]
         (or
-          (macro-expr-might-fire? expr-bases source)
-          (macro-expr-might-fire? expr-bases body)))]
+          (macro-expr-might-fire? state expr-bases source)
+          (macro-expr-might-fire? state expr-bases body)))]
     [(ast.AstExpr.ForOwnedStep payload)
       (let
         [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
@@ -101835,32 +105441,35 @@
         (or
           (if (>= expected-type 0)
             (macro-expr-might-fire?
+              state
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases expected-type))
             false)
-          (macro-expr-might-fire? expr-bases body)))]
-    [(ast.AstExpr.Begin exprs) (macro-expr-list-might-fire? expr-bases exprs)]
-    [(ast.AstExpr.Unsafe exprs) (macro-expr-list-might-fire? expr-bases exprs)]
+          (macro-expr-might-fire? state expr-bases body)))]
+    [(ast.AstExpr.Begin exprs)
+      (macro-expr-list-might-fire? state expr-bases exprs)]
+    [(ast.AstExpr.Unsafe exprs)
+      (macro-expr-list-might-fire? state expr-bases exprs)]
     [(ast.AstExpr.Set _ value-box)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (macro-expr-might-fire? expr-bases value))]
+        (macro-expr-might-fire? state expr-bases value))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.Cast inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.Borrow _ _ place-box)
       (let
         [place : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (macro-expr-might-fire? expr-bases place))]
+        (macro-expr-might-fire? state expr-bases place))]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -101868,8 +105477,8 @@
             [scrutinee : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases scrutinee-box)]
             (or
-              (macro-expr-might-fire? expr-bases scrutinee)
-              (macro-match-arms-might-fire? expr-bases arms)))])]
+              (macro-expr-might-fire? state expr-bases scrutinee)
+              (macro-match-arms-might-fire? state expr-bases arms)))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
@@ -101881,9 +105490,9 @@
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (macro-expr-might-fire? expr-bases start)
-              (macro-expr-might-fire? expr-bases end)
-              (macro-expr-might-fire? expr-bases body)))])]
+              (macro-expr-might-fire? state expr-bases start)
+              (macro-expr-might-fire? state expr-bases end)
+              (macro-expr-might-fire? state expr-bases body)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
@@ -101897,10 +105506,10 @@
             [value : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases value-box)]
             (or
-              (macro-expr-might-fire? expr-bases start)
-              (macro-expr-might-fire? expr-bases end)
-              (macro-expr-might-fire? expr-bases init)
-              (macro-expr-might-fire? expr-bases value)))])]
+              (macro-expr-might-fire? state expr-bases start)
+              (macro-expr-might-fire? state expr-bases end)
+              (macro-expr-might-fire? state expr-bases init)
+              (macro-expr-might-fire? state expr-bases value)))])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
@@ -101926,11 +105535,11 @@
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (macro-expr-might-fire? expr-bases start)
-              (macro-expr-might-fire? expr-bases end)
-              (macro-expr-might-fire? expr-bases init)
-              (macro-expr-might-fire? expr-bases value)
-              (macro-expr-might-fire? expr-bases body)))])]
+              (macro-expr-might-fire? state expr-bases start)
+              (macro-expr-might-fire? state expr-bases end)
+              (macro-expr-might-fire? state expr-bases init)
+              (macro-expr-might-fire? state expr-bases value)
+              (macro-expr-might-fire? state expr-bases body)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -101938,8 +105547,8 @@
         [lane : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases lane-box)]
         (or
-          (macro-expr-might-fire? expr-bases value)
-          (macro-expr-might-fire? expr-bases lane)))]
+          (macro-expr-might-fire? state expr-bases value)
+          (macro-expr-might-fire? state expr-bases lane)))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -101947,13 +105556,13 @@
         [lane : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases lane-box)]
         (or
-          (macro-expr-might-fire? expr-bases value)
-          (macro-expr-might-fire? expr-bases lane)))]
+          (macro-expr-might-fire? state expr-bases value)
+          (macro-expr-might-fire? state expr-bases lane)))]
     [(ast.AstExpr.StructGet receiver-box _)
       (let
         [receiver : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (macro-expr-might-fire? expr-bases receiver))]
+        (macro-expr-might-fire? state expr-bases receiver))]
     [(ast.AstExpr.StructSet receiver-box _ value-box)
       (let
         [receiver : ast.AstExpr
@@ -101961,47 +105570,47 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (macro-expr-might-fire? expr-bases receiver)
-          (macro-expr-might-fire? expr-bases value)))]
+          (macro-expr-might-fire? state expr-bases receiver)
+          (macro-expr-might-fire? state expr-bases value)))]
     [(ast.AstExpr.WithRegion _ body)
-      (macro-expr-list-might-fire? expr-bases body)]
+      (macro-expr-list-might-fire? state expr-bases body)]
     [(ast.AstExpr.WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
         (or
-          (macro-expr-might-fire? expr-bases scratch)
-          (macro-expr-list-might-fire? expr-bases body)))]
+          (macro-expr-might-fire? state expr-bases scratch)
+          (macro-expr-list-might-fire? state expr-bases body)))]
     [(ast.AstExpr.WithScratch body)
-      (macro-expr-list-might-fire? expr-bases body)]
+      (macro-expr-list-might-fire? state expr-bases body)]
     [(ast.AstExpr.InArena arena-box body)
       (let
         [arena : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases arena-box)]
         (or
-          (macro-expr-might-fire? expr-bases arena)
-          (macro-expr-list-might-fire? expr-bases body)))]
+          (macro-expr-might-fire? state expr-bases arena)
+          (macro-expr-list-might-fire? state expr-bases body)))]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (or
-            (macro-resource-binding-list-might-fire? expr-bases bindings)
-            (macro-expr-list-might-fire? expr-bases body))])]
+            (macro-resource-binding-list-might-fire? state expr-bases bindings)
+            (macro-expr-list-might-fire? state expr-bases body))])]
     [(ast.AstExpr.Box inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.BoxSet inner-box value-box)
       (let
         [inner : ast.AstExpr
@@ -102009,77 +105618,77 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (macro-expr-might-fire? expr-bases inner)
-          (macro-expr-might-fire? expr-bases value)))]
+          (macro-expr-might-fire? state expr-bases inner)
+          (macro-expr-might-fire? state expr-bases value)))]
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.Try inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.Return inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.PtrNullCheck inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (macro-expr-might-fire? expr-bases inner))]
+        (macro-expr-might-fire? state expr-bases inner))]
     [(ast.AstExpr.PtrRead ptr-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (macro-expr-might-fire? expr-bases ptr))]
+        (macro-expr-might-fire? state expr-bases ptr))]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (macro-expr-might-fire? expr-bases ptr)
-          (macro-expr-might-fire? expr-bases value)))]
+          (macro-expr-might-fire? state expr-bases ptr)
+          (macro-expr-might-fire? state expr-bases value)))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
         [offset : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases offset-box)]
         (or
-          (macro-expr-might-fire? expr-bases ptr)
-          (macro-expr-might-fire? expr-bases offset)))]
+          (macro-expr-might-fire? state expr-bases ptr)
+          (macro-expr-might-fire? state expr-bases offset)))]
     [(ast.AstExpr.PtrCast ptr-box _)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (macro-expr-might-fire? expr-bases ptr))]
+        (macro-expr-might-fire? state expr-bases ptr))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-        (macro-expr-might-fire? expr-bases ptr))]
+        (macro-expr-might-fire? state expr-bases ptr))]
     [(ast.AstExpr.IntToPtr value-box _)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (macro-expr-might-fire? expr-bases value))]
+        (macro-expr-might-fire? state expr-bases value))]
     [(ast.AstExpr.StringData str-box)
       (let
         [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
-        (macro-expr-might-fire? expr-bases str))]
+        (macro-expr-might-fire? state expr-bases str))]
     [(ast.AstExpr.StringFromBytes ptr-box len-box)
       (let
         [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
         (or
-          (macro-expr-might-fire? expr-bases ptr)
-          (macro-expr-might-fire? expr-bases len)))]
+          (macro-expr-might-fire? state expr-bases ptr)
+          (macro-expr-might-fire? state expr-bases len)))]
     [(ast.AstExpr.ArrayData array-box)
       (let
         [array : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (macro-expr-might-fire? expr-bases array))]
+        (macro-expr-might-fire? state expr-bases array))]
     [(ast.AstExpr.BinaryData _) false]
     [(ast.AstExpr.SpmdProgramIndex) false]
     [(ast.AstExpr.SpmdProgramCount) false]
@@ -102090,8 +105699,8 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (macro-expr-might-fire? expr-bases leaf)
-          (macro-expr-might-fire? expr-bases subleaf)))]
+          (macro-expr-might-fire? state expr-bases leaf)
+          (macro-expr-might-fire? state expr-bases subleaf)))]
     [(ast.AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -102099,8 +105708,8 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (macro-expr-might-fire? expr-bases leaf)
-          (macro-expr-might-fire? expr-bases subleaf)))]
+          (macro-expr-might-fire? state expr-bases leaf)
+          (macro-expr-might-fire? state expr-bases subleaf)))]
     [(ast.AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -102108,8 +105717,8 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (macro-expr-might-fire? expr-bases leaf)
-          (macro-expr-might-fire? expr-bases subleaf)))]
+          (macro-expr-might-fire? state expr-bases leaf)
+          (macro-expr-might-fire? state expr-bases subleaf)))]
     [(ast.AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -102117,14 +105726,15 @@
         [subleaf : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (macro-expr-might-fire? expr-bases leaf)
-          (macro-expr-might-fire? expr-bases subleaf)))]
+          (macro-expr-might-fire? state expr-bases leaf)
+          (macro-expr-might-fire? state expr-bases subleaf)))]
     [(ast.AstExpr.Xgetbv index-box)
       (let
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (macro-expr-might-fire? expr-bases index))]
-    [(ast.AstExpr.Syscall args) (macro-expr-list-might-fire? expr-bases args)]
+        (macro-expr-might-fire? state expr-bases index))]
+    [(ast.AstExpr.Syscall args)
+      (macro-expr-list-might-fire? state expr-bases args)]
     [(ast.AstExpr.TypeLiteral _) false]
     [(ast.AstExpr.Init _) false]
     [(ast.AstExpr.PtrNull _) false]
@@ -102132,7 +105742,7 @@
       (let
         [place : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases place-box)]
-        (macro-expr-might-fire? expr-bases place))]
+        (macro-expr-might-fire? state expr-bases place))]
     [(ast.AstExpr.ProgramArgc) false]
     [(ast.AstExpr.ProgramArgv) false]
     [(ast.AstExpr.ProgramEnvp) false]
@@ -102145,18 +105755,23 @@
 ;; returns false so it falls through to the precise `macro-expand-decl-with-path`
 ;; path (which shares or expands import placeholders, splices, defmacro, unsafe,
 ;; comptime templates, etc. correctly).
-(define (macro-decl-cannot-fire? [expr-bases : i64] [decl : ast.AstDecl]) : bool
+(define (macro-decl-cannot-fire?
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [decl : ast.AstDecl]) : bool
   (if (ast.ast-decl-comptime-only? decl)
     false
     (match decl
       [(ast.AstDecl.Def decl-meta _ _ expr-box)
         (not
           (macro-expr-might-fire?
+            state
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases expr-box)))]
       [(ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
         (not
           (macro-expr-might-fire?
+            state
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases body-box)))]
       [(ast.AstDecl.Test _ _ _) false]
@@ -102164,11 +105779,14 @@
 
 ;; Profile-instrumented wrapper for the per-decl share gate; non-profile
 ;; builds see a plain call.
-(define (macro-decl-cannot-fire-gate? [expr-bases : i64] [decl : ast.AstDecl]) : bool
+(define (macro-decl-cannot-fire-gate?
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [decl : ast.AstDecl]) : bool
   (begin
     (cfg compile-profile (compiler-tc-walk-decl-gate-start!))
     (let
-      [result : bool (macro-decl-cannot-fire? expr-bases decl)]
+      [result : bool (macro-decl-cannot-fire? state expr-bases decl)]
       (begin
         (cfg compile-profile (compiler-tc-walk-decl-gate-finish!))
         result))))
@@ -102185,8 +105803,8 @@
 ;; call head.
 ;; Conservative: any unrecognized expression returns `true` (build), so a future
 ;; node that could host a type literal is never silently skipped.
-(define (ctfe-node-has-type-literal? [id : i64]) : bool
-  (ctfe-expr-has-type-literal? (ast.ast-node-get id)))
+(define (ctfe-node-has-type-literal? [state : TcMacroState] [id : i64]) : bool
+  (ctfe-expr-has-type-literal? state (ast.ast-node-get id)))
 
 (define (ctfe-node-is-module-value-query? [id : i64]) : bool
   (match (ast.ast-expr-unspan (ast.ast-node-get id))
@@ -102203,22 +105821,28 @@
 (define (ctfe-reflection-prescan-or [left : bool] [right : bool]) : bool
   (or left right))
 
-(define (ctfe-exprs-have-type-literal? [exprs : ast.AstExprList]) : bool
-  (ctfe-exprs-have-type-literal-at? (& exprs) 0))
+(define (ctfe-exprs-have-type-literal?
+  [state : TcMacroState]
+  [exprs : ast.AstExprList]) : bool
+  (ctfe-exprs-have-type-literal-at? state (& exprs) 0))
 
 (define (ctfe-exprs-have-type-literal-at?
+  [state : TcMacroState]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
   (if (>= index exprs.len)
     false
     (ctfe-reflection-prescan-or
-      (ctfe-node-has-type-literal? (ast.ast-expr-list-get exprs index 0))
-      (ctfe-exprs-have-type-literal-at? exprs (+ index 1)))))
+      (ctfe-node-has-type-literal? state (ast.ast-expr-list-get exprs index 0))
+      (ctfe-exprs-have-type-literal-at? state exprs (+ index 1)))))
 
-(define (ctfe-arms-have-type-literal? [arms : ast.AstMatchArmList]) : bool
-  (ctfe-arms-have-type-literal-at? (& arms) 0))
+(define (ctfe-arms-have-type-literal?
+  [state : TcMacroState]
+  [arms : ast.AstMatchArmList]) : bool
+  (ctfe-arms-have-type-literal-at? state (& arms) 0))
 
 (define (ctfe-arms-have-type-literal-at?
+  [state : TcMacroState]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
   (if (>= index arms.len)
@@ -102229,13 +105853,16 @@
         index
         (ast.ast-match-arm-fallback))
         [(ast.AstMatchArm.Arm _ body-box)
-          (ctfe-node-has-type-literal? body-box)])
-      (ctfe-arms-have-type-literal-at? arms (+ index 1)))))
+          (ctfe-node-has-type-literal? state body-box)])
+      (ctfe-arms-have-type-literal-at? state arms (+ index 1)))))
 
-(define (ctfe-bindings-have-type-literal? [bindings : ast.AstLetBindingList]) : bool
-  (ctfe-bindings-have-type-literal-at? (& bindings) 0))
+(define (ctfe-bindings-have-type-literal?
+  [state : TcMacroState]
+  [bindings : ast.AstLetBindingList]) : bool
+  (ctfe-bindings-have-type-literal-at? state (& bindings) 0))
 
 (define (ctfe-bindings-have-type-literal-at?
+  [state : TcMacroState]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]) : bool
   (if (>= index (ast.ast-let-binding-list-len bindings))
@@ -102246,205 +105873,219 @@
         index
         (ast.ast-let-binding-fallback))
         [(ast.AstLetBinding.Binding _ _ init-box)
-          (ctfe-node-has-type-literal? init-box)])
-      (ctfe-bindings-have-type-literal-at? bindings (+ index 1)))))
+          (ctfe-node-has-type-literal? state init-box)])
+      (ctfe-bindings-have-type-literal-at? state bindings (+ index 1)))))
 
-(define (ctfe-expr-has-type-literal? [expr : ast.AstExpr]) : bool
+(define (ctfe-expr-has-type-literal?
+  [state : TcMacroState]
+  [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.TypeLiteral _) true]
     [(ast.AstExpr.Literal _) false]
     [(ast.AstExpr.Var _) false]
     [(ast.AstExpr.Init _) false]
     [(ast.AstExpr.PtrNull _) false]
-    [(ast.AstExpr.PtrAddrOf place) (ctfe-node-has-type-literal? place)]
+    [(ast.AstExpr.PtrAddrOf place) (ctfe-node-has-type-literal? state place)]
     [(ast.AstExpr.ProgramArgc) false]
     [(ast.AstExpr.ProgramArgv) false]
     [(ast.AstExpr.ProgramEnvp) false]
-    [(ast.AstExpr.Spanned inner-box _) (ctfe-node-has-type-literal? inner-box)]
+    [(ast.AstExpr.Spanned inner-box _)
+      (ctfe-node-has-type-literal? state inner-box)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (ctfe-node-has-type-literal? inner-box)]
+      (ctfe-node-has-type-literal? state inner-box)]
     [(ast.AstExpr.Call func-box args)
       (begin
         (if (ctfe-node-is-module-value-query? func-box)
-          (ctfe_support.ctfe-module-value-reflection-enable! true)
+          (ctfe_support.ctfe-module-value-reflection-enable-for-state!
+            (tc-macro-ctfe-state state)
+            true)
           unit)
         (ctfe-reflection-prescan-or
-          (ctfe-node-has-type-literal? func-box)
-          (ctfe-exprs-have-type-literal? args)))]
-    [(ast.AstExpr.BracketClause items) (ctfe-exprs-have-type-literal? items)]
+          (ctfe-node-has-type-literal? state func-box)
+          (ctfe-exprs-have-type-literal? state args)))]
+    [(ast.AstExpr.BracketClause items)
+      (ctfe-exprs-have-type-literal? state items)]
     [(ast.AstExpr.Binary _ l r)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? l)
-        (ctfe-node-has-type-literal? r))]
-    [(ast.AstExpr.Unary _ i) (ctfe-node-has-type-literal? i)]
+        (ctfe-node-has-type-literal? state l)
+        (ctfe-node-has-type-literal? state r))]
+    [(ast.AstExpr.Unary _ i) (ctfe-node-has-type-literal? state i)]
     [(ast.AstExpr.If c t e)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? c)
+        (ctfe-node-has-type-literal? state c)
         (ctfe-reflection-prescan-or
-          (ctfe-node-has-type-literal? t)
-          (ctfe-node-has-type-literal? e)))]
+          (ctfe-node-has-type-literal? state t)
+          (ctfe-node-has-type-literal? state e)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (ctfe-reflection-prescan-or
-            (ctfe-bindings-have-type-literal? bindings)
-            (ctfe-node-has-type-literal? body))])]
+            (ctfe-bindings-have-type-literal? state bindings)
+            (ctfe-node-has-type-literal? state body))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body) (ctfe-node-has-type-literal? body)])]
-    [(ast.AstExpr.Tuple exprs) (ctfe-exprs-have-type-literal? exprs)]
+        [(ast.AstLambda.Lambda _ _ body)
+          (ctfe-node-has-type-literal? state body)])]
+    [(ast.AstExpr.Tuple exprs) (ctfe-exprs-have-type-literal? state exprs)]
     [(ast.AstExpr.TupleRef a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
-    [(ast.AstExpr.Array exprs) (ctfe-exprs-have-type-literal? exprs)]
-    [(ast.AstExpr.DynArray exprs) (ctfe-exprs-have-type-literal? exprs)]
-    [(ast.AstExpr.MakeArray _ len) (ctfe-node-has-type-literal? len)]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
+    [(ast.AstExpr.Array exprs) (ctfe-exprs-have-type-literal? state exprs)]
+    [(ast.AstExpr.DynArray exprs) (ctfe-exprs-have-type-literal? state exprs)]
+    [(ast.AstExpr.MakeArray _ len) (ctfe-node-has-type-literal? state len)]
     [(ast.AstExpr.ArrayRef a i)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? i))]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state i))]
     [(ast.AstExpr.ArraySet a i v)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? state a)
         (ctfe-reflection-prescan-or
-          (ctfe-node-has-type-literal? i)
-          (ctfe-node-has-type-literal? v)))]
+          (ctfe-node-has-type-literal? state i)
+          (ctfe-node-has-type-literal? state v)))]
     [(ast.AstExpr.ArrayTake a l i)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? state a)
         (ctfe-reflection-prescan-or
-          (ctfe-node-has-type-literal? l)
-          (ctfe-node-has-type-literal? i)))]
+          (ctfe-node-has-type-literal? state l)
+          (ctfe-node-has-type-literal? state i)))]
     [(ast.AstExpr.FixedArrayTake a i)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? i))]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state i))]
     [(ast.AstExpr.ArrayPush a v)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? v))]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state v))]
     [(ast.AstExpr.StringRef a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
     [(ast.AstExpr.While c b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? c)
-        (ctfe-node-has-type-literal? b))]
-    [(ast.AstExpr.Begin exprs) (ctfe-exprs-have-type-literal? exprs)]
-    [(ast.AstExpr.Unsafe exprs) (ctfe-exprs-have-type-literal? exprs)]
-    [(ast.AstExpr.Set _ rhs) (ctfe-node-has-type-literal? rhs)]
-    [(ast.AstExpr.Ann i _) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.Cast i _) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.Borrow _ _ i) (ctfe-node-has-type-literal? i)]
+        (ctfe-node-has-type-literal? state c)
+        (ctfe-node-has-type-literal? state b))]
+    [(ast.AstExpr.Begin exprs) (ctfe-exprs-have-type-literal? state exprs)]
+    [(ast.AstExpr.Unsafe exprs) (ctfe-exprs-have-type-literal? state exprs)]
+    [(ast.AstExpr.Set _ rhs) (ctfe-node-has-type-literal? state rhs)]
+    [(ast.AstExpr.Ann i _) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.Cast i _) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.Borrow _ _ i) (ctfe-node-has-type-literal? state i)]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut arms)
           (ctfe-reflection-prescan-or
-            (ctfe-node-has-type-literal? scrut)
-            (ctfe-arms-have-type-literal? arms))])]
+            (ctfe-node-has-type-literal? state scrut)
+            (ctfe-arms-have-type-literal? state arms))])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ s e b)
           (ctfe-reflection-prescan-or
-            (ctfe-node-has-type-literal? s)
+            (ctfe-node-has-type-literal? state s)
             (ctfe-reflection-prescan-or
-              (ctfe-node-has-type-literal? e)
-              (ctfe-node-has-type-literal? b)))])]
-    [(ast.AstExpr.StructGet i _) (ctfe-node-has-type-literal? i)]
+              (ctfe-node-has-type-literal? state e)
+              (ctfe-node-has-type-literal? state b)))])]
+    [(ast.AstExpr.StructGet i _) (ctfe-node-has-type-literal? state i)]
     [(ast.AstExpr.StructSet i _ v)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? i)
-        (ctfe-node-has-type-literal? v))]
-    [(ast.AstExpr.WithRegion _ exprs) (ctfe-exprs-have-type-literal? exprs)]
+        (ctfe-node-has-type-literal? state i)
+        (ctfe-node-has-type-literal? state v))]
+    [(ast.AstExpr.WithRegion _ exprs)
+      (ctfe-exprs-have-type-literal? state exprs)]
     [(ast.AstExpr.WithEscape i exprs)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? i)
-        (ctfe-exprs-have-type-literal? exprs))]
-    [(ast.AstExpr.WithScratch exprs) (ctfe-exprs-have-type-literal? exprs)]
+        (ctfe-node-has-type-literal? state i)
+        (ctfe-exprs-have-type-literal? state exprs))]
+    [(ast.AstExpr.WithScratch exprs)
+      (ctfe-exprs-have-type-literal? state exprs)]
     [(ast.AstExpr.InArena i exprs)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? i)
-        (ctfe-exprs-have-type-literal? exprs))]
-    [(ast.AstExpr.Box i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.BoxGet i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.BoxTake i) (ctfe-node-has-type-literal? i)]
+        (ctfe-node-has-type-literal? state i)
+        (ctfe-exprs-have-type-literal? state exprs))]
+    [(ast.AstExpr.Box i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.BoxGet i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.BoxTake i) (ctfe-node-has-type-literal? state i)]
     [(ast.AstExpr.BoxSet i v)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? i)
-        (ctfe-node-has-type-literal? v))]
-    [(ast.AstExpr.Comptime i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.Quote i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.Quasiquote i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.Unquote i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.UnquoteSplicing i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.Try i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.Return i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.PtrNullCheck i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.PtrRead i) (ctfe-node-has-type-literal? i)]
+        (ctfe-node-has-type-literal? state i)
+        (ctfe-node-has-type-literal? state v))]
+    [(ast.AstExpr.Comptime i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.Quote i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.Quasiquote i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.Unquote i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.UnquoteSplicing i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.Try i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.Return i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.PtrNullCheck i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.PtrRead i) (ctfe-node-has-type-literal? state i)]
     [(ast.AstExpr.PtrWrite a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
     [(ast.AstExpr.PtrOffset a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
-    [(ast.AstExpr.PtrCast i _) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.PtrToInt i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.IntToPtr i _) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.StringData i) (ctfe-node-has-type-literal? i)]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
+    [(ast.AstExpr.PtrCast i _) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.PtrToInt i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.IntToPtr i _) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.StringData i) (ctfe-node-has-type-literal? state i)]
     [(ast.AstExpr.StringFromBytes a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
-    [(ast.AstExpr.ArrayData i) (ctfe-node-has-type-literal? i)]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
+    [(ast.AstExpr.ArrayData i) (ctfe-node-has-type-literal? state i)]
     [(ast.AstExpr.BinaryData _) false]
     [(ast.AstExpr.SpmdProgramIndex) false]
     [(ast.AstExpr.SpmdProgramCount) false]
     [(ast.AstExpr.CpuIdEax a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
     [(ast.AstExpr.CpuIdEbx a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
     [(ast.AstExpr.CpuIdEcx a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
     [(ast.AstExpr.CpuIdEdx a b)
       (ctfe-reflection-prescan-or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? b))]
-    [(ast.AstExpr.Xgetbv i) (ctfe-node-has-type-literal? i)]
-    [(ast.AstExpr.Syscall exprs) (ctfe-exprs-have-type-literal? exprs)]
+        (ctfe-node-has-type-literal? state a)
+        (ctfe-node-has-type-literal? state b))]
+    [(ast.AstExpr.Xgetbv i) (ctfe-node-has-type-literal? state i)]
+    [(ast.AstExpr.Syscall exprs) (ctfe-exprs-have-type-literal? state exprs)]
     [_ true]))
 
-(define (ctfe-decl-has-type-literal? [decl : ast.AstDecl]) : bool
+(define (ctfe-decl-has-type-literal?
+  [state : TcMacroState]
+  [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ expr-box)
-      (ctfe-node-has-type-literal? expr-box)]
+      (ctfe-node-has-type-literal? state expr-box)]
     [(ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-      (ctfe-node-has-type-literal? body-box)]
-    [(ast.AstDecl.Test _ expr-box _) (ctfe-node-has-type-literal? expr-box)]
+      (ctfe-node-has-type-literal? state body-box)]
+    [(ast.AstDecl.Test _ expr-box _)
+      (ctfe-node-has-type-literal? state expr-box)]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ body-box)
-      (ctfe-node-has-type-literal? body-box)]
+      (ctfe-node-has-type-literal? state body-box)]
     [(ast.AstDecl.Unsafe inner-box)
-      (ctfe-decl-has-type-literal? (__tl-box-place inner-box))]
+      (ctfe-decl-has-type-literal? state (__tl-box-place inner-box))]
     [(ast.AstDecl.ModuleBody _ body-box)
-      (ctfe-program-has-type-literal? (__tl-box-place body-box))]
+      (ctfe-program-has-type-literal? state (__tl-box-place body-box))]
     [_ false]))
 
-(define (ctfe-program-has-type-literal? [decls : ast.AstDeclList]) : bool
+(define (ctfe-program-has-type-literal?
+  [state : TcMacroState]
+  [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
       (ctfe-reflection-prescan-or
-        (ctfe-decl-has-type-literal? decl)
-        (ctfe-program-has-type-literal? rest))]))
+        (ctfe-decl-has-type-literal? state decl)
+        (ctfe-program-has-type-literal? state rest))]))
 
 ;; Reflection metadata only needs a refresh when a splice introduces a nominal
 ;; declaration. Keep ordinary expression/function splices on the shared CTFE
@@ -102654,17 +106295,18 @@
   [module-id : i64]
   [env-plan : MacroSpliceEnvPlan]) : ResultMacroSpliceRebuild
   (let
+    [state : TcMacroState (tc-context-macro-state cur-ctx)]
     [pools : ast.AstNodePoolContext (tc-context-pools cur-ctx)]
     [reuse-segmented? : bool
       (and
-        macro-live-symbols-ready
-        (not macro-live-symbols-fallback)
-        macro-live-registries-ready
-        (not macro-live-registries-fallback))]
+        (tc-macro-walk-field state macro-live-symbols-ready)
+        (not (tc-macro-walk-field state macro-live-symbols-fallback))
+        (tc-macro-walk-field state macro-live-registries-ready)
+        (not (tc-macro-walk-field state macro-live-registries-fallback)))]
     [next-program : ast.AstProgram
       (if reuse-segmented?
         (tc-context-program cur-ctx)
-        (macro-expand-scratch-program next-decls))]
+        (macro-expand-scratch-program state next-decls))]
     (begin
       ;; Existing symbol handles and their cached owner names remain stable
       ;; across an append-only splice. The one-entry type lookup also caches a
@@ -102675,18 +106317,18 @@
       ;; Program-position and import-derived alias indexes can contain negative
       ;; answers and refer to the replaced flat program view. Keep their shared
       ;; invalidation until they gain an insert API of their own.
-      (macro-alias-derived-cache-reset!)
+      (macro-alias-derived-cache-reset-for-state! state)
       (tc-job-state-reset-derived-caches! (tc-context-job-state cur-ctx))
       ;; Do not reset ctfe-module-macro-export here: the export set is stable
       ;; across the splice (additive-inert) and is owned by macro-live-prescan-
       ;; ensure!, which repopulates it when the prescan is recomputed. Clearing it
       ;; here would leave module-hook / module-export-macro? with an empty map for
       ;; the spliced tail's expansion.
-      (match (macro-live-symbols-build-or-reuse! next-program next-paths)
+      (match (macro-live-symbols-build-or-reuse! state next-program next-paths)
         [(csym.ResultCompilerSymbols.Ok next-symbols)
           (let
             [next-registries : csym.CompilerRegistries
-              (macro-live-registries-shared-view)]
+              (macro-live-registries-shared-view state)]
             [next-ctx : TcContext
               (tc-context-new-with-source-names-and-body-state
                 next-program
@@ -102700,8 +106342,10 @@
             [_definition-paths : unit
               (macro-definition-paths-index! next-ctx next-decls next-paths)]
             (begin
-              (set! macro-expand-active-module "")
-              (macro-expand-set-macro-names! macro-live-prescan-visible-names)
+              (tc-macro-walk-set! state macro-expand-active-module "")
+              (macro-expand-set-macro-names!
+                state
+                (tc-macro-walk-field state macro-live-prescan-visible-names))
               (match (tc-stdlib-comptime-surface-ok-for-macro next-ctx)
                 [(ResultTcUnit.Ok)
                   (match (macro-splice-top-env
@@ -102713,7 +106357,7 @@
                     env-plan)
                     [(ResultTcEnv.Ok top-env)
                       (begin
-                        (tc-hygiene-reset-active-top-env! top-env)
+                        (tc-hygiene-reset-active-top-env! state top-env)
                         (tc-context-capture-active-pools! next-ctx)
                         (macro-expand-ctfe-env-build-once! next-ctx)
                         (ResultMacroSpliceRebuild.Ok
@@ -102773,6 +106417,7 @@
     ;; of megabytes of obsolete persistent-env bindings.
     [cur-materialize-seen : sym_i64_env.SymI64Env initial-materialize-seen]
     [walk-state : TcJobState (tc-context-job-state ctx)]
+    [macro-state : TcMacroState (tc-job-state-macro-state walk-state)]
     [cur-module : String module]
     [cur-module-id : i64 module-id]
     [cur-orig-decls : ast.AstDeclList orig-decls]
@@ -102826,7 +106471,10 @@
                 [decl-owner-id : i64
                   (macro-segmented-program-current-owner-id walk-state)]
                 [_set-decl-owner : unit
-                  (set! macro-active-decl-owner-id decl-owner-id)]
+                  (tc-macro-walk-set!
+                    macro-state
+                    macro-active-decl-owner-id
+                    decl-owner-id)]
                 (match decl
                   [(ast.AstDecl.Module next-module)
                     (begin
@@ -102965,7 +106613,8 @@
                                           [(ResultTcEnv.Ok next-top-env)
                                             (begin
                                               (tc-nominal-owner-cache-reset!)
-                                              (macro-alias-derived-cache-reset!)
+                                              (macro-alias-derived-cache-reset-for-state!
+                                                macro-state)
                                               (tc-job-state-reset-derived-caches!
                                                 (tc-context-job-state cur-ctx))
                                               (if defer-cache?
@@ -103037,6 +106686,7 @@
                                           expanded-paths)]
                                       [generated-ext : MacroMaybeGeneratedModuleExtension
                                         (macro-generated-module-extension
+                                          macro-state
                                           expanded
                                           cur-module-id)]
                                       [symbols-inserted : bool
@@ -103045,12 +106695,14 @@
                                             expanded
                                             expanded)
                                           (macro-live-symbols-insert-decls!
+                                            (tc-context-macro-state cur-ctx)
                                             expanded
                                             cur-module-id))]
                                       [registries-inserted : bool
                                         (and
                                           symbols-inserted
                                           (macro-live-registries-append-decls!
+                                            (tc-context-macro-state cur-ctx)
                                             expanded
                                             expanded-paths
                                             cur-module-id))]
@@ -103062,8 +106714,10 @@
                                         (if incremental?
                                           unit
                                           (begin
-                                            (macro-live-symbols-invalidate!)
-                                            (macro-live-registries-invalidate!)))]
+                                            (macro-live-symbols-invalidate!
+                                              (tc-context-macro-state cur-ctx))
+                                            (macro-live-registries-invalidate!
+                                              (tc-context-macro-state cur-ctx))))]
                                       [flat-view : MacroSegmentedProgramFlatView
                                         (if incremental?
                                           (MacroSegmentedProgramFlatView
@@ -103079,6 +106733,7 @@
                                       [_prescan-delta : unit
                                         (if incremental?
                                           (macro-live-prescan-append-decls!
+                                            macro-state
                                             expanded
                                             cur-module-id)
                                           unit)]
@@ -103091,7 +106746,9 @@
                                         (macro-decls-reflection-relevant?
                                           expanded)]
                                       [ctfe-build-generation-before : i64
-                                        macro-expand-ctfe-env-build-generation]
+                                        (tc-macro-walk-field
+                                          macro-state
+                                          macro-expand-ctfe-env-build-generation)]
                                       (begin
                                         (cfg
                                           compile-profile
@@ -103131,16 +106788,26 @@
                                             (if incremental?
                                               unit
                                               (begin
-                                                (macro-live-prescan-reset!)
+                                                (macro-live-prescan-reset!
+                                                  macro-state)
                                                 (macro-live-prescan-ensure!
+                                                  macro-state
                                                   next-decls)
                                                 (macro-expand-set-expr-type-macro-names!
-                                                  macro-live-prescan-expr-type-names)))
-                                            (set!
+                                                  macro-state
+                                                  (tc-macro-walk-field
+                                                    macro-state
+                                                    macro-live-prescan-expr-type-names))))
+                                            (tc-macro-walk-set!
+                                              macro-state
                                               ctfe-needs-metadata
                                               (or
-                                                ctfe-needs-metadata
-                                                macro-live-prescan-has-defmacro))
+                                                (tc-macro-walk-field
+                                                  macro-state
+                                                  ctfe-needs-metadata)
+                                                (tc-macro-walk-field
+                                                  macro-state
+                                                  macro-live-prescan-has-defmacro)))
                                             unit)
                                           unit)
                                         (match (macro-expand-rebuild-context-for-splice
@@ -103237,7 +106904,9 @@
                         ;; additive and can use the same refresh path as a macro
                         ;; splice instead of retaining another whole-program env.
                         (begin
-                          (macro-expand-program-structural-change-note! 4)
+                          (macro-expand-program-structural-change-note!
+                            macro-state
+                            4)
                           (cfg
                             compile-profile
                             (compiler-tc-walk-decl-sample-note! 7))
@@ -103288,7 +106957,9 @@
                                     (macro-decls-reflection-relevant?
                                       materialized-decls)]
                                   [ctfe-build-generation-before : i64
-                                    macro-expand-ctfe-env-build-generation]
+                                    (tc-macro-walk-field
+                                      macro-state
+                                      macro-expand-ctfe-env-build-generation)]
                                   (begin
                                     (set!
                                       cur-materialize-seen
@@ -103298,20 +106969,32 @@
                                     ;; prescan over the new whole-program view
                                     ;; before the context rebuild consumes its
                                     ;; visible-name set.
-                                    (macro-live-symbols-invalidate!)
+                                    (macro-live-symbols-invalidate!
+                                      (tc-context-macro-state cur-ctx))
                                     ;; Source-file materialization can insert any
                                     ;; index-bearing declaration or alias surface,
                                     ;; so retain the full registry rebuild even
                                     ;; when it contains no nominal declaration.
-                                    (macro-live-registries-invalidate!)
-                                    (macro-live-prescan-ensure! next-decls)
+                                    (macro-live-registries-invalidate!
+                                      (tc-context-macro-state cur-ctx))
+                                    (macro-live-prescan-ensure!
+                                      macro-state
+                                      next-decls)
                                     (macro-expand-set-expr-type-macro-names!
-                                      macro-live-prescan-expr-type-names)
-                                    (set!
+                                      macro-state
+                                      (tc-macro-walk-field
+                                        macro-state
+                                        macro-live-prescan-expr-type-names))
+                                    (tc-macro-walk-set!
+                                      macro-state
                                       ctfe-needs-metadata
                                       (or
-                                        ctfe-needs-metadata
-                                        macro-live-prescan-has-defmacro))
+                                        (tc-macro-walk-field
+                                          macro-state
+                                          ctfe-needs-metadata)
+                                        (tc-macro-walk-field
+                                          macro-state
+                                          macro-live-prescan-has-defmacro)))
                                     unit
                                     (match (macro-expand-rebuild-context-for-splice
                                       cur-ctx
@@ -103365,6 +107048,7 @@
                       [(and
                           cur-can-share
                           (macro-decl-cannot-fire-gate?
+                            macro-state
                             (tc-context-expr-bases cur-ctx)
                             decl))
                         ;; Predict-skip: a macro-free value decl can never fire a
@@ -103553,32 +107237,37 @@
         (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
 
 (define (macro-decl-might-fire-expression-macro?
+  [state : TcMacroState]
   [expr-bases : i64]
   [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ expr-box)
       (macro-expr-might-fire?
+        state
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases expr-box))]
     [(ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
       (macro-expr-might-fire?
+        state
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases body-box))]
     [(ast.AstDecl.Unsafe inner-box)
       (macro-decl-might-fire-expression-macro?
+        state
         expr-bases
         (__tl-box-place inner-box))]
     [_ false]))
 
 (define (macro-program-might-fire-expression-macro?
+  [state : TcMacroState]
   [expr-bases : i64]
   [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
       (or
-        (macro-decl-might-fire-expression-macro? expr-bases decl)
-        (macro-program-might-fire-expression-macro? expr-bases rest))]))
+        (macro-decl-might-fire-expression-macro? state expr-bases decl)
+        (macro-program-might-fire-expression-macro? state expr-bases rest))]))
 
 (define (macro-import-kind-summary-backed? [kind : ast.AstImportKind]) : bool
   (match kind
@@ -103770,26 +107459,31 @@
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
+          [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
           [decls : ast.AstDeclList (__tl-box-place decls-box)]
-          [_prescan : unit (macro-live-prescan-ensure! decls)]
-          [has-defmacro : bool macro-live-prescan-has-defmacro]
+          [_prescan : unit (macro-live-prescan-ensure! macro-state decls)]
+          [has-defmacro : bool
+            (tc-macro-walk-field macro-state macro-live-prescan-has-defmacro)]
           [expr-type-macro-names : TcNameIdList
-            macro-live-prescan-expr-type-names]
+            (tc-macro-walk-field macro-state macro-live-prescan-expr-type-names)]
           [has-expr-type-macros : bool
             (match expr-type-macro-names
               [(TcNameIdList.Nil) false]
               [_ true])]
-          [program-needs-expansion : bool macro-live-prescan-needs-expansion]
-          [has-summary-macro-import : bool macro-live-prescan-summary-import]
+          [program-needs-expansion : bool
+            (tc-macro-walk-field macro-state macro-live-prescan-needs-expansion)]
+          [has-summary-macro-import : bool
+            (tc-macro-walk-field macro-state macro-live-prescan-summary-import)]
           [prescan-macro-names : TcNameIdList
             (if has-summary-macro-import
-              macro-live-prescan-visible-names
+              (tc-macro-walk-field macro-state macro-live-prescan-visible-names)
               (TcNameIdList.Nil))]
           [has-visible-macro-call : bool
             (if has-summary-macro-import
               (begin
-                (macro-expand-set-macro-names! prescan-macro-names)
+                (macro-expand-set-macro-names! macro-state prescan-macro-names)
                 (macro-program-might-fire-expression-macro?
+                  macro-state
                   (ast.ast-node-pool-context-expr-segment-bases pools)
                   decls))
               false)]
@@ -103810,32 +107504,40 @@
             ;; Same per-compile reset for the qualified-alias resolution cache:
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.
-            (macro-alias-derived-cache-reset!)
+            (macro-alias-derived-cache-reset-for-state! macro-state)
             (tc-job-state-reset-derived-caches! job-state)
             ;; The ctfe-module-macro-export map is not reset per pass: it is owned
             ;; by macro-live-prescan-ensure!, which populates it once (with the
             ;; cached visible-name prescan) and repopulates it on the non-inert
             ;; splice fallback. Clearing it here left every pass after the first
             ;; with an empty export set, breaking module-hook.
-            (macro-expand-set-expr-type-macro-names! expr-type-macro-names)
+            (macro-expand-set-expr-type-macro-names!
+              macro-state
+              expr-type-macro-names)
             ;; Scan once for type literals and module-value queries. The latter
             ;; enables only the compact signature index; it must not force the
             ;; much larger layout/nominal-reflection metadata build.
-            (ctfe_support.ctfe-module-value-reflection-enable! false)
+            (ctfe_support.ctfe-module-value-reflection-enable-for-state!
+              (tc-macro-ctfe-state macro-state)
+              false)
             (let
-              [has-type-literal : bool (ctfe-program-has-type-literal? decls)]
+              [has-type-literal : bool
+                (ctfe-program-has-type-literal? macro-state decls)]
               (begin
                 ;; Source macro bodies and ordinary comptime expressions are
                 ;; visited by the combined scan above. Surface-summary macro
                 ;; bodies are outside this AST, so conservatively enable the
                 ;; compact index only for that imported-summary case.
                 (if has-summary-macro-import
-                  (ctfe_support.ctfe-module-value-reflection-enable! true)
+                  (ctfe_support.ctfe-module-value-reflection-enable-for-state!
+                    (tc-macro-ctfe-state macro-state)
+                    true)
                   unit)
                 ;; Only build the (tens-of-MB, O(types^2))
                 ;; reflection/layout metadata if the program actually contains
                 ;; a `(type T)` literal or macros need reflection.
-                (set!
+                (tc-macro-walk-set!
+                  macro-state
                   ctfe-needs-metadata
                   (or
                     has-defmacro
@@ -103853,19 +107555,26 @@
                     prefix-reserve)]
                 [active-program : ast.AstProgram (ast.ast-program active-decls)]
                 (begin
-                  (macro-expand-scratch-begin!)
+                  (macro-expand-scratch-begin! macro-state)
                   (cfg compile-profile (compiler-tc-profile-start))
                   (match (macro-live-symbols-build-or-reuse!
+                    macro-state
                     active-program
                     active-paths)
                     [(csym.ResultCompilerSymbols.Ok symbols)
                       (let
                         [registries : csym.CompilerRegistries
-                          (macro-live-registries-shared-view)]
+                          (macro-live-registries-shared-view macro-state)]
                         (begin
-                          (set! macro-expand-active-module "")
+                          (tc-macro-walk-set!
+                            macro-state
+                            macro-expand-active-module
+                            "")
                           (macro-expand-set-macro-names!
-                            macro-live-prescan-visible-names)
+                            macro-state
+                            (tc-macro-walk-field
+                              macro-state
+                              macro-live-prescan-visible-names))
                           (let
                             [ctx : TcContext
                               (tc-context-new-with-source-names-and-job-state
@@ -103887,7 +107596,9 @@
                                 (match (tc-build-top-env ctx active-program)
                                   [(ResultTcEnv.Ok top-env)
                                     (begin
-                                      (tc-hygiene-reset-active-top-env! top-env)
+                                      (tc-hygiene-reset-active-top-env!
+                                        macro-state
+                                        top-env)
                                       (tc-context-capture-active-pools! ctx)
                                       (cfg
                                         compile-profile
@@ -104182,11 +107893,15 @@
   [cfgs : sym_i64_env.SymI64Env]
   [intern-state : ci.InternCompatState]) : ResultMacroExpand
   (begin
+    (tc-macro-state-bind-source-names!
+      (tc-job-state-macro-state job-state)
+      source-names)
     ;; Legacy macro expansion still reads compatibility globals; bridge the
     ;; compile-owned pool and interner state at the phase boundary.
     (ast.ast-node-pool-context-install! pools)
     (ci.intern-compat-state-install! intern-state)
-    (macro-expand-program-structural-change-reset!)
+    (macro-expand-program-structural-change-reset!
+      (tc-job-state-macro-state job-state))
     ;; The route is a property of the compiler's embedded image plus the exact
     ;; source provenance observed by this load session. Embedded source marks
     ;; the session directly; byte-identical disk source may mark individual
@@ -104197,7 +107912,8 @@
     ;; and across five reset/release/remap cycles on hosted Linux and Windows,
     ;; so production routing now uses this same policy on both hosts. The
     ;; stress-only cfg controls durable telemetry, not route selection.
-    (set!
+    (tc-macro-walk-set!
+      (tc-job-state-macro-state job-state)
       macro-expand-stdlib-tlci-route-active
       (cfg
         embedded-stdlib-tlci
@@ -104214,25 +107930,31 @@
       (all embedded-stdlib-tlci tlci-native-route-stress)
       (compiler-tc-tlci-native-stress-pass-start!
         pools
-        macro-expand-stdlib-tlci-route-active))
-    (tc-stdlib-comptime-macro-surface-ok-reset!)
-    (macro-generated-module-memo-reset!)
-    (tc-macro-abstract-proof-reset!)
-    (macro-generated-decls-memo-reset!)
+        (tc-macro-walk-field
+          (tc-job-state-macro-state job-state)
+          macro-expand-stdlib-tlci-route-active)))
+    (tc-stdlib-comptime-macro-surface-ok-reset!
+      (tc-job-state-macro-state job-state))
+    (tc-macro-identity-reset-for-state! (tc-job-state-macro-state job-state))
+    (macro-generated-module-memo-reset! (tc-job-state-macro-state job-state))
+    (tc-macro-abstract-proof-reset-for-state!
+      (tc-job-state-macro-state job-state))
+    (macro-generated-decls-memo-reset! (tc-job-state-macro-state job-state))
     ;; Reset the CTFE base-env cache once per program (plan P2). The pass
     ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
     ;; every in-pass splice rebuild and by the downstream typecheck/lower
     ;; comptime, never rebuilt per splice. This is the "build the CTFE-env
     ;; once, after expansion" boundary. The typecheck entry wraps that boundary
     ;; in macro-expand-then-build-envs-with-load-state.
-    (compiler-typecheck-ctfe-env-cache-clear!)
+    (compiler-typecheck-ctfe-env-cache-clear!
+      (tc-job-state-macro-state job-state))
     ;; Reset the live symbols/registries cache once per program (plan P2): the
     ;; pass rebuilds them and in-pass splice rebuilds reuse or refresh them.
-    (macro-live-symbols-reset!)
+    (macro-live-symbols-reset! (tc-job-state-macro-state job-state))
     ;; Reset the hoisted whole-program prescans: computed at
     ;; pass setup and refreshed only when a generated file import loads new
     ;; declarations mid-walk.
-    (macro-live-prescan-reset!)
+    (macro-live-prescan-reset! (tc-job-state-macro-state job-state))
     (let
       [macro-result : ResultMacroExpand
         (macro-expand-program-pass-with-paths-and-pools
@@ -104259,14 +107981,19 @@
                 (compiler-tc-tlci-native-stress-pass-finish! pools 0))
               (let
                 [_profile-owners : unit
-                  (macro-expand-allocation-profile-snapshot! 0)]
+                  (macro-expand-allocation-profile-snapshot!
+                    (tc-job-state-macro-state job-state)
+                    0)]
                 [_release-scratch : unit
                   (begin
-                    (macro-expand-scratch-release!)
+                    (macro-expand-scratch-release!
+                      (tc-job-state-macro-state job-state))
                     (tc-job-state-reset-derived-caches! job-state))]
                 (if (spec.compiler-specialize-needed-with-pools expanded pools)
                   (begin
-                    (macro-expand-program-structural-change-note! 8)
+                    (macro-expand-program-structural-change-note!
+                      (tc-job-state-macro-state job-state)
+                      8)
                     (let
                       [normalized-result : spec.ResultGenProgramWithPaths
                         (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
@@ -104295,8 +108022,11 @@
               (cfg
                 (all embedded-stdlib-tlci tlci-native-route-stress)
                 (compiler-tc-tlci-native-stress-pass-finish! pools 1))
-              (macro-expand-allocation-profile-snapshot! 0)
-              (macro-expand-scratch-release!)
+              (macro-expand-allocation-profile-snapshot!
+                (tc-job-state-macro-state job-state)
+                0)
+              (macro-expand-scratch-release!
+                (tc-job-state-macro-state job-state))
               (tc-job-state-reset-derived-caches! job-state)
               (ResultMacroExpand.Err diag))])))))
 
@@ -105444,7 +109174,8 @@
                   ;; rewind-sensitive content reached through them) must not
                   ;; outlive this declaration, so rebuild the cache per
                   ;; declaration inside the scratch scope.
-                  (tc-macro-helper-env-cache-reset!)
+                  (tc-macro-helper-env-cache-reset!
+                    (tc-context-macro-state ctx))
                   escaped)))))))))
 
 (define (tc-scratch-arena-state-isolation-self-test) : bool
@@ -105575,22 +109306,28 @@
   ;; Keep the dark-lane fast path literal and outermost: before any metadata,
   ;; visible-name, or family work, a session with no complete proof returns
   ;; immediately.
-  (if (not active?)
+  (if (not (tc-macro-proof-field (tc-context-macro-state ctx) qualified-active))
     (TcProofReuseGeneratedDeclConcrete)
-    (if (not (complete-key generator))
+    (if (not (complete-key-for-state (tc-context-macro-state ctx) generator))
       (TcProofReuseGeneratedDeclConcrete)
       (let
         ;; The caller has already destructured this declaration's immutable
         ;; generated metadata and passes those exact values here.
-        [right-id : i64 (lookup-key-id identity)]
-        [slot : i64 (slot-id right-id)]
+        [proof-state : TcMacroState (tc-context-macro-state ctx)]
+        [right-id : i64 (lookup-key-id-for-state proof-state identity)]
+        [slot : i64 (slot-id-for-state proof-state right-id)]
         [count : i64
           (if (and
             (>= slot 0)
             (< slot store-capacity)
-            (> (array-ref identity-bytes slot) 0))
+            (>
+              (array-ref (tc-macro-proof-field proof-state identity-bytes) slot)
+              0))
             (let
-              [count : i64 (array-ref operand-count slot)]
+              [count : i64
+                (array-ref
+                  (tc-macro-proof-field proof-state operand-count)
+                  slot)]
               (if (and (>= count 0) (<= count expected-count))
                 count
                 -1))
@@ -105600,13 +109337,16 @@
             (>= right-id 0)
             (>= slot 0)
             (< slot store-capacity)
-            (> (array-ref identity-bytes slot) 0)
+            (>
+              (array-ref (tc-macro-proof-field proof-state identity-bytes) slot)
+              0)
             (>= count 1)
             (<= count expected-count))]
         (if (not ok)
           (TcProofReuseGeneratedDeclConcrete)
           (let
-            [key : i64 (slot-index generator item)]
+            [key : i64
+              (slot-index-for-state (tc-context-macro-state ctx) generator item)]
             (if (or (< key 0) (>= key additional-capacity))
               ;; A missing family is still eligible to seed after a
               ;; successful concrete check.  The exact walker below owns the
@@ -105614,8 +109354,20 @@
               (TcProofReuseGeneratedDeclConcreteSeed)
               (let
                 [left-id : i64
-                  (if (> (array-ref storage-identity-vars key) 0)
-                    (- (array-ref storage-identity-vars key) 1)
+                  (if (>
+                    (array-ref
+                      (tc-macro-proof-field
+                        (tc-context-macro-state ctx)
+                        storage-identity-vars)
+                      key)
+                    0)
+                    (-
+                      (array-ref
+                        (tc-macro-proof-field
+                          (tc-context-macro-state ctx)
+                          storage-identity-vars)
+                        key)
+                      1)
                     -1)]
                 (if (or (< left-id 0) (= left-id right-id))
                   (TcProofReuseGeneratedDeclConcrete)
@@ -105626,22 +109378,40 @@
                         (let
                           [other : ast.AstDecl
                             (tc-global-array-element-shared-view
-                              augmented-decls
+                              (augmented-decls-shared-view-for-state
+                                (tc-context-macro-state ctx))
                               key)]
                           ;; The exact walker performs identity preflight,
                           ;; declaration substitution, dependent-type vetoes,
                           ;; and Rule 4 in one bounded proof. Unsupported
                           ;; declarations and expressions fail closed there.
                           (if (begin
-                            (scratch-reset-functions)
-                            (set!
+                            (scratch-reset-functions-for-state proof-state)
+                            (tc-macro-proof-set!
+                              proof-state
                               first-module-id
-                              (if (> (array-ref storage-module-vars key) 0)
-                                (- (array-ref storage-module-vars key) 1)
+                              (if (>
+                                (array-ref
+                                  (tc-macro-proof-field
+                                    (tc-context-macro-state ctx)
+                                    storage-module-vars)
+                                  key)
+                                0)
+                                (-
+                                  (array-ref
+                                    (tc-macro-proof-field
+                                      (tc-context-macro-state ctx)
+                                      storage-module-vars)
+                                    key)
+                                  1)
                                 -1))
-                            (set! next-module-id (tc-context-module-id ctx))
+                            (tc-macro-proof-set!
+                              proof-state
+                              next-module-id
+                              (tc-context-module-id ctx))
                             (and
-                              (tc-proof-reuse-session-identity-preflight-ids?
+                              (tc-proof-reuse-session-identity-preflight-ids-for-state?
+                                proof-state
                                 left-id
                                 right-id)
                               (tc-proof-reuse-session-ast-decl-exact?
@@ -105653,17 +109423,42 @@
                               ;; reflection facts can authorize reuse.
                               (not
                                 (or
-                                  active-invalid
-                                  overflow-ok
-                                  (and portable-pair local-use)
+                                  (tc-macro-proof-field
+                                    proof-state
+                                    active-invalid)
+                                  (tc-macro-proof-field proof-state overflow-ok)
                                   (and
-                                    portable-pair
-                                    fixed-call
-                                    (not allow-cleanup))
-                                  (< first-key 0)
-                                  (< next-id 0)
-                                  (< identity-count2 1)
-                                  (> identity-count2 expected-count)))
+                                    (tc-macro-proof-field
+                                      proof-state
+                                      portable-pair)
+                                    (tc-macro-proof-field proof-state local-use))
+                                  (and
+                                    (tc-macro-proof-field
+                                      proof-state
+                                      portable-pair)
+                                    (tc-macro-proof-field
+                                      proof-state
+                                      fixed-call)
+                                    (not
+                                      (tc-macro-proof-field
+                                        proof-state
+                                        allow-cleanup)))
+                                  (<
+                                    (tc-macro-proof-field proof-state first-key)
+                                    0)
+                                  (<
+                                    (tc-macro-proof-field proof-state next-id)
+                                    0)
+                                  (<
+                                    (tc-macro-proof-field
+                                      proof-state
+                                      identity-count2)
+                                    1)
+                                  (>
+                                    (tc-macro-proof-field
+                                      proof-state
+                                      identity-count2)
+                                    expected-count)))
                               (let
                                 [index : i64 0]
                                 [ok : bool true]
@@ -105675,18 +109470,42 @@
                                   (while (and ok (< index expected-count))
                                     (begin
                                       (if (=
-                                        (bit-and active-mask (shl 1 index))
+                                        (bit-and
+                                          (tc-macro-proof-field
+                                            proof-state
+                                            active-mask)
+                                          (shl 1 index))
                                         0)
                                         unit
                                         (if (let
                                           [key : String
-                                            (type-key-id first-slot index)]
+                                            (type-key-id-for-state
+                                              proof-state
+                                              (tc-macro-proof-field
+                                                proof-state
+                                                first-slot)
+                                              index)]
                                           [value : String
-                                            (type-key-id next-slots index)]
+                                            (type-key-id-for-state
+                                              proof-state
+                                              (tc-macro-proof-field
+                                                proof-state
+                                                next-slots)
+                                              index)]
                                           [kind : String
-                                            (kind-for-check first-slot index)]
+                                            (kind-for-check-for-state
+                                              proof-state
+                                              (tc-macro-proof-field
+                                                proof-state
+                                                first-slot)
+                                              index)]
                                           [other : String
-                                            (kind-for-check next-slots index)]
+                                            (kind-for-check-for-state
+                                              proof-state
+                                              (tc-macro-proof-field
+                                                proof-state
+                                                next-slots)
+                                              index)]
                                           [first : bool
                                             (or
                                               (string.eq kind "f32")
@@ -105753,27 +109572,46 @@
                                                 [true true]
                                                 [false
                                                   (match (or
-                                                    checked-context
+                                                    (tc-macro-proof-field
+                                                      proof-state
+                                                      checked-context)
                                                     first
                                                     second
                                                     left
                                                     right
                                                     result
                                                     saved
-                                                    shifted
-                                                    has-operands
-                                                    reflection-env
-                                                    negative-literal
+                                                    (tc-macro-proof-field
+                                                      proof-state
+                                                      shifted)
+                                                    (tc-macro-proof-field
+                                                      proof-state
+                                                      has-operands)
+                                                    (tc-macro-proof-field
+                                                      proof-state
+                                                      reflection-env)
+                                                    (tc-macro-proof-field
+                                                      proof-state
+                                                      negative-literal)
                                                     (and
-                                                      (> digit-count 0)
+                                                      (>
+                                                        (tc-macro-proof-field
+                                                          proof-state
+                                                          digit-count)
+                                                        0)
                                                       (not state))
                                                     (and
-                                                      conditional-operand
+                                                      (tc-macro-proof-field
+                                                        proof-state
+                                                        conditional-operand)
                                                       (not
                                                         (string.eq kind other))))
                                                     [true false]
                                                     [false
-                                                      (type-dedup-ok? other 0)])])]))
+                                                      (type-dedup-ok-for-state?
+                                                        proof-state
+                                                        other
+                                                        0)])])]))
                                           unit
                                           (set! ok false)))
                                       (set! index (+ index 1))))
@@ -105927,7 +109765,7 @@
             (begin
               ;; Every generated attempt starts concrete; the profile hook
               ;; reads this bit only after the declaration succeeds.
-              (set! next-skip false)
+              (tc-macro-proof-set! (tc-context-macro-state ctx) next-skip false)
               (let
                 [result : TcProofReuseGeneratedDeclDecision
                   (tc-proof-reuse-generated-decl-decision
@@ -105939,7 +109777,10 @@
                 (match result
                   [(TcProofReuseGeneratedDeclSkip)
                     (begin
-                      (set! next-skip true)
+                      (tc-macro-proof-set!
+                        (tc-context-macro-state ctx)
+                        next-skip
+                        true)
                       (cfg
                         test
                         (set!
@@ -105967,7 +109808,8 @@
                         ;; concrete decisions or failed checks.
                         (match result
                           [(ResultTcUnit.Ok)
-                            (record-slot
+                            (record-slot-for-state
+                              (tc-context-macro-state ctx)
                               generator
                               item
                               identity
@@ -106974,10 +110816,13 @@
                                 [decls : ast.AstDeclList
                                   (__tl-box-place decls-box)]
                                 (begin
-                                  (tc-hygiene-reset-active-top-env! top-env)
+                                  (tc-hygiene-reset-active-top-env!
+                                    (tc-context-macro-state ctx)
+                                    top-env)
                                   (tc-context-capture-active-pools! ctx)
                                   (tc-clone-able-cache-populate! ctx)
-                                  (tc-macro-helper-env-cache-reset!)
+                                  (tc-macro-helper-env-cache-reset!
+                                    (tc-context-macro-state ctx))
                                   (match (tc-check-decls-with-paths
                                     prefix-cache
                                     (tc-prefix-snapshot-cache-active-for-state?
@@ -107163,41 +111008,86 @@
 
 (define (compiler-typecheck-clear-macro-expanded-source-caches-for-job!
   [job-state : TcJobState]) : unit
-  (begin
-    ;; Checked lowering can retire the load/source pools before its macro pass.
-    ;; Surface summaries are about to be destroyed, but lazy macro bodies may
-    ;; still need their definition-site import aliases. Distill those aliases
-    ;; into the id-only stub table while the summary strings are alive.
-    (tc-lazy-import-surface-stubs-record-for-job! job-state)
-    (tc-unbound-suggestion-snapshot-reset!)
-    (tc-clone-able-cache-reset!)
-    (tc-macro-helper-env-cache-reset!)
-    (tc-macro-module-env-cache-clear!)
-    (tc-spmd-inline-helper-stack-reset!)
-    (tc-agg-caches-reset!)
-    (tc-nominal-owner-cache-reset!)
-    (tc-stdlib-comptime-macro-surface-ok-reset!)
-    (tc-unqualified-import-ambiguity-reset!)
-    (macro-alias-cache-reset!)
-    (cload.compiler-load-surface-summaries-reset!)
-    (ctfe_support.ctfe-build-seen-reset!)
-    (set! macro-expand-active-module "")
-    (macro-expand-set-macro-names! (TcNameIdList.Nil))
-    (macro-expand-set-expr-type-macro-names! (TcNameIdList.Nil))
-    (compiler-typecheck-ctfe-env-cache-clear!)
-    (macro-live-symbols-reset!)
-    (macro-live-prescan-reset!)
-    (set! tc-hygiene-active-top-env-ready false)
-    (set! tc-hygiene-active-top-env (tc-empty-type-env))
-    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-    (tc-hygiene-module-env-cache-arena-reset!)
-    (set! tc-lazy-import-summary-macro-force-record-count 0)
-    (ctfe_support.ctfe-module-macro-export-reset!)
-    (ctfe_support.ctfe-module-value-reflection-enable! false)
-    (ctfe_support.ctfe-module-value-reset!)
-    (set! ctfe-needs-metadata true)
-    (macro-generated-module-memo-reset!)
-    (macro-generated-decls-memo-reset!)))
+  (let
+    [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
+    (begin
+      ;; Checked lowering can retire the load/source pools before its macro pass.
+      ;; Surface summaries are about to be destroyed, but lazy macro bodies may
+      ;; still need their definition-site import aliases. Distill those aliases
+      ;; into the id-only stub table while the summary strings are alive.
+      (tc-lazy-import-surface-stubs-record-for-job! job-state)
+      (tc-unbound-suggestion-snapshot-reset!)
+      (tc-clone-able-cache-reset!)
+      (tc-macro-helper-env-cache-reset! macro-state)
+      (tc-macro-module-env-cache-clear! macro-state)
+      (tc-spmd-inline-helper-stack-reset!)
+      (tc-agg-caches-reset!)
+      (tc-nominal-owner-cache-reset!)
+      (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
+      (tc-unqualified-import-ambiguity-reset!)
+      (macro-alias-derived-cache-reset-for-state! macro-state)
+      (cload.compiler-load-surface-summaries-reset!)
+      (ctfe_support.ctfe-build-seen-reset!)
+      (tc-macro-walk-set! macro-state macro-expand-active-module "")
+      (macro-expand-set-macro-names! macro-state (TcNameIdList.Nil))
+      (macro-expand-set-expr-type-macro-names! macro-state (TcNameIdList.Nil))
+      (compiler-typecheck-ctfe-env-cache-clear! macro-state)
+      (macro-live-symbols-reset! macro-state)
+      (macro-live-prescan-reset! macro-state)
+      (tc-hygiene-clear-active-top-env! macro-state)
+      (set! tc-lazy-import-summary-macro-force-record-count 0)
+      (ctfe_support.ctfe-module-macro-export-reset-for-state!
+        (tc-macro-ctfe-state macro-state))
+      (ctfe_support.ctfe-module-value-reflection-enable-for-state!
+        (tc-macro-ctfe-state macro-state)
+        false)
+      (ctfe_support.ctfe-module-value-reset-for-state!
+        (tc-macro-ctfe-state macro-state))
+      (tc-macro-walk-set! macro-state ctfe-needs-metadata true)
+      (macro-generated-module-memo-reset! macro-state)
+      (macro-generated-decls-memo-reset! macro-state))))
+
+(define (compiler-typecheck-reset-file-state-for-job! [job-state : TcJobState]) : unit
+  (let
+    [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
+    (begin
+      (surface_facts.surface-typecheck-facts-clear!)
+      (cfg
+        compiler-surface-producer
+        (surface_facts.surface-typecheck-facts-recording-abort!)
+        unit)
+      (tc-unbound-suggestion-snapshot-reset!)
+      (tc-job-state-release-scratch-arenas! job-state)
+      (ctfe_support.ctfe-builtin-reset!)
+      (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
+      (tc-clone-able-cache-reset!)
+      (tc-macro-helper-env-cache-reset! macro-state)
+      (tc-macro-module-env-cache-clear! macro-state)
+      (tc-spmd-inline-helper-stack-reset!)
+      (tc-agg-caches-reset!)
+      (tc-nominal-owner-cache-reset!)
+      (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
+      (tc-unqualified-import-ambiguity-reset!)
+      (macro-alias-derived-cache-reset-for-state! macro-state)
+      (tc-lazy-import-stubs-reset!)
+      (cload.compiler-load-surface-summaries-reset!)
+      (ctfe_support.ctfe-build-seen-reset!)
+      (tc-hygiene-clear-active-top-env! macro-state)
+      (tc-macro-walk-set! macro-state macro-expand-active-module "")
+      (macro-expand-set-macro-names! macro-state (TcNameIdList.Nil))
+      (macro-expand-set-expr-type-macro-names! macro-state (TcNameIdList.Nil))
+      (compiler-typecheck-ctfe-env-cache-clear! macro-state)
+      (macro-live-symbols-reset! macro-state)
+      (macro-live-prescan-reset! macro-state)
+      (set! tc-lazy-import-summary-macro-force-record-count 0)
+      (ctfe_support.ctfe-module-macro-export-reset-for-state!
+        (tc-macro-ctfe-state macro-state))
+      (ctfe_support.ctfe-module-value-reflection-enable-for-state!
+        (tc-macro-ctfe-state macro-state)
+        false)
+      (ctfe_support.ctfe-module-value-reset-for-state!
+        (tc-macro-ctfe-state macro-state))
+      (tc-macro-walk-set! macro-state ctfe-needs-metadata true))))
 
 ;; Serial/test compatibility adapter. Production lowering owns and supplies a
 ;; job state so cache invalidation remains isolated between compiler requests.
@@ -107206,43 +111096,7 @@
     (tc-serial-job-state)))
 
 (define (compiler-typecheck-reset-file-state!) : unit
-  (begin
-    (surface_facts.surface-typecheck-facts-clear!)
-    (cfg
-      compiler-surface-producer
-      (surface_facts.surface-typecheck-facts-recording-abort!)
-      unit)
-    (tc-unbound-suggestion-snapshot-reset!)
-    (tc-serial-scratch-arenas-release-if-ready!)
-    (ctfe_support.ctfe-builtin-reset!)
-    (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
-    (tc-clone-able-cache-reset!)
-    (tc-macro-helper-env-cache-reset!)
-    (tc-macro-module-env-cache-clear!)
-    (tc-spmd-inline-helper-stack-reset!)
-    (tc-agg-caches-reset!)
-    (tc-nominal-owner-cache-reset!)
-    (tc-stdlib-comptime-macro-surface-ok-reset!)
-    (tc-unqualified-import-ambiguity-reset!)
-    (macro-alias-cache-reset!)
-    (tc-lazy-import-stubs-reset!)
-    (cload.compiler-load-surface-summaries-reset!)
-    (ctfe_support.ctfe-build-seen-reset!)
-    (set! tc-hygiene-active-top-env-ready false)
-    (set! tc-hygiene-active-top-env (tc-empty-type-env))
-    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-    (tc-hygiene-module-env-cache-arena-reset!)
-    (set! macro-expand-active-module "")
-    (macro-expand-set-macro-names! (TcNameIdList.Nil))
-    (macro-expand-set-expr-type-macro-names! (TcNameIdList.Nil))
-    (compiler-typecheck-ctfe-env-cache-clear!)
-    (macro-live-symbols-reset!)
-    (macro-live-prescan-reset!)
-    (set! tc-lazy-import-summary-macro-force-record-count 0)
-    (ctfe_support.ctfe-module-macro-export-reset!)
-    (ctfe_support.ctfe-module-value-reflection-enable! false)
-    (ctfe_support.ctfe-module-value-reset!)
-    (set! ctfe-needs-metadata true)))
+  (compiler-typecheck-reset-file-state-for-job! (tc-serial-job-state)))
 
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
   (begin

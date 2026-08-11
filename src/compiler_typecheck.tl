@@ -7987,6 +7987,8 @@
 (define (compiler-typecheck-macro-abstract-proof-tests-ok?) : bool
   (let
     [ok : bool true]
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
     (begin
       ;; A passing constrained defmacro persists one proof per (macro, param)
       ;; with the checked kind mask.
@@ -7994,17 +7996,27 @@
         (compiler-typecheck-macro-abstract-proof-source))
         unit
         (set! ok false))
-      (if (tc_core.tc-macro-abstract-proof-exists-for-macro? "emit-kind-count")
+      (if (tc_core.tc-macro-abstract-proof-exists-for-macro?
+        macro-state
+        "emit-kind-count")
         unit
         (set! ok false))
       (if (=
-        (tc_core.tc-macro-abstract-proof-lookup "emit-kind-count" "T")
+        (tc_core.tc-macro-abstract-proof-lookup
+          macro-state
+          "emit-kind-count"
+          "T")
         (bit-or
           (tc_core.tc-macro-abstract-kind-bit "struct")
           (tc_core.tc-macro-abstract-kind-bit "enum")))
         unit
         (set! ok false))
-      (if (= (tc_core.tc-macro-abstract-proof-lookup "emit-kind-count" "U") -1)
+      (if (=
+        (tc_core.tc-macro-abstract-proof-lookup
+          macro-state
+          "emit-kind-count"
+          "U")
+        -1)
         unit
         (set! ok false))
       ;; Proof keys carry the definition module, matching the generator string
@@ -8013,14 +8025,18 @@
         (compiler-typecheck-macro-abstract-proof-module-source))
         unit
         (set! ok false))
-      (if (tc_core.tc-macro-abstract-proof-exists-for-macro? "app/emit-one")
+      (if (tc_core.tc-macro-abstract-proof-exists-for-macro?
+        macro-state
+        "app/emit-one")
         unit
         (set! ok false))
-      (if (tc_core.tc-macro-abstract-proof-exists-for-macro? "emit-one")
+      (if (tc_core.tc-macro-abstract-proof-exists-for-macro?
+        macro-state
+        "emit-one")
         (set! ok false)
         unit)
       (if (=
-        (tc_core.tc-macro-abstract-proof-lookup "app/emit-one" "T")
+        (tc_core.tc-macro-abstract-proof-lookup macro-state "app/emit-one" "T")
         (tc_core.tc-macro-abstract-kind-bit "i64"))
         unit
         (set! ok false))
@@ -8029,7 +8045,9 @@
         (compiler-typecheck-macro-unconstrained-proof-source))
         unit
         (set! ok false))
-      (if (tc_core.tc-macro-abstract-proof-exists-for-macro? "emit-two")
+      (if (tc_core.tc-macro-abstract-proof-exists-for-macro?
+        macro-state
+        "emit-two")
         (set! ok false)
         unit)
       ok)))
@@ -9310,70 +9328,74 @@
       limit)))
 
 (define (compiler-typecheck-macro-hygiene-env-snapshots-ok?) : bool
-  (begin
-    (tc_core.macro-hygiene-env-reset!)
-    (let
-      [empty : tc_core.MacroHygieneEnv (tc_core.macro-hygiene-env-empty)]
-      [parent : tc_core.MacroHygieneEnv
-        (tc_core.macro-hygiene-env-bind-raw empty 7 70)]
-      [left : tc_core.MacroHygieneEnv
-        (tc_core.macro-hygiene-env-bind-raw parent 8 80)]
-      [right : tc_core.MacroHygieneEnv
-        (tc_core.macro-hygiene-env-bind-raw parent 9 90)]
-      [shadow-one : tc_core.MacroHygieneEnv
-        (tc_core.macro-hygiene-env-bind-raw parent 7 71)]
-      [shadow-two : tc_core.MacroHygieneEnv
-        (tc_core.macro-hygiene-env-bind-raw shadow-one 7 72)]
-      [pattern : tc_core.MacroHygieneEnv
-        (tc_core.macro-hygiene-env-bind-pattern-name-raw empty 10 100)]
-      [pattern-with-bind : tc_core.MacroHygieneEnv
-        (tc_core.macro-hygiene-env-bind-raw pattern 10 101)]
-      [pattern-shadow : tc_core.MacroHygieneEnv
-        (tc_core.macro-hygiene-env-bind-pattern-name-raw
-          pattern-with-bind
-          10
-          102)]
-      ;; Force two capacity growths while retaining earlier sibling heads.
-      [deep : tc_core.MacroHygieneEnv
-        (compiler-typecheck-macro-hygiene-env-extend parent 0 80)]
-      (and
-        (compiler-typecheck-hygiene-name-missing?
-          (tc_core.macro-hygiene-env-lookup empty 7))
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup parent 7)
-          70)
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup left 8)
-          80)
-        (compiler-typecheck-hygiene-name-missing?
-          (tc_core.macro-hygiene-env-lookup left 9))
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup right 9)
-          90)
-        (compiler-typecheck-hygiene-name-missing?
-          (tc_core.macro-hygiene-env-lookup right 8))
-        (compiler-typecheck-hygiene-name-missing?
-          (tc_core.macro-hygiene-env-lookup parent 8))
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup shadow-two 7)
-          72)
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup pattern-with-bind 10)
-          101)
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup-pattern-name pattern-with-bind 10)
-          100)
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup-pattern-name pattern-shadow 10)
-          102)
-        (compiler-typecheck-hygiene-name-missing?
-          (tc_core.macro-hygiene-env-lookup-pattern-name left 8))
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup parent 7)
-          70)
-        (compiler-typecheck-hygiene-name-is?
-          (tc_core.macro-hygiene-env-lookup deep 179)
-          1079)))))
+  (let
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
+    (begin
+      (tc_core.macro-hygiene-env-reset! macro-state)
+      (let
+        [empty : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-empty macro-state)]
+        [parent : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-bind-raw empty 7 70)]
+        [left : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-bind-raw parent 8 80)]
+        [right : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-bind-raw parent 9 90)]
+        [shadow-one : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-bind-raw parent 7 71)]
+        [shadow-two : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-bind-raw shadow-one 7 72)]
+        [pattern : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-bind-pattern-name-raw empty 10 100)]
+        [pattern-with-bind : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-bind-raw pattern 10 101)]
+        [pattern-shadow : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-bind-pattern-name-raw
+            pattern-with-bind
+            10
+            102)]
+        ;; Force two capacity growths while retaining earlier sibling heads.
+        [deep : tc_core.MacroHygieneEnv
+          (compiler-typecheck-macro-hygiene-env-extend parent 0 80)]
+        (and
+          (compiler-typecheck-hygiene-name-missing?
+            (tc_core.macro-hygiene-env-lookup empty 7))
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup parent 7)
+            70)
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup left 8)
+            80)
+          (compiler-typecheck-hygiene-name-missing?
+            (tc_core.macro-hygiene-env-lookup left 9))
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup right 9)
+            90)
+          (compiler-typecheck-hygiene-name-missing?
+            (tc_core.macro-hygiene-env-lookup right 8))
+          (compiler-typecheck-hygiene-name-missing?
+            (tc_core.macro-hygiene-env-lookup parent 8))
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup shadow-two 7)
+            72)
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup pattern-with-bind 10)
+            101)
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup-pattern-name pattern-with-bind 10)
+            100)
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup-pattern-name pattern-shadow 10)
+            102)
+          (compiler-typecheck-hygiene-name-missing?
+            (tc_core.macro-hygiene-env-lookup-pattern-name left 8))
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup parent 7)
+            70)
+          (compiler-typecheck-hygiene-name-is?
+            (tc_core.macro-hygiene-env-lookup deep 179)
+            1079))))))
 
 (define (compiler-typecheck-macro-own-when-source) : String
   "(defmacro (when [condition : i64] [body : unit]) : unit body)

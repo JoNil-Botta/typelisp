@@ -9123,14 +9123,18 @@
 ;; scratch arena is destroyed mirrors the macro-walk boundary clears.
 (define (lower-clone-handoff-expansion-cache-clear!
   [job-state : tc_core.TcJobState]) : unit
-  (begin
-    (tc_core.macro-generated-decls-memo-reset!)
-    (tc_core.macro-generated-module-memo-reset!)
-    (tc_core.tc-macro-helper-env-cache-reset!)
-    (tc_core.tc-nominal-owner-cache-reset!)
-    (tc_core.macro-alias-derived-cache-reset!)
-    (tc_core.tc-job-state-reset-file-state! job-state)
-    (ctfe.ctfe-module-macro-export-reset!)))
+  (let
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state job-state)]
+    (begin
+      (tc_core.macro-generated-decls-memo-reset! macro-state)
+      (tc_core.macro-generated-module-memo-reset! macro-state)
+      (tc_core.tc-macro-helper-env-cache-reset! macro-state)
+      (tc_core.tc-nominal-owner-cache-reset!)
+      (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
+      (tc_core.tc-job-state-reset-file-state! job-state)
+      (ctfe.ctfe-module-macro-export-reset-for-state!
+        (tc_core.tc-macro-ctfe-state macro-state)))))
 
 ;; The handoff expansion runs the full macro/CTFE machinery for every clone
 ;; root in one shot. Its working set (CTFE values, env spines, memo entries) is
@@ -9443,8 +9447,11 @@
           [(tc_core.ResultTcEnv.Ok next-env)
             (begin
               (tc_core.tc-context-capture-active-pools! next-ctx)
-              (tc_core.tc-hygiene-reset-active-top-env! next-env)
-              (tc_core.tc-macro-helper-env-cache-reset!)
+              (tc_core.tc-hygiene-reset-active-top-env!
+                (tc_core.tc-context-macro-state next-ctx)
+                next-env)
+              (tc_core.tc-macro-helper-env-cache-reset!
+                (tc_core.tc-context-macro-state next-ctx))
               (ResultLowerCheckedContext.Ok next-ctx next-env))]
           [(tc_core.ResultTcEnv.Err message)
             (ResultLowerCheckedContext.Err message)]))]))
@@ -66452,7 +66459,8 @@
                             [checked-detach? : bool
                               lower-checked-dest-pools-active]
                             [macro-changed? : bool
-                              (tc_core.macro-expand-program-structurally-changed?)]
+                              (tc_core.macro-expand-program-structurally-changed?
+                                (tc_core.tc-job-state-macro-state job-state))]
                             [retain-macro-source? : bool
                               (and checked-detach? (not macro-changed?))]
                             [detach-load-pools? : bool

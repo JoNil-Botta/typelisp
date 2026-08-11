@@ -1421,27 +1421,32 @@
     (compiler-typecheck-bytes-referent-tests-ok?)))
 
 (define (compiler-typecheck-macro-alias-cache-collision-ok?) : bool
-  (begin
-    (tc_core.macro-alias-cache-reset!)
-    (tc_core.macro-alias-cache-ensure!)
-    (tc_core.macro-alias-cache-put! 1 (ci.intern-capacity) 11)
-    (tc_core.macro-alias-cache-put! 2 0 22)
-    (tc_core.macro-alias-cache-put! 3 1 -1)
-    (tc_core.macro-alias-cache-put! 3 1 33)
-    (tc_core.macro-alias-cache-put! 4 2 2)
-    (tc_core.macro-alias-cache-put! 4 2 44)
-    (tc_core.macro-alias-cache-put! 5 3 3)
-    (tc_core.macro-alias-cache-put! 5 3 -3)
-    (tc_core.macro-alias-cache-put! 6 4 4)
-    (tc_core.macro-alias-cache-put! 6 4 -3)
-    (tc_core.macro-alias-cache-put! 6 4 66)
-    (and
-      (= (tc_core.macro-alias-cache-get 1 (ci.intern-capacity)) 11)
-      (= (tc_core.macro-alias-cache-get 2 0) 22)
-      (= (tc_core.macro-alias-cache-get 3 1) 33)
-      (= (tc_core.macro-alias-cache-get 4 2) 44)
-      (= (tc_core.macro-alias-cache-get 5 3) -3)
-      (= (tc_core.macro-alias-cache-get 6 4) 66))))
+  (let
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
+    (begin
+      (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
+      (tc_core.macro-alias-cache-ensure! macro-state)
+      (tc_core.macro-alias-cache-put! macro-state 1 (ci.intern-capacity) 11)
+      (tc_core.macro-alias-cache-put! macro-state 2 0 22)
+      (tc_core.macro-alias-cache-put! macro-state 3 1 -1)
+      (tc_core.macro-alias-cache-put! macro-state 3 1 33)
+      (tc_core.macro-alias-cache-put! macro-state 4 2 2)
+      (tc_core.macro-alias-cache-put! macro-state 4 2 44)
+      (tc_core.macro-alias-cache-put! macro-state 5 3 3)
+      (tc_core.macro-alias-cache-put! macro-state 5 3 -3)
+      (tc_core.macro-alias-cache-put! macro-state 6 4 4)
+      (tc_core.macro-alias-cache-put! macro-state 6 4 -3)
+      (tc_core.macro-alias-cache-put! macro-state 6 4 66)
+      (and
+        (=
+          (tc_core.macro-alias-cache-get macro-state 1 (ci.intern-capacity))
+          11)
+        (= (tc_core.macro-alias-cache-get macro-state 2 0) 22)
+        (= (tc_core.macro-alias-cache-get macro-state 3 1) 33)
+        (= (tc_core.macro-alias-cache-get macro-state 4 2) 44)
+        (= (tc_core.macro-alias-cache-get macro-state 5 3) -3)
+        (= (tc_core.macro-alias-cache-get macro-state 6 4) 66)))))
 
 (define (compiler-typecheck-smoke-module-macro-import-evaluated-key-source) : String
   "(defmacro (gen [key : String]) : Module
@@ -3248,6 +3253,10 @@
     [entry : String "target/tc_surface_macro_entry.tl"]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
+    [ctfe-state : ctfe.CompilerCtfeMacroState
+      (tc_core.tc-macro-ctfe-state macro-state)]
     (begin
       (compiler-typecheck-smoke-write-text
         provider
@@ -3263,10 +3272,14 @@
         cfgs)
         [(load.ResultCompilerLoadWithPaths.Ok _ _ _ _)
           (begin
-            (ctfe.ctfe-module-macro-export-reset!)
+            (tc_core.tc-macro-state-bind-source-names!
+              macro-state
+              (ci.intern-source-name-session-capture-active-handle))
+            (ctfe.ctfe-module-macro-export-reset-for-state! ctfe-state)
             (let
               [names : tc_core.TcNameIdList
                 (tc_core.macro-collect-surface-summary-macro-names
+                  macro-state
                   (load.compiler-load-surface-summaries)
                   (tc_core.TcNameIdList.Nil))]
               ;; The provider stays a lazy surface summary (aliased dotted
@@ -3309,27 +3322,36 @@
                     (tc_core.macro-surface-module-has-macro?
                       generated-provider-id))
                   (match (tc_core.macro-surface-call-decl-in-module
+                    macro-state
                     provider-id
                     hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) true]
                     [(tc_core.MacroMaybeDecl.No) false])
                   (match (tc_core.macro-surface-call-decl-in-module
+                    macro-state
                     generated-provider-id
                     generated-hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) false]
                     [(tc_core.MacroMaybeDecl.No) true])
-                  (ctfe.ctfe-module-macro-export-id? provider-id hook-id)
+                  (ctfe.ctfe-module-macro-export-id-for-state?
+                    ctfe-state
+                    provider-id
+                    hook-id)
                   (not
-                    (ctfe.ctfe-module-macro-export-id? provider-id non-macro-id)))]
+                    (ctfe.ctfe-module-macro-export-id-for-state?
+                      ctfe-state
+                      provider-id
+                      non-macro-id)))]
               (begin
                 (load.compiler-load-surface-summaries-reset!)
-                (tc_core.macro-surface-call-decl-cache-reset!)
+                (tc_core.macro-surface-call-decl-cache-reset! macro-state)
                 (and
                   before-reset
                   (not
                     (tc_core.macro-surface-macro-in-module? provider-id hook-id))
                   (not (tc_core.macro-surface-module-has-macro? provider-id))
                   (match (tc_core.macro-surface-call-decl-in-module
+                    macro-state
                     provider-id
                     hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) false]
@@ -3877,6 +3899,8 @@
     (tc_core.tc-source-dotted-full-path-key-cache-reset!)
     (tc_core.tc-source-qualified-variant-key-cache-reset!)
     (let
+      [macro-state : tc_core.TcMacroState
+        (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
       [registry-id : i64
         (compiler_symbols.compiler-registries-identity
           (compiler_symbols.compiler-registries-empty))]
@@ -3891,14 +3915,20 @@
       [old-generation : i64 (ci.intern-generation)]
       [old-result-module-id : i64 (ci.intern "stdlib.result")]
       [old-result-name-id : i64 (ci.intern "result")]
+      [_bind-source-names : unit
+        (tc_core.tc-macro-state-bind-source-names!
+          macro-state
+          (ci.intern-source-name-session-capture-active-handle))]
       [_old-result-identity : unit
-        (tc_core.macro-stdlib-result-identity-ensure!)]
+        (tc_core.macro-stdlib-result-identity-ensure! macro-state)]
+      [old-result-identity : tc_core.TcMacroResultIdentityStateData
+        (tc_core.tc-macro-result-identity-state-data macro-state)]
       [old-result-ids-current : bool
         (and
-          (= tc_core.macro-stdlib-result-identity-table-id old-table-id)
-          (= tc_core.macro-stdlib-result-identity-generation old-generation)
-          (= tc_core.macro-stdlib-result-module-id old-result-module-id)
-          (= tc_core.macro-stdlib-result-macro-id old-result-name-id))]
+          (= old-result-identity.table-id old-table-id)
+          (= old-result-identity.reset-generation old-generation)
+          (= old-result-identity.module-id old-result-module-id)
+          (= old-result-identity.macro-id old-result-name-id))]
       (begin
         (tc_core.tc-source-dotted-alias-key-cache-put!
           old-module-id
@@ -3924,8 +3954,14 @@
           [variant-name-id : i64 (ci.intern "Choice.Full")]
           [result-module-id : i64 (ci.intern "stdlib.result")]
           [result-name-id : i64 (ci.intern "result")]
+          [_bind-result-source-names : unit
+            (tc_core.tc-macro-state-bind-source-names!
+              macro-state
+              (ci.intern-source-name-session-capture-active-handle))]
           [_result-identity : unit
-            (tc_core.macro-stdlib-result-identity-ensure!)]
+            (tc_core.macro-stdlib-result-identity-ensure! macro-state)]
+          [result-identity : tc_core.TcMacroResultIdentityStateData
+            (tc_core.tc-macro-result-identity-state-data macro-state)]
           [alias-miss : i64
             (tc_core.tc-source-dotted-alias-key-cache-get
               module-id
@@ -3945,12 +3981,10 @@
               old-result-ids-current
               (= (ci.intern-active-table-id) old-table-id)
               (> (ci.intern-generation) old-generation)
-              (= tc_core.macro-stdlib-result-identity-table-id old-table-id)
-              (=
-                tc_core.macro-stdlib-result-identity-generation
-                (ci.intern-generation))
-              (= tc_core.macro-stdlib-result-module-id result-module-id)
-              (= tc_core.macro-stdlib-result-macro-id result-name-id)
+              (= result-identity.table-id old-table-id)
+              (= result-identity.reset-generation (ci.intern-generation))
+              (= result-identity.module-id result-module-id)
+              (= result-identity.macro-id result-name-id)
               (= alias-miss -2)
               (= full-miss -2)
               (= variant-miss -2))))))))
@@ -5261,8 +5295,13 @@
           (match (tc_core.macro-expand-program program)
             [(tc_core.ResultMacroExpand.Ok _ _)
               (if expected-change
-                (tc_core.macro-expand-program-structurally-changed?)
-                (not (tc_core.macro-expand-program-structurally-changed?)))]
+                (tc_core.macro-expand-program-structurally-changed?
+                  (tc_core.tc-job-state-macro-state
+                    (tc_core.tc-serial-job-state)))
+                (not
+                  (tc_core.macro-expand-program-structurally-changed?
+                    (tc_core.tc-job-state-macro-state
+                      (tc_core.tc-serial-job-state)))))]
             [(tc_core.ResultMacroExpand.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
     (begin
@@ -5408,6 +5447,12 @@
   (unless
     (tc_core.tc-unused-unsafe-state-isolation-self-test)
     (io.panic "typecheck: unused unsafe state isolation smoke failed")))
+
+(test
+  compiler-typecheck-macro-state-isolation
+  (unless
+    (tc_core.tc-macro-state-isolation-ok?)
+    (io.panic "typecheck: macro/CTFE job state isolation smoke failed")))
 
 (define (compiler-typecheck-smoke-body-state-diagnostic-reuse-ok?) : bool
   (let
@@ -5730,26 +5775,32 @@
       [name-id : i64 (ci.intern "profile-dense-macro")]
       [macro-a : i64 (ci.intern-composite-pair-id module-a name-id)]
       [macro-b : i64 (ci.intern-composite-pair-id module-b name-id)]
+      [macro-state : tc_core.TcMacroState
+        (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
       [growth-cursor : i64 0]
       [ok : bool true]
       (begin
         (tc_core.compiler-tc-macro-profile-reset)
         (tc_core.compiler-tc-macro-profile-record-entry!
+          macro-state
           macro-a
           "profile-dense-module-a/profile-dense-macro"
           2
           3)
         (tc_core.compiler-tc-macro-profile-record-entry!
+          macro-state
           macro-a
           "profile-dense-module-a/profile-dense-macro"
           2
           5)
         (tc_core.compiler-tc-macro-profile-record-entry!
+          macro-state
           macro-a
           "profile-dense-module-a/profile-dense-macro"
           6
           7)
         (tc_core.compiler-tc-macro-profile-record-entry!
+          macro-state
           macro-b
           "profile-dense-module-b/profile-dense-macro"
           2
@@ -5782,6 +5833,7 @@
         (while (< growth-cursor 32)
           (begin
             (tc_core.compiler-tc-macro-profile-record-entry!
+              macro-state
               macro-b
               "profile-dense-module-b/profile-dense-macro"
               (+ growth-cursor 100)
@@ -5812,6 +5864,7 @@
               (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 2)
               -1)))
         (tc_core.compiler-tc-macro-profile-record-entry!
+          macro-state
           macro-b
           "profile-dense-module-b/profile-dense-macro"
           2

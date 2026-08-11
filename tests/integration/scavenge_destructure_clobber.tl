@@ -67,12 +67,12 @@
     [slots : (__tl_dyn-array Slot) (array.make-array Slot n)]
     (begin
       ;; Distinct heap key strings; ids offset by the seed so they are not folded.
-      (array-set! slots 0 (SlotUsed "alpha" (+ s 10) 100))
-      (array-set! slots 1 (SlotUsed "beta" (+ s 20) 200))
-      (array-set! slots 2 (SlotUsed "gamma" (+ s 30) 300))
-      (array-set! slots 3 (SlotUsed "delta" (+ s 40) 400))
-      (array-set! slots 4 (SlotUsed "epsilon" (+ s 50) 500))
-      (array-set! slots 5 (SlotEmpty))
+      (set! (array-ref slots 0) (SlotUsed "alpha" (+ s 10) 100))
+      (set! (array-ref slots 1) (SlotUsed "beta" (+ s 20) 200))
+      (set! (array-ref slots 2) (SlotUsed "gamma" (+ s 30) 300))
+      (set! (array-ref slots 3) (SlotUsed "delta" (+ s 40) 400))
+      (set! (array-ref slots 4) (SlotUsed "epsilon" (+ s 50) 500))
+      (set! (array-ref slots 5) (SlotEmpty))
       ;; gamma -> id (s+30) at hash 300; delta -> id (s+40) at hash 400.
       (let
         [g : i64 (slot-lookup slots n "gamma" 300)]

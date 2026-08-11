@@ -14,7 +14,9 @@
         [out-slots (i64v.slots-mut (&mut out))]
         (foreach
           ([lane : i64 0 n])
-          (array-set! out-slots lane (+ (* (program-count) 10) (program-index)))))
+          (set!
+            (array-ref out-slots lane)
+            (+ (* (program-count) 10) (program-index)))))
       (while (< i n)
         (begin
           (set! acc (+ acc (i64v.get (& out) i 0)))

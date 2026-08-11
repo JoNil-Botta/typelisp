@@ -187,16 +187,16 @@
           (define (new) : Set
             (with-capacity 8))
           (define (len [set : (& set Set)]) : i64
-            (struct-get set len))
+            set.len)
           (define (capacity [set : (& set Set)]) : i64
-            (array-length (struct-get set slots)))
+            (array-length set.slots))
           (define (capacity-mut [set : (&mut set Set)]) : i64
-            (array-length (struct-get set slots)))
+            (array-length set.slots))
           (define (needs-grow? [set : (&mut set Set)]) : bool
-            (> (* (+ (struct-get set len) 1) 4) (* (capacity-mut set) 3)))
+            (> (* (+ set.len 1) 4) (* (capacity-mut set) 3)))
           (define (grow [set : (&mut set Set)]) : unit
             (let
-              [old-capacity : i64 (array-length (struct-get set slots))]
+              [old-capacity : i64 (array-length set.slots)]
               [new-capacity : i64
                 (if (< old-capacity 1)
                   1
@@ -206,7 +206,7 @@
               (begin
                 (while (< scan old-capacity)
                   (begin
-                    (match (array-ref (struct-get set slots) scan)
+                    (match (array-ref set.slots scan)
                       [(Slot.Occupied key hash)
                         (let
                           [index : i64 (bucket-index hash new-capacity)]
@@ -218,9 +218,8 @@
                             (match (array-ref fresh index)
                               [Slot.Empty
                                 (begin
-                                  (array-set!
-                                    fresh
-                                    index
+                                  (set!
+                                    (array-ref fresh index)
                                     (Slot.Occupied (clone key) hash))
                                   (set! placed true))]
                               [_
@@ -229,11 +228,11 @@
                                   (set! seen (+ seen 1)))])))]
                       [_ unit])
                     (set! scan (+ scan 1))))
-                (set! (struct-get set slots) fresh)
-                (set! (struct-get set deleted) 0))))
+                (set! set.slots fresh)
+                (set! set.deleted 0))))
           (define (contains-borrowed? [set : (& set Set)] [key : (& key str)]) : bool
             (match (probe-borrowed
-              (& (struct-get set slots))
+              (& set.slots)
               (capacity set)
               key
               (hash-key key))
@@ -249,7 +248,7 @@
               (let
                 [hash : i64 (hash-key (& key))]
                 (match (probe-borrowed
-                  (& (struct-get set slots))
+                  (& set.slots)
                   (capacity-mut set)
                   (& key)
                   hash)
@@ -257,19 +256,16 @@
                   [(Probe.Absent index)
                     (let
                       [was-tombstone : bool
-                        (match (array-ref (struct-get set slots) index)
+                        (match (array-ref set.slots index)
                           [Slot.Tombstone true]
                           [_ false])]
                       (begin
-                        (array-set!
-                          (struct-get set slots)
-                          index
+                        (set!
+                          (array-ref set.slots index)
                           (Slot.Occupied key hash))
-                        (set! (struct-get set len) (+ (struct-get set len) 1))
+                        (set! set.len (+ set.len 1))
                         (if was-tombstone
-                          (set!
-                            (struct-get set deleted)
-                            (- (struct-get set deleted) 1))
+                          (set! set.deleted (- set.deleted 1))
                           unit)))]
                   [Probe.Full
                     (begin
@@ -279,15 +275,15 @@
             [set : (&mut set Set)]
             [key : (& key str)]) : unit
             (match (probe-borrowed
-              (& (struct-get set slots))
+              (& set.slots)
               (capacity-mut set)
               key
               (hash-key key))
               [(Probe.Found index)
                 (begin
-                  (array-set! (struct-get set slots) index (Slot.Tombstone))
-                  (set! (struct-get set len) (- (struct-get set len) 1))
-                  (set! (struct-get set deleted) (+ (struct-get set deleted) 1)))]
+                  (set! (array-ref set.slots index) (Slot.Tombstone))
+                  (set! set.len (- set.len 1))
+                  (set! set.deleted (+ set.deleted 1)))]
               [_ unit]))
           (define (remove-ref! [set : (&mut set Set)] [key : String]) : unit
             (remove-borrowed-ref! set (& key)))
@@ -303,7 +299,7 @@
                 (while (if found
                   false
                   (< index cap))
-                  (match (array-ref (struct-get set slots) index)
+                  (match (array-ref set.slots index)
                     [(Slot.Occupied _ _) (set! found true)]
                     [_ (set! index (+ index 1))]))
                 index)))
@@ -311,7 +307,7 @@
             (if (if (>= index 0)
               (< index (capacity set))
               false)
-              (match (array-ref (struct-get set slots) index)
+              (match (array-ref set.slots index)
                 [(Slot.Occupied key _) (Entry.Some (clone key))]
                 [_ (Entry.None)])
               (Entry.None)))
@@ -436,16 +432,16 @@
           (define (new) : Set
             (with-capacity 8))
           (define (len [set : (& set Set)]) : i64
-            (struct-get set len))
+            set.len)
           (define (capacity [set : (& set Set)]) : i64
-            (array-length (struct-get set slots)))
+            (array-length set.slots))
           (define (capacity-mut [set : (&mut set Set)]) : i64
-            (array-length (struct-get set slots)))
+            (array-length set.slots))
           (define (needs-grow? [set : (&mut set Set)]) : bool
-            (> (* (+ (struct-get set len) 1) 4) (* (capacity-mut set) 3)))
+            (> (* (+ set.len 1) 4) (* (capacity-mut set) 3)))
           (define (grow [set : (&mut set Set)]) : unit
             (let
-              [old-capacity : i64 (array-length (struct-get set slots))]
+              [old-capacity : i64 (array-length set.slots)]
               [new-capacity : i64
                 (if (< old-capacity 1)
                   1
@@ -455,7 +451,7 @@
               (begin
                 (while (< scan old-capacity)
                   (begin
-                    (match (array-ref (struct-get set slots) scan)
+                    (match (array-ref set.slots scan)
                       [(Slot.Occupied key hash)
                         (let
                           [index : i64 (bucket-index hash new-capacity)]
@@ -467,9 +463,8 @@
                             (match (array-ref fresh index)
                               [Slot.Empty
                                 (begin
-                                  (array-set!
-                                    fresh
-                                    index
+                                  (set!
+                                    (array-ref fresh index)
                                     (Slot.Occupied key hash))
                                   (set! placed true))]
                               [_
@@ -478,14 +473,10 @@
                                   (set! seen (+ seen 1)))])))]
                       [_ unit])
                     (set! scan (+ scan 1))))
-                (set! (struct-get set slots) fresh)
-                (set! (struct-get set deleted) 0))))
+                (set! set.slots fresh)
+                (set! set.deleted 0))))
           (define (contains? [set : (& set Set)] [key : i64]) : bool
-            (match (probe
-              (& (struct-get set slots))
-              (capacity set)
-              key
-              (hash-key key))
+            (match (probe (& set.slots) (capacity set) key (hash-key key))
               [(Probe.Found _) true]
               [_ false]))
           (define (insert-ref! [set : (&mut set Set)] [key : i64]) : unit
@@ -495,44 +486,33 @@
                 unit)
               (let
                 [hash : i64 (hash-key key)]
-                (match (probe
-                  (& (struct-get set slots))
-                  (capacity-mut set)
-                  key
-                  hash)
+                (match (probe (& set.slots) (capacity-mut set) key hash)
                   [(Probe.Found _) unit]
                   [(Probe.Absent index)
                     (let
                       [was-tombstone : bool
-                        (match (array-ref (struct-get set slots) index)
+                        (match (array-ref set.slots index)
                           [Slot.Tombstone true]
                           [_ false])]
                       (begin
-                        (array-set!
-                          (struct-get set slots)
-                          index
+                        (set!
+                          (array-ref set.slots index)
                           (Slot.Occupied key hash))
-                        (set! (struct-get set len) (+ (struct-get set len) 1))
+                        (set! set.len (+ set.len 1))
                         (if was-tombstone
-                          (set!
-                            (struct-get set deleted)
-                            (- (struct-get set deleted) 1))
+                          (set! set.deleted (- set.deleted 1))
                           unit)))]
                   [Probe.Full
                     (begin
                       (grow set)
                       (insert-ref! set key))]))))
           (define (remove-ref! [set : (&mut set Set)] [key : i64]) : unit
-            (match (probe
-              (& (struct-get set slots))
-              (capacity-mut set)
-              key
-              (hash-key key))
+            (match (probe (& set.slots) (capacity-mut set) key (hash-key key))
               [(Probe.Found index)
                 (begin
-                  (array-set! (struct-get set slots) index (Slot.Tombstone))
-                  (set! (struct-get set len) (- (struct-get set len) 1))
-                  (set! (struct-get set deleted) (+ (struct-get set deleted) 1)))]
+                  (set! (array-ref set.slots index) (Slot.Tombstone))
+                  (set! set.len (- set.len 1))
+                  (set! set.deleted (+ set.deleted 1)))]
               [_ unit]))
           (define (next-occupied [set : (& set Set)] [from : i64]) : i64
             (let
@@ -546,7 +526,7 @@
                 (while (if found
                   false
                   (< index cap))
-                  (match (array-ref (struct-get set slots) index)
+                  (match (array-ref set.slots index)
                     [(Slot.Occupied _ _) (set! found true)]
                     [_ (set! index (+ index 1))]))
                 index)))
@@ -554,7 +534,7 @@
             (if (if (>= index 0)
               (< index (capacity set))
               false)
-              (match (array-ref (struct-get set slots) index)
+              (match (array-ref set.slots index)
                 [(Slot.Occupied key _) (Entry.Some key)]
                 [_ (Entry.None)])
               (Entry.None)))

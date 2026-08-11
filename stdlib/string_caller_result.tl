@@ -23,12 +23,12 @@
 ;: True when `result` carries the caller input text borrow.
 (define (string-replace-result-borrowed?
   [result : (StringReplaceResult text old replacement)]) : bool
-  (not (struct-get result is-owned)))
+  (not result.is-owned))
 
 ;: True when `result` carries owned replacement output.
 (define (string-replace-result-owned?
   [result : (StringReplaceResult text old replacement)]) : bool
-  (struct-get result is-owned))
+  result.is-owned)
 
 ;: Construct a no-match replacement result that borrows the caller input text.
 (define (string-replace-borrowed-result
@@ -52,11 +52,8 @@
 (define (string-replace-result-string
   [result : (StringReplaceResult text old replacement)]) : String
   (if (string-replace-result-owned? result)
-    (struct-get result owned)
-    (string.substring
-      (struct-get result borrowed)
-      0
-      (string-length (struct-get result borrowed)))))
+    result.owned
+    (string.substring result.borrowed 0 (string-length result.borrowed))))
 
 ;: Return the first index of `old` in `s`, or `-1` when no match is present.
 (define (string-replace-find-index [s : (& s str)] [old : (& old str)]) : i64

@@ -7,7 +7,7 @@
   [atomic-out : (& atomic-out atomic.AtomicI64Buffer)]
   [i : i64]) : unit
   (begin
-    (array-set! out i (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7))
+    (set! (array-ref out i) (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7))
     (atomic.atomic-i64-add! atomic-out 0 1)))
 
 (define (fill

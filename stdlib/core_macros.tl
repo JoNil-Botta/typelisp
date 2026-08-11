@@ -23,6 +23,58 @@
 ;# ```
 (import stdlib.comptime)
 
+;; Private AST-level bridge for the checked-in seed's pre-dotted global and
+;; macro-hygiene resolver. Ordinary source uses direct `value.field` places.
+;: Internal bootstrap bridge that projects the named field from `target`.
+;:
+;: Ordinary source uses direct `target.field` syntax.
+;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
+(defmacro (__tl-project-field [target : Expr] [field : Expr]) : Expr
+  (match field
+    [(comptime.Expr.Var name) (comptime.expr-struct-get target name)]
+    [_
+      (comptime.comptime-error "internal field projection expects a field name")]))
+
+;: Internal bootstrap bridge that assigns `value` to a projected field.
+;:
+;: Ordinary source uses `(set! target.field value)`.
+;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
+(defmacro (__tl-project-set-field [target : Expr] [field : Expr] [value : Expr]) : Expr
+  (match field
+    [(comptime.Expr.Var name) (comptime.expr-struct-set target name value)]
+    [_
+      (comptime.comptime-error "internal field assignment expects a field name")]))
+
+;; Generated seed templates pass field names as strings so macro hygiene never
+;; treats the member name as a binding in the generated module.
+;: Internal bootstrap projection bridge whose field operand is a string literal.
+;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
+(defmacro (__tl-project-field-name [target : Expr] [field : Expr]) : Expr
+  (if (comptime.expr-string? field)
+    (comptime.expr-struct-get target (comptime.expr-string-value field))
+    (comptime.comptime-error
+      "internal field projection expects a string literal")))
+
+;: Internal bootstrap assignment bridge whose field operand is a string literal.
+;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
+(defmacro (__tl-project-set-field-name
+  [target : Expr]
+  [field : Expr]
+  [value : Expr]) : Expr
+  (if (comptime.expr-string? field)
+    (comptime.expr-struct-set target (comptime.expr-string-value field) value)
+    (comptime.comptime-error
+      "internal field assignment expects a string literal")))
+
+;; Keep the checked-in seed's legacy BoxGet AST confined to this private
+;; one-epoch bridge; public source uses `deref` once rebuilt by the new compiler.
+;: Internal bootstrap bridge that projects the value stored in an owned box.
+;:
+;: Ordinary source uses `(deref value)`.
+;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
+(defmacro (__tl-box-place [value : Expr]) : Expr
+  `(box-get ,value))
+
 ;; lint-allow: unused-import -- loads the typed clone declaration producer.
 (import stdlib.clone)
 

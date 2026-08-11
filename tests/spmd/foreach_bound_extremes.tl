@@ -10,7 +10,7 @@
   [end : i64]) : unit
   (foreach
     ([i : i64 start end])
-    (array-set! output i (+ (array-ref input i) 1))))
+    (set! (array-ref output i) (+ (array-ref input i) 1))))
 
 (define (main) : i64
   (let
@@ -20,7 +20,7 @@
     (begin
       (while (< i 8)
         (begin
-          (array-set! input i 41)
+          (set! (array-ref input i) 41)
           (set! i (+ i 1))))
       (fill input output -4 -4)
       (fill input output 9223372036854775806 9223372036854775806)

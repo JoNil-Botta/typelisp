@@ -89,7 +89,7 @@
     (begin
       (while (< index length)
         (begin
-          (array-set! out index (array-ref bytes (+ offset index)))
+          (set! (array-ref out index) (array-ref bytes (+ offset index)))
           (set! index (+ index 1))))
       (unsafe
         (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) length)))))
@@ -104,6 +104,6 @@
       (begin
         (while (< index (array-length bytes))
           (begin
-            (array-set! out index (array-ref bytes index))
+            (set! (array-ref out index) (array-ref bytes index))
             (set! index (+ index 1))))
         out))))

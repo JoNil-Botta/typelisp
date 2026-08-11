@@ -884,9 +884,9 @@
         (unsafe
           (array-data bytes))]
       (begin
-        (array-set! bytes 0 (cast 'a' : u8))
-        (array-set! bytes 1 (cast 0 : u8))
-        (array-set! bytes 2 (cast 'b' : u8))
+        (set! (array-ref bytes 0) (cast 'a' : u8))
+        (set! (array-ref bytes 1) (cast 0 : u8))
+        (set! (array-ref bytes 2) (cast 'b' : u8))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) 3))))))
 

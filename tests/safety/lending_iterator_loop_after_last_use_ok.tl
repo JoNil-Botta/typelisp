@@ -13,12 +13,12 @@
 
 (define (next [iter : (&mut state (Iter source))]) : (Next source)
   (let
-    [index : i64 (struct-get iter index)]
+    [index : i64 iter.index]
     (if (>= index 1)
       (Next.Done)
       (begin
-        (set! (struct-get iter index) (+ index 1))
-        (Next.Item (&mut (array-ref (struct-get iter slots) index)))))))
+        (set! iter.index (+ index 1))
+        (Next.Item (&mut (array-ref iter.slots index)))))))
 
 (define (consume [value : (Next source)]) : unit
   (match value

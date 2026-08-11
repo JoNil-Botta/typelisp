@@ -760,7 +760,7 @@
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) false]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (tltest-main-decl? inner))]
     [_ false]))
 
@@ -1159,7 +1159,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (ast.ast-program
           (match target
             [(compiler_backend.CompilerBackendTarget.Linux)
@@ -1568,7 +1568,7 @@
             then-branch
             (tltest-reach-mark-expr cond names))))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -1576,7 +1576,7 @@
               body
               (tltest-reach-mark-let-bindings bindings names)))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -1682,7 +1682,7 @@
         [place : ast.AstExpr (ast.ast-node-get place-box)]
         (tltest-reach-mark-expr place names))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr (ast.ast-node-get scrutinee-box)]
@@ -1690,7 +1690,7 @@
               arms
               (tltest-reach-mark-expr scrutinee names)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
           (let
             [start : ast.AstExpr (ast.ast-node-get start-box)]
@@ -1700,7 +1700,7 @@
               body
               (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (let
             [start : ast.AstExpr (ast.ast-node-get start-box)]
@@ -1715,7 +1715,7 @@
                   end
                   (tltest-reach-mark-expr start names)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             _
@@ -1779,7 +1779,7 @@
         [arena : ast.AstExpr (ast.ast-node-get arena-box)]
         (tltest-reach-mark-expr-list body (tltest-reach-mark-expr arena names)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (tltest-reach-mark-expr-list
             body
@@ -1960,7 +1960,7 @@
         names)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (tltest-reach-mark-runtime-helper-root inner names))]
     [_ names]))
 
@@ -2108,7 +2108,7 @@
         (tltest-reach-mark-expr body names))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (tltest-reach-mark-decl inner names))]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
@@ -2199,7 +2199,7 @@
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (tltest-reachable-runtime-decl? inner names))]
     [_ true]))
 
@@ -2347,7 +2347,7 @@
                           (tltest-diagnostic-with-source-fallback
                             source
                             (cdiag.compiler-diagnostic-list-first
-                              (box-get diag)))))
+                              (__tl-box-place diag)))))
                       1)]))])))]))
 
 (define (tltest-inline-stdlib-source? [source : String] [roots : cli_svec.Vec]) : bool
@@ -2414,7 +2414,9 @@
             (begin
               (io.print-error
                 (driver.compiler-driver-render-source-diagnostic
-                  (tltest-diagnostic-with-source-fallback source (box-get diag))))
+                  (tltest-diagnostic-with-source-fallback
+                    source
+                    (__tl-box-place diag))))
               1)])))))
 
 (define (tltest-inline-typecheck-package-source-with-cfg
@@ -2453,7 +2455,9 @@
           (begin
             (io.print-error
               (driver.compiler-driver-render-source-diagnostic
-                (tltest-diagnostic-with-source-fallback source (box-get diag))))
+                (tltest-diagnostic-with-source-fallback
+                  source
+                  (__tl-box-place diag))))
             1)]))
     0))
 
@@ -2476,8 +2480,8 @@
     [(sym_i64_env.SymI64ViewNil) unit]
     [(sym_i64_env.SymI64ViewBind key value rest)
       (begin
-        (array-set! slots index (cfg_core.compiler-cfg-name key))
-        (array-set! values index value)
+        (set! (array-ref slots index) (cfg_core.compiler-cfg-name key))
+        (set! (array-ref values index) value)
         (tltest-cfg-names-fill! rest slots values (+ index 1)))]))
 
 (define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
@@ -2492,7 +2496,7 @@
 (define (tltest-cfg-names-to-env [names : TltestCfgNames]) : sym_i64_env.SymI64Env
   (let
     [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
-    [index : i64 (struct-get names len)]
+    [index : i64 names.len]
     (begin
       (while (> index 0)
         (begin
@@ -2501,8 +2505,8 @@
             env
             (cfg_core.compiler-cfg-bind
               env
-              (array-ref (struct-get names slots) index)
-              (array-ref (struct-get names values) index)))))
+              (array-ref names.slots index)
+              (array-ref names.values index)))))
       env)))
 
 (define (tltest-inline-typecheck-package-sources-from
@@ -2599,7 +2603,7 @@
     [(ast.AstDecl.Extern decl-meta name _ _ _) (ci.intern-str name)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (tltest-decl-name inner))]
     [_ ""]))
 
@@ -2678,7 +2682,9 @@
           [(ast.AstProgram.Program harness-decls-box)
             (and
               (= count 1)
-              (tltest-decl-list-has-name? (box-get harness-decls-box) "eq"))])])))
+              (tltest-decl-list-has-name?
+                (__tl-box-place harness-decls-box)
+                "eq"))])])))
 
 (test
   test-cli-inline-harness-keeps-alias-qualified-base
@@ -2725,7 +2731,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 2)
                 (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
@@ -2820,7 +2827,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (string.eq (tltest-decl-name-at harness-decls 0) "substring")
@@ -2885,7 +2893,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (string.eq (tltest-decl-name-at harness-decls 0) "substring")
@@ -2946,7 +2955,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (string.eq (tltest-decl-name-at harness-decls 0) "substring")
@@ -3001,7 +3011,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
@@ -3072,7 +3083,7 @@
       [(InlineHarness.Harness program _ count)
         (match program
           [(ast.AstProgram.Program harness-decls-box)
-            (match (ast.ast-decl-list-step (box-get harness-decls-box))
+            (match (ast.ast-decl-list-step (__tl-box-place harness-decls-box))
               [(ast.AstDeclListStep.Cons first _)
                 (and (= count 1) (tltest-import-alias-preserved? first))]
               [_ false])])])))
@@ -3153,7 +3164,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (tltest-decl-list-has-name? harness-decls helper-name)
@@ -3227,7 +3239,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (tltest-decl-list-has-name? harness-decls fetch-name)
@@ -3308,7 +3321,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (tltest-decl-list-has-name? harness-decls live-name)
@@ -3365,7 +3379,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (tltest-decl-list-has-name? harness-decls dead-name)
@@ -3418,7 +3433,8 @@
         (match program
           [(ast.AstProgram.Program harness-decls-box)
             (let
-              [harness-decls : ast.AstDeclList (box-get harness-decls-box)]
+              [harness-decls : ast.AstDeclList
+                (__tl-box-place harness-decls-box)]
               (and
                 (= count 1)
                 (string.eq (tltest-decl-name-at harness-decls 0) helper-name)
@@ -3507,7 +3523,7 @@
         (begin
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first (box-get diag))))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))
           false)])))
 
 (define (tltest-function-base-defined?
@@ -3522,7 +3538,7 @@
             [name-text : String (ir.compiler-ir-symbol-text name)]
             (if (string.contains (& name-text) (& base))
               true
-              (tltest-function-base-defined? (box-get rest) base)))])]
+              (tltest-function-base-defined? (__tl-box-place rest) base)))])]
     [(ir.CompilerIrFunctionList.Array seq)
       (tltest-function-base-defined?
         (ir.compiler-ir-function-seq-to-list seq)
@@ -3790,7 +3806,7 @@
               (begin
                 (io.print-error
                   (driver.compiler-driver-render-source-diagnostic
-                    (box-get diag)))
+                    (__tl-box-place diag)))
                 false)]
             [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (match (lower.lower-compiler-program-with-decl-paths-mode-cache
@@ -3807,7 +3823,7 @@
                       (driver.compiler-driver-render-source-diagnostic
                         (tltest-diagnostic-with-source-fallback
                           source
-                          (box-get diag))))
+                          (__tl-box-place diag))))
                     false)])])))]))
 
 (test
@@ -3854,7 +3870,7 @@
         (begin
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first (box-get diag))))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))
           1)])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -4092,7 +4108,9 @@
         (begin
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
-              (tltest-diagnostic-with-source-fallback source (box-get diag))))
+              (tltest-diagnostic-with-source-fallback
+                source
+                (__tl-box-place diag))))
           (build_run_core.source-tool-clean-temp
             temp-dir
             asm-path
@@ -4176,7 +4194,7 @@
         (begin
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first (box-get diag))))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))
           1)])))
 
 (define (tltest-no-tests-run
@@ -4551,7 +4569,7 @@
             (begin
               (io.print-error
                 (driver.compiler-driver-render-source-diagnostic
-                  (cdiag.compiler-diagnostic-list-first (box-get diag))))
+                  (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))
               (ResultTestPackageTotals.Err 1))]))
       (begin
         (io.print-error (tltest-package-integration-missing-main source))
@@ -4630,7 +4648,8 @@
             (io.print-error
               (str_cat.str-cat "test: integration test source failed: " source))
             (io.print-error
-              (driver.compiler-driver-render-source-diagnostic (box-get diag)))
+              (driver.compiler-driver-render-source-diagnostic
+                (__tl-box-place diag)))
             (ResultTestPackageTotals.Err 1))]))
     (ResultTestPackageTotals.Ok 0 0)))
 
@@ -4705,7 +4724,8 @@
             (io.print-error
               (str_cat.str-cat "test: package source failed: " source))
             (io.print-error
-              (driver.compiler-driver-render-source-diagnostic (box-get diag)))
+              (driver.compiler-driver-render-source-diagnostic
+                (__tl-box-place diag)))
             (ResultTestPackageTotals.Err 1))]))
     (ResultTestPackageTotals.Ok 0 0)))
 
@@ -5069,10 +5089,9 @@
             1)]
         [(package_source_core.ResultPackageSourceSet.Ok source-set)
           (let
-            [manifest : compiler_load.CompilerPkgManifest
-              (struct-get source-set manifest)]
-            [manifest-dir : String (struct-get source-set manifest-dir)]
-            [package-owner : String (struct-get manifest name)]
+            [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
+            [manifest-dir : String source-set.manifest-dir]
+            [package-owner : String manifest.name]
             [tests-prefix : String (tltest-package-tests-prefix manifest-dir)]
             (match (package_source_core.package-source-discover-tests-for
               "test"
@@ -5084,7 +5103,7 @@
               [(package_source_core.ResultPackageSourceList.Ok
                   integration-sources)
                 (match (tltest-package-run-sources
-                  (struct-get source-set sources)
+                  source-set.sources
                   tests-prefix
                   target
                   roots
@@ -5093,7 +5112,7 @@
                   backend-target
                   manifest-dir
                   package-owner
-                  (struct-get manifest deps)
+                  manifest.deps
                   0
                   0)
                   [(ResultTestPackageTotals.Err status) status]
@@ -5111,7 +5130,7 @@
                       backend-target
                       manifest-dir
                       package-owner
-                      (struct-get manifest deps)
+                      manifest.deps
                       inline-file-count
                       inline-test-count
                       inline-failed-file-count)]
@@ -5128,7 +5147,7 @@
                       backend-target
                       manifest-dir
                       package-owner
-                      (struct-get manifest deps)
+                      manifest.deps
                       inline-file-count
                       inline-test-count
                       0)])]))])]))
@@ -5172,7 +5191,8 @@
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error
-          (driver.compiler-driver-render-source-diagnostic (box-get diag)))
+          (driver.compiler-driver-render-source-diagnostic
+            (__tl-box-place diag)))
         (ResultTestFileCheck.Err 1))]))
 
 (define (tltest-run-file-loaded
@@ -5224,7 +5244,8 @@
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error
-          (driver.compiler-driver-render-source-diagnostic (box-get diag)))
+          (driver.compiler-driver-render-source-diagnostic
+            (__tl-box-place diag)))
         (ResultTestFileCheck.Err 1))]))
 
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
@@ -5544,7 +5565,7 @@
               (begin
                 (io.print-error
                   (driver.compiler-driver-render-source-diagnostic
-                    (box-get diag)))
+                    (__tl-box-place diag)))
                 1)])])]
     [(TestConfig.Batch paths target _ roots opt-level test-mode)
       (if tltest-list-only

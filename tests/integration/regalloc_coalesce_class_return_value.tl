@@ -79,7 +79,7 @@
     (begin
       (while (< i 40)
         (begin
-          (array-set! src i (cast (+ (* i n) 65) : u8))
+          (set! (array-ref src i) (cast (+ (* i n) 65) : u8))
           (set! i (+ i 1))))
       ;; Every length from 1 to 29 covers the word loop alone, the tail loop
       ;; alone, and both together, so the final mix is reached from all three

@@ -52,7 +52,7 @@
       ;; items[k] = k*10
       (while (< i n)
         (begin
-          (array-set! items i (* i 10))
+          (set! (array-ref items i) (* i 10))
           (set! i (+ i 1))))
       (let
         [r : i64 (sum-array items n seed)]

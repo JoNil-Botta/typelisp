@@ -8,7 +8,9 @@
   [xs : (__tl_dyn-array f64)]
   [out : (__tl_dyn-array f64)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (heavy-f64 (array-ref xs i)))))
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (heavy-f64 (array-ref xs i)))))
 
 (define (sum-array [xs : (__tl_dyn-array f64)] [n : i64]) : f64
   (let
@@ -30,7 +32,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast i : f64))
+          (set! (array-ref xs i) (cast i : f64))
           (set! i (+ i 1))))
       (fill xs out n)
       (if (= (sum-array out n) 442.0)

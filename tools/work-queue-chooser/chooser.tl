@@ -88,39 +88,36 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (cand-builder-grow! [builder : (&mut builder CandBuilder)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get builder slots))]
+    [old-cap : i64 (array-length builder.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array Candidate) (make-array Candidate new-cap)]
     (begin
-      (cand-builder-copy-range!
-        (&mut bigger)
-        (& (struct-get builder slots))
-        (struct-get builder len))
-      (set! (struct-get builder slots) bigger))))
+      (cand-builder-copy-range! (&mut bigger) (& builder.slots) builder.len)
+      (set! builder.slots bigger))))
 
 (define (cand-builder-push!
   [builder : (&mut builder CandBuilder)]
   [cand : Candidate]) : unit
   (begin
-    (if (< (struct-get builder len) (array-length (struct-get builder slots)))
+    (if (< builder.len (array-length builder.slots))
       unit
       (cand-builder-grow! builder))
     (let
-      [index : i64 (struct-get builder len)]
+      [index : i64 builder.len]
       (begin
-        (array-set! (struct-get builder slots) index cand)
-        (set! (struct-get builder len) (+ index 1))))))
+        (set! (array-ref builder.slots index) cand)
+        (set! builder.len (+ index 1))))))
 
 (define (cand-builder-to-seq [builder : CandBuilder]) : CandSeq
-  (CandSeq (struct-get builder slots) (struct-get builder len)))
+  (CandSeq builder.slots builder.len))
 
 (defenum ChooserResult
   (Ok Candidate)
@@ -255,7 +252,7 @@
     (match (json.object-get item (& key))
       [(json.JsonFound found)
         (match found
-          [(json.JsonArray entries) (box-get entries)]
+          [(json.JsonArray entries) (__tl-box-place entries)]
           [_ (json.list-empty)])]
       [(json.JsonMissing) (json.list-empty)])))
 
@@ -342,7 +339,8 @@
     (match (json.object-get item (& key))
       [(json.JsonFound found)
         (match found
-          [(json.JsonArray entries) (pr-check-list-complete? (box-get entries))]
+          [(json.JsonArray entries)
+            (pr-check-list-complete? (__tl-box-place entries))]
           [_ true])]
       [(json.JsonMissing) true])))
 
@@ -526,7 +524,7 @@
     (match (json.object-get value (& key))
       [(json.JsonFound found)
         (match found
-          [(json.JsonArray entries) (box-get entries)]
+          [(json.JsonArray entries) (__tl-box-place entries)]
           [_ (json.list-empty)])]
       [(json.JsonMissing) (json.list-empty)])))
 
@@ -598,7 +596,7 @@
 (define (saturation-line [open-prs : i64] [counts : SaturationCounts]) : String
   (let
     [ready-label : String
-      (if (= (struct-get counts ready-held-back) 1)
+      (if (= counts.ready-held-back 1)
         " ready issue held back; research/triage: "
         " ready issues held back; research/triage: ")]
     (string.append
@@ -608,11 +606,11 @@
         (string.append
           " PRs in flight; implement: "
           (string.append
-            (string.int->string (struct-get counts ready-held-back))
+            (string.int->string counts.ready-held-back)
             (string.append
               ready-label
               (string.append
-                (string.int->string (struct-get counts research-claimed))
+                (string.int->string counts.research-claimed)
                 " claimed"))))))))
 
 ;: Build the full candidate sequence: PR candidates first, then issue
@@ -633,14 +631,14 @@
 
 ;: Number of candidates in a sequence.
 (define (cand-count [cands : CandSeq]) : i64
-  (struct-get cands len))
+  cands.len)
 
 ;: Return the candidate at zero-based `index`, or a sentinel triage candidate
 ;: when out of range (should not happen for a valid weighted index).
 (define (cand-nth [cands : CandSeq] [index : i64]) : Candidate
-  (if (or (< index 0) (>= index (struct-get cands len)))
+  (if (or (< index 0) (>= index cands.len))
     (Candidate kind-triage 0 "" research-weight)
-    (array-ref (struct-get cands slots) index)))
+    (array-ref cands.slots index)))
 
 ;: Build the weight list from candidates, preserving order so a chosen weight
 ;: index maps back to the candidate at the same position.
@@ -648,7 +646,7 @@
   (if (>= index (cand-count cands))
     (random.weight-list-empty)
     (random.weight-list-cons
-      (struct-get (cand-nth cands index) weight)
+      (__tl-project-field (cand-nth cands index) weight)
       (cand-weights-from cands (+ index 1)))))
 
 (define (cand-weights [cands : CandSeq]) : random.RandomWeightList
@@ -663,7 +661,7 @@
     (begin
       (while (and (not found) (< i n))
         (begin
-          (if (= (struct-get (cand-nth cands i) kind) target-kind)
+          (if (= (__tl-project-field (cand-nth cands i) kind) target-kind)
             (set! found true)
             unit)
           (set! i (+ i 1))))
@@ -682,19 +680,19 @@
             (if (= (cand-count cands) 5)
               unit
               (io.panic "expected only complete/no-check PRs plus issue"))
-            (if (= (struct-get (cand-nth cands 0) number) 1)
+            (if (= (__tl-project-field (cand-nth cands 0) number) 1)
               unit
               (io.panic "non-draft PR without checks should remain eligible"))
-            (if (= (struct-get (cand-nth cands 1) number) 2)
+            (if (= (__tl-project-field (cand-nth cands 1) number) 2)
               unit
               (io.panic "empty check rollup should remain eligible"))
-            (if (= (struct-get (cand-nth cands 2) number) 3)
+            (if (= (__tl-project-field (cand-nth cands 2) number) 3)
               unit
               (io.panic "completed check run should remain eligible"))
-            (if (= (struct-get (cand-nth cands 3) number) 6)
+            (if (= (__tl-project-field (cand-nth cands 3) number) 6)
               unit
               (io.panic "terminal legacy status should remain eligible"))
-            (if (= (struct-get (cand-nth cands 4) number) 7)
+            (if (= (__tl-project-field (cand-nth cands 4) number) 7)
               unit
               (io.panic "issue should remain after skipped PRs"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -712,7 +710,7 @@
             (if (= (cand-count cands) 1)
               unit
               (io.panic "only the main-base PR should remain eligible"))
-            (if (= (struct-get (cand-nth cands 0) number) 9)
+            (if (= (__tl-project-field (cand-nth cands 0) number) 9)
               unit
               (io.panic "the stacked PR must not become a review candidate"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -726,15 +724,15 @@
       [(json.OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          [review : i64 (struct-get (cand-nth cands 0) weight)]
-          [ready-both : i64 (struct-get (cand-nth cands 1) weight)]
-          [ready-p0 : i64 (struct-get (cand-nth cands 2) weight)]
-          [ready-p1 : i64 (struct-get (cand-nth cands 3) weight)]
-          [ready-plain : i64 (struct-get (cand-nth cands 4) weight)]
-          [triage-both : i64 (struct-get (cand-nth cands 5) weight)]
-          [triage-p0 : i64 (struct-get (cand-nth cands 6) weight)]
-          [triage-p1 : i64 (struct-get (cand-nth cands 7) weight)]
-          [triage-plain : i64 (struct-get (cand-nth cands 8) weight)]
+          [review : i64 (__tl-project-field (cand-nth cands 0) weight)]
+          [ready-both : i64 (__tl-project-field (cand-nth cands 1) weight)]
+          [ready-p0 : i64 (__tl-project-field (cand-nth cands 2) weight)]
+          [ready-p1 : i64 (__tl-project-field (cand-nth cands 3) weight)]
+          [ready-plain : i64 (__tl-project-field (cand-nth cands 4) weight)]
+          [triage-both : i64 (__tl-project-field (cand-nth cands 5) weight)]
+          [triage-p0 : i64 (__tl-project-field (cand-nth cands 6) weight)]
+          [triage-p1 : i64 (__tl-project-field (cand-nth cands 7) weight)]
+          [triage-plain : i64 (__tl-project-field (cand-nth cands 8) weight)]
           (begin
             (if (= (cand-count cands) 9)
               unit
@@ -780,19 +778,19 @@
               unit
               (io.panic "blocked issues should remain eligible"))
             (if (and
-              (= (struct-get (cand-nth cands 0) number) 30)
-              (= (struct-get (cand-nth cands 0) kind) kind-triage))
+              (= (__tl-project-field (cand-nth cands 0) number) 30)
+              (= (__tl-project-field (cand-nth cands 0) kind) kind-triage))
               unit
               (io.panic "blocked issue should remain in the triage lane"))
             (if (and
-              (= (struct-get (cand-nth cands 1) number) 31)
-              (= (struct-get (cand-nth cands 1) kind) kind-ready))
+              (= (__tl-project-field (cand-nth cands 1) number) 31)
+              (= (__tl-project-field (cand-nth cands 1) kind) kind-ready))
               unit
               (io.panic
                 "blocked ready issue should remain in the implement lane"))
             (if (and
-              (= (struct-get (cand-nth cands 2) number) 32)
-              (= (struct-get (cand-nth cands 3) number) 33))
+              (= (__tl-project-field (cand-nth cands 2) number) 32)
+              (= (__tl-project-field (cand-nth cands 3) number) 33))
               unit
               (io.panic "existing issue eligibility should remain unchanged"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -810,7 +808,7 @@
             (if (= (cand-count cands) 1)
               unit
               (io.panic "expected one PR candidate"))
-            (if (= (struct-get (cand-nth cands 0) weight) 45)
+            (if (= (__tl-project-field (cand-nth cands 0) weight) 45)
               unit
               (io.panic "PR review weight should be 45"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -829,11 +827,11 @@
               unit
               (io.panic
                 "only the non-draft PR and the triage issue should remain"))
-            (if (= (struct-get (cand-nth cands 0) number) 62)
+            (if (= (__tl-project-field (cand-nth cands 0) number) 62)
               unit
               (io.panic
                 "the sole non-draft PR should be the only review candidate"))
-            (if (= (struct-get (cand-nth cands 1) number) 70)
+            (if (= (__tl-project-field (cand-nth cands 1) number) 70)
               unit
               (io.panic "triage issue should follow once draft PRs are dropped"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -863,7 +861,7 @@
               unit
               (io.panic
                 "research/triage issues must stay eligible above the PR cap"))
-            (if (= (struct-get (cand-nth cands 4) number) 51)
+            (if (= (__tl-project-field (cand-nth cands 4) number) 51)
               unit
               (io.panic "triage issue should remain after the four review PRs"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -884,7 +882,7 @@
             (if (cand-list-has-kind? cands kind-ready)
               unit
               (io.panic "exactly three open PRs is at the cap, not above it"))
-            (if (= (struct-get (cand-nth cands 3) number) 50)
+            (if (= (__tl-project-field (cand-nth cands 3) number) 50)
               unit
               (io.panic "ready issue should remain right at the PR cap"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -907,7 +905,7 @@
               unit
               (io.panic
                 "two draft PRs must not push three open PRs over the cap"))
-            (if (= (struct-get (cand-nth cands 3) number) 50)
+            (if (= (__tl-project-field (cand-nth cands 3) number) 50)
               unit
               (io.panic "ready issue should sit right after the non-draft PRs"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -991,12 +989,12 @@
 ;: Render one candidate as the chooser's action line (without trailing newline).
 (define (candidate-line [cand : Candidate]) : String
   (string.append
-    (string.append (action-name (struct-get cand kind)) " ")
+    (string.append (action-name cand.kind) " ")
     (string.append
-      (string.append (github-kind (struct-get cand kind)) " #")
+      (string.append (github-kind cand.kind) " #")
       (string.append
-        (string.int->string (struct-get cand number))
-        (string.append ": " (struct-get cand title))))))
+        (string.int->string cand.number)
+        (string.append ": " cand.title)))))
 
 ;: Choose one candidate from the input JSON. Invalid and genuinely empty input
 ;: are errors; a valid queue emptied by the PR cap returns a successful wait

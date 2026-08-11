@@ -1014,7 +1014,7 @@ cat > "$simd_shape_dir/main.tl" <<'EOF'
 (define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 (define (main) : i64
   (let
     [a : (Array i64) (make-array i64 17)]
@@ -1368,12 +1368,12 @@ cat > "$SPMD_EXEC/spmd.tl" <<'TLEOF'
     (begin
       (while (< i 64)
         (begin
-          (array-set! a i (+ i 1))
-          (array-set! b i (* i 2))
+          (set! (array-ref a i) (+ i 1))
+          (set! (array-ref b i) (* i 2))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 64])
-        (array-set! out j (+ (array-ref a j) (array-ref b j))))
+        (set! (array-ref out j) (+ (array-ref a j) (array-ref b j))))
       (bit-and (array-ref out 63) 255))))
 TLEOF
 run_spmd_exec_mode() {
@@ -1417,7 +1417,7 @@ cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
 (define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 (define (main) : i64
   (let
     [a : (Array i64) (make-array i64 17)]

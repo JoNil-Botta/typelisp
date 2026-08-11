@@ -47,6 +47,6 @@
       (unless (= outer-result 42) (return 3))
       (unless (= mixed-result 17) (return 4))
       (unless (= vec2-result 45) (return 5))
-      (unless (= (cast (struct-get made x) : i64) 6) (return 6))
-      (unless (= (cast (struct-get made y) : i64) 7) (return 7))
+      (unless (= (cast made.x : i64) 6) (return 6))
+      (unless (= (cast made.y : i64) 7) (return 7))
       42)))

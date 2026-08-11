@@ -65,9 +65,9 @@
   (match status
     [(Detailed payload)
       (let
-        [place : StatusPlace (struct-get payload place)]
+        [place : StatusPlace payload.place]
         (and
-          (= (struct-get payload code) 77)
-          (= (struct-get place zip) 90210)
-          (string.eq (struct-get place city) "Malmo")))]
+          (= payload.code 77)
+          (= place.zip 90210)
+          (string.eq place.city "Malmo")))]
     [_ false]))

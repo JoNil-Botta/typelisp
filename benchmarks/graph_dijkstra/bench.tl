@@ -64,19 +64,18 @@
     (begin
       (while (< v vertices)
         (begin
-          (array-set! offset-slots v cursor)
+          (set! (array-ref offset-slots v) cursor)
           (set! state (gd-next-state state))
           (set! cursor (+ cursor (+ 2 (% (gd-draw state) 5))))
           (set! v (+ v 1))))
-      (array-set! offset-slots vertices cursor)
+      (set! (array-ref offset-slots vertices) cursor)
       (while (< e cursor)
         (begin
           (set! state (gd-next-state state))
-          (array-set! target-slots e (% (gd-draw state) vertices))
+          (set! (array-ref target-slots e) (% (gd-draw state) vertices))
           (set! state (gd-next-state state))
-          (array-set!
-            weight-slots
-            e
+          (set!
+            (array-ref weight-slots e)
             (+ 1 (% (gd-draw state) (- gd-weight-limit 1))))
           (set! e (+ e 1))))
       cursor)))
@@ -105,12 +104,12 @@
     (begin
       (while (< i vertices)
         (begin
-          (array-set! dist-slots i gd-infinity)
-          (array-set! settled-slots i 0)
+          (set! (array-ref dist-slots i) gd-infinity)
+          (set! (array-ref settled-slots i) 0)
           (set! i (+ i 1))))
-      (array-set! dist-slots source 0)
-      (array-set! heap-key-slots 0 0)
-      (array-set! heap-node-slots 0 source)
+      (set! (array-ref dist-slots source) 0)
+      (set! (array-ref heap-key-slots 0) 0)
+      (set! (array-ref heap-node-slots 0) source)
       (set! heap-size 1)
       (while (> heap-size 0)
         (let
@@ -120,8 +119,12 @@
           [sifting : bool true]
           (begin
             (set! heap-size (- heap-size 1))
-            (array-set! heap-key-slots 0 (array-ref heap-key-slots heap-size))
-            (array-set! heap-node-slots 0 (array-ref heap-node-slots heap-size))
+            (set!
+              (array-ref heap-key-slots 0)
+              (array-ref heap-key-slots heap-size))
+            (set!
+              (array-ref heap-node-slots 0)
+              (array-ref heap-node-slots heap-size))
             (while sifting
               (let
                 [left : i64 (+ (* slot 2) 1)]
@@ -149,16 +152,14 @@
                         [key : i64 (array-ref heap-key-slots slot)]
                         [node : i64 (array-ref heap-node-slots slot)]
                         (begin
-                          (array-set!
-                            heap-key-slots
-                            slot
+                          (set!
+                            (array-ref heap-key-slots slot)
                             (array-ref heap-key-slots best))
-                          (array-set! heap-key-slots best key)
-                          (array-set!
-                            heap-node-slots
-                            slot
+                          (set! (array-ref heap-key-slots best) key)
+                          (set!
+                            (array-ref heap-node-slots slot)
                             (array-ref heap-node-slots best))
-                          (array-set! heap-node-slots best node)))
+                          (set! (array-ref heap-node-slots best) node)))
                       (set! slot best))))))
             (when
               (= (array-ref settled-slots top-node) 0)
@@ -166,7 +167,7 @@
                 [e : i64 (array-ref offset-slots top-node)]
                 [stop : i64 (array-ref offset-slots (+ top-node 1))]
                 (begin
-                  (array-set! settled-slots top-node 1)
+                  (set! (array-ref settled-slots top-node) 1)
                   (while (< e stop)
                     (let
                       [next : i64 (array-ref target-slots e)]
@@ -177,9 +178,11 @@
                           (let
                             [child : i64 heap-size]
                             (begin
-                              (array-set! dist-slots next relaxed)
-                              (array-set! heap-key-slots heap-size relaxed)
-                              (array-set! heap-node-slots heap-size next)
+                              (set! (array-ref dist-slots next) relaxed)
+                              (set!
+                                (array-ref heap-key-slots heap-size)
+                                relaxed)
+                              (set! (array-ref heap-node-slots heap-size) next)
                               (set! heap-size (+ heap-size 1))
                               (while (and
                                 (> child 0)
@@ -193,16 +196,18 @@
                                     [node : i64
                                       (array-ref heap-node-slots child)]
                                     (begin
-                                      (array-set!
-                                        heap-key-slots
-                                        child
+                                      (set!
+                                        (array-ref heap-key-slots child)
                                         (array-ref heap-key-slots parent))
-                                      (array-set! heap-key-slots parent key)
-                                      (array-set!
-                                        heap-node-slots
-                                        child
+                                      (set!
+                                        (array-ref heap-key-slots parent)
+                                        key)
+                                      (set!
+                                        (array-ref heap-node-slots child)
                                         (array-ref heap-node-slots parent))
-                                      (array-set! heap-node-slots parent node)))
+                                      (set!
+                                        (array-ref heap-node-slots parent)
+                                        node)))
                                   (set! child (/ (- child 1) 2)))))))
                         (set! e (+ e 1)))))))))))
       (set! i 0)

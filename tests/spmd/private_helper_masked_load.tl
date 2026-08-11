@@ -11,8 +11,8 @@
   (foreach
     ([i : i64 0 n])
     (if (< i 5)
-      (array-set! out i (heavy-load xs i))
-      (array-set! out i 0))))
+      (set! (array-ref out i) (heavy-load xs i))
+      (set! (array-ref out i) 0))))
 
 (define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
@@ -34,7 +34,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i i)
+          (set! (array-ref xs i) i)
           (set! i (+ i 1))))
       (fill xs out n)
       (if (= (sum-array out n) 150)

@@ -84,7 +84,7 @@
     (begin
       (while (< i 11)
         (begin
-          (array-set! values i (+ i 1))
+          (set! (array-ref values i) (+ i 1))
           (set! i (+ i 1))))
       (cond
         [(!= (reduce-map-fused values 0 3) 0) 1]

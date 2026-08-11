@@ -24,7 +24,7 @@
     (let
       [a : i64 (array.ref xs 0)]
       (begin
-        (array-set! ys 0 (+ a n))
+        (set! (array-ref ys 0) (+ a n))
         (+ (array.ref xs 0) (array.ref ys 1))))))
 
 (define (mirror-sum
@@ -40,7 +40,7 @@
         (while (< i n)
           (begin
             (set! acc (+ acc (array.ref xs i)))
-            (array-set! ys (- (- n 1) i) (+ i 1))
+            (set! (array-ref ys (- (- n 1) i)) (+ i 1))
             (set! i (+ i 1))))
         acc))))
 
@@ -50,8 +50,8 @@
     [xs : (__tl_dyn-array i64) (array.make-array i64 2)]
     [zs : (__tl_dyn-array i64) (array.make-array i64 (+ n 1))]
     (begin
-      (array-set! xs 0 10)
-      (array-set! xs 1 20)
+      (set! (array-ref xs 0) 10)
+      (set! (array-ref xs 1) 20)
       (let
         ;; n = 6 (io.arg-count is 1 with no args): a=10; xs[0] := 10+6 = 16;
         ;; r1 = xs[0] + xs[1] = 16 + 20 = 36. A stale cached xs[0] gives 30.

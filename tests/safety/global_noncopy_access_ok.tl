@@ -33,10 +33,10 @@
     [explicit : i64 (string.string-length (& global-text))]
     [automatic : i64 (text-length global-text)]
     [copied : i64 global-number]
-    [projected : i64 (struct-get global-owner number)]
+    [projected : i64 global-owner.number]
     [fixed-copy : i64 (fixed-sum global-fixed-copy)]
     (begin
-      (array-set! global-items 0 42)
-      (set! (box-get global-box) (+ copied projected))
+      (set! (array-ref global-items 0) 42)
+      (set! (deref global-box) (+ copied projected))
       (set! global-text "replaced")
       (+ explicit (+ automatic (+ fixed-copy (array-ref global-items 0)))))))

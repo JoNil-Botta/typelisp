@@ -167,16 +167,16 @@
     (cast end-col : i32)))
 
 (define (ast-source-span-start-line [span : AstSourceSpan]) : i64
-  (cast (struct-get span start-line) : i64))
+  (cast span.start-line : i64))
 
 (define (ast-source-span-start-col [span : AstSourceSpan]) : i64
-  (cast (struct-get span start-col) : i64))
+  (cast span.start-col : i64))
 
 (define (ast-source-span-end-line [span : AstSourceSpan]) : i64
-  (cast (struct-get span end-line) : i64))
+  (cast span.end-line : i64))
 
 (define (ast-source-span-end-col [span : AstSourceSpan]) : i64
-  (cast (struct-get span end-col) : i64))
+  (cast span.end-col : i64))
 
 (defenum AstLiteral
   (Int i64 String)
@@ -965,9 +965,8 @@
   (let
     [bases : (__tl_dyn-array i64) (ast-node-pool-segment-base-table-new)]
     (begin
-      (array-set!
-        bases
-        0
+      (set!
+        (array-ref bases 0)
         (ast-expr-node-pool-biased-segment-base
           (ast-global-shared-view ast-node-pool-first-segment)
           0))
@@ -1183,11 +1182,11 @@
   [pool : AstExprNodePoolState]
   [base-arena : i64]) : AstExprNodePoolState
   (AstExprNodePoolState
-    (struct-get pool segment-bases)
-    (struct-get pool count)
+    pool.segment-bases
+    pool.count
     base-arena
-    (struct-get pool storage-arena)
-    (struct-get pool segment-count)))
+    pool.storage-arena
+    pool.segment-count))
 
 (defenum AstExprNodePoolPushResult
   (AstExprNodePoolPushOk AstExprNodePoolState i64))
@@ -1221,9 +1220,8 @@
           [segment : (__tl_dyn-array AstExpr)
             (array.make-array AstExpr ast-expr-node-pool-segment-size)]
           (begin
-            (array-set!
-              segment-bases
-              segment-index
+            (set!
+              (array-ref segment-bases segment-index)
               (ast-expr-node-pool-biased-segment-base segment segment-index))
             (set! segment-index (+ segment-index 1)))))
       (let
@@ -1247,10 +1245,10 @@
   (ast-expr-node-pool-state-init capacity (arena.tl_arena_current)))
 
 (define (ast-expr-node-pool-state-len [pool : AstExprNodePoolState]) : i64
-  (struct-get pool count))
+  pool.count)
 
 (define (ast-expr-node-pool-state-capacity [pool : AstExprNodePoolState]) : i64
-  (* (struct-get pool segment-count) ast-expr-node-pool-segment-size))
+  (* pool.segment-count ast-expr-node-pool-segment-size))
 
 (define (ast-expr-node-pool-state-mark [pool : AstExprNodePoolState]) : i64
   (ast-expr-node-pool-state-len pool))
@@ -1259,11 +1257,11 @@
   [pool : AstExprNodePoolState]
   [mark : i64]) : AstExprNodePoolState
   (AstExprNodePoolState
-    (struct-get pool segment-bases)
+    pool.segment-bases
     mark
-    (struct-get pool base-arena)
-    (struct-get pool storage-arena)
-    (struct-get pool segment-count)))
+    pool.base-arena
+    pool.storage-arena
+    pool.segment-count))
 
 (define (ast-expr-node-pool-state-reset-to-mark
   [pool : AstExprNodePoolState]
@@ -1272,10 +1270,10 @@
 
 (define (ast-expr-node-pool-state-grow [pool : AstExprNodePoolState]) : AstExprNodePoolState
   (let
-    [segment-bases : i64 (struct-get pool segment-bases)]
-    [segment-index : i64 (struct-get pool segment-count)]
-    [base-arena : i64 (struct-get pool base-arena)]
-    [old-storage-arena : i64 (struct-get pool storage-arena)]
+    [segment-bases : i64 pool.segment-bases]
+    [segment-index : i64 pool.segment-count]
+    [base-arena : i64 pool.base-arena]
+    [old-storage-arena : i64 pool.storage-arena]
     [prev-arena : i64 (arena.tl_arena_current)]
     [_set-arena : unit
       (unsafe
@@ -1283,7 +1281,7 @@
     [new-segment : (__tl_dyn-array AstExpr)
       (array.make-array AstExpr ast-expr-node-pool-segment-size)]
     [new-storage-arena : i64 (arena.tl_arena_current)]
-    [len : i64 (struct-get pool count)]
+    [len : i64 pool.count]
     (begin
       (unsafe
         (ptr-write!
@@ -1310,8 +1308,8 @@
         (ast-expr-node-pool-state-capacity pool))
         (ast-expr-node-pool-state-grow pool)
         pool)]
-    [segment-bases : i64 (struct-get ready segment-bases)]
-    [id : i64 (struct-get ready count)]
+    [segment-bases : i64 ready.segment-bases]
+    [id : i64 ready.count]
     [biased-base : i64
       (unsafe
         (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
@@ -1332,9 +1330,9 @@
         (AstExprNodePoolState
           segment-bases
           (+ id 1)
-          (struct-get ready base-arena)
-          (struct-get ready storage-arena)
-          (struct-get ready segment-count))
+          ready.base-arena
+          ready.storage-arena
+          ready.segment-count)
         id))))
 
 (define (ast-expr-node-pool-state-get [pool : AstExprNodePoolState] [id : i64]) : AstExpr
@@ -1342,9 +1340,7 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset
-            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
-            (shr id 16))))]
+          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 16))))]
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -1357,9 +1353,7 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset
-            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
-            (shr id 16))))]
+          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 16))))]
     [dest : (MutPtr i64)
       (unsafe
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -1408,9 +1402,8 @@
   (let
     [bases : (__tl_dyn-array i64) (ast-node-pool-segment-base-table-new)]
     (begin
-      (array-set!
-        bases
-        0
+      (set!
+        (array-ref bases 0)
         (ast-type-node-pool-biased-segment-base
           (ast-global-shared-view ty-node-pool-first-segment)
           0))
@@ -1514,24 +1507,24 @@
 (define (ty-node-persist [node : AstType]) : AstType
   (match node
     [(AstType.Func args ret)
-      (AstType.Func (box (ty-node-persist-type-list (box-get args))) ret)]
+      (AstType.Func (box (ty-node-persist-type-list (__tl-box-place args))) ret)]
     [(AstType.Tuple args)
-      (AstType.Tuple (box (ty-node-persist-type-list (box-get args))))]
+      (AstType.Tuple (box (ty-node-persist-type-list (__tl-box-place args))))]
     [(AstType.Region name inner) (AstType.Region name inner)]
     [(AstType.Ref name inner) (AstType.Ref name inner)]
     [(AstType.MutRef name inner) (AstType.MutRef name inner)]
     [(AstType.EnumArgs name lifetimes)
       (AstType.EnumArgs
         name
-        (box (ty-node-persist-lifetimes (box-get lifetimes))))]
+        (box (ty-node-persist-lifetimes (__tl-box-place lifetimes))))]
     [(AstType.StructArgs name lifetimes)
       (AstType.StructArgs
         name
-        (box (ty-node-persist-lifetimes (box-get lifetimes))))]
+        (box (ty-node-persist-lifetimes (__tl-box-place lifetimes))))]
     [(AstType.VarArgs name lifetimes)
       (AstType.VarArgs
         name
-        (box (ty-node-persist-lifetimes (box-get lifetimes))))]
+        (box (ty-node-persist-lifetimes (__tl-box-place lifetimes))))]
     [(AstType.Consume inner) (AstType.Consume inner)]
     [(AstType.Slice elem) (AstType.Slice elem)]
     [_ node]))
@@ -1554,14 +1547,14 @@
   [pool : AstTypeNodePoolState]
   [base-arena : i64]) : AstTypeNodePoolState
   (AstTypeNodePoolState
-    (struct-get pool segment-bases)
-    (struct-get pool count)
+    pool.segment-bases
+    pool.count
     base-arena
-    (struct-get pool exhausted)
-    (struct-get pool dedup-slots)
-    (struct-get pool dedup-count)
-    (struct-get pool storage-arena)
-    (struct-get pool segment-count)))
+    pool.exhausted
+    pool.dedup-slots
+    pool.dedup-count
+    pool.storage-arena
+    pool.segment-count))
 
 (defenum AstTypeNodePoolPushResult
   (AstTypeNodePoolPushOk AstTypeNodePoolState i64))
@@ -1609,9 +1602,8 @@
           [segment : (__tl_dyn-array AstType)
             (array.make-array AstType ast-type-node-pool-segment-size)]
           (begin
-            (array-set!
-              segment-bases
-              segment-index
+            (set!
+              (array-ref segment-bases segment-index)
               (ast-type-node-pool-biased-segment-base segment segment-index))
             (set! segment-index (+ segment-index 1)))))
       (let
@@ -1638,36 +1630,36 @@
   (ast-type-node-pool-state-init capacity (arena.tl_arena_current)))
 
 (define (ast-type-node-pool-state-len [pool : AstTypeNodePoolState]) : i64
-  (struct-get pool count))
+  pool.count)
 
 (define (ast-type-node-pool-state-capacity [pool : AstTypeNodePoolState]) : i64
-  (* (struct-get pool segment-count) ast-type-node-pool-segment-size))
+  (* pool.segment-count ast-type-node-pool-segment-size))
 
 (define (ast-type-node-pool-state-exhausted? [pool : AstTypeNodePoolState]) : bool
-  (struct-get pool exhausted))
+  pool.exhausted)
 
 (define (ast-type-node-pool-state-mark [pool : AstTypeNodePoolState]) : i64
   (ast-type-node-pool-state-len pool))
 
 (define (ast-type-node-pool-state-dedup-clear [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
   (let
-    [slots : (__tl_dyn-array i64) (struct-get pool dedup-slots)]
+    [slots : (__tl_dyn-array i64) pool.dedup-slots]
     [cap : i64 (array-length slots)]
     [i : i64 0]
     (begin
       (while (< i cap)
         (begin
-          (array-set! slots i 0)
+          (set! (array-ref slots i) 0)
           (set! i (+ i 1))))
       (AstTypeNodePoolState
-        (struct-get pool segment-bases)
-        (struct-get pool count)
-        (struct-get pool base-arena)
-        (struct-get pool exhausted)
+        pool.segment-bases
+        pool.count
+        pool.base-arena
+        pool.exhausted
         slots
         0
-        (struct-get pool storage-arena)
-        (struct-get pool segment-count)))))
+        pool.storage-arena
+        pool.segment-count))))
 
 (define (ast-type-node-pool-state-reset-to
   [pool : AstTypeNodePoolState]
@@ -1676,14 +1668,14 @@
   ;; table so no entry can point at an id >= mark; later pushes repopulate it.
   (ast-type-node-pool-state-dedup-clear
     (AstTypeNodePoolState
-      (struct-get pool segment-bases)
+      pool.segment-bases
       mark
-      (struct-get pool base-arena)
+      pool.base-arena
       false
-      (struct-get pool dedup-slots)
-      (struct-get pool dedup-count)
-      (struct-get pool storage-arena)
-      (struct-get pool segment-count))))
+      pool.dedup-slots
+      pool.dedup-count
+      pool.storage-arena
+      pool.segment-count)))
 
 (define (ast-type-node-pool-state-reset-to-mark
   [pool : AstTypeNodePoolState]
@@ -1692,10 +1684,10 @@
 
 (define (ast-type-node-pool-state-grow [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
   (let
-    [segment-bases : i64 (struct-get pool segment-bases)]
-    [segment-index : i64 (struct-get pool segment-count)]
-    [base-arena : i64 (struct-get pool base-arena)]
-    [old-storage-arena : i64 (struct-get pool storage-arena)]
+    [segment-bases : i64 pool.segment-bases]
+    [segment-index : i64 pool.segment-count]
+    [base-arena : i64 pool.base-arena]
+    [old-storage-arena : i64 pool.storage-arena]
     [prev-arena : i64 (arena.tl_arena_current)]
     [_set-arena : unit
       (unsafe
@@ -1703,7 +1695,7 @@
     [new-segment : (__tl_dyn-array AstType)
       (array.make-array AstType ast-type-node-pool-segment-size)]
     [new-storage-arena : i64 (arena.tl_arena_current)]
-    [len : i64 (struct-get pool count)]
+    [len : i64 pool.count]
     (begin
       (unsafe
         (ptr-write!
@@ -1717,9 +1709,9 @@
         segment-bases
         len
         base-arena
-        (struct-get pool exhausted)
-        (struct-get pool dedup-slots)
-        (struct-get pool dedup-count)
+        pool.exhausted
+        pool.dedup-slots
+        pool.dedup-count
         new-storage-arena
         (+ segment-index 1)))))
 
@@ -1733,12 +1725,12 @@
         (ast-type-node-pool-state-capacity pool))
         (ast-type-node-pool-state-grow pool)
         pool)]
-    [segment-bases : i64 (struct-get ready segment-bases)]
-    [id : i64 (struct-get ready count)]
+    [segment-bases : i64 ready.segment-bases]
+    [id : i64 ready.count]
     [biased-base : i64
       (unsafe
         (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
-    [base-arena : i64 (struct-get ready base-arena)]
+    [base-arena : i64 ready.base-arena]
     [prev-arena : i64 (arena.tl_arena_current)]
     [_set-arena : unit
       (unsafe
@@ -1767,11 +1759,11 @@
           segment-bases
           (+ id 1)
           head-arena
-          (struct-get ready exhausted)
-          (struct-get ready dedup-slots)
-          (struct-get ready dedup-count)
-          (struct-get ready storage-arena)
-          (struct-get ready segment-count))
+          ready.exhausted
+          ready.dedup-slots
+          ready.dedup-count
+          ready.storage-arena
+          ready.segment-count)
         id))))
 
 (define (ast-type-node-pool-state-push-dedup
@@ -1787,17 +1779,17 @@
       (match (ast-type-node-pool-state-push-raw pool node)
         [(AstTypeNodePoolPushOk next id)
           (begin
-            (array-set! dedup-slots idx (+ id 1))
+            (set! (array-ref dedup-slots idx) (+ id 1))
             (AstTypeNodePoolPushOk
               (AstTypeNodePoolState
-                (struct-get next segment-bases)
-                (struct-get next count)
-                (struct-get next base-arena)
-                (struct-get next exhausted)
+                next.segment-bases
+                next.count
+                next.base-arena
+                next.exhausted
                 dedup-slots
                 (+ dedup-count 1)
-                (struct-get next storage-arena)
-                (struct-get next segment-count))
+                next.storage-arena
+                next.segment-count)
               id))])
       (if (ty-node-shallow-value-eq?
         (ast-type-node-pool-state-get pool (- slot 1))
@@ -1815,9 +1807,9 @@
   [pool : AstTypeNodePoolState]
   [node : AstType]) : AstTypeNodePoolPushResult
   (let
-    [dedup-slots : (__tl_dyn-array i64) (struct-get pool dedup-slots)]
+    [dedup-slots : (__tl_dyn-array i64) pool.dedup-slots]
     [dedup-cap : i64 (array-length dedup-slots)]
-    [dedup-count : i64 (struct-get pool dedup-count)]
+    [dedup-count : i64 pool.dedup-count]
     (if (>= (* dedup-count 2) dedup-cap)
       (ast-type-node-pool-state-push-raw pool node)
       (let
@@ -1836,9 +1828,7 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset
-            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
-            (shr id 10))))]
+          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 10))))]
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
@@ -1849,7 +1839,7 @@
   [node : AstType]) : AstTypeNodePoolState
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
-    [base-arena : i64 (struct-get pool base-arena)]
+    [base-arena : i64 pool.base-arena]
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set base-arena))]
@@ -1863,9 +1853,7 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset
-            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
-            (shr id 10))))]
+          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 10))))]
     [dest : (MutPtr i64)
       (unsafe
         (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64)))]
@@ -1977,7 +1965,7 @@
     (begin
       (while (< i capacity)
         (begin
-          (array-set! ty-node-dedup-slots i 0)
+          (set! (array-ref ty-node-dedup-slots i) 0)
           (set! i (+ i 1))))
       (set! ty-node-dedup-count 0))))
 
@@ -1989,7 +1977,7 @@
   (if (>= index len)
     (hash.combine seed 11)
     (let
-      [name : i64 (array-ref (struct-get items slots) index)]
+      [name : i64 (array-ref items.slots index)]
       (ty-lifetime-list-hash-at items len (hash.combine seed name) (+ index 1)))))
 
 (define (ty-lifetime-list-hash [items : AstLifetimeList] [seed : i64]) : i64
@@ -2005,7 +1993,7 @@
     (ty-type-list-hash-at
       items
       len
-      (hash.combine seed (array-ref (struct-get items slots) index))
+      (hash.combine seed (array-ref items.slots index))
       (+ index 1))))
 
 (define (ty-type-list-hash [items : AstTypeList] [seed : i64]) : i64
@@ -2058,8 +2046,8 @@
     [(AstType.Expr) 17]
     [(AstType.ExprList) 18]
     [(AstType.Func args ret)
-      (hash.combine (ty-type-list-hash (box-get args) 19) ret)]
-    [(AstType.Tuple elems) (ty-type-list-hash (box-get elems) 20)]
+      (hash.combine (ty-type-list-hash (__tl-box-place args) 19) ret)]
+    [(AstType.Tuple elems) (ty-type-list-hash (__tl-box-place elems) 20)]
     [(AstType.Array elem count) (hash.combine (hash.combine 21 elem) count)]
     [(AstType.DynArray elem) (hash.combine 22 elem)]
     [(AstType.Box inner) (hash.combine 23 inner)]
@@ -2068,13 +2056,13 @@
     [(AstType.MutRef name inner) (hash.combine (hash.combine 26 name) inner)]
     [(AstType.Enum name) (hash.combine 27 name)]
     [(AstType.EnumArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 28 name))]
+      (ty-lifetime-list-hash (__tl-box-place lifetimes) (hash.combine 28 name))]
     [(AstType.Struct name) (hash.combine 29 name)]
     [(AstType.StructArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 30 name))]
+      (ty-lifetime-list-hash (__tl-box-place lifetimes) (hash.combine 30 name))]
     [(AstType.Var name) (hash.combine 31 name)]
     [(AstType.VarArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 32 name))]
+      (ty-lifetime-list-hash (__tl-box-place lifetimes) (hash.combine 32 name))]
     [(AstType.Ptr inner) (hash.combine 33 inner)]
     [(AstType.MutPtr inner) (hash.combine 34 inner)]
     [(AstType.Consume inner) (hash.combine 36 inner)]
@@ -2088,9 +2076,7 @@
   (if (>= index len)
     true
     (and
-      (=
-        (array-ref (struct-get a slots) index)
-        (array-ref (struct-get b slots) index))
+      (= (array-ref a.slots index) (array-ref b.slots index))
       (ty-lifetime-list-eq-at? a b len (+ index 1)))))
 
 (define (ty-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
@@ -2108,9 +2094,7 @@
   (if (>= index len)
     true
     (and
-      (=
-        (array-ref (struct-get a slots) index)
-        (array-ref (struct-get b slots) index))
+      (= (array-ref a.slots index) (array-ref b.slots index))
       (ty-type-list-eq-at? a b len (+ index 1)))))
 
 (define (ty-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
@@ -2205,12 +2189,12 @@
         [(AstType.Func b-args b-ret)
           (and
             (= a-ret b-ret)
-            (ty-type-list-eq? (box-get a-args) (box-get b-args)))]
+            (ty-type-list-eq? (__tl-box-place a-args) (__tl-box-place b-args)))]
         [_ false])]
     [(AstType.Tuple a-elems)
       (match b
         [(AstType.Tuple b-elems)
-          (ty-type-list-eq? (box-get a-elems) (box-get b-elems))]
+          (ty-type-list-eq? (__tl-box-place a-elems) (__tl-box-place b-elems))]
         [_ false])]
     [(AstType.Array a-elem a-count)
       (match b
@@ -2249,7 +2233,9 @@
         [(AstType.EnumArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ty-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Struct a-name)
       (match b
@@ -2260,7 +2246,9 @@
         [(AstType.StructArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ty-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Var a-name)
       (match b
@@ -2271,7 +2259,9 @@
         [(AstType.VarArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ty-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Ptr a-inner)
       (match b
@@ -2351,7 +2341,7 @@
                 (begin
                   (while (not (= (array-ref new-slots idx) 0))
                     (set! idx (bit-and (+ idx 1) mask)))
-                  (array-set! new-slots idx slot))))
+                  (set! (array-ref new-slots idx) slot))))
             (set! i (+ i 1)))))
       (set! ty-node-dedup-slots new-slots)
       (set! ty-node-dedup-capacity new-capacity)
@@ -2376,7 +2366,7 @@
             (let
               [id : i64 (ty-node-push-raw node)]
               (begin
-                (array-set! ty-node-dedup-slots idx (+ id 1))
+                (set! (array-ref ty-node-dedup-slots idx) (+ id 1))
                 (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
                 (set! result id)))
             (if (ty-node-shallow-eq? (- slot 1) node)
@@ -2471,24 +2461,22 @@
   [type-pool : AstTypeNodePoolState]
   [owner-arena : i64]) : unit
   (begin
-    (set! ast-node-pool-segment-bases (struct-get expr-pool segment-bases))
-    (set! ast-node-pool-count (struct-get expr-pool count))
-    (set! ast-node-pool-storage-arena (struct-get expr-pool storage-arena))
-    (set! ast-node-pool-segment-count (struct-get expr-pool segment-count))
-    (set! ty-node-pool-segment-bases (struct-get type-pool segment-bases))
-    (set! ty-node-pool-count (struct-get type-pool count))
-    (set! ty-node-pool-storage-arena (struct-get type-pool storage-arena))
-    (set! ty-node-pool-segment-count (struct-get type-pool segment-count))
+    (set! ast-node-pool-segment-bases expr-pool.segment-bases)
+    (set! ast-node-pool-count expr-pool.count)
+    (set! ast-node-pool-storage-arena expr-pool.storage-arena)
+    (set! ast-node-pool-segment-count expr-pool.segment-count)
+    (set! ty-node-pool-segment-bases type-pool.segment-bases)
+    (set! ty-node-pool-count type-pool.count)
+    (set! ty-node-pool-storage-arena type-pool.storage-arena)
+    (set! ty-node-pool-segment-count type-pool.segment-count)
     (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
-    (set! ty-node-pool-exhausted (struct-get type-pool exhausted))
-    (set!
-      ty-node-dedup-capacity
-      (array-length (struct-get type-pool dedup-slots)))
-    (set! ty-node-dedup-slots (struct-get type-pool dedup-slots))
-    (set! ty-node-dedup-count (struct-get type-pool dedup-count))
+    (set! ty-node-pool-exhausted type-pool.exhausted)
+    (set! ty-node-dedup-capacity (array-length type-pool.dedup-slots))
+    (set! ty-node-dedup-slots type-pool.dedup-slots)
+    (set! ty-node-dedup-count type-pool.dedup-count)
     ;; Driver-created states allocate both pools in one persistent arena. Keep
     ;; the shared compatibility grow/persist target there after both installs.
-    (set! node-pool-base-arena (struct-get expr-pool base-arena))
+    (set! node-pool-base-arena expr-pool.base-arena)
     (set! node-pool-owner-arena owner-arena)))
 
 (defstruct AstNodePoolContext
@@ -2547,11 +2535,10 @@
 ;;     `shared-arena` and then calls this constructor; with the flag on, the
 ;;     cells were redirected to the GLOBAL base arena instead, so a pool built
 ;;     during an expansion described itself with cells owned by a different
-;;     arena's lifetime. On the `--cfg embedded-stdlib-tlci --cfg
-;;     tlci-native-route` build the stdlib surface is re-hydrated through
-;;     exactly that constructor from inside macro expansion, which is why it
-;;     surfaced on the comptime host-metadata smoke and on no workload this
-;;     packet had measured.
+;;     arena's lifetime. On an `embedded-stdlib-tlci` build the default native
+;;     stdlib route re-hydrates the surface through exactly that constructor
+;;     from inside macro expansion, which is why it surfaced on the comptime
+;;     host-metadata smoke and on no workload this packet had measured.
 ;;   * it was BYPASSABLE. Any future constructor that built cells without
 ;;     consulting the flag was silently outside the rule.
 ;;
@@ -2595,8 +2582,8 @@
           head-arena)
         unit)]
     (begin
-      (array-set! expr-cell 0 expr-pool)
-      (array-set! type-cell 0 type-pool)
+      (set! (array-ref expr-cell 0) expr-pool)
+      (set! (array-ref type-cell 0) type-pool)
       (AstNodePoolContext expr-cell type-cell pool-owner-arena))))
 
 (define (ast-node-pool-context-new
@@ -2695,18 +2682,26 @@
   (if ast-node-pool-compat-context-explicit?
     (ast-node-pool-context-new-with-pool-owner
       (array-ref
-        (struct-get (ast-node-pool-compat-context-shared-view) expr-pool)
+        (__tl-project-field
+          (ast-node-pool-compat-context-shared-view)
+          expr-pool)
         0)
       (array-ref
-        (struct-get (ast-node-pool-compat-context-shared-view) type-pool)
+        (__tl-project-field
+          (ast-node-pool-compat-context-shared-view)
+          type-pool)
         0)
       ;; Describes the compat pool, so the compat pool's base arena owns it.
-      (struct-get
+      (__tl-project-field
         (array-ref
-          (struct-get (ast-node-pool-compat-context-shared-view) expr-pool)
+          (__tl-project-field
+            (ast-node-pool-compat-context-shared-view)
+            expr-pool)
           0)
         base-arena)
-      (struct-get (ast-node-pool-compat-context-shared-view) owner-arena))
+      (__tl-project-field
+        (ast-node-pool-compat-context-shared-view)
+        owner-arena))
     (ast-node-pool-context-capture-active-raw)))
 
 (define ast-node-pool-active-context-installed? : bool
@@ -2716,17 +2711,15 @@
 
 (define (ast-node-pool-active-context-capture-expr!) : unit
   (if ast-node-pool-active-context-installed?
-    (array-set!
-      (struct-get ast-node-pool-active-context expr-pool)
-      0
+    (set!
+      (array-ref (__tl-project-field ast-node-pool-active-context expr-pool) 0)
       (ast-node-pool-state-capture))
     unit))
 
 (define (ast-node-pool-active-context-capture-type!) : unit
   (if ast-node-pool-active-context-installed?
-    (array-set!
-      (struct-get ast-node-pool-active-context type-pool)
-      0
+    (set!
+      (array-ref (__tl-project-field ast-node-pool-active-context type-pool) 0)
       (ty-node-pool-state-capture))
     unit))
 
@@ -2745,31 +2738,42 @@
 
 (define (ast-node-pool-compat-context-use! [pools : AstNodePoolContext]) : unit
   (begin
-    (array-set!
-      ast-node-pool-compat-saved-context-cell
-      0
+    (set!
+      (array-ref ast-node-pool-compat-saved-context-cell 0)
       (ast-node-pool-context-capture-active-raw))
-    (array-set! ast-node-pool-compat-context-cell 0 pools)
+    (set! (array-ref ast-node-pool-compat-context-cell 0) pools)
     (set! ast-node-pool-compat-context-explicit? true)
     (ast-node-pools-state-install!
       (array-ref
-        (struct-get (ast-node-pool-compat-context-shared-view) expr-pool)
+        (__tl-project-field
+          (ast-node-pool-compat-context-shared-view)
+          expr-pool)
         0)
       (array-ref
-        (struct-get (ast-node-pool-compat-context-shared-view) type-pool)
+        (__tl-project-field
+          (ast-node-pool-compat-context-shared-view)
+          type-pool)
         0)
-      (struct-get (ast-node-pool-compat-context-shared-view) owner-arena))))
+      (__tl-project-field
+        (ast-node-pool-compat-context-shared-view)
+        owner-arena))))
 
 (define (ast-node-pool-compat-context-clear!) : unit
   (begin
     (ast-node-pools-state-install!
       (array-ref
-        (struct-get (ast-node-pool-compat-saved-context-shared-view) expr-pool)
+        (__tl-project-field
+          (ast-node-pool-compat-saved-context-shared-view)
+          expr-pool)
         0)
       (array-ref
-        (struct-get (ast-node-pool-compat-saved-context-shared-view) type-pool)
+        (__tl-project-field
+          (ast-node-pool-compat-saved-context-shared-view)
+          type-pool)
         0)
-      (struct-get (ast-node-pool-compat-saved-context-shared-view) owner-arena))
+      (__tl-project-field
+        (ast-node-pool-compat-saved-context-shared-view)
+        owner-arena))
     (set! ast-node-pool-compat-context-explicit? false)))
 
 (define (ast-node-pool-compat-context-active?) : bool
@@ -2782,28 +2786,34 @@
   (if ast-node-pool-compat-context-explicit?
     (ast-node-pools-state-install!
       (array-ref
-        (struct-get (ast-node-pool-compat-context-shared-view) expr-pool)
+        (__tl-project-field
+          (ast-node-pool-compat-context-shared-view)
+          expr-pool)
         0)
       (array-ref
-        (struct-get (ast-node-pool-compat-context-shared-view) type-pool)
+        (__tl-project-field
+          (ast-node-pool-compat-context-shared-view)
+          type-pool)
         0)
-      (struct-get (ast-node-pool-compat-context-shared-view) owner-arena))
+      (__tl-project-field
+        (ast-node-pool-compat-context-shared-view)
+        owner-arena))
     unit))
 
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
   (ast-node-pool-context-new-with-pool-owner
-    (array-ref (struct-get pools expr-pool) 0)
-    (array-ref (struct-get pools type-pool) 0)
+    (array-ref pools.expr-pool 0)
+    (array-ref pools.type-pool 0)
     ;; A snapshot describes the same pool, so it has the same owner.
     (ast-node-pool-context-base-arena pools)
-    (struct-get pools owner-arena)))
+    pools.owner-arena))
 
 (define (ast-node-pool-context-capture-active! [pools : AstNodePoolContext]) : unit
   (if ast-node-pool-compat-context-explicit?
     unit
     (begin
-      (array-set! (struct-get pools expr-pool) 0 (ast-node-pool-state-capture))
-      (array-set! (struct-get pools type-pool) 0 (ty-node-pool-state-capture)))))
+      (set! (array-ref pools.expr-pool 0) (ast-node-pool-state-capture))
+      (set! (array-ref pools.type-pool 0) (ty-node-pool-state-capture)))))
 
 (define (ast-node-pool-active-context-clear!) : unit
   (set! ast-node-pool-active-context-installed? false))
@@ -2843,24 +2853,27 @@
     unit
     (begin
       (compiler-arena-debug-assert-pool-install!
-        (struct-get (array-ref (struct-get pools expr-pool) 0) base-arena))
+        (__tl-project-field (array-ref pools.expr-pool 0) base-arena))
       (ast-node-pools-state-install!
-        (array-ref (struct-get pools expr-pool) 0)
-        (array-ref (struct-get pools type-pool) 0)
-        (struct-get pools owner-arena))
+        (array-ref pools.expr-pool 0)
+        (array-ref pools.type-pool 0)
+        pools.owner-arena)
       ;; Update the persistent global struct's fields instead of assigning the
       ;; struct value: the assignment heap-copies the struct in the CURRENT
       ;; arena, leaving the global pointing into freed memory when the install
       ;; runs inside a rewindable declaration/function scratch arena.
-      (set!
-        (struct-get ast-node-pool-active-context expr-pool)
-        (struct-get pools expr-pool))
-      (set!
-        (struct-get ast-node-pool-active-context type-pool)
-        (struct-get pools type-pool))
-      (set!
-        (struct-get ast-node-pool-active-context owner-arena)
-        (struct-get pools owner-arena))
+      (__tl-project-set-field
+        ast-node-pool-active-context
+        expr-pool
+        pools.expr-pool)
+      (__tl-project-set-field
+        ast-node-pool-active-context
+        type-pool
+        pools.type-pool)
+      (__tl-project-set-field
+        ast-node-pool-active-context
+        owner-arena
+        pools.owner-arena)
       ;; R3-P2c: remember WHICH transient generation, if any, was live when
       ;; these cells were published. See `ast-node-pool-active-context-reseat!`.
       (set!
@@ -2869,13 +2882,13 @@
       (set! ast-node-pool-active-context-installed? true))))
 
 (define (ast-node-pool-context-expr-len [pools : AstNodePoolContext]) : i64
-  (ast-expr-node-pool-state-len (array-ref (struct-get pools expr-pool) 0)))
+  (ast-expr-node-pool-state-len (array-ref pools.expr-pool 0)))
 
 (define (ast-node-pool-context-expr-capacity [pools : AstNodePoolContext]) : i64
-  (ast-expr-node-pool-state-capacity (array-ref (struct-get pools expr-pool) 0)))
+  (ast-expr-node-pool-state-capacity (array-ref pools.expr-pool 0)))
 
 (define (ast-node-pool-context-expr-segment-count [pools : AstNodePoolContext]) : i64
-  (struct-get (array-ref (struct-get pools expr-pool) 0) segment-count))
+  (__tl-project-field (array-ref pools.expr-pool 0) segment-count))
 
 (define (ast-node-pool-context-expr-segment-bytes [pools : AstNodePoolContext]) : i64
   (*
@@ -2883,13 +2896,13 @@
     ast-expr-node-pool-segment-bytes))
 
 (define (ast-node-pool-context-type-len [pools : AstNodePoolContext]) : i64
-  (ast-type-node-pool-state-len (array-ref (struct-get pools type-pool) 0)))
+  (ast-type-node-pool-state-len (array-ref pools.type-pool 0)))
 
 (define (ast-node-pool-context-type-capacity [pools : AstNodePoolContext]) : i64
-  (ast-type-node-pool-state-capacity (array-ref (struct-get pools type-pool) 0)))
+  (ast-type-node-pool-state-capacity (array-ref pools.type-pool 0)))
 
 (define (ast-node-pool-context-type-segment-count [pools : AstNodePoolContext]) : i64
-  (struct-get (array-ref (struct-get pools type-pool) 0) segment-count))
+  (__tl-project-field (array-ref pools.type-pool 0) segment-count))
 
 (define (ast-node-pool-context-type-segment-bytes [pools : AstNodePoolContext]) : i64
   (*
@@ -2897,20 +2910,19 @@
     ast-type-node-pool-segment-bytes))
 
 (define (ast-node-pool-context-expr-storage-arena [pools : AstNodePoolContext]) : i64
-  (struct-get (array-ref (struct-get pools expr-pool) 0) storage-arena))
+  (__tl-project-field (array-ref pools.expr-pool 0) storage-arena))
 
 (define (ast-node-pool-context-type-storage-arena [pools : AstNodePoolContext]) : i64
-  (struct-get (array-ref (struct-get pools type-pool) 0) storage-arena))
+  (__tl-project-field (array-ref pools.type-pool 0) storage-arena))
 
 (define (ast-node-pool-context-type-exhausted? [pools : AstNodePoolContext]) : bool
-  (ast-type-node-pool-state-exhausted?
-    (array-ref (struct-get pools type-pool) 0)))
+  (ast-type-node-pool-state-exhausted? (array-ref pools.type-pool 0)))
 
 (define (ast-node-pool-context-base-arena [pools : AstNodePoolContext]) : i64
-  (struct-get (array-ref (struct-get pools expr-pool) 0) base-arena))
+  (__tl-project-field (array-ref pools.expr-pool 0) base-arena))
 
 (define (ast-node-pool-context-owner-arena [pools : AstNodePoolContext]) : i64
-  (struct-get pools owner-arena))
+  pools.owner-arena)
 
 ;; Segments have no interior pointers into their backing arenas, so adding one
 ;; never copies or relocates prior nodes. Expression and type segments use
@@ -2946,17 +2958,15 @@
   [pools : AstNodePoolContext]
   [base-arena : i64]) : unit
   (begin
-    (array-set!
-      (struct-get pools expr-pool)
-      0
+    (set!
+      (array-ref pools.expr-pool 0)
       (ast-expr-node-pool-state-with-base-arena
-        (array-ref (struct-get pools expr-pool) 0)
+        (array-ref pools.expr-pool 0)
         base-arena))
-    (array-set!
-      (struct-get pools type-pool)
-      0
+    (set!
+      (array-ref pools.type-pool 0)
       (ast-type-node-pool-state-with-base-arena
-        (array-ref (struct-get pools type-pool) 0)
+        (array-ref pools.type-pool 0)
         base-arena))))
 
 (define (ast-node-pool-context-new-with-capacities-in-arena
@@ -2967,10 +2977,8 @@
     [expr-pool : AstExprNodePoolState
       (ast-expr-node-pool-state-init expr-capacity base-arena)]
     [type-pool : AstTypeNodePoolState
-      (ast-type-node-pool-state-init
-        type-capacity
-        (struct-get expr-pool base-arena))]
-    [shared-arena : i64 (struct-get type-pool base-arena)]
+      (ast-type-node-pool-state-init type-capacity expr-pool.base-arena)]
+    [shared-arena : i64 type-pool.base-arena]
     [previous-arena : i64 (arena.tl_arena_current)]
     [_set-arena : unit
       (unsafe
@@ -3006,17 +3014,15 @@
   [expr-mark : i64]
   [type-mark : i64]) : unit
   (begin
-    (array-set!
-      (struct-get pools expr-pool)
-      0
+    (set!
+      (array-ref pools.expr-pool 0)
       (ast-expr-node-pool-state-reset-to
-        (array-ref (struct-get pools expr-pool) 0)
+        (array-ref pools.expr-pool 0)
         expr-mark))
-    (array-set!
-      (struct-get pools type-pool)
-      0
+    (set!
+      (array-ref pools.type-pool 0)
       (ast-type-node-pool-state-reset-to
-        (array-ref (struct-get pools type-pool) 0)
+        (array-ref pools.type-pool 0)
         type-mark))
     (ast-node-pool-compat-context-sync-installed!)))
 
@@ -3027,27 +3033,22 @@
 ;; unrelated node.
 (define (ast-node-pool-context-type-dedup-clear! [pools : AstNodePoolContext]) : unit
   (begin
-    (array-set!
-      (struct-get pools type-pool)
-      0
-      (ast-type-node-pool-state-dedup-clear
-        (array-ref (struct-get pools type-pool) 0)))
+    (set!
+      (array-ref pools.type-pool 0)
+      (ast-type-node-pool-state-dedup-clear (array-ref pools.type-pool 0)))
     (ast-node-pool-compat-context-sync-installed!)))
 
 (define (ast-node-pool-context-expr-push
   [pools : AstNodePoolContext]
   [node : AstExpr]) : i64
   (let
-    [current : AstExprNodePoolState (array-ref (struct-get pools expr-pool) 0)]
+    [current : AstExprNodePoolState (array-ref pools.expr-pool 0)]
     (match (ast-expr-node-pool-state-push current node)
       [(AstExprNodePoolPushOk next id)
         (begin
-          (array-set! (struct-get pools expr-pool) 0 next)
-          (if (not
-            (= (struct-get current base-arena) (struct-get next base-arena)))
-            (ast-node-pool-context-sync-base-arena!
-              pools
-              (struct-get next base-arena))
+          (set! (array-ref pools.expr-pool 0) next)
+          (if (not (= current.base-arena next.base-arena))
+            (ast-node-pool-context-sync-base-arena! pools next.base-arena)
             unit)
           (ast-node-pool-compat-context-sync-installed!)
           id)])))
@@ -3072,9 +3073,9 @@
 ;; changing the pointer, so a walk may cache it across reads; only installing a
 ;; different pool context invalidates it.
 (define (ast-node-pool-context-expr-segment-bases [pools : AstNodePoolContext]) : i64
-  (struct-get
+  (__tl-project-field
     (unsafe
-      (ptr-read (array-data (struct-get pools expr-pool))))
+      (ptr-read (array-data pools.expr-pool)))
     segment-bases))
 
 ;; Segment-bases pointer of the process-global (installed) expression pool, the
@@ -3092,29 +3093,22 @@
   [id : i64]
   [node : AstExpr]) : unit
   (begin
-    (array-set!
-      (struct-get pools expr-pool)
-      0
-      (ast-expr-node-pool-state-set!
-        (array-ref (struct-get pools expr-pool) 0)
-        id
-        node))
+    (set!
+      (array-ref pools.expr-pool 0)
+      (ast-expr-node-pool-state-set! (array-ref pools.expr-pool 0) id node))
     (ast-node-pool-compat-context-sync-installed!)))
 
 (define (ast-node-pool-context-type-push
   [pools : AstNodePoolContext]
   [node : AstType]) : i64
   (let
-    [current : AstTypeNodePoolState (array-ref (struct-get pools type-pool) 0)]
+    [current : AstTypeNodePoolState (array-ref pools.type-pool 0)]
     (match (ast-type-node-pool-state-push current node)
       [(AstTypeNodePoolPushOk next id)
         (begin
-          (array-set! (struct-get pools type-pool) 0 next)
-          (if (not
-            (= (struct-get current base-arena) (struct-get next base-arena)))
-            (ast-node-pool-context-sync-base-arena!
-              pools
-              (struct-get next base-arena))
+          (set! (array-ref pools.type-pool 0) next)
+          (if (not (= current.base-arena next.base-arena))
+            (ast-node-pool-context-sync-base-arena! pools next.base-arena)
             unit)
           (ast-node-pool-compat-context-sync-installed!)
           id)])))
@@ -3154,7 +3148,7 @@
 ;; Segment-bases pointer of the context's live type-pool cell. The cell is
 ;; replaced on every push, so callers may only cache this across pure reads.
 (define (ast-node-pool-context-type-segment-bases [pools : AstNodePoolContext]) : i64
-  (struct-get (array-ref (struct-get pools type-pool) 0) segment-bases))
+  (__tl-project-field (array-ref pools.type-pool 0) segment-bases))
 
 (define (ast-node-pool-context-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
   (ast-type-segment-bases-get
@@ -3168,8 +3162,7 @@
 ;; the source dedup index verbatim because every indexed id stays unchanged.
 (define (ast-node-pool-context-clone-types-only [source : AstNodePoolContext]) : AstNodePoolContext
   (let
-    [source-state : AstTypeNodePoolState
-      (array-ref (struct-get source type-pool) 0)]
+    [source-state : AstTypeNodePoolState (array-ref source.type-pool 0)]
     [count : i64 (ast-type-node-pool-state-len source-state)]
     [previous-arena : i64 (arena.tl_arena_current)]
     [new-arena : i64 (ast-node-pool-arena-make)]
@@ -3185,43 +3178,40 @@
     (begin
       (while (< i count)
         (match (ast-type-node-pool-state-push-raw
-          (array-ref (struct-get dest type-pool) 0)
+          (array-ref dest.type-pool 0)
           (ast-type-node-pool-state-get source-state i))
           [(AstTypeNodePoolPushOk next _)
             (begin
-              (array-set! (struct-get dest type-pool) 0 next)
-              (ast-node-pool-context-sync-base-arena!
-                dest
-                (struct-get next base-arena))
+              (set! (array-ref dest.type-pool 0) next)
+              (ast-node-pool-context-sync-base-arena! dest next.base-arena)
               ;; Raw pushes append exactly once and therefore retain the
               ;; source's insertion-ordered id.
               (set! i (+ i 1)))]))
       (let
-        [source-dedup : (__tl_dyn-array i64)
-          (struct-get source-state dedup-slots)]
+        [source-dedup : (__tl_dyn-array i64) source-state.dedup-slots]
         [dedup-cap : i64 (array-length source-dedup)]
         [dedup-copy : (__tl_dyn-array i64) (array.make-array i64 dedup-cap)]
         [dedup-i : i64 0]
         (begin
           (while (< dedup-i dedup-cap)
             (begin
-              (array-set! dedup-copy dedup-i (array-ref source-dedup dedup-i))
+              (set!
+                (array-ref dedup-copy dedup-i)
+                (array-ref source-dedup dedup-i))
               (set! dedup-i (+ dedup-i 1))))
           (let
-            [cloned : AstTypeNodePoolState
-              (array-ref (struct-get dest type-pool) 0)]
-            (array-set!
-              (struct-get dest type-pool)
-              0
+            [cloned : AstTypeNodePoolState (array-ref dest.type-pool 0)]
+            (set!
+              (array-ref dest.type-pool 0)
               (AstTypeNodePoolState
-                (struct-get cloned segment-bases)
-                (struct-get cloned count)
-                (struct-get cloned base-arena)
-                (struct-get source-state exhausted)
+                cloned.segment-bases
+                cloned.count
+                cloned.base-arena
+                source-state.exhausted
                 dedup-copy
-                (struct-get source-state dedup-count)
-                (struct-get cloned storage-arena)
-                (struct-get cloned segment-count))))))
+                source-state.dedup-count
+                cloned.storage-arena
+                cloned.segment-count)))))
       (unsafe
         (arena.tl_arena_set previous-arena))
       dest)))
@@ -3444,7 +3434,7 @@
   (ast-type-list-with-capacity 0))
 
 (define (ast-type-list-len [v : (& v AstTypeList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-type-list-empty? [v : (& v AstTypeList)]) : bool
   (= (ast-type-list-len v) 0))
@@ -3454,7 +3444,7 @@
   [index : i64]
   [fallback : i64]) : i64
   (if (and (>= index 0) (< index (ast-type-list-len v)))
-    (array-ref (struct-get v slots) index)
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-type-list-copy-range
@@ -3465,32 +3455,32 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-type-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-type-list-grow [v : (&mut v AstTypeList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
-      (ast-type-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
+      (ast-type-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-type-list-push [v : (&mut v AstTypeList)] [value : i64]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-type-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-type-list-append-from
   [out : (&mut out AstTypeList)]
@@ -3676,7 +3666,7 @@
   (ast-lifetime-list-with-capacity 0))
 
 (define (ast-lifetime-list-len [v : (& v AstLifetimeList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-lifetime-list-empty? [v : (& v AstLifetimeList)]) : bool
   (= (ast-lifetime-list-len v) 0))
@@ -3686,7 +3676,7 @@
   [index : i64]
   [fallback : i64]) : i64
   (if (and (>= index 0) (< index (ast-lifetime-list-len v)))
-    (array-ref (struct-get v slots) index)
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-lifetime-list-copy-range
@@ -3697,32 +3687,32 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-lifetime-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-lifetime-list-grow [v : (&mut v AstLifetimeList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
-      (ast-lifetime-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
+      (ast-lifetime-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-lifetime-list-push [v : (&mut v AstLifetimeList)] [value : i64]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-lifetime-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-lifetime-list-append-from
   [out : (&mut out AstLifetimeList)]
@@ -3770,14 +3760,14 @@
   (ast-param-list-with-capacity 0))
 
 (define (ast-param-list-len [v : (& v AstParamList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-param-list-get
   [v : (& v AstParamList)]
   [index : i64]
   [fallback : AstParam]) : AstParam
   (if (and (>= index 0) (< index (ast-param-list-len v)))
-    (array-ref (struct-get v slots) index)
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-param-list-copy-range
@@ -3788,32 +3778,32 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-param-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-param-list-grow [v : (&mut v AstParamList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstParam) (array.make-array AstParam new-cap)]
     (begin
-      (ast-param-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
+      (ast-param-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-param-list-push [v : (&mut v AstParamList)] [value : AstParam]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-param-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-param-list-append-from
   [out : (&mut out AstParamList)]
@@ -3848,7 +3838,7 @@
     (AstMacroTypeKindList (array.make-array i64 count) count)))
 
 (define (ast-macro-type-kind-list-len [kinds : (& kinds AstMacroTypeKindList)]) : i64
-  (struct-get kinds len))
+  kinds.len)
 
 (define (ast-macro-type-kind-list-empty?
   [kinds : (& kinds AstMacroTypeKindList)]) : bool
@@ -3859,7 +3849,7 @@
   [index : i64]
   [fallback : i64]) : i64
   (if (and (>= index 0) (< index (ast-macro-type-kind-list-len kinds)))
-    (array-ref (struct-get kinds slots) index)
+    (array-ref kinds.slots index)
     fallback))
 
 (define (ast-macro-type-kind-list-set!
@@ -3867,9 +3857,9 @@
   [index : i64]
   [kind : i64]) : unit
   (let
-    [count : i64 (struct-get kinds len)]
+    [count : i64 kinds.len]
     (if (and (>= index 0) (< index count))
-      (array-set! (struct-get kinds slots) index kind)
+      (set! (array-ref kinds.slots index) kind)
       unit)))
 
 (define (ast-macro-type-kind-list-eq-at?
@@ -3944,14 +3934,14 @@
   (ast-macro-param-list-with-capacity 0))
 
 (define (ast-macro-param-list-len [v : (& v AstMacroParamList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-macro-param-list-get
   [v : (& v AstMacroParamList)]
   [index : i64]
   [fallback : AstMacroParam]) : AstMacroParam
   (if (and (>= index 0) (< index (ast-macro-param-list-len v)))
-    (array-ref (struct-get v slots) index)
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-macro-param-list-copy-range
@@ -3962,13 +3952,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-macro-param-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-macro-param-list-grow [v : (&mut v AstMacroParamList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -3976,25 +3966,21 @@
     [bigger : (__tl_dyn-array AstMacroParam)
       (array.make-array AstMacroParam new-cap)]
     (begin
-      (ast-macro-param-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        n)
-      (set! (struct-get v slots) bigger))))
+      (ast-macro-param-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-macro-param-list-push
   [v : (&mut v AstMacroParamList)]
   [value : AstMacroParam]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-macro-param-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-field-cleanup-fn-id [name : i64]) : AstFieldCleanup
   (AstFieldCleanup.Fn name))
@@ -4020,17 +4006,17 @@
   (ast-field-def-list-with-capacity 4))
 
 (define (ast-field-def-list-len [v : (& v AstFieldDefList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-field-def-list-empty? [v : (& v AstFieldDefList)]) : bool
-  (= (struct-get v len) 0))
+  (= v.len 0))
 
 (define (ast-field-def-list-get
   [v : (& v AstFieldDefList)]
   [index : i64]
   [fallback : AstFieldDef]) : AstFieldDef
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-field-def-list-copy-range
@@ -4041,13 +4027,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-field-def-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-field-def-list-grow [v : (&mut v AstFieldDefList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -4055,27 +4041,27 @@
     [bigger : (__tl_dyn-array AstFieldDef)
       (array.make-array AstFieldDef new-cap)]
     (begin
-      (ast-field-def-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
+      (ast-field-def-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-field-def-list-push
   [v : (&mut v AstFieldDefList)]
   [value : AstFieldDef]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-field-def-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-field-def-list-append-from
   [out : (&mut out AstFieldDefList)]
   [items : (& items AstFieldDefList)]
   [index : i64]) : unit
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     unit
     (begin
       (ast-field-def-list-push
@@ -4085,8 +4071,7 @@
 
 (define (ast-field-def-cons [head : AstFieldDef] [rest : AstFieldDefList]) : AstFieldDefList
   (let
-    [out : AstFieldDefList
-      (ast-field-def-list-with-capacity (+ 1 (struct-get (& rest) len)))]
+    [out : AstFieldDefList (ast-field-def-list-with-capacity (+ 1 rest.len))]
     (begin
       (ast-field-def-list-push (&mut out) head)
       (ast-field-def-list-append-from (&mut out) (& rest) 0)
@@ -4107,14 +4092,14 @@
   (ast-extern-link-input-list-with-capacity 4))
 
 (define (ast-extern-link-input-list-len [v : (& v AstExternLinkInputList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-extern-link-input-list-get
   [v : (& v AstExternLinkInputList)]
   [index : i64]
   [fallback : AstExternLinkInput]) : AstExternLinkInput
   (if (and (>= index 0) (< index (ast-extern-link-input-list-len v)))
-    (array-ref (struct-get v slots) index)
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-extern-link-input-list-copy-range
@@ -4125,13 +4110,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-extern-link-input-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-extern-link-input-list-grow [v : (&mut v AstExternLinkInputList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -4139,25 +4124,21 @@
     [bigger : (__tl_dyn-array AstExternLinkInput)
       (array.make-array AstExternLinkInput new-cap)]
     (begin
-      (ast-extern-link-input-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        n)
-      (set! (struct-get v slots) bigger))))
+      (ast-extern-link-input-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-extern-link-input-list-push
   [v : (&mut v AstExternLinkInputList)]
   [value : AstExternLinkInput]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-extern-link-input-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-fn-export-id [name : i64]) : AstFnExport
   (AstFnExport.Export name))
@@ -4176,14 +4157,14 @@
 
 (define (ast-spmd-param-class-list-len
   [items : (& items AstSpmdParamClassList)]) : i64
-  (struct-get items len))
+  items.len)
 
 (define (ast-spmd-param-class-list-get
   [items : (& items AstSpmdParamClassList)]
   [index : i64]
   [fallback : AstSpmdParamClass]) : AstSpmdParamClass
-  (if (and (>= index 0) (< index (struct-get items len)))
-    (array-ref (struct-get items slots) index)
+  (if (and (>= index 0) (< index items.len))
+    (array-ref items.slots index)
     fallback))
 
 (define (ast-spmd-param-class-list-copy-range
@@ -4194,14 +4175,14 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-spmd-param-class-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-spmd-param-class-list-grow
   [items : (&mut items AstSpmdParamClassList)]) : unit
   (let
-    [len : i64 (struct-get items len)]
-    [old-cap : i64 (array-length (struct-get items slots))]
+    [len : i64 items.len]
+    [old-cap : i64 (array-length items.slots)]
     [next : (__tl_dyn-array AstSpmdParamClass)
       (array.make-array
         AstSpmdParamClass
@@ -4209,25 +4190,21 @@
           1
           (* old-cap 2)))]
     (begin
-      (ast-spmd-param-class-list-copy-range
-        (&mut next)
-        (& (struct-get items slots))
-        0
-        len)
-      (set! (struct-get items slots) next))))
+      (ast-spmd-param-class-list-copy-range (&mut next) (& items.slots) 0 len)
+      (set! items.slots next))))
 
 (define (ast-spmd-param-class-list-push
   [items : (&mut items AstSpmdParamClassList)]
   [value : AstSpmdParamClass]) : unit
   (begin
-    (if (< (struct-get items len) (array-length (struct-get items slots)))
+    (if (< items.len (array-length items.slots))
       unit
       (ast-spmd-param-class-list-grow items))
     (let
-      [index : i64 (struct-get items len)]
+      [index : i64 items.len]
       (begin
-        (array-set! (struct-get items slots) index value)
-        (set! (struct-get items len) (+ index 1))))))
+        (set! (array-ref items.slots index) value)
+        (set! items.len (+ index 1))))))
 
 (define (ast-spmd-specialization-list-with-capacity [capacity : i64]) : AstSpmdSpecializationList
   (AstSpmdSpecializationList
@@ -4243,14 +4220,14 @@
 
 (define (ast-spmd-specialization-list-len
   [items : (& items AstSpmdSpecializationList)]) : i64
-  (struct-get items len))
+  items.len)
 
 (define (ast-spmd-specialization-list-get
   [items : (& items AstSpmdSpecializationList)]
   [index : i64]
   [fallback : AstSpmdSpecialization]) : AstSpmdSpecialization
-  (if (and (>= index 0) (< index (struct-get items len)))
-    (array-ref (struct-get items slots) index)
+  (if (and (>= index 0) (< index items.len))
+    (array-ref items.slots index)
     fallback))
 
 (define (ast-spmd-specialization-list-copy-range
@@ -4261,14 +4238,14 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-spmd-specialization-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-spmd-specialization-list-grow
   [items : (&mut items AstSpmdSpecializationList)]) : unit
   (let
-    [len : i64 (struct-get items len)]
-    [old-cap : i64 (array-length (struct-get items slots))]
+    [len : i64 items.len]
+    [old-cap : i64 (array-length items.slots)]
     [next : (__tl_dyn-array AstSpmdSpecialization)
       (array.make-array
         AstSpmdSpecialization
@@ -4278,23 +4255,23 @@
     (begin
       (ast-spmd-specialization-list-copy-range
         (&mut next)
-        (& (struct-get items slots))
+        (& items.slots)
         0
         len)
-      (set! (struct-get items slots) next))))
+      (set! items.slots next))))
 
 (define (ast-spmd-specialization-list-push
   [items : (&mut items AstSpmdSpecializationList)]
   [value : AstSpmdSpecialization]) : unit
   (begin
-    (if (< (struct-get items len) (array-length (struct-get items slots)))
+    (if (< items.len (array-length items.slots))
       unit
       (ast-spmd-specialization-list-grow items))
     (let
-      [index : i64 (struct-get items len)]
+      [index : i64 items.len]
       (begin
-        (array-set! (struct-get items slots) index value)
-        (set! (struct-get items len) (+ index 1))))))
+        (set! (array-ref items.slots index) value)
+        (set! items.len (+ index 1))))))
 
 (define (ast-spmd-param-class-list-clone [items : AstSpmdParamClassList]) : AstSpmdParamClassList
   (let
@@ -4316,10 +4293,10 @@
 
 (define (ast-spmd-specialization-clone [item : AstSpmdSpecialization]) : AstSpmdSpecialization
   (AstSpmdSpecialization
-    (struct-get item lanes)
-    (box (ast-spmd-param-class-list-clone (box-get (struct-get item args))))
-    (struct-get item result)
-    (struct-get item index-param)))
+    item.lanes
+    (box (ast-spmd-param-class-list-clone (__tl-box-place item.args)))
+    item.result
+    item.index-param))
 
 (define (ast-spmd-specialization-list-clone [items : AstSpmdSpecializationList]) : AstSpmdSpecializationList
   (let
@@ -4360,14 +4337,14 @@
 
 (define (ast-imported-spmd-specialization-list-len
   [items : (& items AstImportedSpmdSpecializationList)]) : i64
-  (struct-get items len))
+  items.len)
 
 (define (ast-imported-spmd-specialization-list-get
   [items : (& items AstImportedSpmdSpecializationList)]
   [index : i64]
   [fallback : AstImportedSpmdSpecialization]) : AstImportedSpmdSpecialization
-  (if (and (>= index 0) (< index (struct-get items len)))
-    (array-ref (struct-get items slots) index)
+  (if (and (>= index 0) (< index items.len))
+    (array-ref items.slots index)
     fallback))
 
 (define (ast-imported-spmd-specialization-list-copy-range
@@ -4378,7 +4355,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-imported-spmd-specialization-list-copy-range
         dst
         src
@@ -4388,8 +4365,8 @@
 (define (ast-imported-spmd-specialization-list-grow
   [items : (&mut items AstImportedSpmdSpecializationList)]) : unit
   (let
-    [len : i64 (struct-get items len)]
-    [old-cap : i64 (array-length (struct-get items slots))]
+    [len : i64 items.len]
+    [old-cap : i64 (array-length items.slots)]
     [next : (__tl_dyn-array AstImportedSpmdSpecialization)
       (array.make-array
         AstImportedSpmdSpecialization
@@ -4399,23 +4376,23 @@
     (begin
       (ast-imported-spmd-specialization-list-copy-range
         (&mut next)
-        (& (struct-get items slots))
+        (& items.slots)
         0
         len)
-      (set! (struct-get items slots) next))))
+      (set! items.slots next))))
 
 (define (ast-imported-spmd-specialization-list-push
   [items : (&mut items AstImportedSpmdSpecializationList)]
   [value : AstImportedSpmdSpecialization]) : unit
   (begin
-    (if (< (struct-get items len) (array-length (struct-get items slots)))
+    (if (< items.len (array-length items.slots))
       unit
       (ast-imported-spmd-specialization-list-grow items))
     (let
-      [index : i64 (struct-get items len)]
+      [index : i64 items.len]
       (begin
-        (array-set! (struct-get items slots) index value)
-        (set! (struct-get items len) (+ index 1))))))
+        (set! (array-ref items.slots index) value)
+        (set! items.len (+ index 1))))))
 
 (define (ast-imported-spmd-callable-fallback) : AstImportedSpmdCallable
   (AstImportedSpmdCallable 0 (ast-imported-spmd-specialization-list-new)))
@@ -4434,14 +4411,14 @@
 
 (define (ast-imported-spmd-callable-list-len
   [items : (& items AstImportedSpmdCallableList)]) : i64
-  (struct-get items len))
+  items.len)
 
 (define (ast-imported-spmd-callable-list-get
   [items : (& items AstImportedSpmdCallableList)]
   [index : i64]
   [fallback : AstImportedSpmdCallable]) : AstImportedSpmdCallable
-  (if (and (>= index 0) (< index (struct-get items len)))
-    (array-ref (struct-get items slots) index)
+  (if (and (>= index 0) (< index items.len))
+    (array-ref items.slots index)
     fallback))
 
 (define (ast-imported-spmd-callable-list-copy-range
@@ -4452,14 +4429,14 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-imported-spmd-callable-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-imported-spmd-callable-list-grow
   [items : (&mut items AstImportedSpmdCallableList)]) : unit
   (let
-    [len : i64 (struct-get items len)]
-    [old-cap : i64 (array-length (struct-get items slots))]
+    [len : i64 items.len]
+    [old-cap : i64 (array-length items.slots)]
     [next : (__tl_dyn-array AstImportedSpmdCallable)
       (array.make-array
         AstImportedSpmdCallable
@@ -4469,23 +4446,23 @@
     (begin
       (ast-imported-spmd-callable-list-copy-range
         (&mut next)
-        (& (struct-get items slots))
+        (& items.slots)
         0
         len)
-      (set! (struct-get items slots) next))))
+      (set! items.slots next))))
 
 (define (ast-imported-spmd-callable-list-push
   [items : (&mut items AstImportedSpmdCallableList)]
   [value : AstImportedSpmdCallable]) : unit
   (begin
-    (if (< (struct-get items len) (array-length (struct-get items slots)))
+    (if (< items.len (array-length items.slots))
       unit
       (ast-imported-spmd-callable-list-grow items))
     (let
-      [index : i64 (struct-get items len)]
+      [index : i64 items.len]
       (begin
-        (array-set! (struct-get items slots) index value)
-        (set! (struct-get items len) (+ index 1))))))
+        (set! (array-ref items.slots index) value)
+        (set! items.len (+ index 1))))))
 
 (define (ast-imported-spmd-specialization-list-clone
   [items : AstImportedSpmdSpecializationList]) : AstImportedSpmdSpecializationList
@@ -4525,9 +4502,9 @@
             (ast-imported-spmd-callable-list-push
               (&mut out)
               (AstImportedSpmdCallable
-                (struct-get item signature)
+                item.signature
                 (ast-imported-spmd-specialization-list-clone
-                  (struct-get item specializations))))
+                  item.specializations)))
             (set! index (+ index 1)))))
       out)))
 
@@ -4537,7 +4514,7 @@
     [(AstImportedSpmdMetadata.Package name callables)
       (AstImportedSpmdMetadata.Package
         name
-        (box (ast-imported-spmd-callable-list-clone (box-get callables))))]))
+        (box (ast-imported-spmd-callable-list-clone (__tl-box-place callables))))]))
 
 (define (ast-fn-metadata-clone [metadata : AstFnMetadata]) : AstFnMetadata
   (match metadata
@@ -4545,7 +4522,7 @@
     [(AstFnMetadata.Export symbol) (AstFnMetadata.Export symbol)]
     [(AstFnMetadata.SpmdCallable items)
       (AstFnMetadata.SpmdCallable
-        (box (ast-spmd-specialization-list-clone (box-get items))))]))
+        (box (ast-spmd-specialization-list-clone (__tl-box-place items))))]))
 
 (define (ast-fn-metadata [export : AstFnExport]) : AstFnMetadata
   (match export
@@ -4567,7 +4544,7 @@
 (define (ast-fn-metadata-spmd-callable [metadata : AstFnMetadata]) : AstSpmdCallable
   (match metadata
     [(AstFnMetadata.SpmdCallable items)
-      (AstSpmdCallable.Callable (box-get items))]
+      (AstSpmdCallable.Callable (__tl-box-place items))]
     [_ AstSpmdCallable.No]))
 
 (define (ast-struct-cleanup-fn-id [name : i64]) : AstStructCleanup
@@ -4605,14 +4582,14 @@
 
 (define (ast-variant-payload-cleanup-list-len
   [v : (& v AstVariantPayloadCleanupList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-variant-payload-cleanup-list-get
   [v : (& v AstVariantPayloadCleanupList)]
   [index : i64]
   [fallback : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-variant-payload-cleanup-list-copy-range
@@ -4623,14 +4600,14 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-variant-payload-cleanup-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-variant-payload-cleanup-list-grow
   [v : (&mut v AstVariantPayloadCleanupList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -4640,29 +4617,29 @@
     (begin
       (ast-variant-payload-cleanup-list-copy-range
         (&mut bigger)
-        (& (struct-get v slots))
+        (& v.slots)
         0
         n)
-      (set! (struct-get v slots) bigger))))
+      (set! v.slots bigger))))
 
 (define (ast-variant-payload-cleanup-list-push
   [v : (&mut v AstVariantPayloadCleanupList)]
   [value : AstVariantPayloadCleanup]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-variant-payload-cleanup-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-variant-payload-cleanup-list-append-from
   [out : (&mut out AstVariantPayloadCleanupList)]
   [items : (& items AstVariantPayloadCleanupList)]
   [index : i64]) : unit
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     unit
     (begin
       (ast-variant-payload-cleanup-list-push
@@ -4714,17 +4691,17 @@
   (ast-variant-def-list-with-capacity 4))
 
 (define (ast-variant-def-list-len [v : (& v AstVariantDefList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-variant-def-list-empty? [v : (& v AstVariantDefList)]) : bool
-  (= (struct-get v len) 0))
+  (= v.len 0))
 
 (define (ast-variant-def-list-get
   [v : (& v AstVariantDefList)]
   [index : i64]
   [fallback : AstVariantDef]) : AstVariantDef
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-variant-def-list-copy-range
@@ -4735,13 +4712,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-variant-def-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-variant-def-list-grow [v : (&mut v AstVariantDefList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -4749,31 +4726,27 @@
     [bigger : (__tl_dyn-array AstVariantDef)
       (array.make-array AstVariantDef new-cap)]
     (begin
-      (ast-variant-def-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        n)
-      (set! (struct-get v slots) bigger))))
+      (ast-variant-def-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-variant-def-list-push
   [v : (&mut v AstVariantDefList)]
   [value : AstVariantDef]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-variant-def-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-variant-def-list-append-from
   [out : (&mut out AstVariantDefList)]
   [items : (& items AstVariantDefList)]
   [index : i64]) : unit
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     unit
     (begin
       (ast-variant-def-list-push
@@ -4784,7 +4757,7 @@
 (define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
   (let
     [out : AstVariantDefList
-      (ast-variant-def-list-with-capacity (+ 1 (struct-get (& rest) len)))]
+      (ast-variant-def-list-with-capacity (+ 1 rest.len))]
     (begin
       (ast-variant-def-list-push (&mut out) head)
       (ast-variant-def-list-append-from (&mut out) (& rest) 0)
@@ -4795,8 +4768,7 @@
   [rest : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
   (let
     [out : AstVariantPayloadCleanupList
-      (ast-variant-payload-cleanup-list-with-capacity
-        (+ 1 (struct-get (& rest) len)))]
+      (ast-variant-payload-cleanup-list-with-capacity (+ 1 rest.len))]
     (begin
       (ast-variant-payload-cleanup-list-push (&mut out) head)
       (ast-variant-payload-cleanup-list-append-from (&mut out) (& rest) 0)
@@ -4817,17 +4789,17 @@
   (ast-pattern-list-with-capacity 4))
 
 (define (ast-pattern-list-len [v : (& v AstPatternList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-pattern-list-empty? [v : (& v AstPatternList)]) : bool
-  (= (struct-get v len) 0))
+  (= v.len 0))
 
 (define (ast-pattern-list-get
   [v : (& v AstPatternList)]
   [index : i64]
   [fallback : AstPattern]) : AstPattern
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-pattern-list-copy-range
@@ -4838,40 +4810,40 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-pattern-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-pattern-list-grow [v : (&mut v AstPatternList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstPattern) (array.make-array AstPattern new-cap)]
     (begin
-      (ast-pattern-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
+      (ast-pattern-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-pattern-list-push
   [v : (&mut v AstPatternList)]
   [value : AstPattern]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-pattern-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-pattern-list-append-from
   [out : (&mut out AstPatternList)]
   [items : (& items AstPatternList)]
   [index : i64]) : unit
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     unit
     (begin
       (ast-pattern-list-push
@@ -4881,16 +4853,14 @@
 
 (define (ast-pattern-list-tail [items : AstPatternList]) : AstPatternList
   (let
-    [out : AstPatternList
-      (ast-pattern-list-with-capacity (- (struct-get (& items) len) 1))]
+    [out : AstPatternList (ast-pattern-list-with-capacity (- items.len 1))]
     (begin
       (ast-pattern-list-append-from (&mut out) (& items) 1)
       out)))
 
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
   (let
-    [out : AstPatternList
-      (ast-pattern-list-with-capacity (+ 1 (struct-get (& rest) len)))]
+    [out : AstPatternList (ast-pattern-list-with-capacity (+ 1 rest.len))]
     (begin
       (ast-pattern-list-push (&mut out) head)
       (ast-pattern-list-append-from (&mut out) (& rest) 0)
@@ -4929,14 +4899,14 @@
   (ast-let-binding-list-with-capacity 0))
 
 (define (ast-let-binding-list-len [v : (& v AstLetBindingList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-let-binding-list-get
   [v : (& v AstLetBindingList)]
   [index : i64]
   [fallback : AstLetBinding]) : AstLetBinding
   (if (and (>= index 0) (< index (ast-let-binding-list-len v)))
-    (array-ref (struct-get v slots) index)
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-let-binding-list-copy-range
@@ -4947,13 +4917,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-let-binding-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-let-binding-list-grow [v : (&mut v AstLetBindingList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -4961,25 +4931,21 @@
     [bigger : (__tl_dyn-array AstLetBinding)
       (array.make-array AstLetBinding new-cap)]
     (begin
-      (ast-let-binding-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        n)
-      (set! (struct-get v slots) bigger))))
+      (ast-let-binding-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-let-binding-list-push
   [v : (&mut v AstLetBindingList)]
   [value : AstLetBinding]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-let-binding-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-let-binding-list-append-from
   [out : (&mut out AstLetBindingList)]
@@ -5021,14 +4987,14 @@
   (ast-resource-binding-list-with-capacity 0))
 
 (define (ast-resource-binding-list-len [v : (& v AstResourceBindingList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-resource-binding-list-get
   [v : (& v AstResourceBindingList)]
   [index : i64]
   [fallback : AstResourceBinding]) : AstResourceBinding
   (if (and (>= index 0) (< index (ast-resource-binding-list-len v)))
-    (array-ref (struct-get v slots) index)
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-resource-binding-list-copy-range
@@ -5039,13 +5005,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-resource-binding-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-resource-binding-list-grow [v : (&mut v AstResourceBindingList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -5053,25 +5019,21 @@
     [bigger : (__tl_dyn-array AstResourceBinding)
       (array.make-array AstResourceBinding new-cap)]
     (begin
-      (ast-resource-binding-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        n)
-      (set! (struct-get v slots) bigger))))
+      (ast-resource-binding-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-resource-binding-list-push
   [v : (&mut v AstResourceBindingList)]
   [value : AstResourceBinding]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-resource-binding-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-resource-binding-list-append-from
   [out : (&mut out AstResourceBindingList)]
@@ -5118,17 +5080,17 @@
   (ast-match-arm-list-with-capacity 4))
 
 (define (ast-match-arm-list-len [v : (& v AstMatchArmList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-match-arm-list-empty? [v : (& v AstMatchArmList)]) : bool
-  (= (struct-get v len) 0))
+  (= v.len 0))
 
 (define (ast-match-arm-list-get
   [v : (& v AstMatchArmList)]
   [index : i64]
   [fallback : AstMatchArm]) : AstMatchArm
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-match-arm-list-copy-range
@@ -5139,13 +5101,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-match-arm-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-match-arm-list-grow [v : (&mut v AstMatchArmList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -5153,27 +5115,27 @@
     [bigger : (__tl_dyn-array AstMatchArm)
       (array.make-array AstMatchArm new-cap)]
     (begin
-      (ast-match-arm-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
+      (ast-match-arm-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-match-arm-list-push
   [v : (&mut v AstMatchArmList)]
   [value : AstMatchArm]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-match-arm-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-match-arm-list-append-from
   [out : (&mut out AstMatchArmList)]
   [items : (& items AstMatchArmList)]
   [index : i64]) : unit
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     unit
     (begin
       (ast-match-arm-list-push
@@ -5183,16 +5145,14 @@
 
 (define (ast-match-arm-list-tail [items : AstMatchArmList]) : AstMatchArmList
   (let
-    [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (- (struct-get (& items) len) 1))]
+    [out : AstMatchArmList (ast-match-arm-list-with-capacity (- items.len 1))]
     (begin
       (ast-match-arm-list-append-from (&mut out) (& items) 1)
       out)))
 
 (define (ast-match-arm-cons [head : AstMatchArm] [rest : AstMatchArmList]) : AstMatchArmList
   (let
-    [out : AstMatchArmList
-      (ast-match-arm-list-with-capacity (+ 1 (struct-get (& rest) len)))]
+    [out : AstMatchArmList (ast-match-arm-list-with-capacity (+ 1 rest.len))]
     (begin
       (ast-match-arm-list-push (&mut out) head)
       (ast-match-arm-list-append-from (&mut out) (& rest) 0)
@@ -5210,17 +5170,17 @@
   (ast-expr-list-with-capacity 4))
 
 (define (ast-expr-list-len [v : (& v AstExprList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-expr-list-empty? [v : (& v AstExprList)]) : bool
-  (= (struct-get v len) 0))
+  (= v.len 0))
 
 (define (ast-expr-list-get
   [v : (& v AstExprList)]
   [index : i64]
   [fallback : i64]) : i64
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-expr-list-copy-range
@@ -5231,38 +5191,38 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-expr-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-expr-list-grow [v : (&mut v AstExprList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
-      (ast-expr-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
+      (ast-expr-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-expr-list-push [v : (&mut v AstExprList)] [value : i64]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-expr-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-expr-list-append-from
   [out : (&mut out AstExprList)]
   [items : (& items AstExprList)]
   [index : i64]) : unit
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     unit
     (begin
       (ast-expr-list-push out (ast-expr-list-get items index 0))
@@ -5270,8 +5230,7 @@
 
 (define (ast-expr-list-tail [items : AstExprList]) : AstExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (- (struct-get (& items) len) 1))]
+    [out : AstExprList (ast-expr-list-with-capacity (- items.len 1))]
     (begin
       (ast-expr-list-append-from (&mut out) (& items) 1)
       out)))
@@ -5280,16 +5239,14 @@
   [items : (& items AstExprList)]
   [index : i64]) : AstExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (- (struct-get items len) index))]
+    [out : AstExprList (ast-expr-list-with-capacity (- items.len index))]
     (begin
       (ast-expr-list-append-from (&mut out) items index)
       out)))
 
 (define (ast-expr-cons [head : i64] [rest : AstExprList]) : AstExprList
   (let
-    [out : AstExprList
-      (ast-expr-list-with-capacity (+ 1 (struct-get (& rest) len)))]
+    [out : AstExprList (ast-expr-list-with-capacity (+ 1 rest.len))]
     (begin
       (ast-expr-list-push (&mut out) head)
       (ast-expr-list-append-from (&mut out) (& rest) 0)
@@ -5316,8 +5273,8 @@
   [v : (& v AstExprClauseList)]
   [index : i64]
   [fallback : AstExprClause]) : AstExprClause
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-expr-clause-list-copy-range
@@ -5328,13 +5285,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-expr-clause-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-expr-clause-list-grow [v : (&mut v AstExprClauseList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -5342,33 +5299,29 @@
     [bigger : (__tl_dyn-array AstExprClause)
       (array.make-array AstExprClause new-cap)]
     (begin
-      (ast-expr-clause-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        n)
-      (set! (struct-get v slots) bigger))))
+      (ast-expr-clause-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-expr-clause-list-push
   [v : (&mut v AstExprClauseList)]
   [value : AstExprClause]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-expr-clause-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-expr-clause-list-tail [items : AstExprClauseList]) : AstExprClauseList
   (let
     [out : AstExprClauseList
-      (ast-expr-clause-list-with-capacity (- (struct-get (& items) len) 1))]
+      (ast-expr-clause-list-with-capacity (- items.len 1))]
     [index : i64 1]
     (begin
-      (while (< index (struct-get (& items) len))
+      (while (< index items.len)
         (begin
           (ast-expr-clause-list-push
             (&mut out)
@@ -5406,8 +5359,8 @@
   [v : (& v AstExprBindingClauseList)]
   [index : i64]
   [fallback : AstExprBindingClause]) : AstExprBindingClause
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-expr-binding-clause-list-copy-range
@@ -5418,14 +5371,14 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-expr-binding-clause-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-expr-binding-clause-list-grow
   [v : (&mut v AstExprBindingClauseList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -5433,34 +5386,29 @@
     [bigger : (__tl_dyn-array AstExprBindingClause)
       (array.make-array AstExprBindingClause new-cap)]
     (begin
-      (ast-expr-binding-clause-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        n)
-      (set! (struct-get v slots) bigger))))
+      (ast-expr-binding-clause-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-expr-binding-clause-list-push
   [v : (&mut v AstExprBindingClauseList)]
   [value : AstExprBindingClause]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-expr-binding-clause-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-expr-binding-clause-list-tail [items : AstExprBindingClauseList]) : AstExprBindingClauseList
   (let
     [out : AstExprBindingClauseList
-      (ast-expr-binding-clause-list-with-capacity
-        (- (struct-get (& items) len) 1))]
+      (ast-expr-binding-clause-list-with-capacity (- items.len 1))]
     [index : i64 1]
     (begin
-      (while (< index (struct-get (& items) len))
+      (while (< index items.len)
         (begin
           (ast-expr-binding-clause-list-push
             (&mut out)
@@ -6329,17 +6277,17 @@
   (ast-dispatch-variant-list-with-capacity 4))
 
 (define (ast-dispatch-variant-list-len [v : (& v AstDispatchVariantList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-dispatch-variant-list-empty? [v : (& v AstDispatchVariantList)]) : bool
-  (= (struct-get v len) 0))
+  (= v.len 0))
 
 (define (ast-dispatch-variant-list-get
   [v : (& v AstDispatchVariantList)]
   [index : i64]
   [fallback : AstDispatchVariant]) : AstDispatchVariant
-  (if (and (>= index 0) (< index (struct-get v len)))
-    (array-ref (struct-get v slots) index)
+  (if (and (>= index 0) (< index v.len))
+    (array-ref v.slots index)
     fallback))
 
 (define (ast-dispatch-variant-list-copy-range
@@ -6350,13 +6298,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (ast-dispatch-variant-list-copy-range dst src (+ index 1) count))))
 
 (define (ast-dispatch-variant-list-grow [v : (&mut v AstDispatchVariantList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -6364,25 +6312,21 @@
     [bigger : (__tl_dyn-array AstDispatchVariant)
       (array.make-array AstDispatchVariant new-cap)]
     (begin
-      (ast-dispatch-variant-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        n)
-      (set! (struct-get v slots) bigger))))
+      (ast-dispatch-variant-list-copy-range (&mut bigger) (& v.slots) 0 n)
+      (set! v.slots bigger))))
 
 (define (ast-dispatch-variant-list-push
   [v : (&mut v AstDispatchVariantList)]
   [value : AstDispatchVariant]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (ast-dispatch-variant-list-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (ast-decl-fallback) : AstDecl
   (AstDecl.Module cbi.compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt))
@@ -6404,7 +6348,7 @@
   (ast-decl-list-with-capacity 4))
 
 (define (ast-decl-list-len [v : (& v AstDeclList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-decl-list-empty? [v : (& v AstDeclList)]) : bool
   (= (ast-decl-list-len v) 0))
@@ -6414,16 +6358,16 @@
   [index : i64]
   [fallback : AstDecl]) : AstDecl
   (if (and (>= index 0) (< index (ast-decl-list-len v)))
-    (array-ref (struct-get v slots) (+ (struct-get v offset) index))
+    (array-ref v.slots (+ v.offset index))
     fallback))
 
 (define (ast-decl-list-ref [v : AstDeclList] [index : i64]) : AstDecl
-  (array-ref (struct-get v slots) (+ (struct-get v offset) index)))
+  (array-ref v.slots (+ v.offset index)))
 
 (define (ast-decl-list-ref-borrowed [v : (& v AstDeclList)] [index : i64]) : (&
     v
     AstDecl)
-  (& (array-ref (struct-get v slots) (+ (struct-get v offset) index))))
+  (& (array-ref v.slots (+ v.offset index))))
 
 ;; Field-selective declaration readers.
 ;;
@@ -6443,7 +6387,7 @@
   [v : (& v AstDeclList)]
   [index : i64]
   [fallback : i64]) : i64
-  (match (array-ref (struct-get v slots) (+ (struct-get v offset) index))
+  (match (array-ref v.slots (+ v.offset index))
     [(AstDecl.Module name) name]
     [_ fallback]))
 
@@ -6456,7 +6400,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src (+ src-offset index)))
+      (set! (array-ref dst index) (array-ref src (+ src-offset index)))
       (ast-decl-list-copy-range dst src src-offset (+ index 1) count))))
 
 (define (ast-decl-list-copy-to
@@ -6469,42 +6413,36 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst (+ dst-offset index) (array-ref src (+ src-offset index)))
+      (set!
+        (array-ref dst (+ dst-offset index))
+        (array-ref src (+ src-offset index)))
       (ast-decl-list-copy-to dst src src-offset dst-offset (+ index 1) count))))
 
 (define (ast-decl-list-grow [v : (&mut v AstDeclList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64
-      (- (array-length (struct-get v slots)) (struct-get v offset))]
+    [n : i64 v.len]
+    [old-cap : i64 (- (array-length v.slots) v.offset)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstDecl) (array.make-array AstDecl new-cap)]
     (begin
-      (ast-decl-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        (struct-get v offset)
-        0
-        n)
-      (set! (struct-get v slots) bigger)
-      (set! (struct-get v offset) 0)
-      (set! (struct-get v prependable) true))))
+      (ast-decl-list-copy-range (&mut bigger) (& v.slots) v.offset 0 n)
+      (set! v.slots bigger)
+      (set! v.offset 0)
+      (set! v.prependable true))))
 
 (define (ast-decl-list-push [v : (&mut v AstDeclList)] [value : AstDecl]) : unit
   (begin
-    (if (<
-      (struct-get v len)
-      (- (array-length (struct-get v slots)) (struct-get v offset)))
+    (if (< v.len (- (array-length v.slots) v.offset))
       unit
       (ast-decl-list-grow v))
     (let
-      [index : i64 (+ (struct-get v offset) (struct-get v len))]
+      [index : i64 (+ v.offset v.len)]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ (struct-get v len) 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ v.len 1))))))
 
 ;; Append one declaration read straight out of a source slot array.
 ;;
@@ -6526,35 +6464,29 @@
   [src : (& src (__tl_dyn-array AstDecl))]
   [src-index : i64]) : unit
   (begin
-    (if (<
-      (struct-get v len)
-      (- (array-length (struct-get v slots)) (struct-get v offset)))
+    (if (< v.len (- (array-length v.slots) v.offset))
       unit
       (ast-decl-list-grow v))
     (let
-      [index : i64 (+ (struct-get v offset) (struct-get v len))]
+      [index : i64 (+ v.offset v.len)]
       (begin
-        (array-set! (struct-get v slots) index (array-ref src src-index))
-        (set! (struct-get v len) (+ (struct-get v len) 1))))))
+        (set! (array-ref v.slots index) (array-ref src src-index))
+        (set! v.len (+ v.len 1))))))
 
 (define (ast-decl-list-tail [items : AstDeclList]) : AstDeclList
   (if (<= (ast-decl-list-len (& items)) 0)
     (ast-decl-list-new)
-    (AstDeclList
-      (struct-get items slots)
-      (+ (struct-get items offset) 1)
-      (- (struct-get items len) 1)
-      false)))
+    (AstDeclList items.slots (+ items.offset 1) (- items.len 1) false)))
 
 (define (ast-decl-list-step [items : AstDeclList]) : AstDeclListStep
   (let
-    [len : i64 (struct-get items len)]
-    [offset : i64 (struct-get items offset)]
+    [len : i64 items.len]
+    [offset : i64 items.offset]
     (if (<= len 0)
       (AstDeclListStep.Nil)
       (AstDeclListStep.Cons
-        (array-ref (struct-get items slots) offset)
-        (AstDeclList (struct-get items slots) (+ offset 1) (- len 1) false)))))
+        (array-ref items.slots offset)
+        (AstDeclList items.slots (+ offset 1) (- len 1) false)))))
 
 (define (ast-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -6563,23 +6495,16 @@
   (if (>= index (ast-decl-list-len items))
     unit
     (begin
-      (ast-decl-list-push-from
-        out
-        (& (struct-get items slots))
-        (+ (struct-get items offset) index))
+      (ast-decl-list-push-from out (& items.slots) (+ items.offset index))
       (ast-decl-list-append-from out items (+ index 1)))))
 
 (define (ast-decl-list-prepend-builder [head : AstDecl] [rest : AstDeclList]) : AstDeclList
-  (if (and (> (struct-get rest offset) 0) (struct-get rest prependable))
+  (if (and (> rest.offset 0) rest.prependable)
     (let
-      [new-offset : i64 (- (struct-get rest offset) 1)]
+      [new-offset : i64 (- rest.offset 1)]
       (begin
-        (array-set! (struct-get rest slots) new-offset head)
-        (AstDeclList
-          (struct-get rest slots)
-          new-offset
-          (+ (struct-get rest len) 1)
-          true)))
+        (set! (array-ref rest.slots new-offset) head)
+        (AstDeclList rest.slots new-offset (+ rest.len 1) true)))
     (let
       [rest-len : i64 (ast-decl-list-len (& rest))]
       [new-len : i64 (+ rest-len 1)]
@@ -6590,11 +6515,11 @@
       [new-offset : i64 (- new-cap new-len)]
       [slots : (__tl_dyn-array AstDecl) (array.make-array AstDecl new-cap)]
       (begin
-        (array-set! slots new-offset head)
+        (set! (array-ref slots new-offset) head)
         (ast-decl-list-copy-to
           (&mut slots)
-          (& (struct-get rest slots))
-          (struct-get rest offset)
+          (& rest.slots)
+          rest.offset
           (+ new-offset 1)
           0
           rest-len)
@@ -6610,7 +6535,7 @@
       out)))
 
 (define (ast-decl-cons-boxed [head : AstDecl] [rest : (Box AstDeclList)]) : AstDeclList
-  (ast-decl-cons head (box-get rest)))
+  (ast-decl-cons head (__tl-box-place rest)))
 
 (define (ast-decl-module-id [name : i64]) : AstDecl
   (AstDecl.Module name))
@@ -6750,16 +6675,16 @@
     [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) decl-meta]
     [(AstDecl.DefDispatch decl-meta _ _) decl-meta]
     [(AstDecl.Import decl-meta _) decl-meta]
-    [(AstDecl.Unsafe inner-box) (ast-decl-meta (box-get inner-box))]
+    [(AstDecl.Unsafe inner-box) (ast-decl-meta (__tl-box-place inner-box))]
     [_ (ast-global-shared-view ast-decl-meta-runtime)]))
 
 (define (ast-decl-generated-meta [decl : AstDecl]) : AstGeneratedDeclMeta
-  (match (box-get (struct-get (ast-decl-meta decl) value))
+  (match (__tl-box-place (__tl-project-field (ast-decl-meta decl) value))
     [(AstDeclMetaValue.Runtime) AstGeneratedDeclMeta.No]
     [(AstDeclMetaValue.Comptime meta) meta]))
 
 (define (ast-decl-comptime-only? [decl : AstDecl]) : bool
-  (match (box-get (struct-get (ast-decl-meta decl) value))
+  (match (__tl-box-place (__tl-project-field (ast-decl-meta decl) value))
     [(AstDeclMetaValue.Runtime) false]
     [(AstDeclMetaValue.Comptime _) true]))
 
@@ -6784,7 +6709,8 @@
       (AstDecl.DefDispatch meta name variants)]
     [(AstDecl.Import _ spec) (AstDecl.Import meta spec)]
     [(AstDecl.Unsafe inner-box)
-      (AstDecl.Unsafe (box (ast-decl-with-meta meta (box-get inner-box))))]
+      (AstDecl.Unsafe
+        (box (ast-decl-with-meta meta (__tl-box-place inner-box))))]
     [_ inner]))
 
 (define (ast-decl-comptime-decl [inner : AstDecl]) : AstDecl
@@ -6801,7 +6727,7 @@
 
 (define (ast-decl-unwrapped [decl : AstDecl]) : AstDecl
   (match decl
-    [(AstDecl.Unsafe inner-box) (ast-decl-unwrapped (box-get inner-box))]
+    [(AstDecl.Unsafe inner-box) (ast-decl-unwrapped (__tl-box-place inner-box))]
     [_ decl]))
 
 ;; Declaration classifiers for the index/cache builders.
@@ -6812,8 +6738,8 @@
 ;; declaration is one of the few kinds whose payload they read; every other kind
 ;; can be skipped without copying anything.
 ;;
-;; The `-at?` forms read the outer tag through a borrow. `box-get` requires
-;; owned `Box` storage, so a borrow cannot walk the wrapper chain itself; only
+;; The `-at?` forms read the outer tag through a borrow. The internal BoxGet
+;; node requires owned `Box` storage, so a borrow cannot walk the wrapper chain itself; only
 ;; an `AstDecl.Unsafe` row -- the rare case -- is copied, to finish the peel
 ;; through the by-value form below it. Callers pair these with a by-value
 ;; re-read on the arm that consumes a payload, so a row copy is paid only where
@@ -6822,7 +6748,7 @@
   (match decl
     [(AstDecl.Import decl-meta _) true]
     [(AstDecl.Unsafe inner-box)
-      (ast-decl-unwrapped-import? (box-get inner-box))]
+      (ast-decl-unwrapped-import? (__tl-box-place inner-box))]
     [_ false]))
 
 (define (ast-decl-list-unwrapped-import-at?
@@ -6840,7 +6766,7 @@
     [(AstDecl.Module _) true]
     [(AstDecl.Import decl-meta _) true]
     [(AstDecl.Unsafe inner-box)
-      (ast-decl-unwrapped-module-or-import? (box-get inner-box))]
+      (ast-decl-unwrapped-module-or-import? (__tl-box-place inner-box))]
     [_ false]))
 
 (define (ast-decl-list-unwrapped-module-or-import-at?
@@ -6861,7 +6787,7 @@
     [(AstDecl.DefEnum decl-meta _ _ _) true]
     [(AstDecl.DefStruct decl-meta _ _ _ _) true]
     [(AstDecl.Unsafe inner-box)
-      (ast-decl-unwrapped-module-or-type-definition? (box-get inner-box))]
+      (ast-decl-unwrapped-module-or-type-definition? (__tl-box-place inner-box))]
     [_ false]))
 
 (define (ast-decl-list-unwrapped-module-or-type-definition-at?
@@ -6893,14 +6819,14 @@
   (ast-decl-path-list-with-capacity 4))
 
 (define (ast-decl-path-list-len [v : (& v AstDeclPathList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-decl-path-list-get
   [v : (& v AstDeclPathList)]
   [index : i64]
   [fallback : String]) : String
   (if (and (>= index 0) (< index (ast-decl-path-list-len v)))
-    (array-ref (struct-get v slots) (+ (struct-get v offset) index))
+    (array-ref v.slots (+ v.offset index))
     fallback))
 
 (define (ast-decl-path-list-owner-id
@@ -6908,7 +6834,7 @@
   [index : i64]
   [fallback : i64]) : i64
   (if (and (>= index 0) (< index (ast-decl-path-list-len v)))
-    (array-ref (struct-get v owner-ids) (+ (struct-get v offset) index))
+    (array-ref v.owner-ids (+ v.offset index))
     fallback))
 
 (define (ast-decl-path-list-copy-range
@@ -6920,7 +6846,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src (+ src-offset index)))
+      (set! (array-ref dst index) (array-ref src (+ src-offset index)))
       (ast-decl-path-list-copy-range dst src src-offset (+ index 1) count))))
 
 (define (ast-decl-path-list-copy-to
@@ -6933,7 +6859,9 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst (+ dst-offset index) (array-ref src (+ src-offset index)))
+      (set!
+        (array-ref dst (+ dst-offset index))
+        (array-ref src (+ src-offset index)))
       (ast-decl-path-list-copy-to
         dst
         src
@@ -6944,9 +6872,8 @@
 
 (define (ast-decl-path-list-grow [v : (&mut v AstDeclPathList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64
-      (- (array-length (struct-get v slots)) (struct-get v offset))]
+    [n : i64 v.len]
+    [old-cap : i64 (- (array-length v.slots) v.offset)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -6954,62 +6881,55 @@
     [bigger : (__tl_dyn-array String) (array.make-array String new-cap)]
     [bigger-owner-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
-      (ast-decl-path-list-copy-range
-        (&mut bigger)
-        (& (struct-get v slots))
-        (struct-get v offset)
-        0
-        n)
+      (ast-decl-path-list-copy-range (&mut bigger) (& v.slots) v.offset 0 n)
       (ast-decl-module-list-copy-to
         (&mut bigger-owner-ids)
-        (& (struct-get v owner-ids))
-        (struct-get v offset)
+        (& v.owner-ids)
+        v.offset
         0
         0
         n)
-      (set! (struct-get v slots) bigger)
-      (set! (struct-get v owner-ids) bigger-owner-ids)
-      (set! (struct-get v offset) 0)
-      (set! (struct-get v prependable) true))))
+      (set! v.slots bigger)
+      (set! v.owner-ids bigger-owner-ids)
+      (set! v.offset 0)
+      (set! v.prependable true))))
 
 (define (ast-decl-path-list-push-with-owner-id
   [v : (&mut v AstDeclPathList)]
   [value : String]
   [owner-id : i64]) : unit
   (begin
-    (if (<
-      (struct-get v len)
-      (- (array-length (struct-get v slots)) (struct-get v offset)))
+    (if (< v.len (- (array-length v.slots) v.offset))
       unit
       (ast-decl-path-list-grow v))
     (let
-      [index : i64 (+ (struct-get v offset) (struct-get v len))]
+      [index : i64 (+ v.offset v.len)]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (array-set! (struct-get v owner-ids) index owner-id)
-        (set! (struct-get v len) (+ (struct-get v len) 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! (array-ref v.owner-ids index) owner-id)
+        (set! v.len (+ v.len 1))))))
 
 (define (ast-decl-path-list-tail [items : AstDeclPathList]) : AstDeclPathList
   (if (<= (ast-decl-path-list-len (& items)) 0)
     (ast-decl-path-list-new)
     (AstDeclPathList
-      (struct-get items slots)
-      (struct-get items owner-ids)
-      (+ (struct-get items offset) 1)
-      (- (struct-get items len) 1)
+      items.slots
+      items.owner-ids
+      (+ items.offset 1)
+      (- items.len 1)
       false)))
 
 (define (ast-decl-path-list-step [items : AstDeclPathList]) : AstDeclPathListStep
   (let
-    [len : i64 (struct-get items len)]
-    [offset : i64 (struct-get items offset)]
+    [len : i64 items.len]
+    [offset : i64 items.offset]
     (if (<= len 0)
       (AstDeclPathListStep.Nil)
       (AstDeclPathListStep.Cons
-        (array-ref (struct-get items slots) offset)
+        (array-ref items.slots offset)
         (AstDeclPathList
-          (struct-get items slots)
-          (struct-get items owner-ids)
+          items.slots
+          items.owner-ids
           (+ offset 1)
           (- len 1)
           false)))))
@@ -7034,17 +6954,17 @@
   [head : String]
   [owner-id : i64]
   [rest : AstDeclPathList]) : AstDeclPathList
-  (if (and (> (struct-get rest offset) 0) (struct-get rest prependable))
+  (if (and (> rest.offset 0) rest.prependable)
     (let
-      [new-offset : i64 (- (struct-get rest offset) 1)]
+      [new-offset : i64 (- rest.offset 1)]
       (begin
-        (array-set! (struct-get rest slots) new-offset head)
-        (array-set! (struct-get rest owner-ids) new-offset owner-id)
+        (set! (array-ref rest.slots new-offset) head)
+        (set! (array-ref rest.owner-ids new-offset) owner-id)
         (AstDeclPathList
-          (struct-get rest slots)
-          (struct-get rest owner-ids)
+          rest.slots
+          rest.owner-ids
           new-offset
-          (+ (struct-get rest len) 1)
+          (+ rest.len 1)
           true)))
     (let
       [rest-len : i64 (ast-decl-path-list-len (& rest))]
@@ -7057,19 +6977,19 @@
       [slots : (__tl_dyn-array String) (array.make-array String new-cap)]
       [owner-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
       (begin
-        (array-set! slots new-offset head)
-        (array-set! owner-ids new-offset owner-id)
+        (set! (array-ref slots new-offset) head)
+        (set! (array-ref owner-ids new-offset) owner-id)
         (ast-decl-path-list-copy-to
           (&mut slots)
-          (& (struct-get rest slots))
-          (struct-get rest offset)
+          (& rest.slots)
+          rest.offset
           (+ new-offset 1)
           0
           rest-len)
         (ast-decl-module-list-copy-to
           (&mut owner-ids)
-          (& (struct-get rest owner-ids))
-          (struct-get rest offset)
+          (& rest.owner-ids)
+          rest.offset
           (+ new-offset 1)
           0
           rest-len)
@@ -7102,15 +7022,14 @@
   (ast-decl-module-list-with-capacity 4))
 
 (define (ast-decl-module-list-len [v : (& v AstDeclModuleList)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (ast-decl-module-list-get
   [v : (& v AstDeclModuleList)]
   [index : i64]
   [fallback : String]) : String
   (if (and (>= index 0) (< index (ast-decl-module-list-len v)))
-    (ci.intern-str
-      (array-ref (struct-get v slots) (+ (struct-get v offset) index)))
+    (ci.intern-str (array-ref v.slots (+ v.offset index)))
     fallback))
 
 (define (ast-decl-module-list-get-id
@@ -7118,7 +7037,7 @@
   [index : i64]
   [fallback : i64]) : i64
   (if (and (>= index 0) (< index (ast-decl-module-list-len v)))
-    (array-ref (struct-get v slots) (+ (struct-get v offset) index))
+    (array-ref v.slots (+ v.offset index))
     fallback))
 
 (define (ast-decl-module-list-copy-to
@@ -7131,7 +7050,9 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst (+ dst-offset index) (array-ref src (+ src-offset index)))
+      (set!
+        (array-ref dst (+ dst-offset index))
+        (array-ref src (+ src-offset index)))
       (ast-decl-module-list-copy-to
         dst
         src
@@ -7142,39 +7063,31 @@
 
 (define (ast-decl-module-list-grow [v : (&mut v AstDeclModuleList)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
-      (ast-decl-module-list-copy-to
-        (&mut bigger)
-        (& (struct-get v slots))
-        (struct-get v offset)
-        0
-        0
-        n)
-      (set! (struct-get v slots) bigger)
-      (set! (struct-get v offset) 0)
-      (set! (struct-get v prependable) true))))
+      (ast-decl-module-list-copy-to (&mut bigger) (& v.slots) v.offset 0 0 n)
+      (set! v.slots bigger)
+      (set! v.offset 0)
+      (set! v.prependable true))))
 
 (define (ast-decl-module-list-push-id
   [v : (&mut v AstDeclModuleList)]
   [value : i64]) : unit
   (begin
-    (if (<
-      (+ (struct-get v offset) (struct-get v len))
-      (array-length (struct-get v slots)))
+    (if (< (+ v.offset v.len) (array-length v.slots))
       unit
       (ast-decl-module-list-grow v))
     (let
-      [index : i64 (+ (struct-get v offset) (struct-get v len))]
+      [index : i64 (+ v.offset v.len)]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ (struct-get v len) 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ v.len 1))))))
 
 (define (ast-decl-module-list-append-from
   [out : (&mut out AstDeclModuleList)]
@@ -7194,16 +7107,12 @@
 (define (ast-decl-module-list-prepend-builder-id
   [head : i64]
   [rest : AstDeclModuleList]) : AstDeclModuleList
-  (if (and (> (struct-get rest offset) 0) (struct-get rest prependable))
+  (if (and (> rest.offset 0) rest.prependable)
     (let
-      [new-offset : i64 (- (struct-get rest offset) 1)]
+      [new-offset : i64 (- rest.offset 1)]
       (begin
-        (array-set! (struct-get rest slots) new-offset head)
-        (AstDeclModuleList
-          (struct-get rest slots)
-          new-offset
-          (+ (struct-get rest len) 1)
-          true)))
+        (set! (array-ref rest.slots new-offset) head)
+        (AstDeclModuleList rest.slots new-offset (+ rest.len 1) true)))
     (let
       [rest-len : i64 (ast-decl-module-list-len (& rest))]
       [new-len : i64 (+ rest-len 1)]
@@ -7214,11 +7123,11 @@
       [new-offset : i64 (- new-cap new-len)]
       [slots : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
       (begin
-        (array-set! slots new-offset head)
+        (set! (array-ref slots new-offset) head)
         (ast-decl-module-list-copy-to
           (&mut slots)
-          (& (struct-get rest slots))
-          (struct-get rest offset)
+          (& rest.slots)
+          rest.offset
           (+ new-offset 1)
           0
           rest-len)
@@ -7239,7 +7148,7 @@
   [modules : AstDeclModuleList]) : AstDeclPathList
   (let
     [owner-ids : (__tl_dyn-array i64)
-      (array.make-array i64 (array-length (struct-get paths slots)))]
+      (array.make-array i64 (array-length paths.slots))]
     [index : i64 0]
     [count : i64 (ast-decl-path-list-len (& paths))]
     (begin
@@ -7262,14 +7171,14 @@
                 recorded-owner-id]
               [else cbi.compiler-builtin-id-fix-empty])]
           (begin
-            (array-set! owner-ids (+ (struct-get paths offset) index) owner-id)
+            (set! (array-ref owner-ids (+ paths.offset index)) owner-id)
             (set! index (+ index 1)))))
       (AstDeclPathList
-        (struct-get paths slots)
+        paths.slots
         owner-ids
-        (struct-get paths offset)
-        (struct-get paths len)
-        (struct-get paths prependable)))))
+        paths.offset
+        paths.len
+        paths.prependable))))
 
 (define (ast-program [decls : AstDeclList]) : AstProgram
   (AstProgram.Program (box decls)))
@@ -7416,7 +7325,9 @@
             (if (> (array-ref ast-compaction-profile-survivor-type-map slot) 0)
               unit
               (begin
-                (array-set! ast-compaction-profile-survivor-type-map slot 1)
+                (set!
+                  (array-ref ast-compaction-profile-survivor-type-map slot)
+                  1)
                 (set!
                   ast-compaction-profile-survivor-type-nodes
                   (+ ast-compaction-profile-survivor-type-nodes 1))))))))))
@@ -7454,10 +7365,10 @@
     (array.make-array i32 cap)))
 
 (define (ast-compaction-remap-source-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
-  (struct-get remap source-pools))
+  remap.source-pools)
 
 (define (ast-compaction-remap-dest-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
-  (struct-get remap dest-pools))
+  remap.dest-pools)
 
 (define (ast-compaction-copy-string [text : String]) : String
   (string.copy (& text)))
@@ -7532,11 +7443,11 @@
     [(AstType.ExprList) (AstType.ExprList)]
     [(AstType.Func args ret)
       (AstType.Func
-        (box (ast-compaction-remap-type-list remap (box-get args)))
+        (box (ast-compaction-remap-type-list remap (__tl-box-place args)))
         (ast-compaction-remap-type-id remap ret))]
     [(AstType.Tuple elems)
       (AstType.Tuple
-        (box (ast-compaction-remap-type-list remap (box-get elems))))]
+        (box (ast-compaction-remap-type-list remap (__tl-box-place elems))))]
     [(AstType.Array elem count)
       (AstType.Array (ast-compaction-remap-type-id remap elem) count)]
     [(AstType.DynArray elem)
@@ -7552,17 +7463,17 @@
     [(AstType.EnumArgs name lifetimes)
       (AstType.EnumArgs
         name
-        (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
+        (box (ast-compaction-remap-lifetime-list (__tl-box-place lifetimes))))]
     [(AstType.Struct name) (AstType.Struct name)]
     [(AstType.StructArgs name lifetimes)
       (AstType.StructArgs
         name
-        (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
+        (box (ast-compaction-remap-lifetime-list (__tl-box-place lifetimes))))]
     [(AstType.Var name) (AstType.Var name)]
     [(AstType.VarArgs name lifetimes)
       (AstType.VarArgs
         name
-        (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
+        (box (ast-compaction-remap-lifetime-list (__tl-box-place lifetimes))))]
     [(AstType.Ptr elem) (AstType.Ptr (ast-compaction-remap-type-id remap elem))]
     [(AstType.MutPtr elem)
       (AstType.MutPtr (ast-compaction-remap-type-id remap elem))]
@@ -7575,13 +7486,13 @@
   [remap : AstProgramCompactionRemap]
   [id : i64]) : i64
   (let
-    [base : i64 (struct-get remap shared-type-base)]
+    [base : i64 remap.shared-type-base]
     (if (< id base)
       (begin
         (cfg compile-profile (ast-compaction-profile-note-shared-type! id))
         id)
       (let
-        [type-map : (__tl_dyn-array i32) (struct-get remap type-map)]
+        [type-map : (__tl_dyn-array i32) remap.type-map]
         [slot : i64 (- id base)]
         [cached : i32 (array-ref type-map slot)]
         (if (> cached 0)
@@ -7596,7 +7507,7 @@
             [new-ty : AstType (ast-compaction-remap-type remap source-ty)]
             [new-id : i64 (ast-node-pool-context-type-push dest-pools new-ty)]
             (begin
-              (array-set! type-map slot (cast (+ new-id 1) : i32))
+              (set! (array-ref type-map slot) (cast (+ new-id 1) : i32))
               new-id)))))))
 
 (define (ast-compaction-remap-maybe-type
@@ -7908,7 +7819,7 @@
         (ast-compaction-copy-string path)
         (ast-compaction-remap-maybe-module-name module-name)
         (ast-compaction-remap-maybe-import-alias alias)
-        (box (box-get span)))]))
+        (box (__tl-box-place span)))]))
 
 (define (ast-compaction-remap-dispatch-variant [variant : AstDispatchVariant]) : AstDispatchVariant
   (match variant
@@ -7963,16 +7874,16 @@
       (AstPattern.Var name (ast-compaction-remap-maybe-type remap maybe-ty))]
     [(AstPattern.Tuple items)
       (AstPattern.Tuple
-        (box (ast-compaction-remap-pattern-list remap (box-get items))))]
+        (box (ast-compaction-remap-pattern-list remap (__tl-box-place items))))]
     [(AstPattern.Array items)
       (AstPattern.Array
-        (box (ast-compaction-remap-pattern-list remap (box-get items))))]
+        (box (ast-compaction-remap-pattern-list remap (__tl-box-place items))))]
     [(AstPattern.Wildcard) AstPattern.Wildcard]
     [(AstPattern.Binding name) (AstPattern.Binding name)]
     [(AstPattern.Variant name items)
       (AstPattern.Variant
         name
-        (box (ast-compaction-remap-pattern-list remap (box-get items))))]
+        (box (ast-compaction-remap-pattern-list remap (__tl-box-place items))))]
     [(AstPattern.Literal lit)
       (AstPattern.Literal (ast-compaction-remap-literal lit))]))
 
@@ -8180,7 +8091,7 @@
         (ast-compaction-remap-expr-id remap then-expr)
         (ast-compaction-remap-expr-id remap else-expr))]
     [(AstExpr.Let payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(AstLet.Let bindings body)
           (AstExpr.Let
             (box
@@ -8188,7 +8099,7 @@
                 (ast-compaction-remap-let-binding-list remap bindings)
                 (ast-compaction-remap-expr-id remap body))))])]
     [(AstExpr.Lambda payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(AstLambda.Lambda params ret body)
           (AstExpr.Lambda
             (box
@@ -8296,7 +8207,7 @@
         lifetime-id
         (ast-compaction-remap-expr-id remap inner))]
     [(AstExpr.Match payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(AstMatch.Match scrutinee arms)
           (AstExpr.Match
             (box
@@ -8304,7 +8215,7 @@
                 (ast-compaction-remap-expr-id remap scrutinee)
                 (ast-compaction-remap-match-arm-list remap arms))))])]
     [(AstExpr.Foreach payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(AstForeach.Foreach name index-ty start end body)
           (AstExpr.Foreach
             (box
@@ -8315,7 +8226,7 @@
                 (ast-compaction-remap-expr-id remap end)
                 (ast-compaction-remap-expr-id remap body))))])]
     [(AstExpr.SpmdReduce payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(AstSpmdReduce.Reduce op index index-ty start end init value)
           (AstExpr.SpmdReduce
             (box
@@ -8328,7 +8239,7 @@
                 (ast-compaction-remap-expr-id remap init)
                 (ast-compaction-remap-expr-id remap value))))])]
     [(AstExpr.SpmdScan payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(AstSpmdScan.Scan
             op
             index
@@ -8383,7 +8294,7 @@
         (ast-compaction-remap-expr-id remap arena)
         (ast-compaction-remap-expr-list remap body))]
     [(AstExpr.WithResource payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(AstWithResource.WithResource bindings body)
           (AstExpr.WithResource
             (box
@@ -8489,16 +8400,16 @@
   [remap : AstProgramCompactionRemap]
   [id : i64]) : i64
   (let
-    [base : i64 (struct-get remap shared-expr-base)]
+    [base : i64 remap.shared-expr-base]
     (if (< id base)
       (begin
         (cfg compile-profile (ast-compaction-profile-note-source-expr!))
         id)
       (let
-        [expr-map : (__tl_dyn-array i32) (struct-get remap expr-map)]
+        [expr-map : (__tl_dyn-array i32) remap.expr-map]
         [slot : i64 (- id base)]
         [cached : i32 (array-ref expr-map slot)]
-        [persist? : bool (struct-get remap persist-in-place)]
+        [persist? : bool remap.persist-in-place]
         (if (> cached 0)
           (if persist?
             id
@@ -8512,14 +8423,12 @@
             (let
               [_mark : unit
                 (begin
-                  (array-set! expr-map slot (cast 1 : i32))
+                  (set! (array-ref expr-map slot) (cast 1 : i32))
                   (cfg
                     compile-profile
                     (ast-compaction-profile-note-survivor-expr!)))]
               [source-expr : AstExpr
-                (ast-expr-segment-bases-get
-                  (struct-get remap source-expr-bases)
-                  id)]
+                (ast-expr-segment-bases-get remap.source-expr-bases id)]
               [owned-expr : AstExpr
                 (ast-compaction-remap-expr remap source-expr)]
               (begin
@@ -8532,14 +8441,12 @@
               [dest-pools : AstNodePoolContext
                 (ast-compaction-remap-dest-pools remap)]
               [source-expr : AstExpr
-                (ast-expr-segment-bases-get
-                  (struct-get remap source-expr-bases)
-                  id)]
+                (ast-expr-segment-bases-get remap.source-expr-bases id)]
               [new-expr : AstExpr (ast-compaction-remap-expr remap source-expr)]
               [new-id : i64
                 (ast-node-pool-context-expr-push dest-pools new-expr)]
               (begin
-                (array-set! expr-map slot (cast (+ new-id 1) : i32))
+                (set! (array-ref expr-map slot) (cast (+ new-id 1) : i32))
                 new-id))))))))
 
 (define (ast-compaction-remap-generated-meta
@@ -8557,7 +8464,7 @@
 (define (ast-compaction-remap-decl-meta
   [remap : AstProgramCompactionRemap]
   [meta : AstDeclMeta]) : AstDeclMeta
-  (match (box-get (struct-get meta value))
+  (match (__tl-box-place meta.value)
     [(AstDeclMetaValue.Runtime) (ast-global-shared-view ast-decl-meta-runtime)]
     [(AstDeclMetaValue.Comptime generated)
       (AstDeclMeta
@@ -8573,7 +8480,7 @@
     [(AstDecl.ModuleBody name body)
       (AstDecl.ModuleBody
         name
-        (box (ast-compaction-remap-decl-list remap (box-get body))))]
+        (box (ast-compaction-remap-decl-list remap (__tl-box-place body))))]
     [(AstDecl.Def decl-meta name maybe-ty value)
       (AstDecl.Def
         (ast-compaction-remap-decl-meta remap decl-meta)
@@ -8600,7 +8507,8 @@
         (ast-compaction-remap-decl-meta remap decl-meta)
         name
         kind
-        (box (ast-compaction-remap-extern-metadata remap (box-get metadata)))
+        (box
+          (ast-compaction-remap-extern-metadata remap (__tl-box-place metadata)))
         (ast-compaction-remap-type remap ty))]
     [(AstDecl.DefEnum decl-meta name cleanup variants)
       (AstDecl.DefEnum
@@ -8650,7 +8558,8 @@
     [(AstDecl.Test name body span)
       (AstDecl.Test name (ast-compaction-remap-expr-id remap body) span)]
     [(AstDecl.Unsafe inner)
-      (AstDecl.Unsafe (box (ast-compaction-remap-decl remap (box-get inner))))]))
+      (AstDecl.Unsafe
+        (box (ast-compaction-remap-decl remap (__tl-box-place inner))))]))
 
 (define (ast-compaction-remap-decl-list
   [remap : AstProgramCompactionRemap]
@@ -8660,8 +8569,8 @@
   ;; extra row copy buy nothing.
   (let
     [count : i64 (ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [decl-slots : (__tl_dyn-array AstDecl) decls.slots]
     [index : i64 0]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
     (begin
@@ -8681,7 +8590,7 @@
   (match program
     [(AstProgram.Program decls)
       (AstProgram.Program
-        (box (ast-compaction-remap-decl-list remap (box-get decls))))]))
+        (box (ast-compaction-remap-decl-list remap (__tl-box-place decls))))]))
 
 ;: Copy `program` from `source-pools` into a reset `dest-pools`, remapping every
 ;: reachable expression id and recursive type id into dense destination ids.
@@ -9058,9 +8967,7 @@
   (if (>= index len)
     true
     (and
-      (=
-        (array-ref (struct-get a slots) index)
-        (array-ref (struct-get b slots) index))
+      (= (array-ref a.slots index) (array-ref b.slots index))
       (ast-lifetime-list-eq-at? a b len (+ index 1)))))
 
 (define (ast-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
@@ -9081,8 +8988,8 @@
     true
     (and
       (ast-type-eq?
-        (ast-node-pool-reader-type-get (array-ref (struct-get a slots) index))
-        (ast-node-pool-reader-type-get (array-ref (struct-get b slots) index)))
+        (ast-node-pool-reader-type-get (array-ref a.slots index))
+        (ast-node-pool-reader-type-get (array-ref b.slots index)))
       (ast-type-list-eq-at? a b len (+ index 1)))))
 
 (define (ast-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
@@ -9174,7 +9081,7 @@
       (match b
         [(AstType.Func b-args b-ret)
           (and
-            (ast-type-list-eq? (box-get a-args) (box-get b-args))
+            (ast-type-list-eq? (__tl-box-place a-args) (__tl-box-place b-args))
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-ret)
               (ast-node-pool-reader-type-get b-ret)))]
@@ -9182,7 +9089,7 @@
     [(AstType.Tuple a-elems)
       (match b
         [(AstType.Tuple b-elems)
-          (ast-type-list-eq? (box-get a-elems) (box-get b-elems))]
+          (ast-type-list-eq? (__tl-box-place a-elems) (__tl-box-place b-elems))]
         [_ false])]
     [(AstType.Array a-elem a-len)
       (match b
@@ -9243,7 +9150,9 @@
         [(AstType.EnumArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ast-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Struct a-name)
       (match b
@@ -9254,7 +9163,9 @@
         [(AstType.StructArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ast-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Var a-name)
       (match b
@@ -9265,7 +9176,9 @@
         [(AstType.VarArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ast-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Ptr a-elem)
       (match b
@@ -9322,12 +9235,8 @@
     (and
       (ast-type-eq-with-seg-bases?
         seg-bases
-        (ast-type-segment-bases-get
-          seg-bases
-          (array-ref (struct-get a slots) index))
-        (ast-type-segment-bases-get
-          seg-bases
-          (array-ref (struct-get b slots) index)))
+        (ast-type-segment-bases-get seg-bases (array-ref a.slots index))
+        (ast-type-segment-bases-get seg-bases (array-ref b.slots index)))
       (ast-type-list-eq-at-with-seg-bases? seg-bases a b len (+ index 1)))))
 
 ;; Read-only walk entry point: snapshot the type pool's segment-bases once, so
@@ -9427,8 +9336,8 @@
       (match b
         [(AstType.Func b-args b-ret)
           (let
-            [a-arg-list : AstTypeList (box-get a-args)]
-            [b-arg-list : AstTypeList (box-get b-args)]
+            [a-arg-list : AstTypeList (__tl-box-place a-args)]
+            [b-arg-list : AstTypeList (__tl-box-place b-args)]
             [a-arg-len : i64 (ast-type-list-len (& a-arg-list))]
             (and
               (= a-arg-len (ast-type-list-len (& b-arg-list)))
@@ -9447,8 +9356,8 @@
       (match b
         [(AstType.Tuple b-elems)
           (let
-            [a-elem-list : AstTypeList (box-get a-elems)]
-            [b-elem-list : AstTypeList (box-get b-elems)]
+            [a-elem-list : AstTypeList (__tl-box-place a-elems)]
+            [b-elem-list : AstTypeList (__tl-box-place b-elems)]
             [a-elem-len : i64 (ast-type-list-len (& a-elem-list))]
             (and
               (= a-elem-len (ast-type-list-len (& b-elem-list)))
@@ -9524,7 +9433,9 @@
         [(AstType.EnumArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ast-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Struct a-name)
       (match b
@@ -9535,7 +9446,9 @@
         [(AstType.StructArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ast-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Var a-name)
       (match b
@@ -9546,7 +9459,9 @@
         [(AstType.VarArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
-            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (ast-lifetime-list-eq?
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(AstType.Ptr a-elem)
       (match b
@@ -9687,16 +9602,16 @@
   (match pattern
     [(AstPattern.Variant name args-box)
       (let
-        [args : AstPatternList (box-get args-box)]
+        [args : AstPatternList (__tl-box-place args-box)]
         (and
           (= name cbi.compiler-builtin-id-fix-Some)
-          (= (struct-get (& args) len) 1)
+          (= args.len 1)
           (match (ast-pattern-list-get (& args) 0 (ast-pattern-fallback))
             [(AstPattern.Tuple items-box)
               (let
-                [items : AstPatternList (box-get items-box)]
+                [items : AstPatternList (__tl-box-place items-box)]
                 (and
-                  (= (struct-get (& items) len) 2)
+                  (= items.len 2)
                   (match (ast-pattern-list-get
                     (& items)
                     0
@@ -9728,7 +9643,7 @@
 (define (compiler-ast-nested-expr-box-ok? [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
@@ -9758,7 +9673,7 @@
                         [_ false])
                       (match then-expr
                         [(AstExpr.Match match-box)
-                          (match (box-get match-box)
+                          (match (__tl-box-place match-box)
                             [(AstMatch.Match scrut-box arms)
                               (let
                                 [scrut : AstExpr (ast-node-get scrut-box)]
@@ -9835,7 +9750,7 @@
   (match decl
     [(AstDecl.Unsafe inner-box)
       (let
-        [inner : AstDecl (box-get inner-box)]
+        [inner : AstDecl (__tl-box-place inner-box)]
         (and
           (ast-decl-comptime-only? inner)
           (compiler-ast-decl-def-lit-ok? inner generated-name-id 7)))]
@@ -9862,7 +9777,7 @@
     (match program
       [(AstProgram.Program decls-box)
         (let
-          [decls : AstDeclList (box-get decls-box)]
+          [decls : AstDeclList (__tl-box-place decls-box)]
           (match (ast-decl-list-step decls)
             [(AstDeclListStep.Cons first rest-box)
               (let
@@ -9985,12 +9900,12 @@
               [item : AstSpmdSpecialization
                 (ast-spmd-specialization-list-get (& copied-items) 0 fallback)]
               [copied-classes : AstSpmdParamClassList
-                (box-get (struct-get item args))]
+                (__tl-box-place item.args)]
               (and
                 (= (ast-spmd-specialization-list-len (& copied-items)) 1)
-                (= (struct-get item lanes) 8)
-                (= (struct-get item index-param) 0)
-                (match (struct-get item result)
+                (= item.lanes 8)
+                (= item.index-param 0)
+                (match item.result
                   [(AstSpmdResultClass.Varying) true]
                   [_ false])
                 (match (ast-spmd-param-class-list-get
@@ -10024,14 +9939,15 @@
         (AstImportedSpmdMetadata.Package 7 (box callables)))
         [(AstImportedSpmdMetadata.Package name copied-callables)
           (let
-            [copied : AstImportedSpmdCallableList (box-get copied-callables)]
+            [copied : AstImportedSpmdCallableList
+              (__tl-box-place copied-callables)]
             [callable : AstImportedSpmdCallable
               (ast-imported-spmd-callable-list-get
                 (& copied)
                 0
                 (ast-imported-spmd-callable-fallback))]
             [copied-specializations : AstImportedSpmdSpecializationList
-              (struct-get callable specializations)]
+              callable.specializations]
             [item : AstImportedSpmdSpecialization
               (ast-imported-spmd-specialization-list-get
                 (& copied-specializations)
@@ -10040,13 +9956,13 @@
             (and
               (= name 7)
               (= (ast-imported-spmd-callable-list-len (& copied)) 1)
-              (= (struct-get callable signature) 6)
+              (= callable.signature 6)
               (=
                 (ast-imported-spmd-specialization-list-len
                   (& copied-specializations))
                 1)
-              (= (struct-get item lanes) 8)
-              (= (struct-get item symbol) 5)))]
+              (= item.lanes 8)
+              (= item.symbol 5)))]
         [(AstImportedSpmdMetadata.No) false]))))
 
 ;; Pin `ast-expr-node-bytes` / `ast-type-node-bytes` to the compiler's REAL
@@ -10067,8 +9983,8 @@
 (define (ast-expr-node-stride-pinned?) : bool
   (let
     [slots : (__tl_dyn-array AstExpr) (array.make-array AstExpr 2)]
-    [_w0 : unit (array-set! slots 0 (AstExpr.Var 0))]
-    [_w1 : unit (array-set! slots 1 (AstExpr.Comptime 987654321))]
+    [_w0 : unit (set! (array-ref slots 0) (AstExpr.Var 0))]
+    [_w1 : unit (set! (array-ref slots 1) (AstExpr.Comptime 987654321))]
     [base : i64
       (cast
         (unsafe
@@ -10089,8 +10005,8 @@
 (define (ast-type-node-stride-pinned?) : bool
   (let
     [slots : (__tl_dyn-array AstType) (array.make-array AstType 2)]
-    [_w0 : unit (array-set! slots 0 (AstType.I64))]
-    [_w1 : unit (array-set! slots 1 (AstType.Array 123456789 42))]
+    [_w0 : unit (set! (array-ref slots 0) (AstType.I64))]
+    [_w1 : unit (set! (array-ref slots 1) (AstType.Array 123456789 42))]
     [base : i64
       (cast
         (unsafe

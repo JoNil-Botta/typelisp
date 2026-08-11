@@ -7,8 +7,8 @@
 (defmacro (for-each [vec : Expr] [body : Expr]) : unit
   `(let
     [idx : i64 0]
-    (while (< idx (struct-get ,vec len))
-      (,body (array-ref (struct-get ,vec slots) idx))
+    (while (< idx (__tl-project-field-name ,vec "len"))
+      (,body (array-ref (__tl-project-field-name ,vec "slots") idx))
       (set! idx (+ idx 1)))))
 
 (defstruct Ball

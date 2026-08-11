@@ -36,7 +36,7 @@
     (foreach
       ([i : i64 0 4])
       (if (< i 2)
-        (array-set! destination i (array-ref source i))
+        (set! (array-ref destination i) (array-ref source i))
         unit))))
 
 (cfg

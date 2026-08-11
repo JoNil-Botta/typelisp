@@ -122,7 +122,7 @@
 ;: right-sized array so the stepped-over sequence keeps its own storage.
 (define (string-step [args : ProcessStringList]) : ProcessStringStep
   (let
-    [n : i64 (- (struct-get args len) 1)]
+    [n : i64 (- args.len 1)]
     (if (< n 0)
       (ProcessStringStep false "" (args-empty))
       (let
@@ -131,35 +131,35 @@
         (begin
           (while (< i n)
             (begin
-              (array-set! slots i (array-ref (struct-get args slots) (+ i 1)))
+              (set! (array-ref slots i) (array-ref args.slots (+ i 1)))
               (set! i (+ i 1))))
           (ProcessStringStep
             true
-            (array-ref (struct-get args slots) 0)
+            (array-ref args.slots 0)
             (ProcessStringList slots n)))))))
 
 ;: Return whether a destructured argv step contains an item.
 (define (string-step-present? [step : ProcessStringStep]) : bool
-  (struct-get step present))
+  step.present)
 
 ;: Return the argv value from a destructured step, or the empty string.
 (define (string-step-value [step : ProcessStringStep]) : String
-  (struct-get step value))
+  step.value)
 
 ;: Return the argv tail from a destructured step.
 (define (string-step-rest [step : ProcessStringStep]) : ProcessStringList
-  (struct-get step rest))
+  step.rest)
 
 ;: Return the environment name at `index`, or the empty string out of range.
 (define (env-name-ref [env : ProcessEnvList] [index : i64]) : String
-  (if (and (>= index 0) (< index (struct-get env len)))
-    (array-ref (struct-get env names) index)
+  (if (and (>= index 0) (< index env.len))
+    (array-ref env.names index)
     ""))
 
 ;: Return the environment value at `index`, or the empty string out of range.
 (define (env-value-ref [env : ProcessEnvList] [index : i64]) : String
-  (if (and (>= index 0) (< index (struct-get env len)))
-    (array-ref (struct-get env values) index)
+  (if (and (>= index 0) (< index env.len))
+    (array-ref env.values index)
     ""))
 
 ;: Copy a live environment range into parallel destination buffers, preserving
@@ -171,12 +171,14 @@
   [offset : i64]
   [start : i64]) : unit
   (let
-    [n : i64 (struct-get env len)]
+    [n : i64 env.len]
     [i : i64 start]
     (while (< i n)
       (begin
-        (array-set! dst-names (+ offset (- i start)) (env-name-ref env i))
-        (array-set! dst-values (+ offset (- i start)) (env-value-ref env i))
+        (set! (array-ref dst-names (+ offset (- i start))) (env-name-ref env i))
+        (set!
+          (array-ref dst-values (+ offset (- i start)))
+          (env-value-ref env i))
         (set! i (+ i 1))))))
 
 ;: Return a destructured step from an environment override list. The tail is
@@ -184,7 +186,7 @@
 ;: self-tail.
 (define (env-step [env : ProcessEnvList]) : ProcessEnvStep
   (let
-    [n : i64 (struct-get env len)]
+    [n : i64 env.len]
     (if (< n 1)
       (ProcessEnvStep false "" "" (env-empty))
       (let
@@ -195,8 +197,8 @@
         (begin
           (while (< i n)
             (begin
-              (array-set! tail-names (- i 1) (env-name-ref env i))
-              (array-set! tail-values (- i 1) (env-value-ref env i))
+              (set! (array-ref tail-names (- i 1)) (env-name-ref env i))
+              (set! (array-ref tail-values (- i 1)) (env-value-ref env i))
               (set! i (+ i 1))))
           (ProcessEnvStep
             true
@@ -206,19 +208,19 @@
 
 ;: Return whether a destructured env step contains an item.
 (define (env-step-present? [step : ProcessEnvStep]) : bool
-  (struct-get step present))
+  step.present)
 
 ;: Return the env name from a destructured step, or the empty string.
 (define (env-step-name [step : ProcessEnvStep]) : String
-  (struct-get step name))
+  step.name)
 
 ;: Return the env value from a destructured step, or the empty string.
 (define (env-step-value [step : ProcessEnvStep]) : String
-  (struct-get step value))
+  step.value)
 
 ;: Return the env tail from a destructured step.
 (define (env-step-rest [step : ProcessEnvStep]) : ProcessEnvList
-  (struct-get step rest))
+  step.rest)
 
 ;: Return a destructured optional string.
 (define (maybe-string-info [value : ProcessMaybeString]) : ProcessMaybeStringInfo
@@ -228,11 +230,11 @@
 
 ;: Return whether a destructured optional string is present.
 (define (maybe-string-info-present? [info : ProcessMaybeStringInfo]) : bool
-  (struct-get info present))
+  info.present)
 
 ;: Return the string from a destructured optional string, or the empty string.
 (define (maybe-string-info-value [info : ProcessMaybeStringInfo]) : String
-  (struct-get info value))
+  info.value)
 
 ;: Return an empty argument list.
 (define (args-empty) : ProcessStringList
@@ -240,12 +242,12 @@
 
 ;: Return the number of argv entries in `args`.
 (define (args-count [args : ProcessStringList]) : i64
-  (struct-get args len))
+  args.len)
 
 ;: Return the argv entry at `index`, or the empty string when out of range.
 (define (args-ref [args : ProcessStringList] [index : i64]) : String
-  (if (and (>= index 0) (< index (struct-get args len)))
-    (array-ref (struct-get args slots) index)
+  (if (and (>= index 0) (< index args.len))
+    (array-ref args.slots index)
     ""))
 
 ;: Copy the `len` live entries of `args` into `dst` starting at `offset`.
@@ -254,20 +256,20 @@
   [args : ProcessStringList]
   [offset : i64]) : unit
   (let
-    [n : i64 (struct-get args len)]
+    [n : i64 args.len]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! dst (+ offset i) (array-ref (struct-get args slots) i))
+        (set! (array-ref dst (+ offset i)) (array-ref args.slots i))
         (set! i (+ i 1))))))
 
 ;: Prepend an owned argument string to an argv list.
 (define (args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
   (let
-    [n : i64 (struct-get rest len)]
+    [n : i64 rest.len]
     [slots : (__tl_dyn-array String) (array.make-array String (+ n 1))]
     (begin
-      (array-set! slots 0 value)
+      (set! (array-ref slots 0) value)
       (args-copy-into (&mut slots) rest 1)
       (ProcessStringList slots (+ n 1)))))
 
@@ -276,14 +278,14 @@
   (let
     [slots : (__tl_dyn-array String) (array.make-array String 1)]
     (begin
-      (array-set! slots 0 value)
+      (set! (array-ref slots 0) value)
       (ProcessStringList slots 1))))
 
 ;: Concatenate two argument lists while preserving argv order.
 (define (args-append [left : ProcessStringList] [right : ProcessStringList]) : ProcessStringList
   (let
-    [ln : i64 (struct-get left len)]
-    [rn : i64 (struct-get right len)]
+    [ln : i64 left.len]
+    [rn : i64 right.len]
     [slots : (__tl_dyn-array String) (array.make-array String (+ ln rn))]
     (begin
       (args-copy-into (&mut slots) left 0)
@@ -300,7 +302,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (svec.get args i ""))
+          (set! (array-ref slots i) (svec.get args i ""))
           (set! i (+ i 1))))
       (ProcessStringList slots n))))
 
@@ -310,18 +312,18 @@
 
 ;: Return the number of env overrides in `env`.
 (define (env-count [env : ProcessEnvList]) : i64
-  (struct-get env len))
+  env.len)
 
 ;: Prepend owned environment override strings to an env list. The retained
 ;: parent is never mutated.
 (define (env-cons [name : String] [value : String] [rest : ProcessEnvList]) : ProcessEnvList
   (let
-    [n : i64 (struct-get rest len)]
+    [n : i64 rest.len]
     [names : (__tl_dyn-array String) (array.make-array String (+ n 1))]
     [values : (__tl_dyn-array String) (array.make-array String (+ n 1))]
     (begin
-      (array-set! names 0 name)
-      (array-set! values 0 value)
+      (set! (array-ref names 0) name)
+      (set! (array-ref values 0) value)
       (env-copy-into (&mut names) (&mut values) rest 1 0)
       (ProcessEnvList names values (+ n 1)))))
 
@@ -342,11 +344,11 @@
 
 ;: Return the name buffer from a vector-backed env override set.
 (define (env-vec-names [env : (& env ProcessEnvVec)]) : (& env svec.Vec)
-  (& (struct-get env names)))
+  (& env.names))
 
 ;: Return the value buffer from a vector-backed env override set.
 (define (env-vec-values [env : (& env ProcessEnvVec)]) : (& env svec.Vec)
-  (& (struct-get env values)))
+  (& env.values))
 
 ;: Create an empty vector-backed env override set with at least `capacity`
 ;: backing slots in each parallel buffer.
@@ -375,8 +377,8 @@
   [name : String]
   [value : String]) : unit
   (begin
-    (svec.push (&mut (struct-get env names)) name)
-    (svec.push (&mut (struct-get env values)) value)))
+    (svec.push (&mut env.names) name)
+    (svec.push (&mut env.values) value)))
 
 ;: Fill dense public env storage from a vector-backed override set.
 (define (env-vec-to-list-fill
@@ -388,8 +390,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! names i (svec.get (env-vec-names env) i ""))
-        (array-set! values i (svec.get (env-vec-values env) i ""))
+        (set! (array-ref names i) (svec.get (env-vec-names env) i ""))
+        (set! (array-ref values i) (svec.get (env-vec-values env) i ""))
         (set! i (+ i 1))))))
 
 ;: Convert vector-backed env overrides to the dense representation consumed by
@@ -563,23 +565,23 @@
 
 ;: Return the executable path from `command`.
 (define (command-executable [command : ProcessCommand]) : String
-  (struct-get command executable))
+  command.executable)
 
 ;: Return the argv list from `command`.
 (define (command-argv [command : ProcessCommand]) : ProcessStringList
-  (struct-get command argv))
+  command.argv)
 
 ;: Return the cwd setting from `command`.
 (define (command-cwd [command : ProcessCommand]) : ProcessMaybeString
-  (struct-get command cwd))
+  command.cwd)
 
 ;: Return the env override list from `command`.
 (define (command-env [command : ProcessCommand]) : ProcessEnvList
-  (struct-get command env))
+  command.env)
 
 ;: Return the stdin setting from `command`.
 (define (command-stdin [command : ProcessCommand]) : ProcessMaybeString
-  (struct-get command stdin))
+  command.stdin)
 
 ;: Return the process exit status.
 ;:
@@ -589,15 +591,15 @@
 ;: terminations such as 0xC0000005 (reported as 3221225477). Spawn and wait
 ;: failures are never encoded in this field; they are `ProcessError` values.
 (define (output-status [output : ProcessOutput]) : i64
-  (struct-get output status))
+  output.status)
 
 ;: Return captured stdout from `output`.
 (define (output-stdout [output : ProcessOutput]) : String
-  (struct-get output stdout))
+  output.stdout)
 
 ;: Return captured stderr from `output`.
 (define (output-stderr [output : ProcessOutput]) : String
-  (struct-get output stderr))
+  output.stderr)
 
 ;: Return true when the process exit status is zero.
 (define (success? [output : ProcessOutput]) : bool
@@ -629,28 +631,24 @@
 (define (child-result-info [result : ResultProcessChild]) : ProcessChildInfo
   (match result
     [(OkProcessChild child)
-      (ProcessChildInfo
-        true
-        (struct-get child pid)
-        (struct-get child stdout-handle)
-        (struct-get child stderr-handle))]
+      (ProcessChildInfo true child.pid child.stdout-handle child.stderr-handle)]
     [(ErrProcessChild _) (ProcessChildInfo false (- 0 1) (- 0 1) (- 0 1))]))
 
 ;: Return true when `info` describes a started child.
 (define (child-info-ok? [info : ProcessChildInfo]) : bool
-  (struct-get info ok))
+  info.ok)
 
 ;: Return the child pid from `info`, or -1 when it is not ok.
 (define (child-info-pid [info : ProcessChildInfo]) : i64
-  (struct-get info pid))
+  info.pid)
 
 ;: Return the child stdout handle from `info`, or -1 when it is not ok.
 (define (child-info-stdout-handle [info : ProcessChildInfo]) : i64
-  (struct-get info stdout-handle))
+  info.stdout-handle)
 
 ;: Return the child stderr handle from `info`, or -1 when it is not ok.
 (define (child-info-stderr-handle [info : ProcessChildInfo]) : i64
-  (struct-get info stderr-handle))
+  info.stderr-handle)
 
 ;: Return the output status, or `fallback` when `result` is an error.
 (define (result-status-or [result : ResultProcessOutput] [fallback : i64]) : i64
@@ -689,7 +687,7 @@
 ;: Return the child pid, or `fallback` when `result` is an error.
 (define (child-result-pid-or [result : ResultProcessChild] [fallback : i64]) : i64
   (match (result-child-normalize result)
-    [(OkProcessChild child) (struct-get child pid)]
+    [(OkProcessChild child) child.pid]
     [(ErrProcessChild _) fallback]))
 
 ;: Return true when an output result carries an invalid-command error.
@@ -759,7 +757,7 @@
 
 ;: Return the first env validation error, or `ProcessNoString`.
 (define (env-validation-error-from [env : ProcessEnvList] [index : i64]) : ProcessMaybeString
-  (if (>= index (struct-get env len))
+  (if (>= index env.len)
     (ProcessNoString)
     (let
       [name : String (env-name-ref env index)]
@@ -880,10 +878,7 @@
 
 ;: Convert a public child handle to the runtime module's no-cycle representation.
 (define (runtime-child [child : ProcessChild]) : process_runtime.ProcessRuntimeChild
-  (process_runtime.child
-    (struct-get child pid)
-    (struct-get child stdout-handle)
-    (struct-get child stderr-handle)))
+  (process_runtime.child child.pid child.stdout-handle child.stderr-handle))
 
 ;: Convert a runtime captured-output result to the public result enum.
 (define (output-from-runtime
@@ -891,15 +886,9 @@
   (let
     [info : process_runtime.ProcessRuntimeOutputInfo
       (process_runtime.result-output-info result)]
-    (if (struct-get info ok)
-      (output-ok-public
-        (struct-get info status)
-        (struct-get info stdout)
-        (struct-get info stderr))
-      (output-error-public
-        (error-from-runtime-kind
-          (struct-get info kind)
-          (struct-get info message))))))
+    (if info.ok
+      (output-ok-public info.status info.stdout info.stderr)
+      (output-error-public (error-from-runtime-kind info.kind info.message)))))
 
 ;: Convert a runtime async-start result to the public result enum.
 (define (child-from-runtime
@@ -907,15 +896,9 @@
   (let
     [info : process_runtime.ProcessRuntimeChildInfo
       (process_runtime.result-child-info result)]
-    (if (struct-get info ok)
-      (child-ok-public
-        (struct-get info pid)
-        (struct-get info stdout-handle)
-        (struct-get info stderr-handle))
-      (child-error-public
-        (error-from-runtime-kind
-          (struct-get info kind)
-          (struct-get info message))))))
+    (if info.ok
+      (child-ok-public info.pid info.stdout-handle info.stderr-handle)
+      (child-error-public (error-from-runtime-kind info.kind info.message)))))
 
 ;: Run a command and capture stdout, stderr, and exit status.
 (define (output [command : ProcessCommand]) : ResultProcessOutput

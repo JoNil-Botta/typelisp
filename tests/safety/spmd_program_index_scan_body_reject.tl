@@ -8,4 +8,4 @@
     sum
     ([i : i64 0 n] [prefix : i64 0])
     i
-    (array-set! out i (program-index))))
+    (set! (array-ref out i) (program-index))))

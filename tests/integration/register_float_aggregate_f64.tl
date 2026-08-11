@@ -20,7 +20,7 @@
   (MixIF 7 8.5))
 
 (define (pair-sum [p : PairF64]) : f64
-  (+ (struct-get p x) (struct-get p y)))
+  (+ p.x p.y))
 
 (define (make-pair [x : f64] [y : f64]) : PairF64
   (PairF64 x y))
@@ -31,10 +31,10 @@
     (PairF64 9.0 10.0)))
 
 (define (mix-i [m : MixIF]) : i64
-  (struct-get m i))
+  m.i)
 
 (define (mix-f [m : MixIF]) : f64
-  (struct-get m f))
+  m.f)
 
 (define (handle [r : FloatRes]) : f64
   (match r
@@ -90,10 +90,10 @@
   (let
     [items : (__tl_dyn-array PairF64) (array.make-array PairF64 2)]
     (begin
-      (array-set! items 0 (PairF64 3.0 4.0))
-      (array-set! items 1 (PairF64 5.0 6.0))
+      (set! (array-ref items 0) (PairF64 3.0 4.0))
+      (set! (array-ref items 1) (PairF64 5.0 6.0))
       (if (= (pair-sum (array-ref items 0)) 7.0)
-        (= (struct-get (array-ref items 1) y) 6.0)
+        (= (__tl-project-field (array-ref items 1) y) 6.0)
         false))))
 
 (define (case-capture) : bool

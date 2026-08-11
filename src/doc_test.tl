@@ -1432,13 +1432,13 @@
                         target))]
                   [(driver.ResultCompilerDriver.Err diag)
                     (build_run_core.ResultSourceToolString.Err
-                      (cdiag.compiler-diagnostic-render (box-get diag)))])]
+                      (cdiag.compiler-diagnostic-render (__tl-box-place diag)))])]
               [(lower.ResultCompilerLower.Err diag)
                 (build_run_core.ResultSourceToolString.Err
-                  (cdiag.compiler-diagnostic-render (box-get diag)))])]
+                  (cdiag.compiler-diagnostic-render (__tl-box-place diag)))])]
           [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
             (build_run_core.ResultSourceToolString.Err
-              (cdiag.compiler-diagnostic-render (box-get diag)))])]
+              (cdiag.compiler-diagnostic-render (__tl-box-place diag)))])]
       (begin
         (driver.compiler-driver-state-clear-pool-backed-caches!)
         (driver.compiler-driver-reset-file-state!)
@@ -1691,7 +1691,7 @@
               index
               (doc-test-unexpected-error-message
                 index
-                (cdiag.compiler-diagnostic-list-first (box-get diag))))))])))
+                (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))))])))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
@@ -1742,7 +1742,7 @@
               index
               (doc-test-unexpected-error-message
                 index
-                (cdiag.compiler-diagnostic-list-first (box-get diag))))))])))
+                (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))))])))
 
 (define (doc-test-check-example-with-roots
   [path : String]
@@ -2038,7 +2038,7 @@
     (let
       [dep : compiler_load.CompilerPkgDep
         (compiler_load.compiler-pkg-dep-list-at deps index)]
-      [dep-path : String (struct-get dep path)]
+      [dep-path : String dep.path]
       [dep-root : String
         (compiler_load.compiler-load-normalize-path
           (if (compiler_load.compiler-load-absolute-path? dep-path)

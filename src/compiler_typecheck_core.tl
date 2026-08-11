@@ -407,9 +407,8 @@
     [cell : (__tl_dyn-array TcTopEnvMembershipStateData)
       (array.make-array TcTopEnvMembershipStateData 1)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (TcTopEnvMembershipStateData
           0
           (array.make-array i64 tc-topenv-renderable-table-capacity)
@@ -432,9 +431,8 @@
     [cell : (__tl_dyn-array TcThreadNameKindStateData)
       (array.make-array TcThreadNameKindStateData 1)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (TcThreadNameKindStateData
           (tc_i64_i64_map.with-capacity 64)
           1
@@ -454,9 +452,8 @@
     [cell : (__tl_dyn-array TcInlayHintStateData)
       (array.make-array TcInlayHintStateData 1)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (TcInlayHintStateData
           false
           0
@@ -476,9 +473,8 @@
     [cell : (__tl_dyn-array TcMacroCallSiteStateData)
       (array.make-array TcMacroCallSiteStateData 1)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (TcMacroCallSiteStateData
           false
           (array.make-array i64 0)
@@ -518,7 +514,7 @@
     [cell : (__tl_dyn-array TcScratchArenaStateData)
       (array.make-array TcScratchArenaStateData 1)]
     (begin
-      (array-set! cell 0 (TcScratchArenaStateData 0 0 0 0 0))
+      (set! (array-ref cell 0) (TcScratchArenaStateData 0 0 0 0 0))
       (TcScratchArenaState
         (cast
           (unsafe
@@ -530,9 +526,8 @@
   (let
     [cell : (__tl_dyn-array TcJobStateData) (array.make-array TcJobStateData 1)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (TcJobStateData
           (tc-source-key-cache-state-new)
           (tc-topenv-membership-state-new)
@@ -549,15 +544,16 @@
 
 (define (tc-job-state-data [state : TcJobState]) : TcJobStateData
   (unsafe
-    (ptr-read
-      (int->ptr (cast (struct-get state address) : u64) : (Ptr TcJobStateData)))))
+    (ptr-read (int->ptr (cast state.address : u64) : (Ptr TcJobStateData)))))
 
 (defmacro (tc-job-state-field [state : Expr] [field : Expr] [_T : type]) : Expr
   `(unsafe
     (ptr-read
       (ptr-cast
         (ptr-offset
-          (int->ptr (cast (struct-get ,state address) : u64) : (Ptr u8))
+          (int->ptr
+            (cast ,(comptime.expr-struct-get state "address") : u64)
+            : (Ptr u8))
           (comptime (offset-of (type TcJobStateData) ,field)))
         : (Ptr ,_T)))))
 
@@ -577,7 +573,7 @@
   (tc-job-state-field state macro-call-sites TcMacroCallSiteState))
 
 (define (tc-job-state-scratch-arenas [state : TcJobState]) : TcScratchArenaState
-  (struct-get (tc-job-state-data state) scratch-arenas))
+  (__tl-project-field (tc-job-state-data state) scratch-arenas))
 
 (define (tc-job-state-macro-program-view-address [state : TcJobState]) : i64
   (tc-job-state-field state macro-program-view-address i64))
@@ -589,7 +585,7 @@
     (ptr-write!
       (ptr-cast
         (ptr-offset
-          (int->ptr (cast (struct-get state address) : u64) : (Ptr u8))
+          (int->ptr (cast state.address : u64) : (Ptr u8))
           (comptime
             (offset-of (type TcJobStateData) macro-program-view-address)))
         : (MutPtr i64))
@@ -598,56 +594,44 @@
 (define (tc-scratch-arena-state-data [state : TcScratchArenaState]) : TcScratchArenaStateData
   (unsafe
     (ptr-read
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (Ptr TcScratchArenaStateData)))))
+      (int->ptr (cast state.address : u64) : (Ptr TcScratchArenaStateData)))))
 
 (define (tc-scratch-arena-state-data-set!
   [state : TcScratchArenaState]
   [data : TcScratchArenaStateData]) : unit
   (unsafe
     (ptr-write!
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (MutPtr TcScratchArenaStateData))
+      (int->ptr (cast state.address : u64) : (MutPtr TcScratchArenaStateData))
       data)))
 
 (define (tc-inlay-hint-state-data [state : TcInlayHintState]) : TcInlayHintStateData
   (unsafe
     (ptr-read
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (Ptr TcInlayHintStateData)))))
+      (int->ptr (cast state.address : u64) : (Ptr TcInlayHintStateData)))))
 
 (define (tc-inlay-hint-state-data-set!
   [state : TcInlayHintState]
   [data : TcInlayHintStateData]) : unit
   (unsafe
     (ptr-write!
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (MutPtr TcInlayHintStateData))
+      (int->ptr (cast state.address : u64) : (MutPtr TcInlayHintStateData))
       data)))
 
 (define (tc-macro-call-site-state-data [state : TcMacroCallSiteState]) : TcMacroCallSiteStateData
   (unsafe
     (ptr-read
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (Ptr TcMacroCallSiteStateData)))))
+      (int->ptr (cast state.address : u64) : (Ptr TcMacroCallSiteStateData)))))
 
 (define (tc-macro-call-site-state-data-set!
   [state : TcMacroCallSiteState]
   [data : TcMacroCallSiteStateData]) : unit
   (unsafe
     (ptr-write!
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (MutPtr TcMacroCallSiteStateData))
+      (int->ptr (cast state.address : u64) : (MutPtr TcMacroCallSiteStateData))
       data)))
 
 (define (tc-macro-call-site-state-enabled? [state : TcMacroCallSiteState]) : bool
-  (struct-get (tc-macro-call-site-state-data state) enabled))
+  (__tl-project-field (tc-macro-call-site-state-data state) enabled))
 
 (define (tc-macro-call-site-state-set-enabled!
   [state : TcMacroCallSiteState]
@@ -655,15 +639,13 @@
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (begin
-      (set! (struct-get data enabled) enabled)
+      (set! data.enabled enabled)
       (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-topenv-membership-state-data [state : TcTopEnvMembershipState]) : TcTopEnvMembershipStateData
   (unsafe
     (ptr-read
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (Ptr TcTopEnvMembershipStateData)))))
+      (int->ptr (cast state.address : u64) : (Ptr TcTopEnvMembershipStateData)))))
 
 (define (tc-topenv-membership-state-data-set!
   [state : TcTopEnvMembershipState]
@@ -671,25 +653,21 @@
   (unsafe
     (ptr-write!
       (int->ptr
-        (cast (struct-get state address) : u64)
+        (cast state.address : u64)
         : (MutPtr TcTopEnvMembershipStateData))
       data)))
 
 (define (tc-thread-name-kind-state-data [state : TcThreadNameKindState]) : TcThreadNameKindStateData
   (unsafe
     (ptr-read
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (Ptr TcThreadNameKindStateData)))))
+      (int->ptr (cast state.address : u64) : (Ptr TcThreadNameKindStateData)))))
 
 (define (tc-thread-name-kind-state-data-set!
   [state : TcThreadNameKindState]
   [data : TcThreadNameKindStateData]) : unit
   (unsafe
     (ptr-write!
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (MutPtr TcThreadNameKindStateData))
+      (int->ptr (cast state.address : u64) : (MutPtr TcThreadNameKindStateData))
       data)))
 
 (define (tc-job-state-set-topenv-membership-enabled!
@@ -701,7 +679,7 @@
     [data : TcTopEnvMembershipStateData
       (tc-topenv-membership-state-data membership)]
     (begin
-      (set! (struct-get data accelerator-enabled) enabled)
+      (set! data.accelerator-enabled enabled)
       (tc-topenv-membership-state-data-set! membership data))))
 
 (define (tc-job-state-set-thread-name-kind-enabled!
@@ -712,33 +690,33 @@
     [data : TcThreadNameKindStateData
       (tc-thread-name-kind-state-data thread-state)]
     (begin
-      (set! (struct-get data accelerator-enabled) enabled)
+      (set! data.accelerator-enabled enabled)
       (tc-thread-name-kind-state-data-set! thread-state data))))
 
 (define (tc-topenv-membership-state-reset! [state : TcTopEnvMembershipState]) : unit
   (let
     [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
     (begin
-      (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
-      (set! (struct-get data intern-table-id) -1)
-      (set! (struct-get data intern-generation) -1)
-      (set! (struct-get data mode) 0)
+      (set! data.epoch (+ data.epoch 1))
+      (set! data.intern-table-id -1)
+      (set! data.intern-generation -1)
+      (set! data.mode 0)
       (tc-topenv-membership-state-data-set! state data))))
 
 (define (tc-thread-name-kind-state-reset! [state : TcThreadNameKindState]) : unit
   (let
     [data : TcThreadNameKindStateData (tc-thread-name-kind-state-data state)]
     (begin
-      (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
-      (set! (struct-get data intern-table-id) -1)
-      (set! (struct-get data intern-generation) -1)
+      (set! data.epoch (+ data.epoch 1))
+      (set! data.intern-table-id -1)
+      (set! data.intern-generation -1)
       (tc-thread-name-kind-state-data-set! state data))))
 
 (define (tc-source-key-cache-state-reset! [state : TcSourceKeyCacheState]) : unit
   (begin
-    (array-set! (struct-get state control) 2 0)
-    (array-set! (struct-get state control) 5 0)
-    (array-set! (struct-get state control) 9 0)))
+    (set! (array-ref state.control 2) 0)
+    (set! (array-ref state.control 5) 0)
+    (set! (array-ref state.control 9) 0)))
 
 (define tc-macro-call-site-record-stride : i64
   12)
@@ -749,14 +727,14 @@
 (define (tc-macro-call-site-state-storage-grow! [state : TcMacroCallSiteState]) : unit
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    [old-records : (__tl_dyn-array i64) (struct-get data records)]
-    [old-capacity : i64 (struct-get data capacity)]
+    [old-records : (__tl_dyn-array i64) data.records]
+    [old-capacity : i64 data.capacity]
     [new-capacity : i64
       (if (< old-capacity 1)
         16
         (* old-capacity 2))]
     [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 (struct-get data fixed-storage-arena)]
+    [owner : i64 data.fixed-storage-arena]
     [_set-owner : unit
       (unsafe
         (arena.tl_arena_set owner))]
@@ -764,20 +742,18 @@
       (array.make-array i64 (* new-capacity tc-macro-call-site-record-stride))]
     [index : i64 0]
     (begin
-      (while (<
-        index
-        (* (struct-get data len) tc-macro-call-site-record-stride))
+      (while (< index (* data.len tc-macro-call-site-record-stride))
         (begin
-          (array-set! new-records index (array-ref old-records index))
+          (set! (array-ref new-records index) (array-ref old-records index))
           (set! index (+ index 1))))
-      (set! (struct-get data records) new-records)
-      (set! (struct-get data capacity) new-capacity)
-      (set! (struct-get data fixed-storage-arena) (arena.tl_arena_current))
+      (set! data.records new-records)
+      (set! data.capacity new-capacity)
+      (set! data.fixed-storage-arena (arena.tl_arena_current))
       (tc-macro-call-site-state-data-set! state data)
       (unsafe
         (arena.tl_arena_set
           (if (= previous owner)
-            (struct-get data fixed-storage-arena)
+            data.fixed-storage-arena
             previous))))))
 
 (define (tc-macro-call-site-record-key-eq?
@@ -788,7 +764,7 @@
   [declaration-id : i64]
   [span : ast.AstSourceSpan]) : bool
   (let
-    [records : (__tl_dyn-array i64) (struct-get data records)]
+    [records : (__tl_dyn-array i64) data.records]
     [base : i64 (tc-macro-call-site-record-slot index 0)]
     (and
       (= (array-ref records base) path-id)
@@ -826,7 +802,7 @@
     [index : i64 0]
     [found : bool false]
     (begin
-      (while (and (not found) (< index (struct-get data len)))
+      (while (and (not found) (< index data.len))
         (begin
           (if (tc-macro-call-site-record-key-eq?
             data
@@ -849,9 +825,9 @@
   [span : ast.AstSourceSpan]) : bool
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    (match (tc_i64_i64_map.get (& (struct-get data seen-sites)) site-hash)
+    (match (tc_i64_i64_map.get (& data.seen-sites) site-hash)
       [(tc_i64_i64_map.LookupFound index)
-        (if (and (>= index 0) (< index (struct-get data len)))
+        (if (and (>= index 0) (< index data.len))
           (if (tc-macro-call-site-record-key-eq?
             data
             index
@@ -882,28 +858,26 @@
   [record-index : i64]) : unit
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    (match (tc_i64_i64_map.get (& (struct-get data seen-sites)) site-hash)
+    (match (tc_i64_i64_map.get (& data.seen-sites) site-hash)
       [(tc_i64_i64_map.LookupFound _) unit]
       [(tc_i64_i64_map.LookupMissing)
         (let
           [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 (struct-get data fixed-storage-arena)]
+          [owner : i64 data.fixed-storage-arena]
           [_set-owner : unit
             (unsafe
               (arena.tl_arena_set owner))]
           (begin
             (tc_i64_i64_map.insert-ref!
-              (&mut (struct-get data seen-sites))
+              (&mut data.seen-sites)
               site-hash
               record-index)
-            (set!
-              (struct-get data fixed-storage-arena)
-              (arena.tl_arena_current))
+            (set! data.fixed-storage-arena (arena.tl_arena_current))
             (tc-macro-call-site-state-data-set! state data)
             (unsafe
               (arena.tl_arena_set
                 (if (= previous owner)
-                  (struct-get data fixed-storage-arena)
+                  data.fixed-storage-arena
                   previous)))))])))
 
 (define (tc-macro-call-site-state-record!
@@ -914,7 +888,7 @@
   [span : ast.AstSourceSpan]) : unit
   (let
     [active : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    [path-id : i64 (struct-get active active-path-id)]
+    [path-id : i64 active.active-path-id]
     [site-hash : i64
       (tc-macro-call-site-key-hash
         path-id
@@ -930,40 +904,41 @@
       span)
       unit
       (begin
-        (if (>= (struct-get active len) (struct-get active capacity))
+        (if (>= active.len active.capacity)
           (tc-macro-call-site-state-storage-grow! state)
           unit)
         (let
           [latest : TcMacroCallSiteStateData
             (tc-macro-call-site-state-data state)]
-          [index : i64 (struct-get latest len)]
+          [index : i64 latest.len]
           [base : i64 (tc-macro-call-site-record-slot index 0)]
-          [records : (__tl_dyn-array i64) (struct-get latest records)]
+          [records : (__tl_dyn-array i64) latest.records]
           (begin
-            (array-set! records base path-id)
-            (array-set! records (+ base 1) macro-name-id)
-            (array-set! records (+ base 2) definition-module-id)
-            (array-set! records (+ base 3) declaration-id)
-            (array-set!
-              records
-              (+ base 4)
+            (set! (array-ref records base) path-id)
+            (set! (array-ref records (+ base 1)) macro-name-id)
+            (set! (array-ref records (+ base 2)) definition-module-id)
+            (set! (array-ref records (+ base 3)) declaration-id)
+            (set!
+              (array-ref records (+ base 4))
               (ast.ast-source-span-start-line span))
-            (array-set! records (+ base 5) (ast.ast-source-span-start-col span))
-            (array-set! records (+ base 6) (ast.ast-source-span-end-line span))
-            (array-set! records (+ base 7) (ast.ast-source-span-end-col span))
-            (array-set!
-              records
-              (+ base 8)
-              (if (struct-get active active-editable)
+            (set!
+              (array-ref records (+ base 5))
+              (ast.ast-source-span-start-col span))
+            (set!
+              (array-ref records (+ base 6))
+              (ast.ast-source-span-end-line span))
+            (set!
+              (array-ref records (+ base 7))
+              (ast.ast-source-span-end-col span))
+            (set!
+              (array-ref records (+ base 8))
+              (if active.active-editable
                 1
                 0))
-            (array-set!
-              records
-              (+ base 9)
-              (struct-get active active-generator-id))
-            (array-set! records (+ base 10) (struct-get active active-item-id))
-            (array-set! records (+ base 11) (struct-get active active-key-id))
-            (set! (struct-get latest len) (+ index 1))
+            (set! (array-ref records (+ base 9)) active.active-generator-id)
+            (set! (array-ref records (+ base 10)) active.active-item-id)
+            (set! (array-ref records (+ base 11)) active.active-key-id)
+            (set! latest.len (+ index 1))
             (tc-macro-call-site-state-data-set! state latest)
             (tc-macro-call-site-state-seen-note! state site-hash index)))))))
 
@@ -974,31 +949,31 @@
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (begin
-      (set! (struct-get data active-path-id) (ci.intern path))
+      (set! data.active-path-id (ci.intern path))
       (match meta
         [(ast.AstGeneratedDeclMeta.No)
           (begin
-            (set! (struct-get data active-editable) true)
-            (set! (struct-get data active-generator-id) -1)
-            (set! (struct-get data active-item-id) -1)
-            (set! (struct-get data active-key-id) -1))]
+            (set! data.active-editable true)
+            (set! data.active-generator-id -1)
+            (set! data.active-item-id -1)
+            (set! data.active-key-id -1))]
         [(ast.AstGeneratedDeclMeta.Some generator item _ key)
           (begin
-            (set! (struct-get data active-editable) false)
-            (set! (struct-get data active-generator-id) (ci.intern generator))
-            (set! (struct-get data active-item-id) (ci.intern item))
-            (set! (struct-get data active-key-id) (ci.intern key)))])
+            (set! data.active-editable false)
+            (set! data.active-generator-id (ci.intern generator))
+            (set! data.active-item-id (ci.intern item))
+            (set! data.active-key-id (ci.intern key)))])
       (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-macro-call-site-state-active-decl [state : TcMacroCallSiteState]) : TcMacroCallSiteActiveDecl
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (TcMacroCallSiteActiveDecl
-      (struct-get data active-path-id)
-      (struct-get data active-editable)
-      (struct-get data active-generator-id)
-      (struct-get data active-item-id)
-      (struct-get data active-key-id))))
+      data.active-path-id
+      data.active-editable
+      data.active-generator-id
+      data.active-item-id
+      data.active-key-id)))
 
 (define (tc-macro-call-site-state-restore-active-decl!
   [state : TcMacroCallSiteState]
@@ -1006,27 +981,25 @@
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (begin
-      (set! (struct-get data active-path-id) (struct-get active path-id))
-      (set! (struct-get data active-editable) (struct-get active editable))
-      (set!
-        (struct-get data active-generator-id)
-        (struct-get active generator-id))
-      (set! (struct-get data active-item-id) (struct-get active item-id))
-      (set! (struct-get data active-key-id) (struct-get active key-id))
+      (set! data.active-path-id active.path-id)
+      (set! data.active-editable active.editable)
+      (set! data.active-generator-id active.generator-id)
+      (set! data.active-item-id active.item-id)
+      (set! data.active-key-id active.key-id)
       (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-macro-call-site-state-reset! [state : TcMacroCallSiteState]) : unit
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (begin
-      (set! (struct-get data len) 0)
-      (set! (struct-get data active-path-id) -1)
-      (set! (struct-get data active-editable) false)
-      (set! (struct-get data active-generator-id) -1)
-      (set! (struct-get data active-item-id) -1)
-      (set! (struct-get data active-key-id) -1)
-      (tc-cache-map-clear! (&mut (struct-get data seen-sites)))
-      (tc-cache-map-clear! (&mut (struct-get data definition-paths)))
+      (set! data.len 0)
+      (set! data.active-path-id -1)
+      (set! data.active-editable false)
+      (set! data.active-generator-id -1)
+      (set! data.active-item-id -1)
+      (set! data.active-key-id -1)
+      (tc-cache-map-clear! (&mut data.seen-sites))
+      (tc-cache-map-clear! (&mut data.definition-paths))
       (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-macro-call-site-text [id : i64]) : String
@@ -1035,7 +1008,7 @@
     (ci.intern-str id)))
 
 (define (tc-macro-call-site-count-for-state [state : TcMacroCallSiteState]) : i64
-  (struct-get (tc-macro-call-site-state-data state) len))
+  (__tl-project-field (tc-macro-call-site-state-data state) len))
 
 (define (tc-macro-call-site-field-for-state
   [state : TcMacroCallSiteState]
@@ -1044,10 +1017,8 @@
   [fallback : i64]) : i64
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    (if (and (>= index 0) (< index (struct-get data len)))
-      (array-ref
-        (struct-get data records)
-        (tc-macro-call-site-record-slot index field))
+    (if (and (>= index 0) (< index data.len))
+      (array-ref data.records (tc-macro-call-site-record-slot index field))
       fallback)))
 
 (define (tc-macro-call-site-path-for-state
@@ -1148,7 +1119,7 @@
             unit)
           (unsafe
             (arena.tl_arena_set tc-serial-job-state-arena))
-          (array-set! tc-serial-job-state-cell 0 (tc-job-state-new))
+          (set! (array-ref tc-serial-job-state-cell 0) (tc-job-state-new))
           ;; Large table allocation can grow and replace the current arena
           ;; segment, so retain the updated handle before restoring the caller.
           (set! tc-serial-job-state-arena (arena.tl_arena_current))
@@ -1420,9 +1391,8 @@
     [source-session : ci.InternSourceNameSession
       (ci.intern-source-name-session-handle-session source-names)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (TcBodyStateData
           false
           false
@@ -1444,11 +1414,11 @@
         cell
         job-state
         (tc-job-state-inlay-hints job-state)
-        (struct-get
+        (__tl-project-field
           (tc-inlay-hint-state-data (tc-job-state-inlay-hints job-state))
           enabled)
-        (struct-get source-session table-id)
-        (struct-get source-session reset-generation)))))
+        source-session.table-id
+        source-session.reset-generation))))
 
 (define (tc-body-state-new-with-job-state [job-state : TcJobState]) : TcBodyState
   (tc-body-state-new-with-job-state-and-source-names
@@ -1459,19 +1429,22 @@
   (tc-body-state-new-with-job-state (tc-serial-job-state)))
 
 (define (tc-body-state-data-value [state : TcBodyState]) : TcBodyStateData
-  (array.ref (struct-get state data) 0))
+  (array.ref state.data 0))
 
 (define (tc-body-state-data-set! [state : TcBodyState] [data : TcBodyStateData]) : unit
-  (array-set! (struct-get state data) 0 data))
+  (set! (array-ref state.data 0) data))
 
 (define (tc-body-state-storage-arena-value [state : TcBodyState]) : i64
-  (struct-get (tc-body-state-data-value state) type-fact-storage-arena))
+  (__tl-project-field (tc-body-state-data-value state) type-fact-storage-arena))
 
 (define (tc-body-state-type-fact-capacity [state : TcBodyState]) : i64
-  (array.length (struct-get (tc-body-state-data-value state) type-fact-types)))
+  (array.length
+    (__tl-project-field (tc-body-state-data-value state) type-fact-types)))
 
 (define (tc-body-state-early-exit-source-limit [state : TcBodyState]) : i64
-  (struct-get (tc-body-state-data-value state) early-exit-source-expr-limit))
+  (__tl-project-field
+    (tc-body-state-data-value state)
+    early-exit-source-expr-limit))
 
 (define (tc-body-early-exit-facts-start-with-limit!
   [state : TcBodyState]
@@ -1480,16 +1453,16 @@
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (begin
       (set!
-        (struct-get data early-exit-facts)
+        data.early-exit-facts
         (array.make-array i64 (/ (+ expr-limit 63) 64)))
       (set!
-        (struct-get data early-exit-known)
+        data.early-exit-known
         (array.make-array i64 (/ (+ expr-limit 63) 64)))
-      (set! (struct-get data early-exit-current) false)
-      (set! (struct-get data early-exit-suppress-depth) 0)
-      (set! (struct-get data early-exit-source-expr-limit) expr-limit)
-      (set! (struct-get data early-exit-facts-ready) false)
-      (set! (struct-get data early-exit-facts-collecting) true)
+      (set! data.early-exit-current false)
+      (set! data.early-exit-suppress-depth 0)
+      (set! data.early-exit-source-expr-limit expr-limit)
+      (set! data.early-exit-facts-ready false)
+      (set! data.early-exit-facts-collecting true)
       (tc-body-state-data-set! state data)
       (tc-body-type-fact-storage-start! state expr-limit))))
 
@@ -1504,8 +1477,8 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (begin
-      (set! (struct-get data early-exit-facts-collecting) false)
-      (set! (struct-get data early-exit-facts-ready) true)
+      (set! data.early-exit-facts-collecting false)
+      (set! data.early-exit-facts-ready true)
       (tc-body-state-data-set! state data)
       (tc-body-type-fact-storage-release! state))))
 
@@ -1513,21 +1486,21 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (begin
-      (set! (struct-get data early-exit-facts-collecting) false)
-      (set! (struct-get data early-exit-facts-ready) false)
-      (set! (struct-get data early-exit-current) false)
-      (set! (struct-get data early-exit-suppress-depth) 0)
-      (set! (struct-get data early-exit-source-expr-limit) -1)
+      (set! data.early-exit-facts-collecting false)
+      (set! data.early-exit-facts-ready false)
+      (set! data.early-exit-current false)
+      (set! data.early-exit-suppress-depth 0)
+      (set! data.early-exit-source-expr-limit -1)
       (tc-body-state-data-set! state data)
       (tc-body-type-fact-storage-release! state))))
 
 (define (tc-body-early-exit-function-start! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    (if (struct-get data early-exit-facts-collecting)
+    (if data.early-exit-facts-collecting
       (begin
-        (set! (struct-get data early-exit-current) false)
-        (set! (struct-get data early-exit-suppress-depth) 0)
+        (set! data.early-exit-current false)
+        (set! data.early-exit-suppress-depth 0)
         (tc-body-state-data-set! state data))
       unit)))
 
@@ -1537,27 +1510,21 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (if (and
-      (struct-get data early-exit-facts-collecting)
+      data.early-exit-facts-collecting
       (>= body-id 0)
-      (< body-id (struct-get data early-exit-source-expr-limit)))
+      (< body-id data.early-exit-source-expr-limit))
       (let
         [word-index : i64 (/ body-id 64)]
         [bit-index : i64 (% body-id 64)]
         [bit : i64 (shl 1 bit-index)]
         (begin
-          (array-set!
-            (struct-get data early-exit-known)
-            word-index
-            (bit-or
-              (array.ref (struct-get data early-exit-known) word-index)
-              bit))
-          (if (struct-get data early-exit-current)
-            (array-set!
-              (struct-get data early-exit-facts)
-              word-index
-              (bit-or
-                (array.ref (struct-get data early-exit-facts) word-index)
-                bit))
+          (set!
+            (array-ref data.early-exit-known word-index)
+            (bit-or (array.ref data.early-exit-known word-index) bit))
+          (if data.early-exit-current
+            (set!
+              (array-ref data.early-exit-facts word-index)
+              (bit-or (array.ref data.early-exit-facts word-index) bit))
             unit)))
       unit)))
 
@@ -1565,32 +1532,32 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (if (and
-      (struct-get data early-exit-facts-collecting)
-      (= (struct-get data early-exit-suppress-depth) 0))
+      data.early-exit-facts-collecting
+      (= data.early-exit-suppress-depth 0))
       (begin
-        (set! (struct-get data early-exit-current) true)
+        (set! data.early-exit-current true)
         (tc-body-state-data-set! state data))
       unit)))
 
 (define (tc-body-early-exit-suppress-push! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    (if (struct-get data early-exit-facts-collecting)
+    (if data.early-exit-facts-collecting
       (begin
         (set!
-          (struct-get data early-exit-suppress-depth)
-          (+ (struct-get data early-exit-suppress-depth) 1))
+          data.early-exit-suppress-depth
+          (+ data.early-exit-suppress-depth 1))
         (tc-body-state-data-set! state data))
       unit)))
 
 (define (tc-body-early-exit-suppress-pop! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    (if (struct-get data early-exit-facts-collecting)
+    (if data.early-exit-facts-collecting
       (begin
         (set!
-          (struct-get data early-exit-suppress-depth)
-          (- (struct-get data early-exit-suppress-depth) 1))
+          data.early-exit-suppress-depth
+          (- data.early-exit-suppress-depth 1))
         (tc-body-state-data-set! state data))
       unit)))
 
@@ -1598,19 +1565,18 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (if (and
-      (struct-get data early-exit-facts-ready)
+      data.early-exit-facts-ready
       (>= body-id 0)
-      (< body-id (struct-get data early-exit-source-expr-limit)))
+      (< body-id data.early-exit-source-expr-limit))
       (let
         [word-index : i64 (/ body-id 64)]
         [bit-index : i64 (% body-id 64)]
         [bit : i64 (shl 1 bit-index)]
-        [known : i64 (array.ref (struct-get data early-exit-known) word-index)]
+        [known : i64 (array.ref data.early-exit-known word-index)]
         (if (= (bit-and known bit) 0)
           (TcBodyEarlyExitFact.Unknown)
           (let
-            [bits : i64
-              (array.ref (struct-get data early-exit-facts) word-index)]
+            [bits : i64 (array.ref data.early-exit-facts word-index)]
             (TcBodyEarlyExitFact.Known (not (= (bit-and bits bit) 0))))))
       (TcBodyEarlyExitFact.Unknown))))
 
@@ -1625,30 +1591,26 @@
 (define (tc-body-type-fact-storage-release! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    [storage : i64 (struct-get data type-fact-storage-arena)]
+    [storage : i64 data.type-fact-storage-arena]
     (if (= storage 0)
       unit
       (begin
         (if (= (arena.tl_arena_current) storage)
           (unsafe
-            (arena.tl_arena_set (struct-get data type-fact-enclosing-arena)))
+            (arena.tl_arena_set data.type-fact-enclosing-arena))
           unit)
         ;; Replace storage-owned arrays before destroying their arena. The
         ;; returned context retains only these tiny idle placeholders plus the
         ;; early-exit bitsets needed by lowering.
-        (set! (struct-get data type-fact-index) (array.make-array i64 1))
-        (set! (struct-get data type-fact-expr-ids) (array.make-array i64 1))
-        (set!
-          (struct-get data type-fact-types)
-          (array.make-array ast.AstType 1))
-        (set!
-          (struct-get data type-fact-closure-codes)
-          (array.make-array i64 1))
-        (set! (struct-get data type-fact-storage-arena) 0)
-        (set! (struct-get data type-fact-enclosing-arena) 0)
-        (set! (struct-get data type-fact-count) 0)
-        (set! (struct-get data type-facts-recording) false)
-        (set! (struct-get data type-facts-consuming) false)
+        (set! data.type-fact-index (array.make-array i64 1))
+        (set! data.type-fact-expr-ids (array.make-array i64 1))
+        (set! data.type-fact-types (array.make-array ast.AstType 1))
+        (set! data.type-fact-closure-codes (array.make-array i64 1))
+        (set! data.type-fact-storage-arena 0)
+        (set! data.type-fact-enclosing-arena 0)
+        (set! data.type-fact-count 0)
+        (set! data.type-facts-recording false)
+        (set! data.type-facts-consuming false)
         (tc-body-state-data-set! state data)
         (unsafe
           (arena.tl_arena_destroy storage))))))
@@ -1671,26 +1633,22 @@
         (let
           [data : TcBodyStateData (tc-body-state-data-value state)]
           (begin
-            (set! (struct-get data type-fact-storage-arena) storage)
-            (set! (struct-get data type-fact-enclosing-arena) enclosing)
+            (set! data.type-fact-storage-arena storage)
+            (set! data.type-fact-enclosing-arena enclosing)
+            (set! data.type-fact-index (array.make-array i64 index-cap))
             (set!
-              (struct-get data type-fact-index)
-              (array.make-array i64 index-cap))
-            (set!
-              (struct-get data type-fact-expr-ids)
+              data.type-fact-expr-ids
               (array.make-array i64 (tc-body-type-fact-initial-capacity)))
             (set!
-              (struct-get data type-fact-types)
+              data.type-fact-types
               (array.make-array
                 ast.AstType
                 (tc-body-type-fact-initial-capacity)))
             (set!
-              (struct-get data type-fact-closure-codes)
+              data.type-fact-closure-codes
               (array.make-array i64 (tc-body-type-fact-initial-capacity)))
-            (set!
-              (struct-get data type-fact-storage-arena)
-              (arena.tl_arena_current))
-            (set! (struct-get data type-fact-count) 0)
+            (set! data.type-fact-storage-arena (arena.tl_arena_current))
+            (set! data.type-fact-count 0)
             (tc-body-state-data-set! state data)
             (unsafe
               (arena.tl_arena_set enclosing))))))))
@@ -1708,18 +1666,17 @@
     [i : i64 index]
     (while (< i count)
       (begin
-        (array-set! dst-types i (array.ref src-types i))
-        (array-set! dst-closure-codes i (array.ref src-closure-codes i))
-        (array-set! dst-expr-ids i (array.ref src-expr-ids i))
+        (set! (array-ref dst-types i) (array.ref src-types i))
+        (set! (array-ref dst-closure-codes i) (array.ref src-closure-codes i))
+        (set! (array-ref dst-expr-ids i) (array.ref src-expr-ids i))
         (set! i (+ i 1))))))
 
 (define (tc-body-type-fact-grow! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    [old-types : (__tl_dyn-array ast.AstType) (struct-get data type-fact-types)]
-    [old-closure-codes : (__tl_dyn-array i64)
-      (struct-get data type-fact-closure-codes)]
-    [old-expr-ids : (__tl_dyn-array i64) (struct-get data type-fact-expr-ids)]
+    [old-types : (__tl_dyn-array ast.AstType) data.type-fact-types]
+    [old-closure-codes : (__tl_dyn-array i64) data.type-fact-closure-codes]
+    [old-expr-ids : (__tl_dyn-array i64) data.type-fact-expr-ids]
     [old-cap : i64 (array.length old-types)]
     [new-cap : i64
       (if (< old-cap 1)
@@ -1728,7 +1685,7 @@
     [enclosing : i64 (arena.tl_arena_current)]
     (begin
       (unsafe
-        (arena.tl_arena_set (struct-get data type-fact-storage-arena)))
+        (arena.tl_arena_set data.type-fact-storage-arena))
       (let
         [next-types : (__tl_dyn-array ast.AstType)
           (array.make-array ast.AstType new-cap)]
@@ -1743,14 +1700,12 @@
             old-types
             old-closure-codes
             old-expr-ids
-            (struct-get data type-fact-count)
+            data.type-fact-count
             0)
-          (set! (struct-get data type-fact-types) next-types)
-          (set! (struct-get data type-fact-closure-codes) next-closure-codes)
-          (set! (struct-get data type-fact-expr-ids) next-expr-ids)
-          (set!
-            (struct-get data type-fact-storage-arena)
-            (arena.tl_arena_current))
+          (set! data.type-fact-types next-types)
+          (set! data.type-fact-closure-codes next-closure-codes)
+          (set! data.type-fact-expr-ids next-expr-ids)
+          (set! data.type-fact-storage-arena (arena.tl_arena_current))
           (tc-body-state-data-set! state data)
           (unsafe
             (arena.tl_arena_set enclosing)))))))
@@ -1759,31 +1714,31 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     [i : i64 0]
-    [index-len : i64 (array.length (struct-get data type-fact-index))]
+    [index-len : i64 (array.length data.type-fact-index)]
     (begin
-      (while (< i (struct-get data type-fact-count))
+      (while (< i data.type-fact-count)
         (let
-          [expr-id : i64 (array.ref (struct-get data type-fact-expr-ids) i)]
+          [expr-id : i64 (array.ref data.type-fact-expr-ids i)]
           (begin
             (if (and (>= expr-id 0) (< expr-id index-len))
-              (array-set! (struct-get data type-fact-index) expr-id 0)
+              (set! (array-ref data.type-fact-index expr-id) 0)
               unit)
             (set! i (+ i 1)))))
-      (set! (struct-get data type-fact-count) 0)
+      (set! data.type-fact-count 0)
       (tc-body-state-data-set! state data))))
 
 (define (tc-body-type-fact-ensure-storage! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     [source-limit : i64
-      (if (> (struct-get data early-exit-source-expr-limit) 0)
-        (struct-get data early-exit-source-expr-limit)
+      (if (> data.early-exit-source-expr-limit 0)
+        data.early-exit-source-expr-limit
         1)]
     (if (or
-      (= (struct-get data type-fact-storage-arena) 0)
-      (< (array.length (struct-get data type-fact-index)) source-limit)
+      (= data.type-fact-storage-arena 0)
+      (< (array.length data.type-fact-index) source-limit)
       (<
-        (array.length (struct-get data type-fact-types))
+        (array.length data.type-fact-types)
         (tc-body-type-fact-initial-capacity)))
       (tc-body-type-fact-storage-start! state source-limit)
       unit)))
@@ -1791,10 +1746,8 @@
 (define (tc-body-type-fact-slot [state : TcBodyState] [expr-id : i64]) : i64
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    (if (and
-      (>= expr-id 0)
-      (< expr-id (array.length (struct-get data type-fact-index))))
-      (- (array.ref (struct-get data type-fact-index) expr-id) 1)
+    (if (and (>= expr-id 0) (< expr-id (array.length data.type-fact-index)))
+      (- (array.ref data.type-fact-index expr-id) 1)
       -1)))
 
 (define (tc-body-type-facts-start-recording! [state : TcBodyState]) : unit
@@ -1804,24 +1757,24 @@
     (let
       [data : TcBodyStateData (tc-body-state-data-value state)]
       (begin
-        (set! (struct-get data type-facts-consuming) false)
-        (set! (struct-get data type-facts-recording) true)
+        (set! data.type-facts-consuming false)
+        (set! data.type-facts-recording true)
         (tc-body-state-data-set! state data)))))
 
 (define (tc-body-type-facts-start-consuming! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (begin
-      (set! (struct-get data type-facts-recording) false)
-      (set! (struct-get data type-facts-consuming) true)
+      (set! data.type-facts-recording false)
+      (set! data.type-facts-consuming true)
       (tc-body-state-data-set! state data))))
 
 (define (tc-body-type-facts-clear! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (begin
-      (set! (struct-get data type-facts-recording) false)
-      (set! (struct-get data type-facts-consuming) false)
+      (set! data.type-facts-recording false)
+      (set! data.type-facts-consuming false)
       (tc-body-state-data-set! state data)
       (tc-body-type-fact-clear-recorded-index! state))))
 
@@ -1832,40 +1785,36 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (if (and
-      (struct-get data type-facts-recording)
+      data.type-facts-recording
       (>= expr-id 0)
-      (< expr-id (array.length (struct-get data type-fact-index))))
+      (< expr-id (array.length data.type-fact-index)))
       (if (>= (tc-body-type-fact-slot state expr-id) 0)
         unit
         (let
-          [slot : i64 (struct-get data type-fact-count)]
+          [slot : i64 data.type-fact-count]
           (begin
-            (if (>= slot (array.length (struct-get data type-fact-types)))
+            (if (>= slot (array.length data.type-fact-types))
               (tc-body-type-fact-grow! state)
               unit)
             (let
               [ready : TcBodyStateData (tc-body-state-data-value state)]
               (begin
-                (array-set! (struct-get ready type-fact-types) slot ty)
-                (array-set! (struct-get ready type-fact-closure-codes) slot 0)
-                (array-set! (struct-get ready type-fact-expr-ids) slot expr-id)
-                (array-set!
-                  (struct-get ready type-fact-index)
-                  expr-id
-                  (+ slot 1))
-                (set! (struct-get ready type-fact-count) (+ slot 1))
+                (set! (array-ref ready.type-fact-types slot) ty)
+                (set! (array-ref ready.type-fact-closure-codes slot) 0)
+                (set! (array-ref ready.type-fact-expr-ids slot) expr-id)
+                (set! (array-ref ready.type-fact-index expr-id) (+ slot 1))
+                (set! ready.type-fact-count (+ slot 1))
                 (tc-body-state-data-set! state ready))))))
       unit)))
 
 (define (tc-body-type-fact-lookup [state : TcBodyState] [expr-id : i64]) : TcBodyTypeFact
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    (if (struct-get data type-facts-consuming)
+    (if data.type-facts-consuming
       (let
         [slot : i64 (tc-body-type-fact-slot state expr-id)]
-        (if (and (>= slot 0) (< slot (struct-get data type-fact-count)))
-          (TcBodyTypeFact.Hit
-            (array.ref (struct-get data type-fact-types) slot))
+        (if (and (>= slot 0) (< slot data.type-fact-count))
+          (TcBodyTypeFact.Hit (array.ref data.type-fact-types slot))
           (TcBodyTypeFact.Miss)))
       (TcBodyTypeFact.Miss))))
 
@@ -1879,10 +1828,10 @@
     [data : TcBodyStateData (tc-body-state-data-value state)]
     [slot : i64 (tc-body-type-fact-slot state body-id)]
     (if (and
-      (struct-get data type-facts-consuming)
+      data.type-facts-consuming
       (>= slot 0)
-      (< slot (struct-get data type-fact-count)))
-      (array.ref (struct-get data type-fact-closure-codes) slot)
+      (< slot data.type-fact-count))
+      (array.ref data.type-fact-closure-codes slot)
       0)))
 
 (define (tc-body-closure-fact-record!
@@ -1893,10 +1842,10 @@
     [data : TcBodyStateData (tc-body-state-data-value state)]
     [slot : i64 (tc-body-type-fact-slot state body-id)]
     (if (and
-      (struct-get data type-facts-consuming)
+      data.type-facts-consuming
       (>= slot 0)
-      (< slot (struct-get data type-fact-count)))
-      (array-set! (struct-get data type-fact-closure-codes) slot code)
+      (< slot data.type-fact-count))
+      (set! (array-ref data.type-fact-closure-codes slot) code)
       unit)))
 
 (define (tc-body-state-type-fact-i64-hit? [state : TcBodyState] [expr-id : i64]) : bool
@@ -2466,18 +2415,18 @@
   (TcReprCFieldLayoutList (array.make-array TcReprCFieldLayout count)))
 
 (define (tc-repr-c-field-layout-list-count [items : TcReprCFieldLayoutList]) : i64
-  (array-length (struct-get items slots)))
+  (array-length items.slots))
 
 (define (tc-repr-c-field-layout-list-ref
   [items : TcReprCFieldLayoutList]
   [index : i64]) : TcReprCFieldLayout
-  (array-ref (struct-get items slots) index))
+  (array-ref items.slots index))
 
 (define (tc-repr-c-field-layout-list-set!
   [items : TcReprCFieldLayoutList]
   [index : i64]
   [value : TcReprCFieldLayout]) : unit
-  (array-set! (struct-get items slots) index value))
+  (set! (array-ref items.slots index) value))
 
 (define (tc-inline-field-layout-list-with-count [count : i64]) : TcInlineFieldLayoutList
   (in-arena
@@ -2485,18 +2434,18 @@
     (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))))
 
 (define (tc-inline-field-layout-list-count [items : TcInlineFieldLayoutList]) : i64
-  (array-length (struct-get items slots)))
+  (array-length items.slots))
 
 (define (tc-inline-field-layout-list-ref
   [items : TcInlineFieldLayoutList]
   [index : i64]) : TcInlineFieldLayout
-  (array-ref (struct-get items slots) index))
+  (array-ref items.slots index))
 
 (define (tc-inline-field-layout-list-set!
   [items : TcInlineFieldLayoutList]
   [index : i64]
   [value : TcInlineFieldLayout]) : unit
-  (array-set! (struct-get items slots) index value))
+  (set! (array-ref items.slots index) value))
 
 (define (tc-inline-payload-layout-list-with-count [count : i64]) : TcInlinePayloadLayoutList
   (in-arena
@@ -2505,18 +2454,18 @@
 
 (define (tc-inline-payload-layout-list-count
   [items : TcInlinePayloadLayoutList]) : i64
-  (array-length (struct-get items slots)))
+  (array-length items.slots))
 
 (define (tc-inline-payload-layout-list-ref
   [items : TcInlinePayloadLayoutList]
   [index : i64]) : TcInlinePayloadLayout
-  (array-ref (struct-get items slots) index))
+  (array-ref items.slots index))
 
 (define (tc-inline-payload-layout-list-set!
   [items : TcInlinePayloadLayoutList]
   [index : i64]
   [value : TcInlinePayloadLayout]) : unit
-  (array-set! (struct-get items slots) index value))
+  (set! (array-ref items.slots index) value))
 
 (define (tc-inline-variant-layout-list-with-count [count : i64]) : TcInlineVariantLayoutList
   (in-arena
@@ -2525,18 +2474,18 @@
 
 (define (tc-inline-variant-layout-list-count
   [items : TcInlineVariantLayoutList]) : i64
-  (array-length (struct-get items slots)))
+  (array-length items.slots))
 
 (define (tc-inline-variant-layout-list-ref
   [items : TcInlineVariantLayoutList]
   [index : i64]) : TcInlineVariantLayout
-  (array-ref (struct-get items slots) index))
+  (array-ref items.slots index))
 
 (define (tc-inline-variant-layout-list-set!
   [items : TcInlineVariantLayoutList]
   [index : i64]
   [value : TcInlineVariantLayout]) : unit
-  (array-set! (struct-get items slots) index value))
+  (set! (array-ref items.slots index) value))
 
 (defenum CompilerTypecheckSummary
   (CompilerTypecheckSummary i64 i64 i64))
@@ -2602,14 +2551,16 @@
       (array.make-array TcPrefixSnapshotCacheProvenance 1)]
     [provenance-ready-cell : (__tl_dyn-array bool) (array.make-array bool 1)]
     (begin
-      (array-set! arena-cell 0 0)
-      (array-set! enabled-cell 0 false)
-      (array-set! ready-cell 0 false)
-      (array-set! hit-cell 0 0)
-      (array-set! miss-cell 0 0)
-      (array-set! store-cell 0 0)
-      (array-set! provenance-cell 0 (tc-prefix-snapshot-cache-provenance-empty))
-      (array-set! provenance-ready-cell 0 false)
+      (set! (array-ref arena-cell 0) 0)
+      (set! (array-ref enabled-cell 0) false)
+      (set! (array-ref ready-cell 0) false)
+      (set! (array-ref hit-cell 0) 0)
+      (set! (array-ref miss-cell 0) 0)
+      (set! (array-ref store-cell 0) 0)
+      (set!
+        (array-ref provenance-cell 0)
+        (tc-prefix-snapshot-cache-provenance-empty))
+      (set! (array-ref provenance-ready-cell 0) false)
       (TcPrefixSnapshotCacheState
         (array.make-array TcPrefixSnapshotSlot 64)
         arena-cell
@@ -2640,20 +2591,20 @@
       (ast.ast-node-pool-context-base-arena pools)
       (cload.compiler-load-session-state-ast-floor-value load-state)
       (cload.compiler-load-session-state-ty-floor-value load-state)
-      (struct-get session table-id)
-      (struct-get session reset-generation)
+      session.table-id
+      session.reset-generation
       (cload.compiler-load-session-state-intern-floor-value load-state))))
 
 (define (tc-prefix-snapshot-cache-provenance-eq?
   [left : TcPrefixSnapshotCacheProvenance]
   [right : TcPrefixSnapshotCacheProvenance]) : bool
   (and
-    (= (struct-get left pool-arena) (struct-get right pool-arena))
-    (= (struct-get left ast-floor) (struct-get right ast-floor))
-    (= (struct-get left type-floor) (struct-get right type-floor))
-    (= (struct-get left intern-table-id) (struct-get right intern-table-id))
-    (= (struct-get left intern-generation) (struct-get right intern-generation))
-    (= (struct-get left intern-floor) (struct-get right intern-floor))))
+    (= left.pool-arena right.pool-arena)
+    (= left.ast-floor right.ast-floor)
+    (= left.type-floor right.type-floor)
+    (= left.intern-table-id right.intern-table-id)
+    (= left.intern-generation right.intern-generation)
+    (= left.intern-floor right.intern-floor)))
 
 (define (tc-prefix-snapshot-cache-fill-for-state!
   [state : TcPrefixSnapshotCacheState]
@@ -2661,28 +2612,28 @@
   (if (>= index tc-prefix-snapshot-cache-capacity)
     unit
     (begin
-      (array-set! (struct-get state slots) index (TcPrefixSnapshotSlot.Empty))
+      (set! (array-ref state.slots index) (TcPrefixSnapshotSlot.Empty))
       (tc-prefix-snapshot-cache-fill-for-state! state (+ index 1)))))
 
 (define (tc-prefix-snapshot-cache-stats-reset-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
   (begin
-    (array-set! (struct-get state hit-count) 0 0)
-    (array-set! (struct-get state miss-count) 0 0)
-    (array-set! (struct-get state store-count) 0 0)))
+    (set! (array-ref state.hit-count 0) 0)
+    (set! (array-ref state.miss-count 0) 0)
+    (set! (array-ref state.store-count 0) 0)))
 
 (define (tc-prefix-snapshot-cache-arena-handle-for-state
   [state : TcPrefixSnapshotCacheState]) : i64
   (begin
-    (if (= (array-ref (struct-get state arena) 0) 0)
-      (array-set! (struct-get state arena) 0 (arena.tl_arena_make_small))
+    (if (= (array-ref state.arena 0) 0)
+      (set! (array-ref state.arena 0) (arena.tl_arena_make_small))
       unit)
-    (array-ref (struct-get state arena) 0)))
+    (array-ref state.arena 0)))
 
 (define (tc-prefix-snapshot-cache-arena-reset-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
   (let
-    [cache-arena : i64 (array-ref (struct-get state arena) 0)]
+    [cache-arena : i64 (array-ref state.arena 0)]
     (if (= cache-arena 0)
       unit
       (begin
@@ -2692,40 +2643,40 @@
           unit)
         (unsafe
           (arena.tl_arena_destroy cache-arena))
-        (array-set! (struct-get state arena) 0 0)))))
+        (set! (array-ref state.arena 0) 0)))))
 
 (define (tc-prefix-snapshot-cache-clear-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
   (begin
     (tc-prefix-snapshot-cache-fill-for-state! state 0)
     (tc-prefix-snapshot-cache-arena-reset-for-state! state)
-    (array-set! (struct-get state ready) 0 true)
+    (set! (array-ref state.ready 0) true)
     (tc-prefix-snapshot-cache-stats-reset-for-state! state)))
 
 (define (tc-prefix-snapshot-cache-invalidate-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
   (begin
     (tc-prefix-snapshot-cache-clear-for-state! state)
-    (array-set! (struct-get state provenance-ready) 0 false)))
+    (set! (array-ref state.provenance-ready 0) false)))
 
 (define (tc-prefix-snapshot-cache-enable-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
-  (array-set! (struct-get state enabled) 0 true))
+  (set! (array-ref state.enabled 0) true))
 
 (define (tc-prefix-snapshot-cache-disable-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
-  (array-set! (struct-get state enabled) 0 false))
+  (set! (array-ref state.enabled 0) false))
 
 (define (tc-prefix-snapshot-cache-active-for-state?
   [state : TcPrefixSnapshotCacheState]
   [load-state : cload.CompilerLoadSessionState]) : bool
   (or
-    (array-ref (struct-get state enabled) 0)
+    (array-ref state.enabled 0)
     (cload.compiler-load-session-state-cache-enabled? load-state)))
 
 (define (tc-prefix-snapshot-cache-ensure-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
-  (if (array-ref (struct-get state ready) 0)
+  (if (array-ref state.ready 0)
     unit
     (tc-prefix-snapshot-cache-clear-for-state! state)))
 
@@ -2733,52 +2684,43 @@
   [state : TcPrefixSnapshotCacheState]
   [provenance : TcPrefixSnapshotCacheProvenance]) : unit
   (if (and
-    (array-ref (struct-get state provenance-ready) 0)
+    (array-ref state.provenance-ready 0)
     (tc-prefix-snapshot-cache-provenance-eq?
-      (array-ref (struct-get state provenance) 0)
+      (array-ref state.provenance 0)
       provenance))
     (tc-prefix-snapshot-cache-ensure-for-state! state)
     (begin
       (tc-prefix-snapshot-cache-clear-for-state! state)
-      (array-set! (struct-get state provenance) 0 provenance)
-      (array-set! (struct-get state provenance-ready) 0 true))))
+      (set! (array-ref state.provenance 0) provenance)
+      (set! (array-ref state.provenance-ready 0) true))))
 
 (define (tc-prefix-snapshot-cache-note-hit-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
-  (array-set!
-    (struct-get state hit-count)
-    0
-    (+ (array-ref (struct-get state hit-count) 0) 1)))
+  (set! (array-ref state.hit-count 0) (+ (array-ref state.hit-count 0) 1)))
 
 (define (tc-prefix-snapshot-cache-note-miss-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
-  (array-set!
-    (struct-get state miss-count)
-    0
-    (+ (array-ref (struct-get state miss-count) 0) 1)))
+  (set! (array-ref state.miss-count 0) (+ (array-ref state.miss-count 0) 1)))
 
 (define (tc-prefix-snapshot-cache-note-store-for-state!
   [state : TcPrefixSnapshotCacheState]) : unit
-  (array-set!
-    (struct-get state store-count)
-    0
-    (+ (array-ref (struct-get state store-count) 0) 1)))
+  (set! (array-ref state.store-count 0) (+ (array-ref state.store-count 0) 1)))
 
 (define (tc-prefix-snapshot-cache-hit-count-for-state
   [state : TcPrefixSnapshotCacheState]) : i64
-  (array-ref (struct-get state hit-count) 0))
+  (array-ref state.hit-count 0))
 
 (define (tc-prefix-snapshot-cache-miss-count-for-state
   [state : TcPrefixSnapshotCacheState]) : i64
-  (array-ref (struct-get state miss-count) 0))
+  (array-ref state.miss-count 0))
 
 (define (tc-prefix-snapshot-cache-store-count-for-state
   [state : TcPrefixSnapshotCacheState]) : i64
-  (array-ref (struct-get state store-count) 0))
+  (array-ref state.store-count 0))
 
 (define (tc-prefix-snapshot-cache-arena-value-for-state
   [state : TcPrefixSnapshotCacheState]) : i64
-  (array-ref (struct-get state arena) 0))
+  (array-ref state.arena 0))
 
 (define (tc-prefix-snapshot-cache-lookup-count-for-state
   [state : TcPrefixSnapshotCacheState]) : i64
@@ -2826,7 +2768,7 @@
   [index : i64]) : TcPrefixSnapshotLookup
   (if (>= index tc-prefix-snapshot-cache-capacity)
     (TcPrefixSnapshotLookup.Miss)
-    (match (array-ref (struct-get state slots) index)
+    (match (array-ref state.slots index)
       [(TcPrefixSnapshotSlot.Empty) (TcPrefixSnapshotLookup.Miss)]
       [(TcPrefixSnapshotSlot.Full slot-key count module module-id summary)
         (if (string.eq slot-key key)
@@ -2850,21 +2792,19 @@
   [index : i64]) : bool
   (if (>= index tc-prefix-snapshot-cache-capacity)
     false
-    (match (array-ref (struct-get state slots) index)
+    (match (array-ref state.slots index)
       [(TcPrefixSnapshotSlot.Empty)
         (begin
-          (array-set!
-            (struct-get state slots)
-            index
+          (set!
+            (array-ref state.slots index)
             (TcPrefixSnapshotSlot.Full key count module module-id summary))
           (tc-prefix-snapshot-cache-note-store-for-state! state)
           true)]
       [(TcPrefixSnapshotSlot.Full slot-key _ _ _ _)
         (if (string.eq slot-key key)
           (begin
-            (array-set!
-              (struct-get state slots)
-              index
+            (set!
+              (array-ref state.slots index)
               (TcPrefixSnapshotSlot.Full key count module module-id summary))
             (tc-prefix-snapshot-cache-note-store-for-state! state)
             true)
@@ -2922,7 +2862,7 @@
             summary)]
         [cache-head : i64 (arena.tl_arena_current)]
         (begin
-          (array-set! (struct-get state arena) 0 cache-head)
+          (set! (array-ref state.arena 0) cache-head)
           (unsafe
             (arena.tl_arena_set prev-arena))
           stored)))))
@@ -3115,7 +3055,7 @@
     [(TcContext _ _ _ _ _ _ _ _ body-state) body-state]))
 
 (define (tc-context-job-state [ctx : TcContext]) : TcJobState
-  (struct-get (tc-context-body-state ctx) job-state))
+  (__tl-project-field (tc-context-body-state ctx) job-state))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (if (ast.ast-node-pool-compat-context-active?)
@@ -3588,8 +3528,7 @@
               (tc-located-error-diag inner)
               (tc-diag-at-start inner)))
           false))]
-    [inner-diag : cdiag.CompilerDiagnostic
-      (struct-get inner-decoded diagnostic)]
+    [inner-diag : cdiag.CompilerDiagnostic inner-decoded.diagnostic]
     [path-id : i64
       (string.>int (tc-located-error-field message prefix-len path-end))]
     [macro-name-id : i64
@@ -3597,9 +3536,7 @@
     [origin-path-id : i64
       (string.>int (tc-located-error-field message origin-start origin-end))]
     [claim-origin : bool
-      (and
-        (>= origin-path-id 0)
-        (not (struct-get inner-decoded primary-origin-claimed)))]
+      (and (>= origin-path-id 0) (not inner-decoded.primary-origin-claimed))]
     [origin-diag : cdiag.CompilerDiagnostic
       (if claim-origin
         (cdiag.compiler-diagnostic-with-path
@@ -3626,10 +3563,10 @@
               (tc-located-error-field message end-col-start end-col-end)))
           (CompilerDiagnosticSomeString
             (tc-macro-expansion-frame-label macro-name-id))))
-      (or (struct-get inner-decoded primary-origin-claimed) claim-origin))))
+      (or inner-decoded.primary-origin-claimed claim-origin))))
 
 (define (tc-macro-framed-error-diag [message : String]) : cdiag.CompilerDiagnostic
-  (struct-get (tc-macro-framed-error-decode message) diagnostic))
+  (__tl-project-field (tc-macro-framed-error-decode message) diagnostic))
 
 (define (tc-ty-node-pool-exhausted-diagnostic) : cdiag.CompilerDiagnostic
   (tc-diag-at-start (ast.ty-node-pool-exhausted-message)))
@@ -4970,50 +4907,43 @@
   compile-profile
   (define (compiler-tc-walk-sp-probe-start! [index : i64]) : unit
     (begin
-      (array-set!
-        compiler-tc-walk-sp-probe-start-ns
-        index
+      (set!
+        (array-ref compiler-tc-walk-sp-probe-start-ns index)
         (compiler-tc-walk-now-ns))
-      (array-set!
-        compiler-tc-walk-sp-probe-start-alloc
-        index
+      (set!
+        (array-ref compiler-tc-walk-sp-probe-start-alloc index)
         (profile.alloc-total))
-      (array-set!
-        compiler-tc-walk-sp-probe-start-live
-        index
+      (set!
+        (array-ref compiler-tc-walk-sp-probe-start-live index)
         (profile.alloc-live)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-walk-sp-probe-finish! [index : i64]) : unit
     (begin
-      (array-set!
-        compiler-tc-walk-sp-probe-ns
-        index
+      (set!
+        (array-ref compiler-tc-walk-sp-probe-ns index)
         (+
           (array-ref compiler-tc-walk-sp-probe-ns index)
           (-
             (compiler-tc-walk-now-ns)
             (array-ref compiler-tc-walk-sp-probe-start-ns index))))
-      (array-set!
-        compiler-tc-walk-sp-probe-alloc
-        index
+      (set!
+        (array-ref compiler-tc-walk-sp-probe-alloc index)
         (+
           (array-ref compiler-tc-walk-sp-probe-alloc index)
           (-
             (profile.alloc-total)
             (array-ref compiler-tc-walk-sp-probe-start-alloc index))))
-      (array-set!
-        compiler-tc-walk-sp-probe-live
-        index
+      (set!
+        (array-ref compiler-tc-walk-sp-probe-live index)
         (+
           (array-ref compiler-tc-walk-sp-probe-live index)
           (-
             (profile.alloc-live)
             (array-ref compiler-tc-walk-sp-probe-start-live index))))
-      (array-set!
-        compiler-tc-walk-sp-probe-calls
-        index
+      (set!
+        (array-ref compiler-tc-walk-sp-probe-calls index)
         (+ (array-ref compiler-tc-walk-sp-probe-calls index) 1)))))
 
 (cfg
@@ -5710,7 +5640,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-arg-count [args : ast.AstExprList]) : i64
-    (struct-get (& args) len)))
+    args.len))
 
 (cfg
   compile-profile
@@ -5722,7 +5652,7 @@
       [cursor : i64 0]
       (while (< cursor len)
         (begin
-          (array-set! dst cursor (array-ref src cursor))
+          (set! (array-ref dst cursor) (array-ref src cursor))
           (set! cursor (+ cursor 1)))))))
 
 (cfg
@@ -5730,8 +5660,8 @@
   (define (compiler-tc-macro-profile-ensure-capacity!
     [entries : (&mut entries CompilerTcMacroProfileEntries)]) : unit
     (let
-      [len : i64 (struct-get entries len)]
-      [old-capacity : i64 (array-length (struct-get entries slots))]
+      [len : i64 entries.len]
+      [old-capacity : i64 (array-length entries.slots)]
       (if (< len old-capacity)
         unit
         (let
@@ -5743,10 +5673,10 @@
             (array.make-array CompilerTcMacroProfileEntry next-capacity)]
           (begin
             (compiler-tc-macro-profile-copy-prefix!
-              (& (struct-get entries slots))
+              (& entries.slots)
               (&mut next)
               len)
-            (set! (struct-get entries slots) next)))))))
+            (set! entries.slots next)))))))
 
 (cfg
   compile-profile
@@ -5763,25 +5693,22 @@
     [elapsed-ms : i64]) : unit
     (let
       [key-id : i64 (compiler-tc-macro-profile-key-id macro-id arity)]
-      (match (tc_i64_i64_map.get (& (struct-get entries index)) key-id)
+      (match (tc_i64_i64_map.get (& entries.index) key-id)
         [(tc_i64_i64_map.LookupFound entry-index)
           (let
             [entry : (&mut entries CompilerTcMacroProfileEntry)
-              (&mut (array-ref (struct-get entries slots) entry-index))]
+              (&mut (array-ref entries.slots entry-index))]
             (begin
-              (set! (struct-get entry calls) (+ (struct-get entry calls) 1))
-              (set!
-                (struct-get entry total-ms)
-                (+ (struct-get entry total-ms) elapsed-ms))))]
+              (set! entry.calls (+ entry.calls 1))
+              (set! entry.total-ms (+ entry.total-ms elapsed-ms))))]
         [(tc_i64_i64_map.LookupMissing)
           (begin
             (compiler-tc-macro-profile-ensure-capacity! entries)
             (let
-              [entry-index : i64 (struct-get entries len)]
+              [entry-index : i64 entries.len]
               (begin
-                (array-set!
-                  (struct-get entries slots)
-                  entry-index
+                (set!
+                  (array-ref entries.slots entry-index)
                   (CompilerTcMacroProfileEntry
                     macro-id
                     (string.copy (& macro-name))
@@ -5789,10 +5716,10 @@
                     1
                     elapsed-ms))
                 (tc_i64_i64_map.insert-ref!
-                  (&mut (struct-get entries index))
+                  (&mut entries.index)
                   key-id
                   entry-index)
-                (set! (struct-get entries len) (+ entry-index 1)))))]))))
+                (set! entries.len (+ entry-index 1)))))]))))
 
 (cfg
   compile-profile
@@ -5909,7 +5836,7 @@
     [macro-id : i64]
     [arity : i64]) : i64
     (match (tc_i64_i64_map.get
-      (& (struct-get entries index))
+      (& entries.index)
       (compiler-tc-macro-profile-key-id macro-id arity))
       [(tc_i64_i64_map.LookupFound entry-index) entry-index]
       [(tc_i64_i64_map.LookupMissing) -1])))
@@ -5917,7 +5844,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-count) : i64
-    (struct-get compiler-tc-macro-profile-entries len)))
+    compiler-tc-macro-profile-entries.len))
 
 (cfg
   compile-profile
@@ -5938,7 +5865,7 @@
   compile-profile
   (define (compiler-tc-macro-profile-current-entry [index : i64]) : CompilerTcMacroProfileEntry
     (array-ref
-      (struct-get
+      (__tl-project-field
         (tc-global-shared-view compiler-tc-macro-profile-entries)
         slots)
       index)))
@@ -5949,16 +5876,15 @@
     [entries : (& entries CompilerTcMacroProfileEntries)]) : unit
     (let
       [cursor : i64 0]
-      (while (< cursor (struct-get entries len))
+      (while (< cursor entries.len)
         (let
-          [entry : CompilerTcMacroProfileEntry
-            (array-ref (struct-get entries slots) cursor)]
+          [entry : CompilerTcMacroProfileEntry (array-ref entries.slots cursor)]
           (begin
             (compiler-tc-macro-profile-emit-entry
-              (& (struct-get entry macro-name))
-              (struct-get entry arity)
-              (struct-get entry calls)
-              (struct-get entry total-ms))
+              (& entry.macro-name)
+              entry.arity
+              entry.calls
+              entry.total-ms)
             (set! cursor (+ cursor 1))))))))
 
 (cfg
@@ -6051,10 +5977,10 @@
   (define (compiler-tc-reinfer-profile-reset-at [index : i64]) : unit
     (if (< index compiler-tc-reinfer-profile-site-count)
       (begin
-        (array-set! compiler-tc-reinfer-profile-calls index 0)
-        (array-set! compiler-tc-reinfer-profile-ms index 0)
-        (array-set! compiler-tc-reinfer-profile-alloc index 0)
-        (array-set! compiler-tc-reinfer-profile-live index 0)
+        (set! (array-ref compiler-tc-reinfer-profile-calls index) 0)
+        (set! (array-ref compiler-tc-reinfer-profile-ms index) 0)
+        (set! (array-ref compiler-tc-reinfer-profile-alloc index) 0)
+        (set! (array-ref compiler-tc-reinfer-profile-live index) 0)
         (compiler-tc-reinfer-profile-reset-at (+ index 1)))
       unit)))
 
@@ -6068,8 +5994,8 @@
   (define (compiler-tc-body-fact-profile-reset-at [index : i64]) : unit
     (if (< index compiler-tc-reinfer-profile-site-count)
       (begin
-        (array-set! compiler-tc-body-fact-profile-hits index 0)
-        (array-set! compiler-tc-body-fact-profile-misses index 0)
+        (set! (array-ref compiler-tc-body-fact-profile-hits index) 0)
+        (set! (array-ref compiler-tc-body-fact-profile-misses index) 0)
         (compiler-tc-body-fact-profile-reset-at (+ index 1)))
       unit)))
 
@@ -6085,9 +6011,8 @@
       [index : i64 (compiler-tc-reinfer-profile-site-index site)]
       (if (< index 0)
         unit
-        (array-set!
-          compiler-tc-body-fact-profile-hits
-          index
+        (set!
+          (array-ref compiler-tc-body-fact-profile-hits index)
           (+ (array.ref compiler-tc-body-fact-profile-hits index) 1))))))
 
 (cfg
@@ -6097,9 +6022,8 @@
       [index : i64 (compiler-tc-reinfer-profile-site-index site)]
       (if (< index 0)
         unit
-        (array-set!
-          compiler-tc-body-fact-profile-misses
-          index
+        (set!
+          (array-ref compiler-tc-body-fact-profile-misses index)
           (+ (array.ref compiler-tc-body-fact-profile-misses index) 1))))))
 
 (cfg
@@ -6114,25 +6038,21 @@
       (if (or (< index 0) (>= index compiler-tc-reinfer-profile-site-count))
         unit
         (begin
-          (array-set!
-            compiler-tc-reinfer-profile-calls
-            index
+          (set!
+            (array-ref compiler-tc-reinfer-profile-calls index)
             (+ (array-ref compiler-tc-reinfer-profile-calls index) 1))
-          (array-set!
-            compiler-tc-reinfer-profile-ms
-            index
+          (set!
+            (array-ref compiler-tc-reinfer-profile-ms index)
             (+
               (array-ref compiler-tc-reinfer-profile-ms index)
               (- (profile.now-ms) start-ms)))
-          (array-set!
-            compiler-tc-reinfer-profile-alloc
-            index
+          (set!
+            (array-ref compiler-tc-reinfer-profile-alloc index)
             (+
               (array-ref compiler-tc-reinfer-profile-alloc index)
               (- (profile.alloc-total) start-total)))
-          (array-set!
-            compiler-tc-reinfer-profile-live
-            index
+          (set!
+            (array-ref compiler-tc-reinfer-profile-live index)
             (+
               (array-ref compiler-tc-reinfer-profile-live index)
               (- (profile.alloc-live) start-live))))))))
@@ -6973,7 +6893,7 @@
   (define (tc-lp-reset [index : i64]) : unit
     (if (< index 15)
       (begin
-        (array-set! tc-lp-counts index 0)
+        (set! (array-ref tc-lp-counts index) 0)
         (tc-lp-reset (+ index 1)))
       unit)))
 
@@ -6981,7 +6901,7 @@
   compile-profile
   (define (tc-lp-note [index : i64]) : unit
     (if (tc-lp-index-valid? index)
-      (array-set! tc-lp-counts index (+ (tc-lp-count index) 1))
+      (set! (array-ref tc-lp-counts index) (+ (tc-lp-count index) 1))
       unit)))
 
 (cfg
@@ -8193,7 +8113,7 @@
       (tc-canonical-diagnostic
         (cdiag.compiler-diagnostic-from-ast-span "" span message))]
     [(ast.AstDecl.Unsafe inner-box)
-      (tc-decl-location-diag (box-get inner-box) message)]
+      (tc-decl-location-diag (__tl-box-place inner-box) message)]
     [_ (tc-diag-at-start message)]))
 
 (define (tc-decl-diag [decl : ast.AstDecl] [message : String]) : cdiag.CompilerDiagnostic
@@ -8249,7 +8169,7 @@
     [(ast.AstExpr.MacroExpansion inner _ _) (tc-expr-id-maybe-span inner)]
     [(ast.AstExpr.Unary _ inner) (tc-expr-id-maybe-span inner)]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body) (tc-expr-id-maybe-span body)])]
     [(ast.AstExpr.TupleRef target _) (tc-expr-id-maybe-span target)]
     [(ast.AstExpr.MakeArray _ size) (tc-expr-id-maybe-span size)]
@@ -8282,8 +8202,7 @@
   (if (ast.ast-expr-list-empty? (& exprs))
     (TcMaybeAstSourceSpan.No)
     (tc-expr-maybe-span
-      (ast.ast-node-get
-        (ast.ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0)))))
+      (ast.ast-node-get (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
 
 (define (tc-reference-escape-help) : String
   "return an owned clone, keep the reference inside its scope, or tie the returned reference lifetime to a parameter")
@@ -8419,7 +8338,7 @@
     [(TcMaybeAstSourceSpan.No) message]))
 
 ;; Macros that read a vector element directly often expand to
-;; `(array-ref (struct-get vec slots) index)`.  The outer generated nodes do
+;; `(array-ref vec.slots index)`. The outer generated nodes do
 ;; not carry a source span, but the unquoted vector expression does.  Use that
 ;; span so this diagnostic points to the user's borrowed-vector argument, not
 ;; only the macro's quasiquote body.
@@ -8550,7 +8469,7 @@
                       "` lives longer than the assigned value")))]))
           (TcMaybeString.No))]
       [(ast.AstExpr.Let let-box)
-        (match (box-get let-box)
+        (match (__tl-box-place let-box)
           [(ast.AstLet.Let _ body-box)
             (if (tc-escape-message? message)
               (let
@@ -8564,7 +8483,7 @@
                     "let result carries a lifetime that cannot outlive this binding scope")))
               (TcMaybeString.No))])]
       [(ast.AstExpr.Lambda lambda-box)
-        (match (box-get lambda-box)
+        (match (__tl-box-place lambda-box)
           [(ast.AstLambda.Lambda _ _ body-box)
             (if (tc-escape-message? message)
               (let
@@ -8660,9 +8579,8 @@
     [cell : (__tl_dyn-array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (tc-type-env-store-new-with-topenv-state-address topenv-state-address))
       (unsafe
         (cast (ptr->int (ptr-cast (array-data cell) : (Ptr u8))) : i64)))))
@@ -8684,22 +8602,22 @@
 (define (tc-type-env-new-with-job-state [state : TcJobState]) : TcTypeEnv
   (TcTypeEnv
     (tc-type-env-store-handle-new-with-topenv-state-address
-      (struct-get (tc-job-state-topenv-membership state) address))
+      (__tl-project-field (tc-job-state-topenv-membership state) address))
     -1
     0))
 
 (define (tc-type-env-topenv-membership-state [env : TcTypeEnv]) : TcTopEnvMembershipState
   (TcTopEnvMembershipState
     (unsafe
-      (ptr-read (ptr-offset (int->ptr (struct-get env store) : (Ptr i64)) 7)))))
+      (ptr-read (ptr-offset (int->ptr env.store : (Ptr i64)) 7)))))
 
 (define (tc-type-env-set-topenv-membership-state!
   [env : TcTypeEnv]
   [state : TcTopEnvMembershipState]) : unit
   (unsafe
     (ptr-write!
-      (ptr-offset (int->ptr (struct-get env store) : (MutPtr i64)) 7)
-      (struct-get state address))))
+      (ptr-offset (int->ptr env.store : (MutPtr i64)) 7)
+      state.address)))
 
 (define (tc-type-env-store-grow-bindings!
   [store : (&mut store TcTypeEnvStore)]
@@ -8709,7 +8627,7 @@
       (if (< required (tc-type-env-binding-segment-capacity))
         (tc-type-env-binding-segment-capacity)
         required)]
-    [owner : i64 (struct-get store owner-arena)]
+    [owner : i64 store.owner-arena]
     [previous-arena : i64 (arena.tl_arena_current)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
@@ -8719,9 +8637,9 @@
         [bigger : (__tl_dyn-array TcTypeEnvBinding)
           (array.make-array TcTypeEnvBinding next-capacity)]
         (begin
-          (set! (struct-get store bindings) bigger)
-          (set! (struct-get store binding-capacity) next-capacity)
-          (set! (struct-get store binding-len) 0)))
+          (set! store.bindings bigger)
+          (set! store.binding-capacity next-capacity)
+          (set! store.binding-len 0)))
       (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
 
 (define (tc-type-env-store-grow-caches!
@@ -8732,7 +8650,7 @@
       (if (< required (tc-type-env-cache-segment-capacity))
         (tc-type-env-cache-segment-capacity)
         required)]
-    [owner : i64 (struct-get store owner-arena)]
+    [owner : i64 store.owner-arena]
     [previous-arena : i64 (arena.tl_arena_current)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
@@ -8742,16 +8660,16 @@
         [bigger : (__tl_dyn-array TcTypeEnvCache)
           (array.make-array TcTypeEnvCache next-capacity)]
         (begin
-          (set! (struct-get store caches) bigger)
-          (set! (struct-get store cache-capacity) next-capacity)
-          (set! (struct-get store cache-len) 0)))
+          (set! store.caches bigger)
+          (set! store.cache-capacity next-capacity)
+          (set! store.cache-len 0)))
       (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
 
 (define (tc-type-env-store-write-cache!
   [store : (&mut store TcTypeEnvStore)]
   [index : i64]
   [cache : TcTypeEnvCache]) : unit
-  (array-set! (struct-get store caches) index cache))
+  (set! (array-ref store.caches index) cache))
 
 ;; Hot persistent-env walkers expand these address/field reads at their direct
 ;; match sites. Returning an enum-shaped view per node was measurably expensive
@@ -8835,7 +8753,7 @@
             (ptr-read
               (ptr-cast store-words : (Ptr (__tl_dyn-array TcTypeEnvBinding)))))]
         (begin
-          (array-set! items index binding)
+          (set! (array-ref items index) binding)
           (unsafe
             (ptr-write! (ptr-offset store-words 2) (+ index 1)))
           (unsafe
@@ -8848,21 +8766,19 @@
   [store : (&mut store TcTypeEnvStore)]
   [cache : TcTypeEnvCache]) : i64
   (let
-    [index : i64 (struct-get store cache-len)]
+    [index : i64 store.cache-len]
     (begin
-      (if (< index (struct-get store cache-capacity))
+      (if (< index store.cache-capacity)
         unit
         (begin
           (tc-type-env-store-grow-caches! store (+ index 1))
           (set! index 0)))
       (tc-type-env-store-write-cache! store index cache)
-      (set! (struct-get store cache-len) (+ index 1))
+      (set! store.cache-len (+ index 1))
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast
-              (ptr-offset (array-data (struct-get store caches)) index)
-              : (Ptr u8)))
+            (ptr-cast (ptr-offset (array-data store.caches) index) : (Ptr u8)))
           : i64)))))
 
 ;; Cleanup-owner markers are only ever introduced by `with`-resource bindings, so
@@ -8892,7 +8808,7 @@
   [name-id : i64]
   [ty : ast.AstType]) : TcTypeEnv
   (let
-    [store-handle : i64 (struct-get env store)]
+    [store-handle : i64 env.store]
     [_note-marker : unit
       (if (= name-id (tc-cleanup-owner-marker-id))
         (set!
@@ -8902,12 +8818,12 @@
     [index : i64
       (tc-type-env-store-push-binding!
         store-handle
-        (TcTypeEnvBinding name-id ty (struct-get env head)))]
+        (TcTypeEnvBinding name-id ty env.head))]
     (TcTypeEnv store-handle index 0)))
 
 (define (tc-type-env-cache-node [env : TcTypeEnv] [cache : TcTypeEnvCache]) : TcTypeEnv
   (let
-    [store-handle : i64 (struct-get env store)]
+    [store-handle : i64 env.store]
     [store : TcTypeEnvStore (tc-type-env-store-read store-handle)]
     [index : i64 (tc-type-env-store-push-cache! (&mut store) cache)]
     (begin
@@ -8916,12 +8832,12 @@
 
 (define (tc-type-env-view [env : TcTypeEnv]) : TcTypeEnvView
   (let
-    [head : i64 (struct-get env head)]
+    [head : i64 env.head]
     (cond
       [(= head -1) TcTypeEnvView.Nil]
       [(>= head 0)
         (let
-          [store-handle : i64 (struct-get env store)]
+          [store-handle : i64 env.store]
           [binding-ptr : (Ptr TcTypeEnvBinding)
             (tc-type-env-binding-ptr store-handle head)]
           (TcTypeEnvView.Bind
@@ -8933,7 +8849,7 @@
               0)))]
       [else
         (let
-          [store-handle : i64 (struct-get env store)]
+          [store-handle : i64 env.store]
           [cache-ptr : (Ptr TcTypeEnvCache)
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
           (TcTypeEnvView.Cache
@@ -9088,7 +9004,7 @@
 ;; not bound-stamped (e.g. spine binds made outside the alias binder) still
 ;; take the exact scan, so results are identical either way.
 (define (tc-topenv-membership-state-present? [state : TcTopEnvMembershipState]) : bool
-  (not (= (struct-get state address) 0)))
+  (not (= state.address 0)))
 
 (define (tc-topenv-membership-map-needs-grow?
   [map : (& map tc_i64_i64_map.Map)]) : bool
@@ -9104,15 +9020,16 @@
   (let
     [index : i64 0]
     (begin
-      (while (< index (array.length (struct-get map slots)))
+      (while (< index (array.length map.slots))
         (begin
-          (set!
-            (struct-get (array-ref (struct-get map slots) index) state)
+          (__tl-project-set-field
+            (array-ref map.slots index)
+            state
             (tc_i64_i64_map.GeneratedHashmapSlotState.Empty))
           (set! index (+ index 1))))
-      (set! (struct-get map len) 0)
+      (set! map.len 0)
       (set!
-        (struct-get map growth-limit)
+        map.growth-limit
         (tc_i64_i64_map.growth-limit-for (tc_i64_i64_map.capacity (& map)))))))
 
 (define (tc-cache-map-grow-in-owner!
@@ -9134,10 +9051,10 @@
   (let
     [packed : i64
       (tc_i64_i64_map.get-value-or
-        (& (struct-get data structural-flags))
+        (& data.structural-flags)
         (ci.intern-id-value name-id)
         0)]
-    (if (= (shr packed 3) (struct-get data epoch))
+    (if (= (shr packed 3) data.epoch)
       (bit-and packed 3)
       0)))
 
@@ -9146,11 +9063,8 @@
   [name-id : i64]) : i64
   (let
     [packed : i64
-      (tc_i64_i64_map.get-value-or
-        (& (struct-get data structural-flags))
-        name-id
-        0)]
-    (if (= (shr packed 2) (struct-get data epoch))
+      (tc_i64_i64_map.get-value-or (& data.structural-flags) name-id 0)]
+    (if (= (shr packed 2) data.epoch)
       (bit-and packed 3)
       0)))
 
@@ -9162,12 +9076,12 @@
     [current : i64 (tc-topenv-membership-structural-flags-for (& data) name-id)]
     (begin
       (tc-cache-map-grow-in-owner!
-        (&mut (struct-get data structural-flags))
-        (struct-get data owner-arena))
+        (&mut data.structural-flags)
+        data.owner-arena)
       (tc_i64_i64_map.insert-ref!
-        (&mut (struct-get data structural-flags))
+        (&mut data.structural-flags)
         name-id
-        (bit-or (shl (struct-get data epoch) 2) (bit-or current bits))))))
+        (bit-or (shl data.epoch 2) (bit-or current bits))))))
 
 (define (tc-topenv-membership-mark-renderable-data!
   [data : (&mut data TcTopEnvMembershipStateData)]
@@ -9175,30 +9089,24 @@
   [bound : bool]) : unit
   (let
     [index : i64 (ci.intern-id-value name-id)]
-    (if (< index (array.length (struct-get data renderable-slots)))
+    (if (< index (array.length data.renderable-slots))
       (begin
-        (array-set!
-          (struct-get data renderable-slots)
-          index
-          (struct-get data epoch))
+        (set! (array-ref data.renderable-slots index) data.epoch)
         (if bound
-          (array-set!
-            (struct-get data renderable-bound-slots)
-            index
-            (struct-get data epoch))
+          (set! (array-ref data.renderable-bound-slots index) data.epoch)
           unit))
       (let
         [current : i64
           (tc-topenv-membership-renderable-overflow-flags-for (& data) name-id)]
         (begin
           (tc-cache-map-grow-in-owner!
-            (&mut (struct-get data structural-flags))
-            (struct-get data owner-arena))
+            (&mut data.structural-flags)
+            data.owner-arena)
           (tc_i64_i64_map.insert-ref!
-            (&mut (struct-get data structural-flags))
+            (&mut data.structural-flags)
             index
             (bit-or
-              (shl (struct-get data epoch) 3)
+              (shl data.epoch 3)
               (bit-or
                 current
                 (if bound
@@ -9232,9 +9140,7 @@
     (let
       [data : TcTopEnvMembershipStateData
         (tc-topenv-membership-state-data state)]
-      (if (and
-        (not (= (bit-and (struct-get data mode) 1) 0))
-        (struct-get data accelerator-enabled))
+      (if (and (not (= (bit-and data.mode 1) 0)) data.accelerator-enabled)
         (begin
           (tc-topenv-membership-mark-key-data! (&mut data) name-id false)
           (tc-topenv-membership-state-data-set! state data))
@@ -9248,9 +9154,7 @@
     (let
       [data : TcTopEnvMembershipStateData
         (tc-topenv-membership-state-data state)]
-      (if (and
-        (not (= (bit-and (struct-get data mode) 1) 0))
-        (struct-get data accelerator-enabled))
+      (if (and (not (= (bit-and data.mode 1) 0)) data.accelerator-enabled)
         (begin
           (tc-topenv-membership-mark-key-data! (&mut data) name-id true)
           (tc-topenv-membership-state-data-set! state data))
@@ -9265,7 +9169,7 @@
 (define (tc-topenv-membership-mode [state : TcTopEnvMembershipState]) : i64
   (if (tc-topenv-membership-state-present? state)
     (unsafe
-      (ptr-read (int->ptr (cast (struct-get state address) : u64) : (Ptr i64))))
+      (ptr-read (int->ptr (cast state.address : u64) : (Ptr i64))))
     0))
 
 (define (tc-topenv-membership-set-alias-fanout-active!
@@ -9275,10 +9179,10 @@
     [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
     (begin
       (set!
-        (struct-get data mode)
+        data.mode
         (if active
-          (bit-or (struct-get data mode) 2)
-          (bit-and (struct-get data mode) -3)))
+          (bit-or data.mode 2)
+          (bit-and data.mode -3)))
       (tc-topenv-membership-state-data-set! state data))))
 
 (define (tc-topenv-membership-set-explicit-build-active!
@@ -9288,10 +9192,10 @@
     [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
     (begin
       (set!
-        (struct-get data mode)
+        data.mode
         (if active
-          (bit-or (struct-get data mode) 4)
-          (bit-and (struct-get data mode) -5)))
+          (bit-or data.mode 4)
+          (bit-and data.mode -5)))
       (tc-topenv-membership-state-data-set! state data))))
 
 ;; True when the id is PROVABLY bound in the accumulated top-env spine (stamped
@@ -9304,18 +9208,14 @@
     (let
       [data : TcTopEnvMembershipStateData
         (tc-topenv-membership-state-data state)]
-      (if (not (struct-get data accelerator-enabled))
+      (if (not data.accelerator-enabled)
         false
         (if (ci.intern-renderable-id? name-id)
           (let
             [renderable : ci.InternId (ci.intern-id-from-renderable name-id)]
             [index : i64 (ci.intern-id-value renderable)]
-            (if (<
-              index
-              (array.length (struct-get data renderable-bound-slots)))
-              (=
-                (array-ref (struct-get data renderable-bound-slots) index)
-                (struct-get data epoch))
+            (if (< index (array.length data.renderable-bound-slots))
+              (= (array-ref data.renderable-bound-slots index) data.epoch)
               (not
                 (=
                   (bit-and
@@ -9342,16 +9242,14 @@
     (let
       [data : TcTopEnvMembershipStateData
         (tc-topenv-membership-state-data state)]
-      (if (not (struct-get data accelerator-enabled))
+      (if (not data.accelerator-enabled)
         true
         (if (ci.intern-renderable-id? name-id)
           (let
             [renderable : ci.InternId (ci.intern-id-from-renderable name-id)]
             [index : i64 (ci.intern-id-value renderable)]
-            (if (< index (array.length (struct-get data renderable-slots)))
-              (=
-                (array-ref (struct-get data renderable-slots) index)
-                (struct-get data epoch))
+            (if (< index (array.length data.renderable-slots))
+              (= (array-ref data.renderable-slots index) data.epoch)
               (not
                 (=
                   (bit-and
@@ -9390,17 +9288,17 @@
     [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
     (begin
       (if (or
-        (not (= (struct-get data intern-table-id) intern-table-id))
-        (not (= (struct-get data intern-generation) intern-generation)))
-        (tc-cache-map-clear! (&mut (struct-get data structural-flags)))
+        (not (= data.intern-table-id intern-table-id))
+        (not (= data.intern-generation intern-generation)))
+        (tc-cache-map-clear! (&mut data.structural-flags))
         unit)
       ;; Every build gets a fresh stamp. Recording the immutable source-name
       ;; owner here prevents equal numeric IDs in two intern sessions from
       ;; sharing accelerator facts.
-      (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
-      (set! (struct-get data intern-table-id) intern-table-id)
-      (set! (struct-get data intern-generation) intern-generation)
-      (set! (struct-get data mode) 1)
+      (set! data.epoch (+ data.epoch 1))
+      (set! data.intern-table-id intern-table-id)
+      (set! data.intern-generation intern-generation)
+      (set! data.mode 1)
       (tc-topenv-membership-state-data-set! state data)
       (tc-topenv-membership-seed! state env))))
 
@@ -9408,7 +9306,7 @@
   (let
     [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
     (begin
-      (set! (struct-get data mode) 0)
+      (set! data.mode 0)
       (tc-topenv-membership-state-data-set! state data))))
 
 (cfg
@@ -9516,8 +9414,8 @@
   [env : TcTypeEnv]
   [remaining : i64]) : bool
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [left : i64 remaining]
     (begin
       (while (and (> left 0) (>= head 0))
@@ -9531,8 +9429,8 @@
 
 (define (tc-env-after-prefix [env : TcTypeEnv] [remaining : i64]) : TcTypeEnv
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [left : i64 remaining]
     (begin
       (while (and (> left 0) (>= head 0))
@@ -9587,8 +9485,8 @@
 
 (define (tc-env-uncached-prefix-to-explicit-cache-count [env : TcTypeEnv]) : i64
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [count : i64 0]
     [found : bool false]
     [done : bool false]
@@ -9609,16 +9507,15 @@
                   (tc-type-env-cache-ptr
                     store-handle
                     (tc-type-env-cache-index head)))]
-              (if (struct-get cache scan-through)
-                (if (struct-get cache partial)
+              (if cache.scan-through
+                (if cache.partial
                   (let
-                    [shadow-flags : (__tl_dyn-array i64)
-                      (struct-get cache shadow-flags)]
+                    [shadow-flags : (__tl_dyn-array i64) cache.shadow-flags]
                     [capacity : i64 (array.length shadow-flags)]
                     [covered : i64 (array-ref shadow-flags (- capacity 1))]
                     (begin
                       (set! count (+ count covered))
-                      (set! head (struct-get cache below))))
+                      (set! head cache.below)))
                   (set! done true))
                 (begin
                   (set! found true)
@@ -9634,8 +9531,8 @@
 ;; layer.
 (define (tc-env-after-cache-expanded-prefix [env : TcTypeEnv] [remaining : i64]) : TcTypeEnv
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [left : i64 remaining]
     [done : bool false]
     (begin
@@ -9655,10 +9552,8 @@
                   (tc-type-env-cache-ptr
                     store-handle
                     (tc-type-env-cache-index head)))]
-              (if (and
-                (struct-get cache scan-through)
-                (struct-get cache partial))
-                (set! head (struct-get cache rest))
+              (if (and cache.scan-through cache.partial)
+                (set! head cache.rest)
                 (set! done true)))]
           [else (set! done true)]))
       (TcTypeEnv store-handle head 0))))
@@ -9816,9 +9711,7 @@
 
 (define (tc-type-env-scoped-slot-c-abi-fnptr?
   [slot : (& slot TcTypeEnvScopedSlot)]) : bool
-  (tc-type-env-scoped-flag?
-    (struct-get slot flags)
-    tc-type-env-scoped-flag-c-abi-fnptr))
+  (tc-type-env-scoped-flag? slot.flags tc-type-env-scoped-flag-c-abi-fnptr))
 
 ;; One dense latest-slot table is shared by every scoped stack. Each stack has
 ;; a unique epoch, so nested carriers can overwrite entries safely; restoring
@@ -9861,17 +9754,17 @@
   (tc-type-env-scoped-stack-with-capacity 16 8))
 
 (define (tc-type-env-scoped-stack-len [stack : TcTypeEnvScopedStack]) : i64
-  (struct-get stack slot-count))
+  stack.slot-count)
 
 (define (tc-type-env-scoped-stack-mark-count [stack : TcTypeEnvScopedStack]) : i64
-  (struct-get stack mark-count))
+  stack.mark-count)
 
 (define (tc-type-env-scoped-stack-scope-depth [stack : TcTypeEnvScopedStack]) : i64
-  (struct-get stack scope-depth))
+  stack.scope-depth)
 
 (define (tc-type-env-scoped-stack-cache-generation
   [stack : TcTypeEnvScopedStack]) : i64
-  (struct-get stack cache-generation))
+  stack.cache-generation)
 
 (define (tc-type-env-scoped-empty-slot) : TcTypeEnvScopedSlot
   (TcTypeEnvScopedSlot 0 (ast.AstType.Unit) 0 0 0 0))
@@ -9883,16 +9776,16 @@
   [stack : (&mut stack TcTypeEnvScopedStack)]
   [min-capacity : i64]) : unit
   (begin
-    (while (< (array-length (struct-get stack slots)) min-capacity)
-      (array-push! (struct-get stack slots) (tc-type-env-scoped-empty-slot)))
+    (while (< (array-length stack.slots) min-capacity)
+      (array-push! stack.slots (tc-type-env-scoped-empty-slot)))
     unit))
 
 (define (tc-type-env-scoped-stack-reserve-marks!
   [stack : (&mut stack TcTypeEnvScopedStack)]
   [min-capacity : i64]) : unit
   (begin
-    (while (< (array-length (struct-get stack marks)) min-capacity)
-      (array-push! (struct-get stack marks) (tc-type-env-scoped-empty-mark)))
+    (while (< (array-length stack.marks) min-capacity)
+      (array-push! stack.marks (tc-type-env-scoped-empty-mark)))
     unit))
 
 (define (tc-type-env-scoped-stack-push-slot!
@@ -9902,62 +9795,64 @@
   [flags : i64]
   [marker-kind : TcTypeEnvScopedMarkerKind]) : unit
   (let
-    [index : i64 (struct-get stack slot-count)]
+    [index : i64 stack.slot-count]
     (begin
       (tc-type-env-scoped-stack-reserve-slots! stack (+ index 1))
       ;; A restored stack reuses array storage. Invalidate the overwritten
       ;; name's cached index so an in-range hit always names this slot.
       (let
         [old-name-id : i64
-          (struct-get (array-ref (struct-get stack slots) index) name-id)]
+          (__tl-project-field (array-ref stack.slots index) name-id)]
         (if (and
           (>= old-name-id 0)
           (< old-name-id tc-type-env-scoped-dense-lookup-capacity))
           (if (and
             (=
               (array-ref tc-type-env-scoped-dense-lookup-epochs old-name-id)
-              (struct-get stack lookup-epoch))
+              stack.lookup-epoch)
             (=
               (array-ref tc-type-env-scoped-dense-lookup-indices old-name-id)
               index))
-            (array-set! tc-type-env-scoped-dense-lookup-epochs old-name-id 0)
+            (set!
+              (array-ref tc-type-env-scoped-dense-lookup-epochs old-name-id)
+              0)
             unit)
           (match (tc_i64_i64_map.get
-            (& (box-get (struct-get stack lookup-cache)))
+            (& (__tl-box-place stack.lookup-cache))
             old-name-id)
             [(tc_i64_i64_map.LookupFound old-index)
               (if (= old-index index)
                 (tc_i64_i64_map.insert-ref!
-                  (&mut (box-get (struct-get stack lookup-cache)))
+                  (&mut (__tl-box-place stack.lookup-cache))
                   old-name-id
                   -1)
                 unit)]
             [(tc_i64_i64_map.LookupMissing) unit])))
-      (array-set!
-        (struct-get stack slots)
-        index
+      (set!
+        (array-ref stack.slots index)
         (TcTypeEnvScopedSlot
           name-id
           ty
           flags
           (tc-type-env-scoped-marker-kind-tag marker-kind)
-          (struct-get stack scope-depth)
-          (struct-get stack cache-generation)))
+          stack.scope-depth
+          stack.cache-generation))
       (if (and
         (>= name-id 0)
         (< name-id tc-type-env-scoped-dense-lookup-capacity))
         (begin
-          (array-set! tc-type-env-scoped-dense-lookup-indices name-id index)
-          (array-set!
-            tc-type-env-scoped-dense-lookup-epochs
-            name-id
-            (struct-get stack lookup-epoch)))
+          (set!
+            (array-ref tc-type-env-scoped-dense-lookup-indices name-id)
+            index)
+          (set!
+            (array-ref tc-type-env-scoped-dense-lookup-epochs name-id)
+            stack.lookup-epoch))
         (tc_i64_i64_map.insert-ref!
-          (&mut (box-get (struct-get stack lookup-cache)))
+          (&mut (__tl-box-place stack.lookup-cache))
           name-id
           index))
       (cfg compile-profile (compiler-tc-env-profile-note-scoped-bind))
-      (set! (struct-get stack slot-count) (+ index 1)))))
+      (set! stack.slot-count (+ index 1)))))
 
 (define (tc-type-env-scoped-stack-bind-id!
   [stack : (&mut stack TcTypeEnvScopedStack)]
@@ -10004,18 +9899,18 @@
 (define (tc-type-env-scoped-stack-save!
   [stack : (&mut stack TcTypeEnvScopedStack)]) : TcTypeEnvScopedMark
   (let
-    [index : i64 (struct-get stack mark-count)]
+    [index : i64 stack.mark-count]
     [mark : TcTypeEnvScopedMark
       (TcTypeEnvScopedMark
-        (struct-get stack slot-count)
+        stack.slot-count
         index
-        (struct-get stack scope-depth)
-        (struct-get stack cache-generation))]
+        stack.scope-depth
+        stack.cache-generation)]
     (begin
       (tc-type-env-scoped-stack-reserve-marks! stack (+ index 1))
-      (array-set! (struct-get stack marks) index mark)
-      (set! (struct-get stack mark-count) (+ index 1))
-      (set! (struct-get stack scope-depth) (+ (struct-get stack scope-depth) 1))
+      (set! (array-ref stack.marks index) mark)
+      (set! stack.mark-count (+ index 1))
+      (set! stack.scope-depth (+ stack.scope-depth 1))
       mark)))
 
 (define (tc-type-env-scoped-stack-restore!
@@ -10023,23 +9918,15 @@
   [mark : TcTypeEnvScopedMark]) : unit
   (begin
     (set!
-      (struct-get stack slot-count)
-      (tc-type-env-scoped-clamp-count
-        (struct-get mark slot-count)
-        (struct-get stack slot-count)))
+      stack.slot-count
+      (tc-type-env-scoped-clamp-count mark.slot-count stack.slot-count))
     (set!
-      (struct-get stack mark-count)
-      (tc-type-env-scoped-clamp-count
-        (struct-get mark mark-count)
-        (struct-get stack mark-count)))
+      stack.mark-count
+      (tc-type-env-scoped-clamp-count mark.mark-count stack.mark-count))
     (set!
-      (struct-get stack scope-depth)
-      (tc-type-env-scoped-clamp-count
-        (struct-get mark scope-depth)
-        (struct-get stack scope-depth)))
-    (set!
-      (struct-get stack cache-generation)
-      (+ (struct-get stack cache-generation) 1))))
+      stack.scope-depth
+      (tc-type-env-scoped-clamp-count mark.scope-depth stack.scope-depth))
+    (set! stack.cache-generation (+ stack.cache-generation 1))))
 
 (define (tc-type-env-scoped-stack-lookup-id-at
   [stack : TcTypeEnvScopedStack]
@@ -10047,19 +9934,16 @@
   (if (< index 0)
     TcTypeEnvScopedLookup.Missing
     (let
-      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
       (TcTypeEnvScopedLookup.Found
-        (struct-get slot ty)
+        slot.ty
+        (tc-type-env-scoped-flag? slot.flags tc-type-env-scoped-flag-unsafe)
         (tc-type-env-scoped-flag?
-          (struct-get slot flags)
-          tc-type-env-scoped-flag-unsafe)
-        (tc-type-env-scoped-flag?
-          (struct-get slot flags)
+          slot.flags
           tc-type-env-scoped-flag-c-abi-fnptr)
-        (tc-type-env-scoped-marker-kind-from-tag
-          (struct-get slot marker-kind-tag))
-        (struct-get slot scope-depth)
-        (struct-get slot generation)))))
+        (tc-type-env-scoped-marker-kind-from-tag slot.marker-kind-tag)
+        slot.scope-depth
+        slot.generation))))
 
 (define (tc-type-env-scoped-stack-dense-lookup-id-refresh
   [stack : (& stack TcTypeEnvScopedStack)]
@@ -10069,13 +9953,12 @@
       (tc-type-env-scoped-stack-find-id-index-from
         stack
         name-id
-        (- (struct-get stack slot-count) 1))]
+        (- stack.slot-count 1))]
     (begin
-      (array-set! tc-type-env-scoped-dense-lookup-indices name-id index)
-      (array-set!
-        tc-type-env-scoped-dense-lookup-epochs
-        name-id
-        (struct-get stack lookup-epoch))
+      (set! (array-ref tc-type-env-scoped-dense-lookup-indices name-id) index)
+      (set!
+        (array-ref tc-type-env-scoped-dense-lookup-epochs name-id)
+        stack.lookup-epoch)
       (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
       index)))
 
@@ -10090,10 +9973,10 @@
   [stack : (& stack TcTypeEnvScopedStack)]
   [name-id : i64]) : i64
   (let
-    [lookup-cache : (Box tc_i64_i64_map.Map) (struct-get stack lookup-cache)]
+    [lookup-cache : (Box tc_i64_i64_map.Map) stack.lookup-cache]
     [index : i64
       (tc-type-env-scoped-stack-map-cached-index
-        (& (box-get lookup-cache))
+        (& (__tl-box-place lookup-cache))
         name-id)]
     (if (= index -2)
       (begin
@@ -10101,10 +9984,8 @@
         -1)
       (if (and
         (>= index 0)
-        (< index (struct-get stack slot-count))
-        (=
-          (struct-get (array-ref (struct-get stack slots) index) name-id)
-          name-id))
+        (< index stack.slot-count)
+        (= (__tl-project-field (array-ref stack.slots index) name-id) name-id))
         (begin
           (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-hit))
           index)
@@ -10115,10 +9996,10 @@
               (tc-type-env-scoped-stack-find-id-index-from
                 stack
                 name-id
-                (- (struct-get stack slot-count) 1))]
+                (- stack.slot-count 1))]
             (begin
               (tc_i64_i64_map.insert-ref!
-                (&mut (box-get lookup-cache))
+                (&mut (__tl-box-place lookup-cache))
                 name-id
                 repaired-index)
               repaired-index)))))))
@@ -10129,7 +10010,7 @@
   (if (and (>= name-id 0) (< name-id tc-type-env-scoped-dense-lookup-capacity))
     (if (=
       (array-ref tc-type-env-scoped-dense-lookup-epochs name-id)
-      (struct-get stack lookup-epoch))
+      stack.lookup-epoch)
       (let
         [index : i64
           (array-ref tc-type-env-scoped-dense-lookup-indices name-id)]
@@ -10139,7 +10020,7 @@
               compile-profile
               (compiler-tc-env-profile-note-scoped-cache-hit))
             -1)
-          (if (< index (struct-get stack slot-count))
+          (if (< index stack.slot-count)
             (begin
               (cfg
                 compile-profile
@@ -10163,19 +10044,17 @@
   (if (< index 0)
     TcTypeEnvScopedMarkerLookup.Missing
     (let
-      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
       (if (and
-        (tc-type-env-scoped-flag?
-          (struct-get slot flags)
-          tc-type-env-scoped-flag-marker)
+        (tc-type-env-scoped-flag? slot.flags tc-type-env-scoped-flag-marker)
         (=
-          (struct-get slot marker-kind-tag)
+          slot.marker-kind-tag
           (tc-type-env-scoped-marker-kind-tag marker-kind)))
         (TcTypeEnvScopedMarkerLookup.Found
-          (struct-get slot name-id)
-          (struct-get slot ty)
-          (struct-get slot scope-depth)
-          (struct-get slot generation))
+          slot.name-id
+          slot.ty
+          slot.scope-depth
+          slot.generation)
         (tc-type-env-scoped-stack-marker-lookup-from
           stack
           marker-kind
@@ -10187,7 +10066,7 @@
   (tc-type-env-scoped-stack-marker-lookup-from
     stack
     marker-kind
-    (- (struct-get stack slot-count) 1)))
+    (- stack.slot-count 1)))
 
 (define (tc-type-env-scoped-stack-owner-marker-before?
   [stack : TcTypeEnvScopedStack]
@@ -10197,13 +10076,8 @@
   (if (<= index 0)
     false
     (let
-      [slot : TcTypeEnvScopedSlot
-        (array-ref (struct-get stack slots) (- index 1))]
-      (tc-arena-owner-marker-for?
-        marker-id
-        (struct-get slot name-id)
-        (struct-get slot ty)
-        name-id))))
+      [slot : TcTypeEnvScopedSlot (array-ref stack.slots (- index 1))]
+      (tc-arena-owner-marker-for? marker-id slot.name-id slot.ty name-id))))
 
 (define (tc-type-env-scoped-stack-cleanup-owner-before?
   [stack : TcTypeEnvScopedStack]
@@ -10212,28 +10086,23 @@
   (if (<= index 0)
     false
     (let
-      [slot : TcTypeEnvScopedSlot
-        (array-ref (struct-get stack slots) (- index 1))]
-      (tc-cleanup-owner-marker-for?
-        (struct-get slot name-id)
-        (struct-get slot ty)
-        name-id))))
+      [slot : TcTypeEnvScopedSlot (array-ref stack.slots (- index 1))]
+      (tc-cleanup-owner-marker-for? slot.name-id slot.ty name-id))))
 
 (define (tc-type-env-scoped-marker-cursor [stack : TcTypeEnvScopedStack]) : TcTypeEnvScopedMarkerCursor
   (TcTypeEnvScopedMarkerCursor stack (- (tc-type-env-scoped-stack-len stack) 1)))
 
 (define (tc-type-env-scoped-marker-step [cursor : TcTypeEnvScopedMarkerCursor]) : TcTypeEnvScopedMarkerStep
   (let
-    [index : i64 (struct-get cursor index)]
+    [index : i64 cursor.index]
     (if (< index 0)
       TcTypeEnvScopedMarkerStep.Done
       (let
-        [slot : TcTypeEnvScopedSlot
-          (array-ref (struct-get (struct-get cursor stack) slots) index)]
+        [slot : TcTypeEnvScopedSlot (array-ref cursor.stack.slots index)]
         (TcTypeEnvScopedMarkerStep.Bind
-          (struct-get slot name-id)
-          (struct-get slot ty)
-          (TcTypeEnvScopedMarkerCursor (struct-get cursor stack) (- index 1)))))))
+          slot.name-id
+          slot.ty
+          (TcTypeEnvScopedMarkerCursor cursor.stack (- index 1)))))))
 
 (define (tc-type-env-scoped-stack-find-id-index-from
   [stack : (& stack TcTypeEnvScopedStack)]
@@ -10242,8 +10111,8 @@
   (if (< index 0)
     -1
     (let
-      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
-      (if (= (struct-get slot name-id) name-id)
+      [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
+      (if (= slot.name-id name-id)
         index
         (tc-type-env-scoped-stack-find-id-index-from stack name-id (- index 1))))))
 
@@ -10253,7 +10122,7 @@
   (tc-type-env-scoped-stack-find-id-index-from
     stack
     name-id
-    (- (struct-get stack slot-count) 1)))
+    (- stack.slot-count 1)))
 
 (define (tc-type-env-scoped-stack-find-lifetime-index-from
   [stack : TcTypeEnvScopedStack]
@@ -10263,10 +10132,10 @@
   (if (< index 0)
     -1
     (let
-      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
       (if (tc-env-binding-matches-lifetime-id?
-        (struct-get slot name-id)
-        (struct-get slot ty)
+        slot.name-id
+        slot.ty
         lifetime-id
         signature-marker-id)
         index
@@ -10292,10 +10161,10 @@
   (if (< index 0)
     false
     (let
-      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
       (tc-signature-lifetime-marker-entry-id?
-        (struct-get slot name-id)
-        (struct-get slot ty)
+        slot.name-id
+        slot.ty
         lifetime-id
         (tc-signature-lifetime-marker-id)))))
 
@@ -10363,7 +10232,7 @@
       (begin
         (tc-type-env-scoped-sidecar-fill-visible-env! sidecar rest-env)
         (tc-type-env-scoped-stack-push-visible-bind!
-          (&mut (struct-get sidecar stack))
+          (&mut sidecar.stack)
           key
           ty
           rest-env))]))
@@ -10376,8 +10245,8 @@
         (&mut sidecar)
         (tc-type-env-marker-start env))
       (set!
-        (struct-get sidecar materialize-start)
-        (tc-type-env-scoped-stack-len (struct-get sidecar stack)))
+        sidecar.materialize-start
+        (tc-type-env-scoped-stack-len sidecar.stack))
       sidecar)))
 
 (define (tc-type-env-scoped-sidecar-from-env [env : TcTypeEnv]) : TcTypeEnvScopedSidecar
@@ -10388,40 +10257,36 @@
 
 (define (tc-type-env-scoped-sidecar-marker-cursor
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedMarkerCursor
-  (tc-type-env-scoped-marker-cursor (struct-get sidecar stack)))
+  (tc-type-env-scoped-marker-cursor sidecar.stack))
 
 (define (tc-type-env-scoped-sidecar-persistent
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnv
-  (struct-get sidecar persistent))
+  sidecar.persistent)
 
 (define (tc-type-env-scoped-sidecar-lookup-id
   [sidecar : TcTypeEnvScopedSidecar]
   [name-id : i64]) : TcTypeEnvScopedLookup
-  (tc-type-env-scoped-stack-lookup-id (struct-get sidecar stack) name-id))
+  (tc-type-env-scoped-stack-lookup-id sidecar.stack name-id))
 
 (define (tc-type-env-scoped-sidecar-save!
   [sidecar : (&mut sidecar TcTypeEnvScopedSidecar)]) : TcTypeEnvScopedMark
-  (tc-type-env-scoped-stack-save! (&mut (struct-get sidecar stack))))
+  (tc-type-env-scoped-stack-save! (&mut sidecar.stack)))
 
 (define (tc-type-env-scoped-sidecar-mark
   [sidecar : TcTypeEnvScopedSidecar]
   [stack-mark : TcTypeEnvScopedMark]) : TcTypeEnvScopedSidecarMark
   (TcTypeEnvScopedSidecarMark
-    (struct-get sidecar persistent)
+    sidecar.persistent
     stack-mark
-    (struct-get sidecar materialize-start)))
+    sidecar.materialize-start))
 
 (define (tc-type-env-scoped-sidecar-restore!
   [sidecar : (&mut sidecar TcTypeEnvScopedSidecar)]
   [mark : TcTypeEnvScopedSidecarMark]) : unit
   (begin
-    (set! (struct-get sidecar persistent) (struct-get mark persistent))
-    (set!
-      (struct-get sidecar materialize-start)
-      (struct-get mark materialize-start))
-    (tc-type-env-scoped-stack-restore!
-      (&mut (struct-get sidecar stack))
-      (struct-get mark stack-mark))))
+    (set! sidecar.persistent mark.persistent)
+    (set! sidecar.materialize-start mark.materialize-start)
+    (tc-type-env-scoped-stack-restore! (&mut sidecar.stack) mark.stack-mark)))
 
 (define (tc-type-env-scoped-sidecar-bind-id
   [sidecar : TcTypeEnvScopedSidecar (:consume)]
@@ -10430,10 +10295,7 @@
   (let
     [next : TcTypeEnvScopedSidecar sidecar]
     (begin
-      (tc-type-env-scoped-stack-bind-id!
-        (&mut (struct-get next stack))
-        name-id
-        ty)
+      (tc-type-env-scoped-stack-bind-id! (&mut next.stack) name-id ty)
       next)))
 
 (define (tc-type-env-scoped-sidecar-bind-marker-id
@@ -10445,7 +10307,7 @@
     [next : TcTypeEnvScopedSidecar sidecar]
     (begin
       (tc-type-env-scoped-stack-bind-marker-id!
-        (&mut (struct-get next stack))
+        (&mut next.stack)
         name-id
         ty
         marker-kind)
@@ -10520,17 +10382,17 @@
     [next : TcTypeEnvScopedSidecar sidecar]
     (begin
       (tc-type-env-scoped-stack-bind-marker-id!
-        (&mut (struct-get next stack))
+        (&mut next.stack)
         (tc-c-abi-fnptr-marker-id name-id)
         (ast.AstType.Unit)
         TcTypeEnvScopedMarkerKind.CAbiFnptr)
       (tc-type-env-scoped-stack-bind-marker-id!
-        (&mut (struct-get next stack))
+        (&mut next.stack)
         (tc-unsafe-decl-marker-id name-id)
         (ast.AstType.Unit)
         TcTypeEnvScopedMarkerKind.UnsafeDecl)
       (tc-type-env-scoped-stack-bind-flags-id!
-        (&mut (struct-get next stack))
+        (&mut next.stack)
         name-id
         ty
         (bit-or
@@ -10550,16 +10412,13 @@
   (if (>= index (tc-type-env-scoped-stack-len stack))
     env
     (let
-      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
       (tc-type-env-scoped-stack-materialize-at
         stack
         (+ index 1)
         (begin
           (cfg compile-profile (compiler-tc-env-profile-note-bind))
-          (tc-type-env-bind-node
-            env
-            (struct-get slot name-id)
-            (struct-get slot ty)))))))
+          (tc-type-env-bind-node env slot.name-id slot.ty))))))
 
 (define (tc-type-env-scoped-sidecar-materialize
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnv
@@ -10568,12 +10427,12 @@
       compile-profile
       (compiler-tc-env-profile-note-scoped-materialization
         (-
-          (tc-type-env-scoped-stack-len (struct-get sidecar stack))
-          (struct-get sidecar materialize-start))))
+          (tc-type-env-scoped-stack-len sidecar.stack)
+          sidecar.materialize-start)))
     (tc-type-env-scoped-stack-materialize-at
-      (struct-get sidecar stack)
-      (struct-get sidecar materialize-start)
-      (struct-get sidecar persistent))))
+      sidecar.stack
+      sidecar.materialize-start
+      sidecar.persistent)))
 
 (define (tc-type-env-scoped-carrier-from-env [env : TcTypeEnv]) : TcTypeEnvScopedCarrier
   (TcTypeEnvScopedCarrier env (tc-type-env-scoped-sidecar-from-env env) false))
@@ -10588,71 +10447,63 @@
   (tc-type-env-scoped-carrier-from-env (tc-empty-env)))
 
 (define (tc-type-env-scoped-carrier-env [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnv
-  (if (struct-get carrier dirty)
-    (tc-type-env-scoped-sidecar-materialize (struct-get carrier sidecar))
-    (struct-get carrier env)))
+  (if carrier.dirty
+    (tc-type-env-scoped-sidecar-materialize carrier.sidecar)
+    carrier.env))
 
 (define (tc-type-env-scoped-carrier-sidecar [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedSidecar
-  (struct-get carrier sidecar))
+  carrier.sidecar)
 
 (define (tc-type-env-scoped-carrier-persistent
   [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnv
-  (tc-type-env-scoped-sidecar-persistent (struct-get carrier sidecar)))
+  (tc-type-env-scoped-sidecar-persistent carrier.sidecar))
 
 (define (tc-type-env-scoped-carrier-marker-cursor
   [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedMarkerCursor
-  (tc-type-env-scoped-sidecar-marker-cursor (struct-get carrier sidecar)))
+  (tc-type-env-scoped-sidecar-marker-cursor carrier.sidecar))
 
 (define (tc-type-env-scoped-carrier-with-sidecar
   [carrier : TcTypeEnvScopedCarrier]
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedCarrier
-  (TcTypeEnvScopedCarrier (struct-get carrier env) sidecar true))
+  (TcTypeEnvScopedCarrier carrier.env sidecar true))
 
 (define (tc-type-env-scoped-carrier-save
   [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrierSave
   (let
-    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
+    [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
     [stack-mark : TcTypeEnvScopedMark
       (tc-type-env-scoped-sidecar-save! (&mut sidecar))]
     (TcTypeEnvScopedCarrierSave
-      (TcTypeEnvScopedCarrier
-        (struct-get carrier env)
-        sidecar
-        (struct-get carrier dirty))
+      (TcTypeEnvScopedCarrier carrier.env sidecar carrier.dirty)
       (TcTypeEnvScopedCarrierMark
-        (struct-get carrier env)
+        carrier.env
         (tc-type-env-scoped-sidecar-mark sidecar stack-mark)
-        (struct-get carrier dirty)))))
+        carrier.dirty))))
 
 (define (tc-type-env-scoped-carrier-snapshot-mark
   [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierMark
   (let
-    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
-    [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
+    [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
+    [stack : TcTypeEnvScopedStack sidecar.stack]
     (TcTypeEnvScopedCarrierMark
-      (struct-get carrier env)
+      carrier.env
       (tc-type-env-scoped-sidecar-mark
         sidecar
         (TcTypeEnvScopedMark
-          (struct-get stack slot-count)
-          (struct-get stack mark-count)
-          (struct-get stack scope-depth)
-          (struct-get stack cache-generation)))
-      (struct-get carrier dirty))))
+          stack.slot-count
+          stack.mark-count
+          stack.scope-depth
+          stack.cache-generation))
+      carrier.dirty)))
 
 (define (tc-type-env-scoped-carrier-restore
   [carrier : TcTypeEnvScopedCarrier (:consume)]
   [mark : TcTypeEnvScopedCarrierMark]) : TcTypeEnvScopedCarrier
   (let
-    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
+    [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
     (begin
-      (tc-type-env-scoped-sidecar-restore!
-        (&mut sidecar)
-        (struct-get mark sidecar-mark))
-      (TcTypeEnvScopedCarrier
-        (struct-get mark env)
-        sidecar
-        (struct-get mark dirty)))))
+      (tc-type-env-scoped-sidecar-restore! (&mut sidecar) mark.sidecar-mark)
+      (TcTypeEnvScopedCarrier mark.env sidecar mark.dirty))))
 
 (define (tc-type-env-scoped-carrier-bind-id
   [carrier : TcTypeEnvScopedCarrier]
@@ -10660,45 +10511,40 @@
   [ty : ast.AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
-    (tc-type-env-scoped-sidecar-bind-id (struct-get carrier sidecar) name-id ty)))
+    (tc-type-env-scoped-sidecar-bind-id carrier.sidecar name-id ty)))
 
 (define (tc-type-env-scoped-carrier-enter-unsafe
   [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
-    (tc-type-env-scoped-sidecar-enter-unsafe (struct-get carrier sidecar))))
+    (tc-type-env-scoped-sidecar-enter-unsafe carrier.sidecar)))
 
 (define (tc-type-env-scoped-carrier-bind-return-type
   [carrier : TcTypeEnvScopedCarrier (:consume)]
   [ty : ast.AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
-    (tc-type-env-scoped-sidecar-bind-return-type
-      (struct-get carrier sidecar)
-      ty)))
+    (tc-type-env-scoped-sidecar-bind-return-type carrier.sidecar ty)))
 
 (define (tc-type-env-scoped-carrier-bind-default-boundary
   [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
-    (tc-type-env-scoped-sidecar-bind-default-boundary
-      (struct-get carrier sidecar))))
+    (tc-type-env-scoped-sidecar-bind-default-boundary carrier.sidecar)))
 
 (define (tc-type-env-scoped-carrier-push-region
   [carrier : TcTypeEnvScopedCarrier (:consume)]
   [region : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
-    (tc-type-env-scoped-sidecar-push-region (struct-get carrier sidecar) region)))
+    (tc-type-env-scoped-sidecar-push-region carrier.sidecar region)))
 
 (define (tc-type-env-scoped-carrier-bind-cleanup-owner
   [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
-    (tc-type-env-scoped-sidecar-bind-cleanup-owner
-      (struct-get carrier sidecar)
-      name-id)))
+    (tc-type-env-scoped-sidecar-bind-cleanup-owner carrier.sidecar name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-ordinary-arena-owner
   [carrier : TcTypeEnvScopedCarrier (:consume)]
@@ -10706,7 +10552,7 @@
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
     (tc-type-env-scoped-sidecar-bind-ordinary-arena-owner
-      (struct-get carrier sidecar)
+      carrier.sidecar
       name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-atomic-arena-owner
@@ -10714,9 +10560,7 @@
   [name-id : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
-    (tc-type-env-scoped-sidecar-bind-atomic-arena-owner
-      (struct-get carrier sidecar)
-      name-id)))
+    (tc-type-env-scoped-sidecar-bind-atomic-arena-owner carrier.sidecar name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
   [carrier : TcTypeEnvScopedCarrier (:consume)]
@@ -10725,7 +10569,7 @@
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
     (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
-      (struct-get carrier sidecar)
+      carrier.sidecar
       name-id
       ty)))
 
@@ -10733,12 +10577,11 @@
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : ResultTcType
   (let
-    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
-    [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
+    [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
+    [stack : TcTypeEnvScopedStack sidecar.stack]
     [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
-      (ResultTcType.Ok
-        (struct-get (array-ref (struct-get stack slots) index) ty))
+      (ResultTcType.Ok (__tl-project-field (array-ref stack.slots index) ty))
       (begin
         (cfg
           compile-profile
@@ -10751,8 +10594,8 @@
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : bool
   (let
-    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
-    [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
+    [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
+    [stack : TcTypeEnvScopedStack sidecar.stack]
     (if (>= (tc-type-env-scoped-stack-lookup-index stack name-id) 0)
       true
       (begin
@@ -10775,17 +10618,15 @@
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : ResultTcTypeUnsafe
   (let
-    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
-    [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
+    [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
+    [stack : TcTypeEnvScopedStack sidecar.stack]
     [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
       (let
-        [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+        [slot : TcTypeEnvScopedSlot (array-ref stack.slots index)]
         (ResultTcTypeUnsafe.Ok
-          (struct-get slot ty)
-          (tc-type-env-scoped-flag?
-            (struct-get slot flags)
-            tc-type-env-scoped-flag-unsafe)))
+          slot.ty
+          (tc-type-env-scoped-flag? slot.flags tc-type-env-scoped-flag-unsafe)))
       (begin
         (cfg
           compile-profile
@@ -10805,12 +10646,11 @@
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : bool
   (let
-    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
-    [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
+    [sidecar : TcTypeEnvScopedSidecar carrier.sidecar]
+    [stack : TcTypeEnvScopedStack sidecar.stack]
     [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
-      (tc-type-env-scoped-slot-c-abi-fnptr?
-        (array-ref (struct-get stack slots) index))
+      (tc-type-env-scoped-slot-c-abi-fnptr? (array-ref stack.slots index))
       (begin
         (cfg
           compile-profile
@@ -10822,13 +10662,11 @@
 (define (tc-type-env-scoped-carrier-marker-type
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : ast.AstMaybeType
-  (match (tc-type-env-scoped-sidecar-lookup-id
-    (struct-get carrier sidecar)
-    name-id)
+  (match (tc-type-env-scoped-sidecar-lookup-id carrier.sidecar name-id)
     [(TcTypeEnvScopedLookup.Found ty _ _ _ _ _) (ast.AstMaybeType.Some ty)]
     [(TcTypeEnvScopedLookup.Missing)
       (tc-env-marker-type
-        (tc-type-env-scoped-sidecar-persistent (struct-get carrier sidecar))
+        (tc-type-env-scoped-sidecar-persistent carrier.sidecar)
         name-id)]))
 
 (define (tc-type-env-scoped-carrier-in-unsafe?
@@ -10850,7 +10688,7 @@
   (match (tc-type-env-scoped-carrier-marker-type carrier (tc-region-marker-id))
     [(ast.AstMaybeType.Some (ast.AstType.Var region))
       (TcMaybeNameId.Some region)]
-    [(ast.AstMaybeType.Some _) (tc-active-region (struct-get carrier env))]
+    [(ast.AstMaybeType.Some _) (tc-active-region carrier.env)]
     [(ast.AstMaybeType.No) (TcMaybeNameId.No)]))
 
 ;; Fully materialized marker-visible snapshots and the active function-body
@@ -10861,8 +10699,7 @@
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : bool
   (let
-    [stack : TcTypeEnvScopedStack
-      (struct-get (struct-get carrier sidecar) stack)]
+    [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
     [index : i64 (tc-type-env-scoped-stack-find-id-index (& stack) name-id)]
     (if (>= index 0)
       (tc-type-env-scoped-stack-cleanup-owner-before? stack index name-id)
@@ -10875,8 +10712,7 @@
   [name-id : i64]
   [marker-id : i64]) : bool
   (let
-    [stack : TcTypeEnvScopedStack
-      (struct-get (struct-get carrier sidecar) stack)]
+    [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
     [index : i64 (tc-type-env-scoped-stack-find-id-index (& stack) name-id)]
     (if (>= index 0)
       (tc-type-env-scoped-stack-owner-marker-before?
@@ -10950,8 +10786,7 @@
   [carrier : TcTypeEnvScopedCarrier]
   [lifetime-id : i64]) : bool
   (let
-    [stack : TcTypeEnvScopedStack
-      (struct-get (struct-get carrier sidecar) stack)]
+    [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
     [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
     [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
     (if (and
@@ -10982,8 +10817,7 @@
   [lifetime-id : i64]
   [target-id : i64]) : bool
   (let
-    [stack : TcTypeEnvScopedStack
-      (struct-get (struct-get carrier sidecar) stack)]
+    [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
     [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
     [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
     (if (and
@@ -11029,8 +10863,7 @@
   (if (= value-lifetime-id target-lifetime-id)
     true
     (let
-      [stack : TcTypeEnvScopedStack
-        (struct-get (struct-get carrier sidecar) stack)]
+      [stack : TcTypeEnvScopedStack carrier.sidecar.stack]
       [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
       [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
       (if (and
@@ -11125,9 +10958,9 @@
   (if (and (>= name-id 0) (< name-id tc-type-env-scoped-dense-lookup-capacity))
     (if (=
       (array-ref tc-type-env-scoped-dense-lookup-epochs name-id)
-      (struct-get
-        (struct-get
-          (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+      (__tl-project-field
+        (__tl-project-field
+          (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
           stack)
         lookup-epoch))
       (let
@@ -11141,9 +10974,9 @@
             -1)
           (if (<
             index
-            (struct-get
-              (struct-get
-                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+            (__tl-project-field
+              (__tl-project-field
+                (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
                 stack)
               slot-count))
             (begin
@@ -11153,20 +10986,22 @@
               index)
             (tc-type-env-scoped-stack-dense-lookup-id-refresh
               (&
-                (struct-get
-                  (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                (__tl-project-field
+                  (__tl-project-field
+                    tc-type-env-scoped-runtime-carrier
+                    sidecar)
                   stack))
               name-id))))
       (tc-type-env-scoped-stack-dense-lookup-id-refresh
         (&
-          (struct-get
-            (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+          (__tl-project-field
+            (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
             stack))
         name-id))
     (tc-type-env-scoped-stack-map-lookup-id
       (&
-        (struct-get
-          (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+        (__tl-project-field
+          (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
           stack))
       name-id)))
 
@@ -11246,39 +11081,35 @@
   (begin
     (tc-type-env-scoped-stack-push-slot!
       (&mut
-        (struct-get
-          (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+        (__tl-project-field
+          (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
           stack))
       name-id
       ty
       0
       TcTypeEnvScopedMarkerKind.None)
-    (set! (struct-get tc-type-env-scoped-runtime-carrier dirty) true)))
+    (__tl-project-set-field tc-type-env-scoped-runtime-carrier dirty true)))
 
 (define (tc-type-env-scoped-stack-mark-latest-flags-id!
   [stack : (&mut stack TcTypeEnvScopedStack)]
   [name-id : i64]
   [flags : i64]) : unit
   (let
-    [index : i64 (- (struct-get stack slot-count) 1)]
+    [index : i64 (- stack.slot-count 1)]
     (if (and
       (>= index 0)
-      (=
-        (struct-get (array-ref (struct-get stack slots) index) name-id)
-        name-id))
+      (= (__tl-project-field (array-ref stack.slots index) name-id) name-id))
       (let
-        [slot : TcTypeEnvScopedSlot
-          (clone (array-ref (struct-get stack slots) index))]
-        (array-set!
-          (struct-get stack slots)
-          index
+        [slot : TcTypeEnvScopedSlot (clone (array-ref stack.slots index))]
+        (set!
+          (array-ref stack.slots index)
           (TcTypeEnvScopedSlot
-            (struct-get slot name-id)
-            (struct-get slot ty)
-            (bit-or (struct-get slot flags) flags)
-            (struct-get slot marker-kind-tag)
-            (struct-get slot scope-depth)
-            (struct-get slot generation))))
+            slot.name-id
+            slot.ty
+            (bit-or slot.flags flags)
+            slot.marker-kind-tag
+            slot.scope-depth
+            slot.generation)))
       unit)))
 
 (define (tc-type-env-scoped-runtime-mark-latest-flags-id!
@@ -11286,7 +11117,9 @@
   [flags : i64]) : unit
   (tc-type-env-scoped-stack-mark-latest-flags-id!
     (&mut
-      (struct-get (struct-get tc-type-env-scoped-runtime-carrier sidecar) stack))
+      (__tl-project-field
+        (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
+        stack))
     name-id
     flags))
 
@@ -11295,27 +11128,23 @@
   [name-id : i64]
   [marker-kind : TcTypeEnvScopedMarkerKind]) : unit
   (let
-    [index : i64 (- (struct-get stack slot-count) 1)]
+    [index : i64 (- stack.slot-count 1)]
     (if (and
       (>= index 0)
-      (=
-        (struct-get (array-ref (struct-get stack slots) index) name-id)
-        name-id))
+      (= (__tl-project-field (array-ref stack.slots index) name-id) name-id))
       (let
-        [slot : TcTypeEnvScopedSlot
-          (clone (array-ref (struct-get stack slots) index))]
-        (array-set!
-          (struct-get stack slots)
-          index
+        [slot : TcTypeEnvScopedSlot (clone (array-ref stack.slots index))]
+        (set!
+          (array-ref stack.slots index)
           (TcTypeEnvScopedSlot
-            (struct-get slot name-id)
-            (struct-get slot ty)
+            slot.name-id
+            slot.ty
             (bit-or
-              (struct-get slot flags)
+              slot.flags
               (tc-type-env-scoped-runtime-slot-flags marker-kind))
             (tc-type-env-scoped-marker-kind-tag marker-kind)
-            (struct-get slot scope-depth)
-            (struct-get slot generation))))
+            slot.scope-depth
+            slot.generation)))
       unit)))
 
 (define (tc-type-env-scoped-runtime-mark-latest-marker-id!
@@ -11323,7 +11152,9 @@
   [marker-kind : TcTypeEnvScopedMarkerKind]) : unit
   (tc-type-env-scoped-stack-mark-latest-marker-id!
     (&mut
-      (struct-get (struct-get tc-type-env-scoped-runtime-carrier sidecar) stack))
+      (__tl-project-field
+        (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
+        stack))
     name-id
     marker-kind))
 
@@ -11351,8 +11182,8 @@
   [name-id : i64]
   [remaining : i64]) : bool
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [left : i64 remaining]
     [done : bool false]
     [found : bool false]
@@ -11367,7 +11198,7 @@
                   (tc-type-env-cache-ptr
                     store-handle
                     (tc-type-env-cache-index head)))]
-              (set! head (struct-get cache rest)))]
+              (set! head cache.rest))]
           [else
             (let
               [binding-ptr : (Ptr TcTypeEnvBinding)
@@ -11389,8 +11220,8 @@
   [env : TcTypeEnv]
   [name-id : i64]) : bool
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     (cond
       [(= head -1) false]
       [(< head -1)
@@ -11402,7 +11233,7 @@
               (if (>= ref 0)
                 (=
                   (array-ref
-                    (struct-get
+                    (__tl-project-field
                       (tc-chain-ref-cache store-handle ref)
                       c-abi-fnptr-flags)
                     (tc-chain-ref-slot ref))
@@ -11412,13 +11243,13 @@
               [cache : TcTypeEnvCache
                 (tc-type-env-cache-at
                   (tc-type-env-cache-ptr store-handle node-addr))]
-              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+              [ids : tc_i64_i64_map.Map cache.ids]
               [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
               (if (>= index 0)
-                (= (array-ref (struct-get cache c-abi-fnptr-flags) index) 1)
-                (if (struct-get cache partial)
+                (= (array-ref cache.c-abi-fnptr-flags index) 1)
+                (if cache.partial
                   (tc-binding-c-abi-fnptr-persistent-id?
-                    (TcTypeEnv store-handle (struct-get cache below) 0)
+                    (TcTypeEnv store-handle cache.below 0)
                     name-id)
                   false)))))]
       [else
@@ -11442,9 +11273,11 @@
         (if (>= index 0)
           (tc-type-env-scoped-slot-c-abi-fnptr?
             (array-ref
-              (struct-get
-                (struct-get
-                  (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+              (__tl-project-field
+                (__tl-project-field
+                  (__tl-project-field
+                    tc-type-env-scoped-runtime-carrier
+                    sidecar)
                   stack)
                 slots)
               index))
@@ -11453,8 +11286,8 @@
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
             (tc-binding-c-abi-fnptr-persistent-id?
-              (struct-get
-                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+              (__tl-project-field
+                (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
               name-id)))]
       (begin
@@ -11469,11 +11302,11 @@
 
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
-    [head : i64 (struct-get env head)]
+    [head : i64 env.head]
     (if (>= head 0)
       (let
         [binding-ptr : (Ptr TcTypeEnvBinding)
-          (tc-type-env-binding-ptr (struct-get env store) head)]
+          (tc-type-env-binding-ptr env.store head)]
         (tc-unsafe-decl-marker-key-id?
           (tc-type-env-binding-name-at binding-ptr)
           name-id))
@@ -11481,8 +11314,8 @@
 
 (define (tc-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     (cond
       [(= head -1) false]
       [(< head -1)
@@ -11494,7 +11327,7 @@
               (if (>= ref 0)
                 (=
                   (array-ref
-                    (struct-get
+                    (__tl-project-field
                       (tc-chain-ref-cache store-handle ref)
                       unsafe-flags)
                     (tc-chain-ref-slot ref))
@@ -11504,13 +11337,13 @@
               [cache : TcTypeEnvCache
                 (tc-type-env-cache-at
                   (tc-type-env-cache-ptr store-handle node-addr))]
-              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+              [ids : tc_i64_i64_map.Map cache.ids]
               [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
               (if (>= index 0)
-                (= (array-ref (struct-get cache unsafe-flags) index) 1)
-                (if (struct-get cache partial)
+                (= (array-ref cache.unsafe-flags index) 1)
+                (if cache.partial
                   (tc-binding-unsafe-id?
-                    (TcTypeEnv store-handle (struct-get cache below) 0)
+                    (TcTypeEnv store-handle cache.below 0)
                     name-id)
                   false)))))]
       [else
@@ -11528,8 +11361,8 @@
 
 (define (tc-env-cache-count [env : TcTypeEnv]) : i64
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [count : i64 0]
     [done : bool false]
     (begin
@@ -11550,13 +11383,13 @@
                   (tc-type-env-cache-ptr
                     store-handle
                     (tc-type-env-cache-index head)))]
-              (set! head (struct-get cache rest)))]))
+              (set! head cache.rest))]))
       count)))
 
 (define (tc-env-cache-count-prefix [env : TcTypeEnv] [remaining : i64]) : i64
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [left : i64 remaining]
     [count : i64 0]
     (begin
@@ -11626,11 +11459,11 @@
       (if default-shadow
         tc-env-cache-flag-default-shadow
         0)]
-    [head : i64 (struct-get rest-env head)]
+    [head : i64 rest-env.head]
     (if (>= head 0)
       (let
         [binding-ptr : (Ptr TcTypeEnvBinding)
-          (tc-type-env-binding-ptr (struct-get rest-env store) head)]
+          (tc-type-env-binding-ptr rest-env.store head)]
         [marker-id : i64 (tc-type-env-binding-name-at binding-ptr)]
         [marker-ty : ast.AstType (tc-type-env-binding-type-at binding-ptr)]
         [marker-flag : i64
@@ -11656,11 +11489,11 @@
   [name-id : i64]
   [marker-id : i64]) : bool
   (let
-    [head : i64 (struct-get env head)]
+    [head : i64 env.head]
     (if (>= head 0)
       (let
         [binding-ptr : (Ptr TcTypeEnvBinding)
-          (tc-type-env-binding-ptr (struct-get env store) head)]
+          (tc-type-env-binding-ptr env.store head)]
         (if (= (tc-type-env-binding-name-at binding-ptr) marker-id)
           (match (tc-type-env-binding-type-at binding-ptr)
             [(ast.AstType.Var owner) (= owner name-id)]
@@ -11694,22 +11527,19 @@
   (if (tc_i64_i64_map.insert-if-absent-ref! ids name-id next)
     (begin
       (cfg compile-profile (compiler-tc-env-profile-note-cache-entry))
-      (array-set! values next ty)
-      (array-set!
-        unsafe-flags
-        next
+      (set! (array-ref values next) ty)
+      (set!
+        (array-ref unsafe-flags next)
         (if unsafe
           1
           0))
-      (array-set!
-        c-abi-fnptr-flags
-        next
+      (set!
+        (array-ref c-abi-fnptr-flags next)
         (if c-abi-fnptr
           1
           0))
-      (array-set!
-        shadow-flags
-        next
+      (set!
+        (array-ref shadow-flags next)
         (+ sidecar-flags (* position tc-env-cache-sidecar-position-scale)))
       true)
     false))
@@ -11743,12 +11573,11 @@
           false)]
       (if (or general-added arena-added)
         (begin
-          (array-set! values next ty)
-          (array-set! unsafe-flags next 0)
-          (array-set! c-abi-fnptr-flags next 0)
-          (array-set!
-            shadow-flags
-            next
+          (set! (array-ref values next) ty)
+          (set! (array-ref unsafe-flags next) 0)
+          (set! (array-ref c-abi-fnptr-flags next) 0)
+          (set!
+            (array-ref shadow-flags next)
             (+
               (if signature
                 tc-env-cache-flag-signature-lifetime
@@ -11767,8 +11596,8 @@
   [shadow-flags : (__tl_dyn-array i64)]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
     [resolution-next : i64 0]
@@ -11824,9 +11653,10 @@
                   (begin
                     (if (and track-resolution (tc-type-needs-resolution? ty))
                       (begin
-                        (array-set!
-                          unsafe-flags
-                          (+ (array.length values) 1 resolution-next)
+                        (set!
+                          (array-ref
+                            unsafe-flags
+                            (+ (array.length values) 1 resolution-next))
                           name-id)
                         (set! resolution-next (+ resolution-next 1)))
                       unit)
@@ -11857,7 +11687,7 @@
                     position)
                     (set! next (+ next 1))
                     unit))
-                (set! head (struct-get rest-env head))
+                (set! head rest-env.head)
                 (set! position (+ position 1))
                 (set! cur-above-boundary still-above)))]
           [else
@@ -11867,11 +11697,11 @@
                   (tc-type-env-cache-ptr
                     store-handle
                     (tc-type-env-cache-index head)))]
-              (set! head (struct-get cache rest)))]))
+              (set! head cache.rest))]))
       ;; The final slot is a construction-only handoff to the cache node. It
       ;; avoids a second result aggregate around the consuming map.
       (if track-resolution
-        (array-set! unsafe-flags (array.length values) resolution-next)
+        (set! (array-ref unsafe-flags (array.length values)) resolution-next)
         unit)
       cur-ids)))
 
@@ -11886,8 +11716,8 @@
   [shadow-flags : (__tl_dyn-array i64)]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [left : i64 remaining]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
@@ -11941,9 +11771,10 @@
                   (begin
                     (if (and track-resolution (tc-type-needs-resolution? ty))
                       (begin
-                        (array-set!
-                          unsafe-flags
-                          (+ (array.length values) 1 resolution-next)
+                        (set!
+                          (array-ref
+                            unsafe-flags
+                            (+ (array.length values) 1 resolution-next))
                           name-id)
                         (set! resolution-next (+ resolution-next 1)))
                       unit)
@@ -11975,7 +11806,7 @@
                     (set! next (+ next 1))
                     unit))
                 (set! left (- left 1))
-                (set! head (struct-get rest-env head))
+                (set! head rest-env.head)
                 (set! position (+ position 1))
                 (set! cur-above-boundary still-above)))]
           [(< head -1)
@@ -11985,17 +11816,15 @@
                   (tc-type-env-cache-ptr
                     store-handle
                     (tc-type-env-cache-index head)))]
-              (if (and
-                (struct-get cache scan-through)
-                (struct-get cache partial))
+              (if (and cache.scan-through cache.partial)
                 ;; The cache's `rest` starts at the first bind it covers. Walk
                 ;; that layer, then the next partial layer, but stop before an
                 ;; explicit/global cache; `left` is the exact covered-bind sum.
-                (set! head (struct-get cache rest))
+                (set! head cache.rest)
                 (set! done true)))]
           [else (set! done true)]))
       (if track-resolution
-        (array-set! unsafe-flags (array.length values) resolution-next)
+        (set! (array-ref unsafe-flags (array.length values)) resolution-next)
         unit)
       cur-ids)))
 
@@ -12147,9 +11976,8 @@
               [slots : (__tl_dyn-array TcChainIndex)
                 (array.make-array TcChainIndex 1)]
               (begin
-                (array-set!
-                  slots
-                  0
+                (set!
+                  (array-ref slots 0)
                   (TcChainIndex (tc_i64_i64_map.with-capacity 1024) 0 owner))
                 (unsafe
                   (cast
@@ -12219,8 +12047,7 @@
         [state : TcChainIndex (tc-chain-state-read state-addr)]
         [s-depth : i64 (tc-chain-node-depth s-addr)]
         [s-seq : i64 (tc-chain-node-seq s-addr)]
-        [ref : i64
-          (tc_i64_i64_map.get-value-or (& (struct-get state map)) key -1)]
+        [ref : i64 (tc_i64_i64_map.get-value-or (& state.map) key -1)]
         [answer : i64 -1]
         [done : bool false]
         (begin
@@ -12262,11 +12089,11 @@
   [full : bool]) : unit
   (let
     [ids : tc_i64_i64_map.Map
-      (struct-get
+      (__tl-project-field
         (tc-type-env-cache-at (tc-type-env-cache-ptr store-handle node-addr))
         ids)]
     [state : TcChainIndex (tc-chain-state-read state-addr)]
-    [owner : i64 (struct-get state owner-arena)]
+    [owner : i64 state.owner-arena]
     [head : i64 rest-head]
     [left : i64 count]
     [done : bool false]
@@ -12287,20 +12114,14 @@
                   (< slot (array.length prev))
                   (= (array-ref prev slot) 0))
                   (begin
-                    (array-set!
-                      prev
-                      slot
+                    (set!
+                      (array-ref prev slot)
                       (+
-                        (tc_i64_i64_map.get-value-or
-                          (& (struct-get state map))
-                          name-id
-                          -1)
+                        (tc_i64_i64_map.get-value-or (& state.map) name-id -1)
                         2))
-                    (tc-cache-map-grow-in-owner!
-                      (&mut (struct-get state map))
-                      owner)
+                    (tc-cache-map-grow-in-owner! (&mut state.map) owner)
                     (tc_i64_i64_map.insert-ref!
-                      (&mut (struct-get state map))
+                      (&mut state.map)
                       name-id
                       (tc-chain-ref-pack node-addr slot)))
                   unit)
@@ -12309,7 +12130,7 @@
           [else
             (set!
               head
-              (struct-get
+              (__tl-project-field
                 (tc-type-env-cache-at
                   (tc-type-env-cache-ptr
                     store-handle
@@ -12368,14 +12189,11 @@
             [seq : i64
               (let
                 [state : TcChainIndex (tc-chain-state-read state-addr)]
-                [next : i64 (struct-get state next-seq)]
+                [next : i64 state.next-seq]
                 (begin
                   (tc-chain-state-write!
                     state-addr
-                    (TcChainIndex
-                      (struct-get state map)
-                      (+ next 1)
-                      (struct-get state owner-arena)))
+                    (TcChainIndex state.map (+ next 1) state.owner-arena))
                   next))]
             (begin
               (if (= levels 0)
@@ -12383,12 +12201,11 @@
                 (let
                   [k : i64 1]
                   (begin
-                    (array-set! jumps 0 below-addr)
+                    (set! (array-ref jumps 0) below-addr)
                     (while (< k levels)
                       (begin
-                        (array-set!
-                          jumps
-                          k
+                        (set!
+                          (array-ref jumps k)
                           (tc-chain-jump-at (array-ref jumps (- k 1)) (- k 1)))
                         (set! k (+ k 1)))))))
               (tc-chain-node-set-fields! node-addr depth seq jumps prev)
@@ -12430,7 +12247,7 @@
           true)]
       [node : TcTypeEnv
         (begin
-          (array-set! shadow-flags (- capacity 1) count)
+          (set! (array-ref shadow-flags (- capacity 1)) count)
           (tc-type-env-cache-node
             env
             (TcTypeEnvCache
@@ -12445,18 +12262,18 @@
               shadow-flags
               scan-through
               false
-              (struct-get env head)
-              (struct-get env head))))]
+              env.head
+              env.head)))]
       (begin
         (if scan-through
           unit
           (tc-chain-attach-layer!
-            (struct-get env store)
-            (struct-get node head)
+            env.store
+            node.head
             -1
             count
             capacity
-            (struct-get env head)
+            env.head
             true))
         node))))
 
@@ -12499,7 +12316,7 @@
           true)]
       [node : TcTypeEnv
         (begin
-          (array-set! shadow-flags (- capacity 1) count)
+          (set! (array-ref shadow-flags (- capacity 1)) count)
           (tc-type-env-cache-node
             env
             (TcTypeEnvCache
@@ -12514,18 +12331,18 @@
               shadow-flags
               scan-through
               true
-              (struct-get env head)
-              (struct-get below head))))]
+              env.head
+              below.head)))]
       (begin
         (if scan-through
           unit
           (tc-chain-attach-layer!
-            (struct-get env store)
-            (struct-get node head)
-            (struct-get below head)
+            env.store
+            node.head
+            below.head
             count
             capacity
-            (struct-get env head)
+            env.head
             false))
         node))))
 
@@ -13180,8 +12997,8 @@
 
 (define (tc-env-marker-type-scan [env : TcTypeEnv] [name-id : i64]) : ast.AstMaybeType
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     (cond
       [(= head -1) (ast.AstMaybeType.No)]
       [(< head -1)
@@ -13191,16 +13008,15 @@
               (tc-type-env-cache-ptr
                 store-handle
                 (tc-type-env-cache-index head)))]
-          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-          (if (struct-get cache scan-through)
+          [ids : tc_i64_i64_map.Map cache.ids]
+          (if cache.scan-through
             (match (tc_i64_i64_map.get (& ids) name-id)
               [(tc_i64_i64_map.LookupFound index)
-                (ast.AstMaybeType.Some
-                  (array-ref (struct-get cache values) index))]
+                (ast.AstMaybeType.Some (array-ref cache.values index))]
               [(tc_i64_i64_map.LookupMissing)
-                (if (struct-get cache partial)
+                (if cache.partial
                   (tc-env-marker-type-scan
-                    (TcTypeEnv store-handle (struct-get cache below) 0)
+                    (TcTypeEnv store-handle cache.below 0)
                     name-id)
                   (ast.AstMaybeType.No))])
             (ast.AstMaybeType.No)))]
@@ -13219,17 +13035,17 @@
 
 (define (tc-env-marker-type [env : TcTypeEnv] [name-id : i64]) : ast.AstMaybeType
   (let
-    [head : i64 (struct-get env head)]
+    [head : i64 env.head]
     (if (< head -1)
       (let
-        [store-handle : i64 (struct-get env store)]
+        [store-handle : i64 env.store]
         [cache : TcTypeEnvCache
           (tc-type-env-cache-at
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head)))]
-        (if (struct-get cache scan-through)
+        (if cache.scan-through
           (tc-env-marker-type-scan env name-id)
           (tc-env-marker-type-scan
-            (TcTypeEnv store-handle (struct-get cache rest) 0)
+            (TcTypeEnv store-handle cache.rest 0)
             name-id)))
       (tc-env-marker-type-scan env name-id))))
 
@@ -13302,18 +13118,17 @@
           (in-arena
             owner
             (begin
-              (set!
-                (struct-get
-                  tc-lazy-global-table-state
-                  unused-unsafe-block-spans)
+              (__tl-project-set-field
+                tc-lazy-global-table-state
+                unused-unsafe-block-spans
                 (array.make-array ast.AstSourceSpan 128))
-              (set!
-                (struct-get
-                  tc-lazy-global-table-state
-                  unused-unsafe-block-paths)
+              (__tl-project-set-field
+                tc-lazy-global-table-state
+                unused-unsafe-block-paths
                 (array.make-array String 128))
-              (set!
-                (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+              (__tl-project-set-field
+                tc-lazy-global-table-state
+                unused-unsafe-block-used
                 (array.make-array bool 128))))
           (set! tc-unused-unsafe-blocks-stable true))))
     (set! tc-unused-unsafe-block-len 0)))
@@ -13324,21 +13139,21 @@
 (define (tc-unused-unsafe-block-path [index : i64]) : String
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
     (tc-global-array-element-shared-view
-      (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+      (__tl-project-field tc-lazy-global-table-state unused-unsafe-block-paths)
       index)
     ""))
 
 (define (tc-unused-unsafe-block-span [index : i64]) : ast.AstSourceSpan
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
     (array-ref
-      (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+      (__tl-project-field tc-lazy-global-table-state unused-unsafe-block-spans)
       index)
     (tc-unused-unsafe-no-span)))
 
 (define (tc-unused-unsafe-block-used? [index : i64]) : bool
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
     (array-ref
-      (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+      (__tl-project-field tc-lazy-global-table-state unused-unsafe-block-used)
       index)
     false))
 
@@ -13374,12 +13189,16 @@
     (if (and
       (string.eq
         (array-ref
-          (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+          (__tl-project-field
+            tc-lazy-global-table-state
+            unused-unsafe-block-paths)
           index)
         path)
       (tc-unused-unsafe-span-eq?
         (array-ref
-          (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+          (__tl-project-field
+            tc-lazy-global-table-state
+            unused-unsafe-block-spans)
           index)
         span))
       index
@@ -13393,23 +13212,26 @@
   (if (>= index tc-unused-unsafe-block-len)
     unit
     (begin
-      (array-set!
-        new-spans
-        index
+      (set!
+        (array-ref new-spans index)
         (array-ref
-          (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+          (__tl-project-field
+            tc-lazy-global-table-state
+            unused-unsafe-block-spans)
           index))
-      (array-set!
-        new-paths
-        index
+      (set!
+        (array-ref new-paths index)
         (array-ref
-          (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+          (__tl-project-field
+            tc-lazy-global-table-state
+            unused-unsafe-block-paths)
           index))
-      (array-set!
-        new-used
-        index
+      (set!
+        (array-ref new-used index)
         (array-ref
-          (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+          (__tl-project-field
+            tc-lazy-global-table-state
+            unused-unsafe-block-used)
           index))
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used (+ index 1)))))
 
@@ -13417,7 +13239,9 @@
   (let
     [old-cap : i64
       (array.length
-        (struct-get tc-lazy-global-table-state unused-unsafe-block-spans))]
+        (__tl-project-field
+          tc-lazy-global-table-state
+          unused-unsafe-block-spans))]
     [new-cap : i64 (* old-cap 2)]
     [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
     [new-spans : (__tl_dyn-array ast.AstSourceSpan)
@@ -13428,14 +13252,17 @@
       (in-arena owner (array.make-array bool new-cap))]
     (begin
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used 0)
-      (set!
-        (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+      (__tl-project-set-field
+        tc-lazy-global-table-state
+        unused-unsafe-block-spans
         new-spans)
-      (set!
-        (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+      (__tl-project-set-field
+        tc-lazy-global-table-state
+        unused-unsafe-block-paths
         new-paths)
-      (set!
-        (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+      (__tl-project-set-field
+        tc-lazy-global-table-state
+        unused-unsafe-block-used
         new-used))))
 
 (define (tc-unused-unsafe-push [span : ast.AstSourceSpan]) : i64
@@ -13453,20 +13280,31 @@
           (if (>=
             slot
             (array.length
-              (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)))
+              (__tl-project-field
+                tc-lazy-global-table-state
+                unused-unsafe-block-spans)))
             (tc-unused-unsafe-grow!)
             unit)
-          (array-set!
-            (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
-            slot
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                unused-unsafe-block-spans)
+              slot)
             span)
-          (array-set!
-            (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
-            slot
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                unused-unsafe-block-paths)
+              slot)
             tc-unused-unsafe-current-path)
-          (array-set!
-            (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
-            slot
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                unused-unsafe-block-used)
+              slot)
             false)
           (set! tc-unused-unsafe-block-len (+ tc-unused-unsafe-block-len 1))
           slot)))))
@@ -13499,9 +13337,10 @@
     tc-unused-unsafe-tracking-enabled
     (>= tc-unused-unsafe-current-block 0)
     (< tc-unused-unsafe-current-block tc-unused-unsafe-block-len))
-    (array-set!
-      (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
-      tc-unused-unsafe-current-block
+    (set!
+      (array-ref
+        (__tl-project-field tc-lazy-global-table-state unused-unsafe-block-used)
+        tc-unused-unsafe-current-block)
       true)
     unit))
 
@@ -13694,12 +13533,15 @@
     [(ast.AstType.Func args ret)
       (str_cat.str-cat
         "(-> "
-        (tc-type-list-render (box-get args))
+        (tc-type-list-render (__tl-box-place args))
         " "
         (tc-type-render (ast.ty-node-get ret))
         ")")]
     [(ast.AstType.Tuple elems)
-      (str_cat.str-cat "(Tuple " (tc-type-list-render (box-get elems)) ")")]
+      (str_cat.str-cat
+        "(Tuple "
+        (tc-type-list-render (__tl-box-place elems))
+        ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
         "(Array "
@@ -13746,17 +13588,17 @@
     [(ast.AstType.EnumArgs name lifetimes)
       (tc-render-nominal-lifetime-type
         (tc-nominal-name-id-display name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Struct name) (tc-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (tc-render-nominal-lifetime-type
         (tc-nominal-name-id-display name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Var name) (tc-nominal-name-id-display name)]
     [(ast.AstType.VarArgs name lifetimes)
       (tc-render-nominal-lifetime-type
         (tc-nominal-name-id-display name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Consume inner)
       (str_cat.str-cat
         "(:consume "
@@ -14122,7 +13964,7 @@
     [slots : (__tl_dyn-array TcStdlibTypeSpec)
       (array.make-array TcStdlibTypeSpec 1)]
     (begin
-      (array-set! slots 0 a)
+      (set! (array-ref slots 0) a)
       (TcStdlibTypeSpecList slots 1))))
 
 (define (tc-stdlib-type-spec-list2
@@ -14132,8 +13974,8 @@
     [slots : (__tl_dyn-array TcStdlibTypeSpec)
       (array.make-array TcStdlibTypeSpec 2)]
     (begin
-      (array-set! slots 0 a)
-      (array-set! slots 1 b)
+      (set! (array-ref slots 0) a)
+      (set! (array-ref slots 1) b)
       (TcStdlibTypeSpecList slots 2))))
 
 (define (tc-stdlib-type-spec-list3
@@ -14144,9 +13986,9 @@
     [slots : (__tl_dyn-array TcStdlibTypeSpec)
       (array.make-array TcStdlibTypeSpec 3)]
     (begin
-      (array-set! slots 0 a)
-      (array-set! slots 1 b)
-      (array-set! slots 2 c)
+      (set! (array-ref slots 0) a)
+      (set! (array-ref slots 1) b)
+      (set! (array-ref slots 2) c)
       (TcStdlibTypeSpecList slots 3))))
 
 (define (tc-stdlib-field-spec-nil) : TcStdlibFieldSpecList
@@ -14157,17 +13999,17 @@
   [ty : TcStdlibTypeSpec]
   [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
   (let
-    [n : i64 (struct-get rest len)]
-    [src : (__tl_dyn-array TcStdlibFieldSpec) (struct-get rest slots)]
+    [n : i64 rest.len]
+    [src : (__tl_dyn-array TcStdlibFieldSpec) rest.slots]
     [slots : (__tl_dyn-array TcStdlibFieldSpec)
       (array.make-array TcStdlibFieldSpec (+ n 1))]
     [i : i64 0]
     (begin
       (cfg compile-profile (tc-lp-note 8))
-      (array-set! slots 0 (TcStdlibFieldSpec.Spec name ty))
+      (set! (array-ref slots 0) (TcStdlibFieldSpec.Spec name ty))
       (while (< i n)
         (begin
-          (array-set! slots (+ i 1) (array-ref src i))
+          (set! (array-ref slots (+ i 1)) (array-ref src i))
           (set! i (+ i 1))))
       (TcStdlibFieldSpecList slots (+ n 1)))))
 
@@ -14179,17 +14021,17 @@
   [payloads : TcStdlibTypeSpecList]
   [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
   (let
-    [n : i64 (struct-get rest len)]
-    [src : (__tl_dyn-array TcStdlibVariantSpec) (struct-get rest slots)]
+    [n : i64 rest.len]
+    [src : (__tl_dyn-array TcStdlibVariantSpec) rest.slots]
     [slots : (__tl_dyn-array TcStdlibVariantSpec)
       (array.make-array TcStdlibVariantSpec (+ n 1))]
     [i : i64 0]
     (begin
       (cfg compile-profile (tc-lp-note 10))
-      (array-set! slots 0 (TcStdlibVariantSpec.Spec name payloads))
+      (set! (array-ref slots 0) (TcStdlibVariantSpec.Spec name payloads))
       (while (< i n)
         (begin
-          (array-set! slots (+ i 1) (array-ref src i))
+          (set! (array-ref slots (+ i 1)) (array-ref src i))
           (set! i (+ i 1))))
       (TcStdlibVariantSpecList slots (+ n 1)))))
 
@@ -14230,7 +14072,7 @@
 (define (tc-stdlib-comptime-raw-type-name [decl : ast.AstDecl]) : TcMaybeString
   (match decl
     [(ast.AstDecl.Unsafe inner-box)
-      (tc-stdlib-comptime-raw-type-name (box-get inner-box))]
+      (tc-stdlib-comptime-raw-type-name (__tl-box-place inner-box))]
     [(ast.AstDecl.DefEnum decl-meta name _ _)
       (TcMaybeString.Some (tc-env-key-name-text name))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta name _ _ _)
@@ -14267,8 +14109,8 @@
   [module : String]) : ResultTcUnit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-offset : i64 decls.offset]
     [index : i64 0]
     [current-module : String module]
     [message : String ""]
@@ -14296,7 +14138,9 @@
 (define (tc-stdlib-check-comptime-declaration-surface [ctx : TcContext]) : ResultTcUnit
   (match (tc-context-program ctx)
     [(ast.AstProgram.Program decls-box)
-      (tc-stdlib-check-comptime-declaration-surface-list (box-get decls-box) "")]))
+      (tc-stdlib-check-comptime-declaration-surface-list
+        (__tl-box-place decls-box)
+        "")]))
 
 (define (tc-stdlib-type-normalize-name [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
   (match ty
@@ -14427,17 +14271,17 @@
   [fields : ast.AstFieldDefList]
   [specs : TcStdlibFieldSpecList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get (& specs) len))
-    (if (>= index (struct-get (& fields) len))
+  (if (>= index specs.len)
+    (if (>= index fields.len)
       ResultTcUnit.Ok
       (tc-stdlib-well-known-mismatch type-name "unexpected extra field"))
-    (match (array-ref (struct-get specs slots) index)
+    (match (array-ref specs.slots index)
       [(TcStdlibFieldSpec.Spec expected-name expected-ty)
         (let
           [expected-name-text : String (ci.intern-str expected-name)]
           (begin
             (cfg compile-profile (tc-lp-note 9))
-            (if (>= index (struct-get (& fields) len))
+            (if (>= index fields.len)
               (tc-stdlib-well-known-mismatch
                 type-name
                 (str_cat.str-cat "missing field " expected-name-text))
@@ -14478,7 +14322,7 @@
   [actual : ast.AstTypeList]
   [expected : TcStdlibTypeSpecList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get (& expected) len))
+  (if (>= index expected.len)
     (if (>= index (ast.ast-type-list-len (& actual)))
       ResultTcUnit.Ok
       (tc-stdlib-well-known-mismatch
@@ -14492,8 +14336,7 @@
         [actual-id : i64
           (ast.ast-type-list-get (& actual) index (ast.ast-type-id-fallback))]
         [actual-ty : ast.AstType (tc-context-type-get ctx actual-id)]
-        [expected-ty : TcStdlibTypeSpec
-          (array-ref (struct-get expected slots) index)]
+        [expected-ty : TcStdlibTypeSpec (array-ref expected.slots index)]
         (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
           (tc-stdlib-check-payload-specs
             ctx
@@ -14516,17 +14359,17 @@
   [variants : ast.AstVariantDefList]
   [specs : TcStdlibVariantSpecList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get (& specs) len))
-    (if (>= index (struct-get (& variants) len))
+  (if (>= index specs.len)
+    (if (>= index variants.len)
       ResultTcUnit.Ok
       (tc-stdlib-well-known-mismatch type-name "unexpected extra variant"))
-    (match (array-ref (struct-get specs slots) index)
+    (match (array-ref specs.slots index)
       [(TcStdlibVariantSpec.Spec expected-name expected-payloads)
         (let
           [expected-name-text : String (ci.intern-str expected-name)]
           (begin
             (cfg compile-profile (tc-lp-note 11))
-            (if (>= index (struct-get (& variants) len))
+            (if (>= index variants.len)
               (tc-stdlib-well-known-mismatch
                 type-name
                 (str_cat.str-cat "missing variant " expected-name-text))
@@ -15894,8 +15737,8 @@
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
     (let
-      [store-handle : i64 (struct-get env store)]
-      [head : i64 (struct-get env head)]
+      [store-handle : i64 env.store]
+      [head : i64 env.head]
       [done : bool false]
       [found : bool false]
       [found-ty : ast.AstType (ast.AstType.Unit)]
@@ -15918,7 +15761,7 @@
                           (set!
                             found-ty
                             (array-ref
-                              (struct-get
+                              (__tl-project-field
                                 (tc-chain-ref-cache store-handle ref)
                                 values)
                               (tc-chain-ref-slot ref)))
@@ -15929,19 +15772,17 @@
                     [cache : TcTypeEnvCache
                       (tc-type-env-cache-at
                         (tc-type-env-cache-ptr store-handle node-addr))]
-                    [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+                    [ids : tc_i64_i64_map.Map cache.ids]
                     [index : i64
                       (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
                     (if (>= index 0)
                       (begin
                         ;; AstType is multi-word; keep this checked value read.
-                        (set!
-                          found-ty
-                          (array-ref (struct-get cache values) index))
+                        (set! found-ty (array-ref cache.values index))
                         (set! found true)
                         (set! done true))
-                      (if (struct-get cache partial)
-                        (set! head (struct-get cache below))
+                      (if cache.partial
+                        (set! head cache.below)
                         (set! done true))))))]
             [else
               (let
@@ -15978,11 +15819,13 @@
           (begin
             (cfg compile-profile (compiler-tc-env-profile-note-lookup))
             (ResultTcType.Ok
-              (struct-get
+              (__tl-project-field
                 (tc-global-array-element-shared-view
-                  (struct-get
-                    (struct-get
-                      (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                  (__tl-project-field
+                    (__tl-project-field
+                      (__tl-project-field
+                        tc-type-env-scoped-runtime-carrier
+                        sidecar)
                       stack)
                     slots)
                   index)
@@ -15992,8 +15835,8 @@
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
             (tc-lookup-persistent-key-id
-              (struct-get
-                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+              (__tl-project-field
+                (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
               persistent-id
               display-id)))]
@@ -16019,8 +15862,8 @@
 
 (define (tc-name-bound-persistent-key-id? [env : TcTypeEnv] [lookup-id : i64]) : bool
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [done : bool false]
     [found : bool false]
     (begin
@@ -16040,15 +15883,15 @@
                   [cache : TcTypeEnvCache
                     (tc-type-env-cache-at
                       (tc-type-env-cache-ptr store-handle node-addr))]
-                  [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+                  [ids : tc_i64_i64_map.Map cache.ids]
                   [index : i64
                     (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
                   (if (>= index 0)
                     (begin
                       (set! found true)
                       (set! done true))
-                    (if (struct-get cache partial)
-                      (set! head (struct-get cache below))
+                    (if cache.partial
+                      (set! head cache.below)
                       (set! done true))))))]
           [else
             (let
@@ -16078,8 +15921,8 @@
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
             (tc-name-bound-persistent-key-id?
-              (struct-get
-                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+              (__tl-project-field
+                (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
               persistent-id)))]
       (begin
@@ -16102,8 +15945,8 @@
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
     (let
-      [store-handle : i64 (struct-get env store)]
-      [head : i64 (struct-get env head)]
+      [store-handle : i64 env.store]
+      [head : i64 env.head]
       [done : bool false]
       [found : bool false]
       [found-ty : ast.AstType (ast.AstType.Unit)]
@@ -16126,14 +15969,10 @@
                             (tc-chain-ref-cache store-handle ref)]
                           [slot : i64 (tc-chain-ref-slot ref)]
                           (begin
-                            (set!
-                              found-ty
-                              (array-ref (struct-get cache values) slot))
+                            (set! found-ty (array-ref cache.values slot))
                             (set!
                               found-unsafe
-                              (=
-                                (array-ref (struct-get cache unsafe-flags) slot)
-                                1))
+                              (= (array-ref cache.unsafe-flags slot) 1))
                             (set! found true)))
                         unit)
                       (set! done true)))
@@ -16141,15 +15980,13 @@
                     [cache : TcTypeEnvCache
                       (tc-type-env-cache-at
                         (tc-type-env-cache-ptr store-handle node-addr))]
-                    [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+                    [ids : tc_i64_i64_map.Map cache.ids]
                     [index : i64
                       (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
                     (if (>= index 0)
                       (begin
                         ;; AstType read stays checked; the flag is scalar i64.
-                        (set!
-                          found-ty
-                          (array-ref (struct-get cache values) index))
+                        (set! found-ty (array-ref cache.values index))
                         (set!
                           found-unsafe
                           (=
@@ -16157,14 +15994,14 @@
                               (ptr-read
                                 (ptr-offset
                                   (ptr-cast
-                                    (array-data (struct-get cache unsafe-flags))
+                                    (array-data cache.unsafe-flags)
                                     : (Ptr i64))
                                   index)))
                             1))
                         (set! found true)
                         (set! done true))
-                      (if (struct-get cache partial)
-                        (set! head (struct-get cache below))
+                      (if cache.partial
+                        (set! head cache.below)
                         (set! done true))))))]
             [else
               (let
@@ -16183,7 +16020,7 @@
                       (tc-binding-unsafe-marker-head-id? rest lookup-id))
                     (set! found true)
                     (set! done true))
-                  (set! head (struct-get rest head))))]))
+                  (set! head rest.head)))]))
         (if found
           (begin
             (tc-poison-observation-note! found-ty)
@@ -16209,26 +16046,28 @@
           (let
             [slot : TcTypeEnvScopedSlot
               (tc-global-array-element-shared-view
-                (struct-get
-                  (struct-get
-                    (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                (__tl-project-field
+                  (__tl-project-field
+                    (__tl-project-field
+                      tc-type-env-scoped-runtime-carrier
+                      sidecar)
                     stack)
                   slots)
                 index)]
             (begin
               (cfg compile-profile (compiler-tc-env-profile-note-lookup))
               (ResultTcTypeUnsafe.Ok
-                (struct-get slot ty)
+                slot.ty
                 (tc-type-env-scoped-flag?
-                  (struct-get slot flags)
+                  slot.flags
                   tc-type-env-scoped-flag-unsafe))))
           (begin
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
             (tc-lookup-unsafe-persistent-key-id
-              (struct-get
-                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+              (__tl-project-field
+                (__tl-project-field tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
               persistent-id
               display-id)))]
@@ -16347,8 +16186,10 @@
           (tc-name-bound-span-next-slot slot)
           (+ tries 1)))
       (begin
-        (array-set! tc-name-bound-span-stamps slot tc-name-bound-span-stamp)
-        (array-set! tc-name-bound-span-keys slot key)
+        (set!
+          (array-ref tc-name-bound-span-stamps slot)
+          tc-name-bound-span-stamp)
+        (set! (array-ref tc-name-bound-span-keys slot) key)
         (set! tc-name-bound-span-count (+ tc-name-bound-span-count 1))
         true))))
 
@@ -16363,9 +16204,8 @@
   (if (>= tc-name-bound-span-cache-count tc-name-bound-span-cache-capacity)
     false
     (begin
-      (array-set!
-        tc-name-bound-span-caches
-        tc-name-bound-span-cache-count
+      (set!
+        (array-ref tc-name-bound-span-caches tc-name-bound-span-cache-count)
         cache-address)
       (set! tc-name-bound-span-cache-count (+ tc-name-bound-span-cache-count 1))
       true)))
@@ -16382,13 +16222,12 @@
 ;; bindings are record addresses and caches their negations), so it is the
 ;; "no stop" sentinel.
 (define (tc-name-bound-span-fill! [env : TcTypeEnv] [stop-head : i64]) : i64
-  (if (= (struct-get env head) stop-head)
+  (if (= env.head stop-head)
     1
     (match (tc-type-env-view env)
       [(TcTypeEnvView.Nil) 2]
       [(TcTypeEnvView.Cache _ scan-through _ rest _)
-        (if (tc-name-bound-span-note-cache!
-          (tc-type-env-cache-index (struct-get env head)))
+        (if (tc-name-bound-span-note-cache! (tc-type-env-cache-index env.head))
           (if scan-through
             (tc-name-bound-span-fill! rest stop-head)
             2)
@@ -16409,19 +16248,19 @@
         false)
       (begin
         (set! tc-name-bound-span-valid true)
-        (set! tc-name-bound-span-store (struct-get env store))
-        (set! tc-name-bound-span-head (struct-get env head))
+        (set! tc-name-bound-span-store env.store)
+        (set! tc-name-bound-span-head env.head)
         (set! tc-name-bound-span-epoch tc-type-env-store-epoch)
         true))))
 
 (define (tc-name-bound-span-prepare! [env : TcTypeEnv]) : bool
   (if (and
     tc-name-bound-span-valid
-    (= (struct-get env store) tc-name-bound-span-store)
+    (= env.store tc-name-bound-span-store)
     (= tc-type-env-store-epoch tc-name-bound-span-epoch))
     (if (= (tc-name-bound-span-fill! env tc-name-bound-span-head) 1)
       (begin
-        (set! tc-name-bound-span-head (struct-get env head))
+        (set! tc-name-bound-span-head env.head)
         true)
       ;; The chain is not an extension of the indexed head, so the partial
       ;; delta above has to be discarded together with the stale suffix.
@@ -16437,7 +16276,7 @@
           (tc-type-env-cache-ptr
             tc-name-bound-span-store
             (array-ref tc-name-bound-span-caches index)))]
-      [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+      [ids : tc_i64_i64_map.Map cache.ids]
       (match (tc_i64_i64_map.get (& ids) name-id)
         [(tc_i64_i64_map.LookupFound _) true]
         [(tc_i64_i64_map.LookupMissing)
@@ -16880,8 +16719,8 @@
       (array.make-array TcStringListNode 4)]
     [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
     (begin
-      (array-set! nodes 0 (TcStringListNode first -1))
-      (array-set! cell 0 (TcStringListStoreData nodes 1 owner))
+      (set! (array-ref nodes 0) (TcStringListNode first -1))
+      (set! (array-ref cell 0) (TcStringListStoreData nodes 1 owner))
       (unsafe
         (cast
           (ptr->int (ptr-cast (array-data cell) : (Ptr TcStringListStoreData)))
@@ -16891,7 +16730,7 @@
   [data : (&mut data TcStringListStoreData)]
   [required : i64]) : unit
   (let
-    [old : (__tl_dyn-array TcStringListNode) (struct-get data nodes)]
+    [old : (__tl_dyn-array TcStringListNode) data.nodes]
     [old-capacity : i64 (array.length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
@@ -16900,23 +16739,21 @@
         (while (< next-capacity required)
           (set! next-capacity (* next-capacity 2)))
         (let
-          [owner : arena.Arena (arena.Arena (struct-get data owner-arena))]
+          [owner : arena.Arena (arena.Arena data.owner-arena)]
           [next : (__tl_dyn-array TcStringListNode)
             (in-arena owner (array.make-array TcStringListNode next-capacity))]
           [index : i64 0]
           (begin
-            (while (< index (struct-get data len))
+            (while (< index data.len)
               (let
                 [node : TcStringListNode (array-ref old index)]
-                [owned : String
-                  (in-arena owner (string.copy (& (struct-get node value))))]
+                [owned : String (in-arena owner (string.copy (& node.value)))]
                 (begin
-                  (array-set!
-                    next
-                    index
-                    (TcStringListNode owned (struct-get node parent)))
+                  (set!
+                    (array-ref next index)
+                    (TcStringListNode owned node.parent))
                   (set! index (+ index 1)))))
-            (set! (struct-get data nodes) next)))))))
+            (set! data.nodes next)))))))
 
 (define (tc-string-list-store-push!
   [address : i64]
@@ -16924,25 +16761,24 @@
   [value : String]) : i64
   (let
     [data : TcStringListStoreData (tc-string-list-store-read address)]
-    [index : i64 (struct-get data len)]
+    [index : i64 data.len]
     (begin
       (tc-string-list-store-grow! (&mut data) (+ index 1))
       ;; Sibling snapshots can append from short-lived scratch arenas. Own each
       ;; string in the stable store arena so a later sibling never retains a
       ;; stale source pointer.
       (let
-        [owner : arena.Arena (arena.Arena (struct-get data owner-arena))]
+        [owner : arena.Arena (arena.Arena data.owner-arena)]
         [owned : String (in-arena owner (string.copy (& value)))]
-        (array-set!
-          (struct-get data nodes)
-          index
-          (TcStringListNode owned parent)))
-      (set! (struct-get data len) (+ index 1))
+        (set! (array-ref data.nodes index) (TcStringListNode owned parent)))
+      (set! data.len (+ index 1))
       (tc-string-list-store-write! address data)
       index)))
 
 (define (tc-string-list-store-node [address : i64] [index : i64]) : TcStringListNode
-  (array-ref (struct-get (tc-string-list-store-read address) nodes) index))
+  (array-ref
+    (__tl-project-field (tc-string-list-store-read address) nodes)
+    index))
 
 (define (tc-string-list-empty? [items : TcStringList]) : bool
   (match items
@@ -16960,7 +16796,7 @@
     [(TcStringList.Nil) ""]
     [(TcStringList.One value) value]
     [(TcStringList.Dense address tail _)
-      (struct-get (tc-string-list-store-node address tail) value)]))
+      (__tl-project-field (tc-string-list-store-node address tail) value)]))
 
 (define (tc-string-list-rest [items : TcStringList]) : TcStringList
   (match items
@@ -16969,10 +16805,12 @@
     [(TcStringList.Dense address tail len)
       (let
         [parent : i64
-          (struct-get (tc-string-list-store-node address tail) parent)]
+          (__tl-project-field (tc-string-list-store-node address tail) parent)]
         (if (= len 2)
           (TcStringList.One
-            (struct-get (tc-string-list-store-node address parent) value))
+            (__tl-project-field
+              (tc-string-list-store-node address parent)
+              value))
           (TcStringList.Dense address parent (- len 1))))]))
 
 (define (tc-string-list-cons [items : TcStringList] [name : String]) : TcStringList
@@ -16996,7 +16834,7 @@
     [(TcStringList.Dense address tail len)
       (let
         [nodes : (__tl_dyn-array TcStringListNode)
-          (struct-get (tc-string-list-store-read address) nodes)]
+          (__tl-project-field (tc-string-list-store-read address) nodes)]
         [index : i64 tail]
         [remaining : i64 len]
         [found : bool false]
@@ -17007,10 +16845,10 @@
             (let
               [node : TcStringListNode (array-ref nodes index)]
               (begin
-                (if (string.eq (struct-get node value) name)
+                (if (string.eq node.value name)
                   (set! found true)
                   unit)
-                (set! index (struct-get node parent))
+                (set! index node.parent)
                 (set! remaining (- remaining 1)))))
           found))]))
 
@@ -17039,8 +16877,8 @@
       (array.make-array TcNameIdListNode 4)]
     [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
     (begin
-      (array-set! nodes 0 (TcNameIdListNode first -1))
-      (array-set! cell 0 (TcNameIdListStoreData nodes 1 owner))
+      (set! (array-ref nodes 0) (TcNameIdListNode first -1))
+      (set! (array-ref cell 0) (TcNameIdListStoreData nodes 1 owner))
       (unsafe
         (cast
           (ptr->int (ptr-cast (array-data cell) : (Ptr TcNameIdListStoreData)))
@@ -17050,7 +16888,7 @@
   [data : (&mut data TcNameIdListStoreData)]
   [required : i64]) : unit
   (let
-    [old : (__tl_dyn-array TcNameIdListNode) (struct-get data nodes)]
+    [old : (__tl_dyn-array TcNameIdListNode) data.nodes]
     [old-capacity : i64 (array.length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
@@ -17060,7 +16898,7 @@
           (set! next-capacity (* next-capacity 2)))
         (let
           [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 (struct-get data owner-arena)]
+          [owner : i64 data.owner-arena]
           (begin
             (unsafe
               (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
@@ -17069,18 +16907,15 @@
                 (array.make-array TcNameIdListNode next-capacity)]
               [index : i64 0]
               (begin
-                (while (< index (struct-get data len))
+                (while (< index data.len)
                   (let
                     [node : TcNameIdListNode (array-ref old index)]
                     (begin
-                      (array-set!
-                        next
-                        index
-                        (TcNameIdListNode
-                          (struct-get node value)
-                          (struct-get node parent)))
+                      (set!
+                        (array-ref next index)
+                        (TcNameIdListNode node.value node.parent))
                       (set! index (+ index 1)))))
-                (set! (struct-get data nodes) next)))
+                (set! data.nodes next)))
             (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
 
 (define (tc-name-id-list-store-push!
@@ -17089,16 +16924,18 @@
   [value : i64]) : i64
   (let
     [data : TcNameIdListStoreData (tc-name-id-list-store-read address)]
-    [index : i64 (struct-get data len)]
+    [index : i64 data.len]
     (begin
       (tc-name-id-list-store-grow! (&mut data) (+ index 1))
-      (array-set! (struct-get data nodes) index (TcNameIdListNode value parent))
-      (set! (struct-get data len) (+ index 1))
+      (set! (array-ref data.nodes index) (TcNameIdListNode value parent))
+      (set! data.len (+ index 1))
       (tc-name-id-list-store-write! address data)
       index)))
 
 (define (tc-name-id-list-store-node [address : i64] [index : i64]) : TcNameIdListNode
-  (array-ref (struct-get (tc-name-id-list-store-read address) nodes) index))
+  (array-ref
+    (__tl-project-field (tc-name-id-list-store-read address) nodes)
+    index))
 
 (define (tc-name-id-list-empty? [items : TcNameIdList]) : bool
   (match items
@@ -17116,7 +16953,7 @@
     [(TcNameIdList.Nil) -1]
     [(TcNameIdList.One value) value]
     [(TcNameIdList.Dense address tail _)
-      (struct-get (tc-name-id-list-store-node address tail) value)]))
+      (__tl-project-field (tc-name-id-list-store-node address tail) value)]))
 
 (define (tc-name-id-list-rest [items : TcNameIdList]) : TcNameIdList
   (match items
@@ -17125,10 +16962,12 @@
     [(TcNameIdList.Dense address tail len)
       (let
         [parent : i64
-          (struct-get (tc-name-id-list-store-node address tail) parent)]
+          (__tl-project-field (tc-name-id-list-store-node address tail) parent)]
         (if (= len 2)
           (TcNameIdList.One
-            (struct-get (tc-name-id-list-store-node address parent) value))
+            (__tl-project-field
+              (tc-name-id-list-store-node address parent)
+              value))
           (TcNameIdList.Dense address parent (- len 1))))]))
 
 (define (tc-name-id-list-cons [items : TcNameIdList] [name : i64]) : TcNameIdList
@@ -17152,7 +16991,7 @@
     [(TcNameIdList.Dense address tail len)
       (let
         [nodes : (__tl_dyn-array TcNameIdListNode)
-          (struct-get (tc-name-id-list-store-read address) nodes)]
+          (__tl-project-field (tc-name-id-list-store-read address) nodes)]
         [index : i64 tail]
         [remaining : i64 len]
         [found : bool false]
@@ -17161,10 +17000,10 @@
             (let
               [node : TcNameIdListNode (array-ref nodes index)]
               (begin
-                (if (= (struct-get node value) name)
+                (if (= node.value name)
                   (set! found true)
                   unit)
-                (set! index (struct-get node parent))
+                (set! index node.parent)
                 (set! remaining (- remaining 1)))))
           found))]))
 
@@ -17556,8 +17395,8 @@
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     (cond
       [(= head -1) TcStringList.Nil]
       [(< head -1)
@@ -17567,10 +17406,10 @@
               (tc-type-env-cache-ptr
                 store-handle
                 (tc-type-env-cache-index head)))]
-          (if (struct-get cache scan-through)
+          (if cache.scan-through
             (tc-active-cleanup-owners-scan
               root
-              (TcTypeEnv store-handle (struct-get cache rest) 0))
+              (TcTypeEnv store-handle cache.rest 0))
             TcStringList.Nil))]
       [else
         (let
@@ -17601,10 +17440,10 @@
     (if (not (tc-cleanup-owner-markers-possible?))
       TcStringList.Nil
       (let
-        [head : i64 (struct-get env head)]
+        [head : i64 env.head]
         (if (< head -1)
           (let
-            [store-handle : i64 (struct-get env store)]
+            [store-handle : i64 env.store]
             [cache : TcTypeEnvCache
               (tc-type-env-cache-at
                 (tc-type-env-cache-ptr
@@ -17612,7 +17451,7 @@
                   (tc-type-env-cache-index head)))]
             (tc-active-cleanup-owners-scan
               env
-              (TcTypeEnv store-handle (struct-get cache rest) 0)))
+              (TcTypeEnv store-handle cache.rest 0)))
           (tc-active-cleanup-owners-scan env env))))))
 
 (define (tc-lifetime-list-count [items : ast.AstLifetimeList]) : i64
@@ -17715,8 +17554,8 @@
       (array.make-array TcLifetimeSubstNode 4)]
     [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
     (begin
-      (array-set! nodes 0 (TcLifetimeSubstNode from to -1))
-      (array-set! cell 0 (TcLifetimeSubstStoreData nodes 1 owner))
+      (set! (array-ref nodes 0) (TcLifetimeSubstNode from to -1))
+      (set! (array-ref cell 0) (TcLifetimeSubstStoreData nodes 1 owner))
       (unsafe
         (cast
           (ptr->int
@@ -17727,7 +17566,7 @@
   [data : (&mut data TcLifetimeSubstStoreData)]
   [required : i64]) : unit
   (let
-    [old : (__tl_dyn-array TcLifetimeSubstNode) (struct-get data nodes)]
+    [old : (__tl_dyn-array TcLifetimeSubstNode) data.nodes]
     [old-capacity : i64 (array.length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
@@ -17737,7 +17576,7 @@
           (set! next-capacity (* next-capacity 2)))
         (let
           [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 (struct-get data owner-arena)]
+          [owner : i64 data.owner-arena]
           (begin
             (unsafe
               (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
@@ -17746,19 +17585,15 @@
                 (array.make-array TcLifetimeSubstNode next-capacity)]
               [index : i64 0]
               (begin
-                (while (< index (struct-get data len))
+                (while (< index data.len)
                   (let
                     [node : TcLifetimeSubstNode (array-ref old index)]
                     (begin
-                      (array-set!
-                        next
-                        index
-                        (TcLifetimeSubstNode
-                          (struct-get node from)
-                          (struct-get node to)
-                          (struct-get node parent)))
+                      (set!
+                        (array-ref next index)
+                        (TcLifetimeSubstNode node.from node.to node.parent))
                       (set! index (+ index 1)))))
-                (set! (struct-get data nodes) next)))
+                (set! data.nodes next)))
             (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
 
 (define (tc-lifetime-subst-store-push!
@@ -17768,14 +17603,11 @@
   [to : i64]) : i64
   (let
     [data : TcLifetimeSubstStoreData (tc-lifetime-subst-store-read address)]
-    [index : i64 (struct-get data len)]
+    [index : i64 data.len]
     (begin
       (tc-lifetime-subst-store-grow! (&mut data) (+ index 1))
-      (array-set!
-        (struct-get data nodes)
-        index
-        (TcLifetimeSubstNode from to parent))
-      (set! (struct-get data len) (+ index 1))
+      (set! (array-ref data.nodes index) (TcLifetimeSubstNode from to parent))
+      (set! data.len (+ index 1))
       (tc-lifetime-subst-store-write! address data)
       index)))
 
@@ -17795,7 +17627,7 @@
     [(TcLifetimeSubst.Dense address tail len)
       (let
         [nodes : (__tl_dyn-array TcLifetimeSubstNode)
-          (struct-get (tc-lifetime-subst-store-read address) nodes)]
+          (__tl-project-field (tc-lifetime-subst-store-read address) nodes)]
         [index : i64 tail]
         [remaining : i64 len]
         [found : bool false]
@@ -17805,12 +17637,12 @@
             (let
               [node : TcLifetimeSubstNode (array-ref nodes index)]
               (begin
-                (if (= (struct-get node from) name)
+                (if (= node.from name)
                   (begin
-                    (set! replacement (struct-get node to))
+                    (set! replacement node.to)
                     (set! found true))
                   unit)
-                (set! index (struct-get node parent))
+                (set! index node.parent)
                 (set! remaining (- remaining 1)))))
           (if found
             (TcMaybeNameId.Some replacement)
@@ -18486,11 +18318,11 @@
 (define (tc-type-contains-region-tag? [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.Func args ret)
-      (if (tc-type-list-contains-region-tag? (box-get args))
+      (if (tc-type-list-contains-region-tag? (__tl-box-place args))
         true
         (tc-type-contains-region-tag? (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-contains-region-tag? (box-get elems))]
+      (tc-type-list-contains-region-tag? (__tl-box-place elems))]
     [(ast.AstType.Array elem _)
       (tc-type-contains-region-tag? (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
@@ -18531,10 +18363,10 @@
     (match ty
       [(ast.AstType.Func args ret)
         (ast.ast-ty-func
-          (tc-type-list-without-regions (box-get args))
+          (tc-type-list-without-regions (__tl-box-place args))
           (tc-type-without-regions (ast.ty-node-get ret)))]
       [(ast.AstType.Tuple elems)
-        (ast.ast-ty-tuple (tc-type-list-without-regions (box-get elems)))]
+        (ast.ast-ty-tuple (tc-type-list-without-regions (__tl-box-place elems)))]
       [(ast.AstType.Array elem len)
         (ast.ast-ty-array (tc-type-without-regions (ast.ty-node-get elem)) len)]
       [(ast.AstType.DynArray elem)
@@ -18558,11 +18390,11 @@
       [(ast.AstType.Region _ inner)
         (tc-type-without-regions (ast.ty-node-get inner))]
       [(ast.AstType.EnumArgs name lifetimes)
-        (ast.ast-ty-enum-args name (box-get lifetimes))]
+        (ast.ast-ty-enum-args name (__tl-box-place lifetimes))]
       [(ast.AstType.StructArgs name lifetimes)
-        (ast.ast-ty-struct-args name (box-get lifetimes))]
+        (ast.ast-ty-struct-args name (__tl-box-place lifetimes))]
       [(ast.AstType.VarArgs name lifetimes)
-        (ast.ast-ty-var-args name (box-get lifetimes))]
+        (ast.ast-ty-var-args name (__tl-box-place lifetimes))]
       [_ ty])
     ty))
 
@@ -18586,10 +18418,10 @@
   (match ty
     [(ast.AstType.Func args ret)
       (or
-        (tc-type-list-contains-region (box-get args) region)
+        (tc-type-list-contains-region (__tl-box-place args) region)
         (tc-type-contains-region (ast.ty-node-get ret) region))]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-contains-region (box-get elems) region)]
+      (tc-type-list-contains-region (__tl-box-place elems) region)]
     [(ast.AstType.Array elem _)
       (tc-type-contains-region (ast.ty-node-get elem) region)]
     [(ast.AstType.DynArray elem)
@@ -18615,11 +18447,11 @@
         (= name region)
         (tc-type-contains-region (ast.ty-node-get inner) region))]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (tc-lifetime-list-contains (box-get lifetimes) region)]
+      (tc-lifetime-list-contains (__tl-box-place lifetimes) region)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (tc-lifetime-list-contains (box-get lifetimes) region)]
+      (tc-lifetime-list-contains (__tl-box-place lifetimes) region)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (tc-lifetime-list-contains (box-get lifetimes) region)]
+      (tc-lifetime-list-contains (__tl-box-place lifetimes) region)]
     [_ false]))
 
 (define (tc-type-list-contains-any-region [types : ast.AstTypeList]) : bool
@@ -18640,10 +18472,10 @@
   (match ty
     [(ast.AstType.Func args ret)
       (or
-        (tc-type-list-contains-any-region (box-get args))
+        (tc-type-list-contains-any-region (__tl-box-place args))
         (tc-type-contains-any-region (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-contains-any-region (box-get elems))]
+      (tc-type-list-contains-any-region (__tl-box-place elems))]
     [(ast.AstType.Array elem _)
       (tc-type-contains-any-region (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
@@ -18660,11 +18492,11 @@
     [(ast.AstType.MutRef _ _) true]
     [(ast.AstType.Region _ _) true]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [_ false]))
 
 (define (tc-type-list-contains-reference? [types : ast.AstTypeList]) : bool
@@ -18699,10 +18531,10 @@
   (match ty
     [(ast.AstType.Func args ret)
       (or
-        (tc-type-list-contains-reference? (box-get args))
+        (tc-type-list-contains-reference? (__tl-box-place args))
         (tc-type-contains-reference? (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-contains-reference? (box-get elems))]
+      (tc-type-list-contains-reference? (__tl-box-place elems))]
     [(ast.AstType.Array elem _)
       (tc-type-contains-reference? (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
@@ -18720,21 +18552,21 @@
     [(ast.AstType.Region _ inner)
       (tc-type-contains-reference? (ast.ty-node-get inner))]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [_ false]))
 
 (define (tc-type-contains-mut-reference? [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.Func args ret)
       (or
-        (tc-type-list-contains-mut-reference? (box-get args))
+        (tc-type-list-contains-mut-reference? (__tl-box-place args))
         (tc-type-contains-mut-reference? (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-contains-mut-reference? (box-get elems))]
+      (tc-type-list-contains-mut-reference? (__tl-box-place elems))]
     [(ast.AstType.Array elem _)
       (tc-type-contains-mut-reference? (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
@@ -18830,7 +18662,7 @@
     [(ast.AstType.Tuple elems)
       (tc-signature-input-type-list-lifetimes-into
         type-bases
-        (box-get elems)
+        (__tl-box-place elems)
         out)]
     [(ast.AstType.Array elem _)
       (tc-signature-input-lifetimes-into
@@ -18945,14 +18777,12 @@
         (let
           [next-out : ast.AstTypeList out]
           (begin
-            (ast.ast-type-list-push
-              (&mut next-out)
-              (ast.ty-node-push (struct-get item ty)))
+            (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
             (tc-elide-input-type-list-at
               type-bases
               types
               (+ offset 1)
-              (struct-get item next-index)
+              item.next-index
               next-out)))]
       [(ResultTcElidedType.Err message) (ResultTcElidedTypes.Err message)])))
 
@@ -18985,9 +18815,7 @@
         (let
           [next-out : ast.AstTypeList out]
           (begin
-            (ast.ast-type-list-push
-              (&mut next-out)
-              (ast.ty-node-push (struct-get item ty)))
+            (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
             (tc-elide-output-type-list-at
               type-bases
               types
@@ -19003,15 +18831,15 @@
   (match (tc-elide-input-type-list type-bases args 0)
     [(ResultTcElidedTypes.Ok inputs)
       (let
-        [input-types : ast.AstTypeList (struct-get inputs types)]
+        [input-types : ast.AstTypeList inputs.types]
         [lifetime : TcMaybeNameId
           (tc-signature-single-input-lifetime type-bases input-types)]
         (match (tc-elide-output-type type-bases ret lifetime)
           [(ResultTcElidedType.Ok output)
             (ResultTcElidedType.Ok
               (TcElidedType
-                (ast.ast-ty-func input-types (struct-get output ty))
-                (struct-get inputs next-index)))]
+                (ast.ast-ty-func input-types output.ty)
+                inputs.next-index))]
           [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
     [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)]))
 
@@ -19023,15 +18851,13 @@
     [(ast.AstType.Func args ret)
       (tc-elide-function-type
         type-bases
-        (box-get args)
+        (__tl-box-place args)
         (ast.ast-type-segment-bases-get type-bases ret))]
     [(ast.AstType.Tuple elems)
-      (match (tc-elide-input-type-list type-bases (box-get elems) index)
+      (match (tc-elide-input-type-list type-bases (__tl-box-place elems) index)
         [(ResultTcElidedTypes.Ok items)
           (ResultTcElidedType.Ok
-            (TcElidedType
-              (ast.ast-ty-tuple (struct-get items types))
-              (struct-get items next-index)))]
+            (TcElidedType (ast.ast-ty-tuple items.types) items.next-index))]
         [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Array elem count)
       (match (tc-elide-input-type
@@ -19040,9 +18866,7 @@
         index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType
-              (ast.ast-ty-array (struct-get inner ty) count)
-              (struct-get inner next-index)))]
+            (TcElidedType (ast.ast-ty-array inner.ty count) inner.next-index))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.DynArray elem)
       (match (tc-elide-input-type
@@ -19051,9 +18875,7 @@
         index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType
-              (ast.ast-ty-dyn-array (struct-get inner ty))
-              (struct-get inner next-index)))]
+            (TcElidedType (ast.ast-ty-dyn-array inner.ty) inner.next-index))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Slice elem)
       (match (tc-elide-input-type
@@ -19062,9 +18884,7 @@
         index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType
-              (ast.ast-ty-slice (struct-get inner ty))
-              (struct-get inner next-index)))]
+            (TcElidedType (ast.ast-ty-slice inner.ty) inner.next-index))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Box elem)
       (match (tc-elide-input-type
@@ -19073,9 +18893,7 @@
         index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType
-              (ast.ast-ty-box (struct-get inner ty))
-              (struct-get inner next-index)))]
+            (TcElidedType (ast.ast-ty-box inner.ty) inner.next-index))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Ptr elem)
       (match (tc-elide-input-type
@@ -19084,9 +18902,7 @@
         index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType
-              (ast.ast-ty-ptr (struct-get inner ty))
-              (struct-get inner next-index)))]
+            (TcElidedType (ast.ast-ty-ptr inner.ty) inner.next-index))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.MutPtr elem)
       (match (tc-elide-input-type
@@ -19095,9 +18911,7 @@
         index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType
-              (ast.ast-ty-mut-ptr (struct-get inner ty))
-              (struct-get inner next-index)))]
+            (TcElidedType (ast.ast-ty-mut-ptr inner.ty) inner.next-index))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Region region elem)
       (match (tc-elide-input-type
@@ -19106,9 +18920,7 @@
         index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType
-              (ast.ast-ty-region region (struct-get inner ty))
-              (struct-get inner next-index)))]
+            (TcElidedType (ast.ast-ty-region region inner.ty) inner.next-index))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Ref lifetime elem)
       (let
@@ -19127,8 +18939,8 @@
           [(ResultTcElidedType.Ok inner)
             (ResultTcElidedType.Ok
               (TcElidedType
-                (ast.ast-ty-ref next-lifetime (struct-get inner ty))
-                (struct-get inner next-index)))]
+                (ast.ast-ty-ref next-lifetime inner.ty)
+                inner.next-index))]
           [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
     [(ast.AstType.MutRef lifetime elem)
       (let
@@ -19147,8 +18959,8 @@
           [(ResultTcElidedType.Ok inner)
             (ResultTcElidedType.Ok
               (TcElidedType
-                (ast.ast-ty-mut-ref next-lifetime (struct-get inner ty))
-                (struct-get inner next-index)))]
+                (ast.ast-ty-mut-ref next-lifetime inner.ty)
+                inner.next-index))]
           [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
     [_ (ResultTcElidedType.Ok (TcElidedType ty index))]))
 
@@ -19160,13 +18972,16 @@
     [(ast.AstType.Func args ret)
       (tc-elide-function-type
         type-bases
-        (box-get args)
+        (__tl-box-place args)
         (ast.ast-type-segment-bases-get type-bases ret))]
     [(ast.AstType.Tuple elems)
-      (match (tc-elide-output-type-list type-bases (box-get elems) lifetime)
+      (match (tc-elide-output-type-list
+        type-bases
+        (__tl-box-place elems)
+        lifetime)
         [(ResultTcElidedTypes.Ok items)
           (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-tuple (struct-get items types)) 0))]
+            (TcElidedType (ast.ast-ty-tuple items.types) 0))]
         [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Array elem count)
       (match (tc-elide-output-type
@@ -19175,7 +18990,7 @@
         lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-array (struct-get inner ty) count) 0))]
+            (TcElidedType (ast.ast-ty-array inner.ty count) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.DynArray elem)
       (match (tc-elide-output-type
@@ -19184,7 +18999,7 @@
         lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-dyn-array (struct-get inner ty)) 0))]
+            (TcElidedType (ast.ast-ty-dyn-array inner.ty) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Slice elem)
       (match (tc-elide-output-type
@@ -19192,8 +19007,7 @@
         (ast.ast-type-segment-bases-get type-bases elem)
         lifetime)
         [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-slice (struct-get inner ty)) 0))]
+          (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-slice inner.ty) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Box elem)
       (match (tc-elide-output-type
@@ -19201,8 +19015,7 @@
         (ast.ast-type-segment-bases-get type-bases elem)
         lifetime)
         [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-box (struct-get inner ty)) 0))]
+          (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-box inner.ty) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Ptr elem)
       (match (tc-elide-output-type
@@ -19210,8 +19023,7 @@
         (ast.ast-type-segment-bases-get type-bases elem)
         lifetime)
         [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-ptr (struct-get inner ty)) 0))]
+          (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-ptr inner.ty) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.MutPtr elem)
       (match (tc-elide-output-type
@@ -19219,8 +19031,7 @@
         (ast.ast-type-segment-bases-get type-bases elem)
         lifetime)
         [(ResultTcElidedType.Ok inner)
-          (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-mut-ptr (struct-get inner ty)) 0))]
+          (ResultTcElidedType.Ok (TcElidedType (ast.ast-ty-mut-ptr inner.ty) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Region region elem)
       (match (tc-elide-output-type
@@ -19229,7 +19040,7 @@
         lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
-            (TcElidedType (ast.ast-ty-region region (struct-get inner ty)) 0))]
+            (TcElidedType (ast.ast-ty-region region inner.ty) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Ref name elem)
       (match lifetime
@@ -19243,7 +19054,7 @@
               lifetime)
               [(ResultTcElidedType.Ok inner)
                 (ResultTcElidedType.Ok
-                  (TcElidedType (ast.ast-ty-ref name (struct-get inner ty)) 0))]
+                  (TcElidedType (ast.ast-ty-ref name inner.ty) 0))]
               [(ResultTcElidedType.Err message)
                 (ResultTcElidedType.Err message)]))]
         [(TcMaybeNameId.Some source)
@@ -19258,7 +19069,7 @@
                     (if (tc-elided-lifetime? name)
                       source
                       name)
-                    (struct-get inner ty))
+                    inner.ty)
                   0))]
             [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])])]
     [(ast.AstType.MutRef name elem)
@@ -19273,9 +19084,7 @@
               lifetime)
               [(ResultTcElidedType.Ok inner)
                 (ResultTcElidedType.Ok
-                  (TcElidedType
-                    (ast.ast-ty-mut-ref name (struct-get inner ty))
-                    0))]
+                  (TcElidedType (ast.ast-ty-mut-ref name inner.ty) 0))]
               [(ResultTcElidedType.Err message)
                 (ResultTcElidedType.Err message)]))]
         [(TcMaybeNameId.Some source)
@@ -19290,7 +19099,7 @@
                     (if (tc-elided-lifetime? name)
                       source
                       name)
-                    (struct-get inner ty))
+                    inner.ty)
                   0))]
             [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])])]
     [_ (ResultTcElidedType.Ok (TcElidedType ty 0))]))
@@ -19314,14 +19123,14 @@
                   (&mut next-out)
                   (ast.ast-param-id-with-consume
                     name
-                    (struct-get item ty)
+                    item.ty
                     is-comptime
                     consume?))
                 (tc-elide-input-params-at
                   type-bases
                   params
                   (+ offset 1)
-                  (struct-get item next-index)
+                  item.next-index
                   next-out)))]
           [(ResultTcElidedType.Err message) (ResultTcElidedParams.Err message)])])))
 
@@ -19353,14 +19162,14 @@
     (ast.ast-param-list-new))
     [(ResultTcElidedParams.Ok inputs)
       (let
-        [input-params : ast.AstParamList (struct-get inputs params)]
+        [input-params : ast.AstParamList inputs.params]
         [input-types : ast.AstTypeList (tc-elided-param-type-list input-params)]
         [lifetime : TcMaybeNameId
           (tc-signature-single-input-lifetime type-bases input-types)]
         (match (tc-elide-output-type type-bases ret lifetime)
           [(ResultTcElidedType.Ok output)
             (ResultTcElidedSignature.Ok
-              (TcElidedSignature input-params (struct-get output ty)))]
+              (TcElidedSignature input-params output.ty))]
           [(ResultTcElidedType.Err message)
             (ResultTcElidedSignature.Err message)]))]
     [(ResultTcElidedParams.Err message) (ResultTcElidedSignature.Err message)]))
@@ -19391,9 +19200,9 @@
     [(ast.AstType.Func args ret)
       (tc-type-collect-reference-lifetimes-into
         (ast.ty-node-get ret)
-        (tc-type-list-collect-reference-lifetimes (box-get args) out))]
+        (tc-type-list-collect-reference-lifetimes (__tl-box-place args) out))]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-collect-reference-lifetimes (box-get elems) out)]
+      (tc-type-list-collect-reference-lifetimes (__tl-box-place elems) out)]
     [(ast.AstType.Array elem _)
       (tc-type-collect-reference-lifetimes-into (ast.ty-node-get elem) out)]
     [(ast.AstType.DynArray elem)
@@ -19417,11 +19226,11 @@
     [(ast.AstType.Region _ inner)
       (tc-type-collect-reference-lifetimes-into (ast.ty-node-get inner) out)]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [(ast.AstType.Consume inner)
       (tc-type-collect-reference-lifetimes-into (ast.ty-node-get inner) out)]
     [_ out]))
@@ -19500,9 +19309,9 @@
     [(ast.AstType.Func args ret)
       (tc-type-collect-regions-into
         (ast.ty-node-get ret)
-        (tc-type-list-collect-regions (box-get args) out))]
+        (tc-type-list-collect-regions (__tl-box-place args) out))]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-collect-regions (box-get elems) out)]
+      (tc-type-list-collect-regions (__tl-box-place elems) out)]
     [(ast.AstType.Array elem _)
       (tc-type-collect-regions-into (ast.ty-node-get elem) out)]
     [(ast.AstType.DynArray elem)
@@ -19528,11 +19337,11 @@
         (ast.ty-node-get inner)
         (tc-name-id-list-add out name))]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [_ out]))
 
 (define (tc-type-collect-regions [ty : ast.AstType]) : TcNameIdList
@@ -19795,12 +19604,12 @@
 ;; uncached walk.
 (define (tc-lazy-global-table-arena-ensure!) : arena.Arena
   (let
-    [owner : arena.Arena (struct-get tc-lazy-global-table-state owner)]
+    [owner : arena.Arena (__tl-project-field tc-lazy-global-table-state owner)]
     (if (= (arena.raw-handle owner) 0)
       (let
         [fresh : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
         (begin
-          (set! (struct-get tc-lazy-global-table-state owner) fresh)
+          (__tl-project-set-field tc-lazy-global-table-state owner fresh)
           fresh))
       owner)))
 
@@ -19812,15 +19621,18 @@
 (define (tc-type-needs-resolution-storage-ensure!) : unit
   (if (=
     (array-length
-      (struct-get (& tc-lazy-global-table-state) type-needs-resolution-slots))
+      (__tl-project-field
+        tc-lazy-global-table-state
+        type-needs-resolution-slots))
     131072)
     unit
     (let
       [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
       (in-arena
         owner
-        (set!
-          (struct-get tc-lazy-global-table-state type-needs-resolution-slots)
+        (__tl-project-set-field
+          tc-lazy-global-table-state
+          type-needs-resolution-slots
           (array.make-array i64 131072))))))
 
 (define (tc-type-needs-resolution-ensure-current!) : unit
@@ -19842,15 +19654,15 @@
       (>=
         ty-id
         (array-length
-          (struct-get
-            (& tc-lazy-global-table-state)
+          (__tl-project-field
+            tc-lazy-global-table-state
             type-needs-resolution-slots)))
       (return (tc-type-needs-resolution? (ast.ty-node-get ty-id))))
     (let
       [slot : i64
         (array-ref
-          (struct-get
-            (& tc-lazy-global-table-state)
+          (__tl-project-field
+            tc-lazy-global-table-state
             type-needs-resolution-slots)
           ty-id)]
       (if (= (shr slot 1) tc-type-needs-resolution-epoch)
@@ -19858,11 +19670,12 @@
         (let
           [answer : bool (tc-type-needs-resolution? (ast.ty-node-get ty-id))]
           (begin
-            (array-set!
-              (struct-get
-                (& tc-lazy-global-table-state)
-                type-needs-resolution-slots)
-              ty-id
+            (set!
+              (array-ref
+                (__tl-project-field
+                  tc-lazy-global-table-state
+                  type-needs-resolution-slots)
+                ty-id)
               (bit-or
                 (shl tc-type-needs-resolution-epoch 1)
                 (if answer
@@ -19873,10 +19686,11 @@
 (define (tc-type-needs-resolution? [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.Func args ret)
-      (if (tc-type-list-needs-resolution? (box-get args))
+      (if (tc-type-list-needs-resolution? (__tl-box-place args))
         true
         (tc-type-needs-resolution-id? ret))]
-    [(ast.AstType.Tuple elems) (tc-type-list-needs-resolution? (box-get elems))]
+    [(ast.AstType.Tuple elems)
+      (tc-type-list-needs-resolution? (__tl-box-place elems))]
     [(ast.AstType.Array elem _) (tc-type-needs-resolution-id? elem)]
     [(ast.AstType.DynArray elem) (tc-type-needs-resolution-id? elem)]
     [(ast.AstType.Slice elem) (tc-type-needs-resolution-id? elem)]
@@ -20078,8 +19892,8 @@
   [name-id : i64]
   [prefix-id : i64]) : bool
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     (cond
       [(= head -1) false]
       [(< head -1)
@@ -20111,7 +19925,7 @@
               [cache : TcTypeEnvCache
                 (tc-type-env-cache-at
                   (tc-type-env-cache-ptr store-handle node-addr))]
-              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+              [ids : tc_i64_i64_map.Map cache.ids]
               [prefix-index : i64
                 (tc_i64_i64_map.get-value-or (& ids) prefix-id -1)]
               (if (>= prefix-index 0)
@@ -20121,11 +19935,11 @@
                   (if (>= name-index 0)
                     (< prefix-index name-index)
                     true))
-                (if (struct-get cache partial)
+                (if cache.partial
                   (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
                     false
                     (tc-source-leading-segment-wins-over-exact-persistent-id?
-                      (TcTypeEnv store-handle (struct-get cache below) 0)
+                      (TcTypeEnv store-handle cache.below 0)
                       name-id
                       prefix-id))
                   false)))))]
@@ -20171,8 +19985,10 @@
                 compile-profile
                 (compiler-tc-env-profile-note-scoped-tail-fallback))
               (tc-source-leading-segment-wins-over-exact-persistent-id?
-                (struct-get
-                  (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                (__tl-project-field
+                  (__tl-project-field
+                    tc-type-env-scoped-runtime-carrier
+                    sidecar)
                   persistent)
                 name-id
                 prefix-id))])]
@@ -20239,6 +20055,39 @@
       (>= (string.string-ref field 0) '0')
       (<= (string.string-ref field 0) '9'))))
 
+(define (tc-dotted-name-source-id [name-id : i64]) : i64
+  ;; Parsed names in the ordinary intern pool dominate this path. Structural
+  ;; families all live above that range, so reject the common case before
+  ;; evaluating their range predicates.
+  (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
+    name-id
+    (cond
+      [(ci.intern-structural-local-id? name-id)
+        (ci.intern-structural-local-source-name-id name-id)]
+      [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
+        (macro-hygiene-structural-source-name-id name-id)]
+      [(ci.intern-template-source-id? name-id)
+        (ci.intern-template-source-name-id name-id)]
+      [else name-id])))
+
+(define (tc-dotted-name-first-dot-id [name-id : i64]) : i64
+  (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
+    (tc-name-first-dot-id name-id)
+    (let
+      [source-id : i64 (tc-dotted-name-source-id name-id)]
+      (if (or (< source-id 0) (>= source-id (ci.intern-capacity)))
+        -1
+        (tc-name-first-dot-id source-id)))))
+
+;; Structural syntax identities place the source spelling in their low lane.
+;; Replacing only that lane keeps the macro/ordinal namespace and depth intact.
+(define (tc-dotted-name-with-source-id [name-id : i64] [source-id : i64]) : i64
+  (let
+    [old-source-id : i64 (tc-dotted-name-source-id name-id)]
+    (if (= old-source-id name-id)
+      source-id
+      (+ (- name-id old-source-id) source-id))))
+
 (define (tc-dotted-local-field-name-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (if (or (< name-id 0) (>= name-id (ci.intern-capacity)))
     false
@@ -20250,6 +20099,91 @@
           env
           name-id
           first-dot)))))
+
+;; A dotted value first keeps the established local-over-module rule. If no
+;; local root wins, an existing fully-qualified value still wins over a global
+;; projection; otherwise a visible value in the leading segment is a place
+;; root. This admits `global.field` without changing module qualification.
+(define (tc-dotted-place-name-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (cond
+    ;; Ordinary parsed names never belong to a structural hygiene family. Keep
+    ;; their local/module disambiguation off those substantially wider range
+    ;; checks and use their intern metadata directly.
+    [(and (>= name-id 0) (< name-id (ci.intern-capacity)))
+      (let
+        [first-dot : i64 (tc-name-first-dot-id name-id)]
+        (if (< first-dot 0)
+          false
+          (if (tc-source-leading-segment-wins-over-exact-id-from-dot?
+            env
+            name-id
+            first-dot)
+            true
+            (let
+              [root-id : i64 (ci.intern-leading-dot-id name-id)]
+              (if (< root-id 0)
+                false
+                (match (tc-var-expr-after-local-field-check
+                  ctx
+                  env
+                  name-id
+                  (tc-hygiene-name-text-id name-id))
+                  [(ResultTcType.Ok _) false]
+                  [(ResultTcType.Err _)
+                    (match (tc-var-expr-after-local-field-check
+                      ctx
+                      env
+                      root-id
+                      (tc-hygiene-name-text-id root-id))
+                      [(ResultTcType.Ok _) true]
+                      [(ResultTcType.Err _) false])]))))))]
+    [(tc-structural-local-name-id? name-id)
+      (let
+        [source-id : i64 (tc-dotted-name-source-id name-id)]
+        [first-dot : i64 (tc-dotted-name-first-dot-id name-id)]
+        (if (< first-dot 0)
+          false
+          (let
+            [root-source-id : i64 (ci.intern-leading-dot-id source-id)]
+            (if (< root-source-id 0)
+              false
+              (match (tc-lookup-visible-id
+                ctx
+                env
+                (tc-dotted-name-with-source-id name-id root-source-id))
+                [(ResultTcType.Ok _) true]
+                [(ResultTcType.Err _) false])))))]
+    [(or
+        (< name-id 0)
+        (>= name-id (ci.intern-capacity))
+        (macro-hygiene-global-id? name-id))
+      false]
+    [else
+      (let
+        [first-dot : i64 (tc-dotted-name-first-dot-id name-id)]
+        (if (< first-dot 0)
+          false
+          (let
+            [root-id : i64 (ci.intern-leading-dot-id name-id)]
+            (if (< root-id 0)
+              false
+              (match (tc-var-expr-after-local-field-check
+                ctx
+                env
+                name-id
+                (tc-hygiene-name-text-id name-id))
+                [(ResultTcType.Ok _) false]
+                [(ResultTcType.Err _)
+                  (match (tc-var-expr-after-local-field-check
+                    ctx
+                    env
+                    root-id
+                    (tc-hygiene-name-text-id root-id))
+                    [(ResultTcType.Ok _) true]
+                    [(ResultTcType.Err _) false])])))))]))
 
 (define (tc-dotted-local-field-expr-id-tail
   [source-name-id : i64]
@@ -20278,14 +20212,17 @@
 
 (define (tc-dotted-local-field-expr-id-from-source-name-id [name-id : i64]) : ResultTcExprId
   (let
-    [root-id : i64 (ci.intern-leading-dot-id name-id)]
-    [remaining-id : i64 (ci.intern-dotted-tail-id name-id)]
-    (if (or (< root-id 0) (< remaining-id 0))
+    [source-name-id : i64 (tc-dotted-name-source-id name-id)]
+    [root-source-id : i64 (ci.intern-leading-dot-id source-name-id)]
+    [remaining-id : i64 (ci.intern-dotted-tail-id source-name-id)]
+    (if (or (< root-source-id 0) (< remaining-id 0))
       (ResultTcExprId.Err (tc-dotted-field-empty-message))
       (tc-dotted-local-field-expr-id-tail
-        name-id
+        source-name-id
         remaining-id
-        (ast.ast-node-push (ast.AstExpr.Var root-id))))))
+        (ast.ast-node-push
+          (ast.AstExpr.Var
+            (tc-dotted-name-with-source-id name-id root-source-id)))))))
 
 (define (tc-dotted-local-field-expr-id-after-check [name-id : i64]) : ResultTcExprId
   (tc-dotted-local-field-expr-id-from-source-name-id name-id))
@@ -20317,6 +20254,128 @@
     (tc-dotted-local-field-set-expr-id-after-check name-id value)
     (ResultTcExprId.Err "")))
 
+;; Typed macro operands are checked before they are captured. Dotted-place
+;; checking normally canonicalizes the source node in place, but retaining that
+;; canonical StructGet in a captured operand makes hygiene treat its synthetic
+;; receiver as transformer-produced syntax. Journal those focused rewrites and
+;; restore the caller's spelling after the operand check; the expanded result
+;; is normalized permanently when it is checked in its final lexical context.
+(define tc-dotted-macro-journal-pools : (__tl_dyn-array ast.AstNodePoolContext)
+  (array.make-array ast.AstNodePoolContext 16))
+(define tc-dotted-macro-journal-ids : (__tl_dyn-array i64)
+  (array.make-array i64 16))
+(define tc-dotted-macro-journal-exprs : (__tl_dyn-array ast.AstExpr)
+  (array.make-array ast.AstExpr 16))
+(define tc-dotted-macro-journal-len : i64
+  0)
+(define tc-dotted-macro-journal-depth : i64
+  0)
+
+(define (tc-dotted-macro-journal-pools-shared-view) : (__tl_dyn-array
+    ast.AstNodePoolContext)
+  (unsafe
+    (ptr-read (ptr-addr-of tc-dotted-macro-journal-pools))))
+
+(define (tc-dotted-macro-journal-exprs-shared-view) : (__tl_dyn-array
+    ast.AstExpr)
+  (unsafe
+    (ptr-read (ptr-addr-of tc-dotted-macro-journal-exprs))))
+
+(define (tc-dotted-macro-journal-grow-copy!
+  [next-pools : (&mut next-pools (__tl_dyn-array ast.AstNodePoolContext))]
+  [next-ids : (&mut next-ids (__tl_dyn-array i64))]
+  [next-exprs : (&mut next-exprs (__tl_dyn-array ast.AstExpr))]
+  [index : i64]) : unit
+  (if (>= index tc-dotted-macro-journal-len)
+    unit
+    (begin
+      (set!
+        (array-ref next-pools index)
+        (array-ref (tc-dotted-macro-journal-pools-shared-view) index))
+      (set!
+        (array-ref next-ids index)
+        (array-ref tc-dotted-macro-journal-ids index))
+      (set!
+        (array-ref next-exprs index)
+        (array-ref (tc-dotted-macro-journal-exprs-shared-view) index))
+      (tc-dotted-macro-journal-grow-copy!
+        next-pools
+        next-ids
+        next-exprs
+        (+ index 1)))))
+
+(define (tc-dotted-macro-journal-grow!) : unit
+  (let
+    [old-capacity : i64 (array.length tc-dotted-macro-journal-ids)]
+    [next-capacity : i64 (* old-capacity 2)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [_persistent : unit
+      (unsafe
+        (arena.tl_arena_set (cload.compiler-load-provenance-arena)))]
+    [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
+      (array.make-array ast.AstNodePoolContext next-capacity)]
+    [next-ids : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [next-exprs : (__tl_dyn-array ast.AstExpr)
+      (array.make-array ast.AstExpr next-capacity)]
+    (begin
+      (tc-dotted-macro-journal-grow-copy!
+        (&mut next-pools)
+        (&mut next-ids)
+        (&mut next-exprs)
+        0)
+      (set! tc-dotted-macro-journal-pools next-pools)
+      (set! tc-dotted-macro-journal-ids next-ids)
+      (set! tc-dotted-macro-journal-exprs next-exprs)
+      (unsafe
+        (arena.tl_arena_set previous-arena)))))
+
+(define (tc-dotted-macro-journal-active-pools) : ast.AstNodePoolContext
+  (if (ast.ast-node-pool-compat-context-active?)
+    (ast.ast-node-pool-compat-context-current)
+    (if (ast.ast-node-pool-has-active-context?)
+      (ast.ast-node-pool-context-active-live)
+      (ast.ast-node-pool-context-capture-active))))
+
+(define (tc-dotted-macro-journal-record! [expr-id : i64] [expr : ast.AstExpr]) : unit
+  (if (< tc-dotted-macro-journal-depth 1)
+    unit
+    (begin
+      (if (>=
+        tc-dotted-macro-journal-len
+        (array.length tc-dotted-macro-journal-ids))
+        (tc-dotted-macro-journal-grow!)
+        unit)
+      (set!
+        (array-ref tc-dotted-macro-journal-pools tc-dotted-macro-journal-len)
+        (tc-dotted-macro-journal-active-pools))
+      (set!
+        (array-ref tc-dotted-macro-journal-ids tc-dotted-macro-journal-len)
+        expr-id)
+      (set!
+        (array-ref tc-dotted-macro-journal-exprs tc-dotted-macro-journal-len)
+        expr)
+      (set! tc-dotted-macro-journal-len (+ tc-dotted-macro-journal-len 1)))))
+
+(define (tc-dotted-macro-journal-start!) : i64
+  (let
+    [mark : i64 tc-dotted-macro-journal-len]
+    (begin
+      (set! tc-dotted-macro-journal-depth (+ tc-dotted-macro-journal-depth 1))
+      mark)))
+
+(define (tc-dotted-macro-journal-restore-to! [mark : i64]) : unit
+  (begin
+    (while (> tc-dotted-macro-journal-len mark)
+      (let
+        [index : i64 (- tc-dotted-macro-journal-len 1)]
+        (begin
+          (ast.ast-node-pool-context-expr-set!
+            (array-ref (tc-dotted-macro-journal-pools-shared-view) index)
+            (array-ref tc-dotted-macro-journal-ids index)
+            (array-ref (tc-dotted-macro-journal-exprs-shared-view) index))
+          (set! tc-dotted-macro-journal-len index))))
+    (set! tc-dotted-macro-journal-depth (- tc-dotted-macro-journal-depth 1))))
+
 ;; Local dotted fields must become ordinary projection nodes before the
 ;; move/borrow/lower passes see them.  Keeping `root.field` as a raw Var and
 ;; teaching each later pass to rebuild it independently loses the rooted place
@@ -20324,6 +20383,7 @@
 ;; node exactly once, after the current lexical environment has decided that
 ;; the leading segment is a local rather than a module alias.
 (define (tc-normalize-dotted-local-field-direct-node!
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [expr-id : i64]
   [expr : ast.AstExpr]) : ResultTcUnit
@@ -20331,13 +20391,13 @@
     [(ast.AstExpr.Var name)
       (if (or
         (macro-hygiene-global-id? name)
-        (tc-structural-local-name-id? name)
-        (< (tc-name-first-dot-id name) 0))
+        (< (tc-dotted-name-first-dot-id name) 0))
         ResultTcUnit.Ok
-        (if (tc-dotted-local-field-name-id? env name)
+        (if (tc-dotted-place-name-id? ctx env name)
           (match (tc-dotted-local-field-expr-id-after-check name)
             [(ResultTcExprId.Ok projection-id)
               (begin
+                (tc-dotted-macro-journal-record! expr-id (ast.AstExpr.Var name))
                 (ast.ast-node-set! expr-id (ast.ast-node-get projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
@@ -20345,13 +20405,15 @@
     [(ast.AstExpr.Set name value-box)
       (if (or
         (macro-hygiene-global-id? name)
-        (tc-structural-local-name-id? name)
-        (< (tc-name-first-dot-id name) 0))
+        (< (tc-dotted-name-first-dot-id name) 0))
         ResultTcUnit.Ok
-        (if (tc-dotted-local-field-name-id? env name)
+        (if (tc-dotted-place-name-id? ctx env name)
           (match (tc-dotted-local-field-set-expr-id-after-check name value-box)
             [(ResultTcExprId.Ok projection-id)
               (begin
+                (tc-dotted-macro-journal-record!
+                  expr-id
+                  (ast.AstExpr.Set name value-box))
                 (ast.ast-node-set! expr-id (ast.ast-node-get projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
@@ -20363,41 +20425,65 @@
 ;; call arguments can be source-span wrappers around those nodes; keep the
 ;; recursive walk for those focused paths only.
 (define (tc-normalize-dotted-local-field-node!
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [expr-id : i64]) : ResultTcUnit
   (match (ast.ast-node-get expr-id)
     [(ast.AstExpr.Spanned inner-box _)
-      (tc-normalize-dotted-local-field-node! env inner-box)]
+      (tc-normalize-dotted-local-field-node! ctx env inner-box)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-normalize-dotted-local-field-node! env inner-box)]
+      (tc-normalize-dotted-local-field-node! ctx env inner-box)]
     [(ast.AstExpr.Ann inner-box _)
-      (tc-normalize-dotted-local-field-node! env inner-box)]
+      (tc-normalize-dotted-local-field-node! ctx env inner-box)]
     [(ast.AstExpr.Cast inner-box _)
-      (tc-normalize-dotted-local-field-node! env inner-box)]
+      (tc-normalize-dotted-local-field-node! ctx env inner-box)]
     [(ast.AstExpr.Borrow _ _ place-box)
-      (tc-normalize-dotted-local-field-node! env place-box)]
+      (tc-normalize-dotted-local-field-node! ctx env place-box)]
+    [(ast.AstExpr.StructGet receiver-box _)
+      (tc-normalize-dotted-local-field-node! ctx env receiver-box)]
+    [(ast.AstExpr.TupleRef tuple-box _)
+      (tc-normalize-dotted-local-field-node! ctx env tuple-box)]
+    [(ast.AstExpr.ArrayRef array-box index-box)
+      (match (tc-normalize-dotted-local-field-node! ctx env array-box)
+        [(ResultTcUnit.Ok)
+          (tc-normalize-dotted-local-field-node! ctx env index-box)]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+    [(ast.AstExpr.BoxGet inner-box)
+      (tc-normalize-dotted-local-field-node! ctx env inner-box)]
+    [(ast.AstExpr.BoxTake inner-box)
+      (tc-normalize-dotted-local-field-node! ctx env inner-box)]
+    [(ast.AstExpr.PtrAddrOf place-box)
+      (tc-normalize-dotted-local-field-node! ctx env place-box)]
     [_
       (tc-normalize-dotted-local-field-direct-node!
+        ctx
         env
         expr-id
         (ast.ast-node-get expr-id))]))
 
 (define (tc-normalize-dotted-local-field-expr-list!
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]) : ResultTcUnit
-  (tc-normalize-dotted-local-field-expr-list-at! env (& exprs) 0))
+  (tc-normalize-dotted-local-field-expr-list-at! ctx env (& exprs) 0))
 
 (define (tc-normalize-dotted-local-field-expr-list-at!
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-normalize-dotted-local-field-node!
+      ctx
       env
       (ast.ast-expr-list-get exprs index 0))
       [(ResultTcUnit.Ok)
-        (tc-normalize-dotted-local-field-expr-list-at! env exprs (+ index 1))]
+        (tc-normalize-dotted-local-field-expr-list-at!
+          ctx
+          env
+          exprs
+          (+ index 1))]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define tc-imported-module-identity-cache-capacity : i64
@@ -20428,7 +20514,7 @@
       (begin
         (while (< i tc-imported-module-identity-cache-capacity)
           (begin
-            (array-set! tc-imported-module-identity-cache-module-keys i 0)
+            (set! (array-ref tc-imported-module-identity-cache-module-keys i) 0)
             (set! i (+ i 1))))
         (set! tc-imported-module-identity-cache-count 0)
         (set!
@@ -20507,17 +20593,18 @@
               (array-ref tc-imported-module-identity-cache-module-keys cursor)]
             (if (= slot 0)
               (begin
-                (array-set!
-                  tc-imported-module-identity-cache-module-keys
-                  cursor
+                (set!
+                  (array-ref
+                    tc-imported-module-identity-cache-module-keys
+                    cursor)
                   module-key)
-                (array-set!
-                  tc-imported-module-identity-cache-target-keys
-                  cursor
+                (set!
+                  (array-ref
+                    tc-imported-module-identity-cache-target-keys
+                    cursor)
                   target-key)
-                (array-set!
-                  tc-imported-module-identity-cache-values
-                  cursor
+                (set!
+                  (array-ref tc-imported-module-identity-cache-values cursor)
                   (if value
                     1
                     -1))
@@ -20559,8 +20646,8 @@
     ;; borrow and then re-read the row with `ast-decl-list-ref`, which returns
     ;; `AstDecl` through an SRET pointer and so copied all 104 B; the projection
     ;; match loads the tag and only the fields an arm binds.
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-offset : i64 decls.offset]
     (begin
       (while (and (not found) (< index count))
         (begin
@@ -20603,7 +20690,7 @@
                         current-module-id
                         target-id)
                       (tc-imported-module-identity-ids?
-                        (box-get decls-box)
+                        (__tl-box-place decls-box)
                         current-module-id
                         target-id
                         cbi.compiler-builtin-id-fix-empty))]
@@ -20625,14 +20712,10 @@
     ;; type occurrence. Preserve the session ownership/generation checks that
     ;; keep retained IDs from being mistaken for names in a reset table.
     (if (and
-      (=
-        (array-ref (struct-get session table-id-cell) 0)
-        (struct-get session table-id))
-      (=
-        (array-ref (struct-get session reset-generation-cell) 0)
-        (struct-get session reset-generation))
+      (= (array-ref session.table-id-cell 0) session.table-id)
+      (= (array-ref session.reset-generation-cell 0) session.reset-generation)
       (>= name 0)
-      (< name (struct-get session source-count)))
+      (< name session.source-count))
       name
       (match (ci.intern-source-name-session-resolve
         session
@@ -20668,7 +20751,7 @@
   (match (tc-type-strip-region ty)
     [(ast.AstType.Func args ret)
       (let
-        [args : ast.AstTypeList (box-get args)]
+        [args : ast.AstTypeList (__tl-box-place args)]
         (if (= (ast.ast-type-list-len (& args)) 1)
           (and
             (tc-str-ref-type? (tc-type-list-ty-node-get args 0))
@@ -20680,7 +20763,7 @@
   (match (tc-type-strip-region ty)
     [(ast.AstType.Func args ret)
       (let
-        [args : ast.AstTypeList (box-get args)]
+        [args : ast.AstTypeList (__tl-box-place args)]
         (if (= (ast.ast-type-list-len (& args)) 2)
           (and
             (tc-str-ref-type? (tc-type-list-ty-node-get args 0))
@@ -20693,7 +20776,7 @@
   (match (tc-type-strip-region ty)
     [(ast.AstType.Func args ret)
       (let
-        [args : ast.AstTypeList (box-get args)]
+        [args : ast.AstTypeList (__tl-box-place args)]
         (if (= (ast.ast-type-list-len (& args)) 2)
           (and
             (tc-string-handle-type? (tc-type-list-ty-node-get args 0))
@@ -20706,7 +20789,7 @@
   (match (tc-type-strip-region ty)
     [(ast.AstType.Func args ret)
       (let
-        [args : ast.AstTypeList (box-get args)]
+        [args : ast.AstTypeList (__tl-box-place args)]
         (if (= (ast.ast-type-list-len (& args)) 2)
           (and
             (tc-str-ref-type? (tc-type-list-ty-node-get args 0))
@@ -20719,7 +20802,7 @@
   (match (tc-type-strip-region ty)
     [(ast.AstType.Func args ret)
       (let
-        [args : ast.AstTypeList (box-get args)]
+        [args : ast.AstTypeList (__tl-box-place args)]
         (if (= (ast.ast-type-list-len (& args)) 1)
           (and
             (tc-string-handle-type? (tc-type-list-ty-node-get args 0))
@@ -20957,7 +21040,7 @@
 
 (define (tc-module-decl-index-seq-matches? [decls : ast.AstDeclList]) : bool
   (let
-    [count : i64 (struct-get decls len)]
+    [count : i64 decls.len]
     (if (not (= (array-length tc-module-decl-index-seq) count))
       false
       (let
@@ -20978,8 +21061,8 @@
     (when
       (and
         tc-module-decl-index-ready
-        (= tc-module-decl-index-decl-count (struct-get decls len))
-        (= tc-module-decl-index-decl-offset (struct-get decls offset)))
+        (= tc-module-decl-index-decl-count decls.len)
+        (= tc-module-decl-index-decl-offset decls.offset))
       (begin
         (when
           (and
@@ -20997,9 +21080,9 @@
             (set! tc-module-decl-index-generation (ci.intern-generation))
             (return unit)))))
     (let
-      [count : i64 (struct-get decls len)]
-      [decl-offset : i64 (struct-get decls offset)]
-      [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+      [count : i64 decls.len]
+      [decl-offset : i64 decls.offset]
+      [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
       [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       [prev-arena : i64 (arena.tl_arena_current)]
       [old-arena : i64 tc-module-decl-index-arena]
@@ -21050,12 +21133,11 @@
                               new-slot)
                             (set! module-count (+ module-count 1))
                             new-slot))))]
-                  (array-set! counts slot (+ (array-ref counts slot) 1))
+                  (set! (array-ref counts slot) (+ (array-ref counts slot) 1))
                   ;; Borrowed import test: the count needs one bit, not a row.
                   (if (ast.ast-decl-list-unwrapped-import-at? (& decls) i)
-                    (array-set!
-                      import-counts
-                      slot
+                    (set!
+                      (array-ref import-counts slot)
                       (+ (array-ref import-counts slot) 1))
                     unit))])
             (set! i (+ i 1))))
@@ -21063,10 +21145,10 @@
         (set! i 0)
         (while (< i module-count)
           (begin
-            (array-set! starts i running)
-            (array-set! ends i running)
-            (array-set! import-starts i import-running)
-            (array-set! import-ends i import-running)
+            (set! (array-ref starts i) running)
+            (set! (array-ref ends i) running)
+            (set! (array-ref import-starts i) import-running)
+            (set! (array-ref import-ends i) import-running)
             (set! running (+ running (array-ref counts i)))
             (set! import-running (+ import-running (array-ref import-counts i)))
             (set! i (+ i 1))))
@@ -21086,14 +21168,18 @@
                     (let
                       [cursor : i64 (array-ref ends slot)]
                       (begin
-                        (array-set! positions cursor i)
-                        (array-set! ends slot (+ cursor 1))
+                        (set! (array-ref positions cursor) i)
+                        (set! (array-ref ends slot) (+ cursor 1))
                         (if (ast.ast-decl-list-unwrapped-import-at? (& decls) i)
                           (let
                             [import-cursor : i64 (array-ref import-ends slot)]
                             (begin
-                              (array-set! import-positions import-cursor i)
-                              (array-set! import-ends slot (+ import-cursor 1))))
+                              (set!
+                                (array-ref import-positions import-cursor)
+                                i)
+                              (set!
+                                (array-ref import-ends slot)
+                                (+ import-cursor 1))))
                           unit)))
                     unit))])
             (set! i (+ i 1))))
@@ -21105,9 +21191,8 @@
             (set! i 0)
             (while (< i count)
               (begin
-                (array-set!
-                  seq
-                  i
+                (set!
+                  (array-ref seq i)
                   (tc-module-decl-index-shape-code-at (& decls) i))
                 (set! i (+ i 1))))
             (set! tc-module-decl-index-seq seq)))
@@ -21158,10 +21243,8 @@
           (while (and (not found) (< j end))
             (begin
               (match (array-ref
-                (struct-get decls slots)
-                (+
-                  (struct-get decls offset)
-                  (array-ref tc-module-decl-index-positions j)))
+                decls.slots
+                (+ decls.offset (array-ref tc-module-decl-index-positions j)))
                 [(ast.AstDecl.Import
                     decl-meta
                     (ast.AstImportSpec.Spec
@@ -21184,7 +21267,7 @@
       (match program
         [(ast.AstProgram.Program decls-box)
           (tc-decl-list-module-imports-stdlib-string?
-            (box-get decls-box)
+            (__tl-box-place decls-box)
             module-id
             cbi.compiler-builtin-id-fix-empty)])]))
 
@@ -21219,40 +21302,40 @@
   [table-id : i64]
   [generation : i64]) : unit
   (if (and
-    (= (array-ref (struct-get state control) 2) 1)
-    (= (array-ref (struct-get state control) 0) table-id)
-    (= (array-ref (struct-get state control) 1) generation))
+    (= (array-ref state.control 2) 1)
+    (= (array-ref state.control 0) table-id)
+    (= (array-ref state.control 1) generation))
     unit
     (let
       [i : i64 0]
       (begin
         (while (< i tc-source-dotted-alias-key-cache-capacity)
           (begin
-            (array-set! (struct-get state dotted-alias-module-keys) i 0)
+            (set! (array-ref state.dotted-alias-module-keys i) 0)
             (set! i (+ i 1))))
-        (array-set! (struct-get state control) 0 table-id)
-        (array-set! (struct-get state control) 1 generation)
-        (array-set! (struct-get state control) 2 1)))))
+        (set! (array-ref state.control 0) table-id)
+        (set! (array-ref state.control 1) generation)
+        (set! (array-ref state.control 2) 1)))))
 
 (define (tc-source-dotted-full-path-key-cache-ensure-for-state!
   [state : TcSourceKeyCacheState]
   [table-id : i64]
   [generation : i64]) : unit
   (if (and
-    (= (array-ref (struct-get state control) 5) 1)
-    (= (array-ref (struct-get state control) 3) table-id)
-    (= (array-ref (struct-get state control) 4) generation))
+    (= (array-ref state.control 5) 1)
+    (= (array-ref state.control 3) table-id)
+    (= (array-ref state.control 4) generation))
     unit
     (let
       [i : i64 0]
       (begin
         (while (< i tc-source-dotted-full-path-key-cache-capacity)
           (begin
-            (array-set! (struct-get state dotted-full-path-module-keys) i 0)
+            (set! (array-ref state.dotted-full-path-module-keys i) 0)
             (set! i (+ i 1))))
-        (array-set! (struct-get state control) 3 table-id)
-        (array-set! (struct-get state control) 4 generation)
-        (array-set! (struct-get state control) 5 1)))))
+        (set! (array-ref state.control 3) table-id)
+        (set! (array-ref state.control 4) generation)
+        (set! (array-ref state.control 5) 1)))))
 
 (define (tc-source-qualified-variant-key-cache-ensure-for-state!
   [state : TcSourceKeyCacheState]
@@ -21260,22 +21343,22 @@
   [generation : i64]
   [registry-id : i64]) : unit
   (if (and
-    (= (array-ref (struct-get state control) 9) 1)
-    (= (array-ref (struct-get state control) 6) table-id)
-    (= (array-ref (struct-get state control) 7) generation)
-    (= (array-ref (struct-get state control) 8) registry-id))
+    (= (array-ref state.control 9) 1)
+    (= (array-ref state.control 6) table-id)
+    (= (array-ref state.control 7) generation)
+    (= (array-ref state.control 8) registry-id))
     unit
     (let
       [i : i64 0]
       (begin
         (while (< i tc-source-qualified-variant-key-cache-capacity)
           (begin
-            (array-set! (struct-get state qualified-variant-name-keys) i 0)
+            (set! (array-ref state.qualified-variant-name-keys i) 0)
             (set! i (+ i 1))))
-        (array-set! (struct-get state control) 6 table-id)
-        (array-set! (struct-get state control) 7 generation)
-        (array-set! (struct-get state control) 8 registry-id)
-        (array-set! (struct-get state control) 9 1)))))
+        (set! (array-ref state.control 6) table-id)
+        (set! (array-ref state.control 7) generation)
+        (set! (array-ref state.control 8) registry-id)
+        (set! (array-ref state.control 9) 1)))))
 
 (define (tc-source-dotted-alias-key-cache-bucket
   [module-id : i64]
@@ -21315,13 +21398,9 @@
       [module-key : i64 (+ module-id 1)]
       [name-key : i64 (+ name-id 1)]
       (if (and
-        (=
-          (array-ref (struct-get state dotted-alias-module-keys) cursor)
-          module-key)
-        (=
-          (array-ref (struct-get state dotted-alias-name-keys) cursor)
-          name-key))
-        (array-ref (struct-get state dotted-alias-values) cursor)
+        (= (array-ref state.dotted-alias-module-keys cursor) module-key)
+        (= (array-ref state.dotted-alias-name-keys cursor) name-key))
+        (array-ref state.dotted-alias-values cursor)
         -2))))
 
 ;; Returns the cached lookup-name id, -1 for no full path, or -2 when absent.
@@ -21342,13 +21421,9 @@
       [module-key : i64 (+ module-id 1)]
       [name-key : i64 (+ name-id 1)]
       (if (and
-        (=
-          (array-ref (struct-get state dotted-full-path-module-keys) cursor)
-          module-key)
-        (=
-          (array-ref (struct-get state dotted-full-path-name-keys) cursor)
-          name-key))
-        (array-ref (struct-get state dotted-full-path-values) cursor)
+        (= (array-ref state.dotted-full-path-module-keys cursor) module-key)
+        (= (array-ref state.dotted-full-path-name-keys cursor) name-key))
+        (array-ref state.dotted-full-path-values cursor)
         -2))))
 
 ;; Returns the cached lookup-name id, -1 for no variant, or -2 when absent.
@@ -21371,13 +21446,9 @@
       [module-key : i64 (+ module-id 1)]
       [name-key : i64 (+ name-id 1)]
       (if (and
-        (=
-          (array-ref (struct-get state qualified-variant-module-keys) cursor)
-          module-key)
-        (=
-          (array-ref (struct-get state qualified-variant-name-keys) cursor)
-          name-key))
-        (array-ref (struct-get state qualified-variant-values) cursor)
+        (= (array-ref state.qualified-variant-module-keys cursor) module-key)
+        (= (array-ref state.qualified-variant-name-keys cursor) name-key))
+        (array-ref state.qualified-variant-values cursor)
         -2))))
 
 ;; Returns the cached registry handle, -1 for no variant, or -2 when absent.
@@ -21400,13 +21471,9 @@
       [module-key : i64 (+ module-id 1)]
       [name-key : i64 (+ name-id 1)]
       (if (and
-        (=
-          (array-ref (struct-get state qualified-variant-module-keys) cursor)
-          module-key)
-        (=
-          (array-ref (struct-get state qualified-variant-name-keys) cursor)
-          name-key))
-        (array-ref (struct-get state qualified-variant-handles) cursor)
+        (= (array-ref state.qualified-variant-module-keys cursor) module-key)
+        (= (array-ref state.qualified-variant-name-keys cursor) name-key))
+        (array-ref state.qualified-variant-handles cursor)
         -2))))
 
 (define (tc-source-dotted-alias-key-cache-put-for-state!
@@ -21424,15 +21491,9 @@
     (let
       [cursor : i64 (tc-source-dotted-alias-key-cache-bucket module-id name-id)]
       (begin
-        (array-set!
-          (struct-get state dotted-alias-module-keys)
-          cursor
-          (+ module-id 1))
-        (array-set!
-          (struct-get state dotted-alias-name-keys)
-          cursor
-          (+ name-id 1))
-        (array-set! (struct-get state dotted-alias-values) cursor value)))))
+        (set! (array-ref state.dotted-alias-module-keys cursor) (+ module-id 1))
+        (set! (array-ref state.dotted-alias-name-keys cursor) (+ name-id 1))
+        (set! (array-ref state.dotted-alias-values cursor) value)))))
 
 (define (tc-source-dotted-full-path-key-cache-put-for-state!
   [state : TcSourceKeyCacheState]
@@ -21450,15 +21511,11 @@
       [cursor : i64
         (tc-source-dotted-full-path-key-cache-bucket module-id name-id)]
       (begin
-        (array-set!
-          (struct-get state dotted-full-path-module-keys)
-          cursor
+        (set!
+          (array-ref state.dotted-full-path-module-keys cursor)
           (+ module-id 1))
-        (array-set!
-          (struct-get state dotted-full-path-name-keys)
-          cursor
-          (+ name-id 1))
-        (array-set! (struct-get state dotted-full-path-values) cursor value)))))
+        (set! (array-ref state.dotted-full-path-name-keys cursor) (+ name-id 1))
+        (set! (array-ref state.dotted-full-path-values cursor) value)))))
 
 (define (tc-source-qualified-variant-key-cache-put-for-state!
   [state : TcSourceKeyCacheState]
@@ -21479,16 +21536,14 @@
       [cursor : i64
         (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
       (begin
-        (array-set!
-          (struct-get state qualified-variant-module-keys)
-          cursor
+        (set!
+          (array-ref state.qualified-variant-module-keys cursor)
           (+ module-id 1))
-        (array-set!
-          (struct-get state qualified-variant-name-keys)
-          cursor
+        (set!
+          (array-ref state.qualified-variant-name-keys cursor)
           (+ name-id 1))
-        (array-set! (struct-get state qualified-variant-values) cursor value)
-        (array-set! (struct-get state qualified-variant-handles) cursor handle)))))
+        (set! (array-ref state.qualified-variant-values cursor) value)
+        (set! (array-ref state.qualified-variant-handles cursor) handle)))))
 
 ;; Serial/test adapters. Production helpers use the explicit-state forms above.
 (define (tc-source-dotted-alias-key-cache-reset!) : unit
@@ -21577,9 +21632,9 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-dotted-alias-key-cache-get-for-state
-      (tc-job-state-source-key-cache (struct-get body-state job-state))
-      (struct-get body-state intern-table-id)
-      (struct-get body-state intern-generation)
+      (tc-job-state-source-key-cache body-state.job-state)
+      body-state.intern-table-id
+      body-state.intern-generation
       module-id
       name-id)))
 
@@ -21590,9 +21645,9 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-dotted-full-path-key-cache-get-for-state
-      (tc-job-state-source-key-cache (struct-get body-state job-state))
-      (struct-get body-state intern-table-id)
-      (struct-get body-state intern-generation)
+      (tc-job-state-source-key-cache body-state.job-state)
+      body-state.intern-table-id
+      body-state.intern-generation
       module-id
       name-id)))
 
@@ -21604,9 +21659,9 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-qualified-variant-key-cache-get-for-state
-      (tc-job-state-source-key-cache (struct-get body-state job-state))
-      (struct-get body-state intern-table-id)
-      (struct-get body-state intern-generation)
+      (tc-job-state-source-key-cache body-state.job-state)
+      body-state.intern-table-id
+      body-state.intern-generation
       registry-id
       module-id
       name-id)))
@@ -21619,9 +21674,9 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-qualified-variant-handle-cache-get-for-state
-      (tc-job-state-source-key-cache (struct-get body-state job-state))
-      (struct-get body-state intern-table-id)
-      (struct-get body-state intern-generation)
+      (tc-job-state-source-key-cache body-state.job-state)
+      body-state.intern-table-id
+      body-state.intern-generation
       registry-id
       module-id
       name-id)))
@@ -21634,9 +21689,9 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-dotted-alias-key-cache-put-for-state!
-      (tc-job-state-source-key-cache (struct-get body-state job-state))
-      (struct-get body-state intern-table-id)
-      (struct-get body-state intern-generation)
+      (tc-job-state-source-key-cache body-state.job-state)
+      body-state.intern-table-id
+      body-state.intern-generation
       module-id
       name-id
       value)))
@@ -21649,9 +21704,9 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-dotted-full-path-key-cache-put-for-state!
-      (tc-job-state-source-key-cache (struct-get body-state job-state))
-      (struct-get body-state intern-table-id)
-      (struct-get body-state intern-generation)
+      (tc-job-state-source-key-cache body-state.job-state)
+      body-state.intern-table-id
+      body-state.intern-generation
       module-id
       name-id
       value)))
@@ -21666,9 +21721,9 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-qualified-variant-key-cache-put-for-state!
-      (tc-job-state-source-key-cache (struct-get body-state job-state))
-      (struct-get body-state intern-table-id)
-      (struct-get body-state intern-generation)
+      (tc-job-state-source-key-cache body-state.job-state)
+      body-state.intern-table-id
+      body-state.intern-generation
       registry-id
       module-id
       name-id
@@ -21694,7 +21749,9 @@
 (define (tc-lazy-import-stub-storage-ensure!) : unit
   (if (=
     (array-length
-      (struct-get (& tc-lazy-global-table-state) lazy-import-stub-index-slots))
+      (__tl-project-field
+        tc-lazy-global-table-state
+        lazy-import-stub-index-slots))
     tc-lazy-import-stub-capacity)
     unit
     (let
@@ -21702,22 +21759,25 @@
       (in-arena
         owner
         (begin
-          (set!
-            (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            lazy-import-stub-module-ids
             (array.make-array i64 tc-lazy-import-stub-capacity))
-          (set!
-            (struct-get tc-lazy-global-table-state lazy-import-stub-alias-ids)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            lazy-import-stub-alias-ids
             (array.make-array i64 tc-lazy-import-stub-capacity))
-          (set!
-            (struct-get tc-lazy-global-table-state lazy-import-stub-target-ids)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            lazy-import-stub-target-ids
             (array.make-array i64 tc-lazy-import-stub-capacity))
-          (set!
-            (struct-get
-              tc-lazy-global-table-state
-              lazy-import-stub-summary-backed)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            lazy-import-stub-summary-backed
             (array.make-array bool tc-lazy-import-stub-capacity))
-          (set!
-            (struct-get tc-lazy-global-table-state lazy-import-stub-index-slots)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            lazy-import-stub-index-slots
             (array.make-array i64 tc-lazy-import-stub-capacity)))))))
 
 ;; Return either the matching record-index slot or the first empty slot. Slots
@@ -21733,8 +21793,8 @@
     (let
       [entry : i64
         (array-ref
-          (struct-get
-            (& tc-lazy-global-table-state)
+          (__tl-project-field
+            tc-lazy-global-table-state
             lazy-import-stub-index-slots)
           cursor)]
       (if (= entry 0)
@@ -21744,15 +21804,15 @@
           (if (and
             (=
               (array-ref
-                (struct-get
-                  (& tc-lazy-global-table-state)
+                (__tl-project-field
+                  tc-lazy-global-table-state
                   lazy-import-stub-module-ids)
                 record-index)
               importer-module-id)
             (=
               (array-ref
-                (struct-get
-                  (& tc-lazy-global-table-state)
+                (__tl-project-field
+                  tc-lazy-global-table-state
                   lazy-import-stub-alias-ids)
                 record-index)
               alias-id))
@@ -21778,11 +21838,12 @@
     [slot : i64 0]
     (while (< slot tc-lazy-import-stub-capacity)
       (begin
-        (array-set!
-          (struct-get
-            (& tc-lazy-global-table-state)
-            lazy-import-stub-index-slots)
-          slot
+        (set!
+          (array-ref
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-index-slots)
+            slot)
           0)
         (set! slot (+ slot 1))))))
 
@@ -21798,8 +21859,8 @@
       (let
         [entry : i64
           (array-ref
-            (struct-get
-              (& tc-lazy-global-table-state)
+            (__tl-project-field
+              tc-lazy-global-table-state
               lazy-import-stub-index-slots)
             slot)]
         (if (or
@@ -21807,16 +21868,17 @@
           (not (= target-module-id alias-id))
           (=
             (array-ref
-              (struct-get
-                (& tc-lazy-global-table-state)
+              (__tl-project-field
+                tc-lazy-global-table-state
                 lazy-import-stub-target-ids)
               (- entry 1))
             alias-id))
-          (array-set!
-            (struct-get
-              (& tc-lazy-global-table-state)
-              lazy-import-stub-index-slots)
-            slot
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                lazy-import-stub-index-slots)
+              slot)
             (+ record-index 1))
           unit)))))
 
@@ -21872,29 +21934,33 @@
       (let
         [index : i64 tc-lazy-import-stub-record-count]
         (begin
-          (array-set!
-            (struct-get
-              (& tc-lazy-global-table-state)
-              lazy-import-stub-module-ids)
-            index
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                lazy-import-stub-module-ids)
+              index)
             importer-module-id)
-          (array-set!
-            (struct-get
-              (& tc-lazy-global-table-state)
-              lazy-import-stub-alias-ids)
-            index
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                lazy-import-stub-alias-ids)
+              index)
             alias-id)
-          (array-set!
-            (struct-get
-              (& tc-lazy-global-table-state)
-              lazy-import-stub-target-ids)
-            index
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                lazy-import-stub-target-ids)
+              index)
             target-module-id)
-          (array-set!
-            (struct-get
-              (& tc-lazy-global-table-state)
-              lazy-import-stub-summary-backed)
-            index
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                lazy-import-stub-summary-backed)
+              index)
             summary-backed)
           (tc-lazy-import-stub-index-record!
             index
@@ -21922,16 +21988,16 @@
         (let
           [entry : i64
             (array-ref
-              (struct-get
-                (& tc-lazy-global-table-state)
+              (__tl-project-field
+                tc-lazy-global-table-state
                 lazy-import-stub-index-slots)
               slot)]
           (if (= entry 0)
             (TcMaybeNameId.No)
             (TcMaybeNameId.Some
               (array-ref
-                (struct-get
-                  (& tc-lazy-global-table-state)
+                (__tl-project-field
+                  tc-lazy-global-table-state
                   lazy-import-stub-target-ids)
                 (- entry 1)))))))))
 
@@ -21960,14 +22026,14 @@
           (let
             [stub-alias-id : i64
               (array-ref
-                (struct-get
-                  (& tc-lazy-global-table-state)
+                (__tl-project-field
+                  tc-lazy-global-table-state
                   lazy-import-stub-alias-ids)
                 index)]
             [target-id : i64
               (array-ref
-                (struct-get
-                  (& tc-lazy-global-table-state)
+                (__tl-project-field
+                  tc-lazy-global-table-state
                   lazy-import-stub-target-ids)
                 index)]
             (begin
@@ -22081,7 +22147,7 @@
               [(ast.AstProgram.Program decls-box)
                 (match (macro-import-alias-target-cached-id-in-context
                   ctx
-                  (box-get decls-box)
+                  (__tl-box-place decls-box)
                   current-module-id
                   alias-id)
                   [(TcMaybeNameId.Some target-module-id)
@@ -22133,7 +22199,7 @@
               [(ast.AstProgram.Program decls-box)
                 (match (macro-import-alias-target-cached-id-in-context
                   ctx
-                  (box-get decls-box)
+                  (__tl-box-place decls-box)
                   current-module-id
                   alias-id)
                   [(TcMaybeNameId.Some target-id)
@@ -22832,7 +22898,7 @@
         [(ast.AstProgram.Program decls-box)
           (macro-resolve-qualified-module-id
             ctx
-            (box-get decls-box)
+            (__tl-box-place decls-box)
             current-module-id
             qualifier-id)])]))
 
@@ -23208,7 +23274,7 @@
               (ci.intern-str next-module))]
           [(ast.AstDecl.ModuleBody name body-box)
             (let
-              [body : ast.AstDeclList (box-get body-box)]
+              [body : ast.AstDeclList (__tl-box-place body-box)]
               [body-count : i64 (csym.compiler-decl-list-index-count body)]
               (if (< target (+ index body-count))
                 (tc-nominal-owner-name-list
@@ -23260,7 +23326,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (tc-nominal-owner-name-list decls index 0 "")
           [(ResultTcString.Ok name)
             (begin
@@ -23377,7 +23443,7 @@
                 [symbols : csym.CompilerSymbols (tc-context-symbols ctx)]
                 (match (tc-source-dotted-alias-target-id-in-context
                   ctx
-                  (box-get decls-box)
+                  (__tl-box-place decls-box)
                   (tc-context-module-id ctx)
                   alias-id)
                   [(TcMaybeNameId.Some target-module-id)
@@ -23587,10 +23653,10 @@
     (match ty
       [(ast.AstType.Func args ret)
         (ast.ast-ty-func
-          (tc-resolve-type-list ctx (box-get args))
+          (tc-resolve-type-list ctx (__tl-box-place args))
           (tc-resolve-type ctx (ast.ty-node-get ret)))]
       [(ast.AstType.Tuple elems)
-        (ast.ast-ty-tuple (tc-resolve-type-list ctx (box-get elems)))]
+        (ast.ast-ty-tuple (tc-resolve-type-list ctx (__tl-box-place elems)))]
       [(ast.AstType.Array elem len)
         (ast.ast-ty-array (tc-resolve-type ctx (ast.ty-node-get elem)) len)]
       [(ast.AstType.DynArray elem)
@@ -23618,7 +23684,7 @@
           ctx
           (tc-hygiene-name-text-id name)
           name
-          (box-get lifetimes))]
+          (__tl-box-place lifetimes))]
       [(ast.AstType.Var name)
         (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]
       [_ ty])
@@ -23758,11 +23824,11 @@
   (match ty
     [(ast.AstType.Func args ret)
       (ast.ast-ty-func
-        (tc-canonicalize-resolved-nominal-type-list ctx (box-get args))
+        (tc-canonicalize-resolved-nominal-type-list ctx (__tl-box-place args))
         (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
       (ast.ast-ty-tuple
-        (tc-canonicalize-resolved-nominal-type-list ctx (box-get elems)))]
+        (tc-canonicalize-resolved-nominal-type-list ctx (__tl-box-place elems)))]
     [(ast.AstType.Array elem len)
       (ast.ast-ty-array
         (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem))
@@ -24002,7 +24068,7 @@
         (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
     [(ast.AstDecl.Unsafe inner-box)
       (tc-program-nominal-lifetimes-from-decl
-        (box-get inner-box)
+        (__tl-box-place inner-box)
         lookup-id
         module-id)]
     [_ (ResultTcLifetimeList.Err "typecheck: nominal type not found")]))
@@ -24033,7 +24099,10 @@
   [lookup-id : i64]) : ResultTcLifetimeList
   (match program
     [(ast.AstProgram.Program decls-box)
-      (tc-program-nominal-lifetimes-in-module (box-get decls-box) lookup-id -1)]))
+      (tc-program-nominal-lifetimes-in-module
+        (__tl-box-place decls-box)
+        lookup-id
+        -1)]))
 
 (define (tc-nominal-lifetimes-id [ctx : TcContext] [name-id : i64]) : ResultTcLifetimeList
   (match ctx
@@ -24118,9 +24187,11 @@
   [ret : ast.AstType]) : ResultTcUnit
   (match (tc-elide-function-type (tc-context-type-bases ctx) args ret)
     [(ResultTcElidedType.Ok normalized)
-      (match (struct-get normalized ty)
+      (match normalized.ty
         [(ast.AstType.Func normalized-args normalized-ret)
-          (match (tc-source-type-list-policy-ok ctx (box-get normalized-args))
+          (match (tc-source-type-list-policy-ok
+            ctx
+            (__tl-box-place normalized-args))
             [(ResultTcUnit.Ok)
               (tc-source-type-policy-ok ctx (ast.ty-node-get normalized-ret))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
@@ -24157,10 +24228,10 @@
             [(ast.AstType.Func args ret)
               (tc-source-function-type-policy-ok
                 ctx
-                (box-get args)
+                (__tl-box-place args)
                 (ast.ty-node-get ret))]
             [(ast.AstType.Tuple elems)
-              (tc-source-type-list-policy-ok ctx (box-get elems))]
+              (tc-source-type-list-policy-ok ctx (__tl-box-place elems))]
             [(ast.AstType.Array elem _)
               (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
             [(ast.AstType.DynArray elem)
@@ -24208,9 +24279,15 @@
             [(ast.AstType.Struct name)
               (tc-bare-nominal-lifetime-policy-ok ctx name)]
             [(ast.AstType.EnumArgs name lifetimes)
-              (tc-nominal-lifetime-use-policy-ok ctx name (box-get lifetimes))]
+              (tc-nominal-lifetime-use-policy-ok
+                ctx
+                name
+                (__tl-box-place lifetimes))]
             [(ast.AstType.StructArgs name lifetimes)
-              (tc-nominal-lifetime-use-policy-ok ctx name (box-get lifetimes))]
+              (tc-nominal-lifetime-use-policy-ok
+                ctx
+                name
+                (__tl-box-place lifetimes))]
             [(ast.AstType.VarArgs name _)
               (ResultTcUnit.Err
                 (tc-source-type-policy-message
@@ -24333,7 +24410,7 @@
   [ctx : TcContext]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     ResultTcUnit.Ok
     (match (ast.ast-field-def-list-get
       fields
@@ -24360,7 +24437,7 @@
   [ctx : TcContext]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     ResultTcUnit.Ok
     (match (ast.ast-variant-def-list-get
       variants
@@ -24418,7 +24495,7 @@
   [params : ast.AstLifetimeList]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     ResultTcUnit.Ok
     (match (ast.ast-field-def-list-get
       fields
@@ -24477,7 +24554,7 @@
   [params : ast.AstLifetimeList]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     ResultTcUnit.Ok
     (match (ast.ast-variant-def-list-get
       variants
@@ -24522,7 +24599,7 @@
   [ctx : TcContext]
   [patterns : (& patterns ast.AstPatternList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     ResultTcUnit.Ok
     (match (tc-source-pattern-policy-ok
       ctx
@@ -24539,15 +24616,15 @@
       (tc-source-maybe-type-policy-ok ctx maybe-ty)]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-source-pattern-list-policy-ok ctx patterns))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-source-pattern-list-policy-ok ctx patterns))]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-source-pattern-list-policy-ok ctx patterns))]
     [_ ResultTcUnit.Ok]))
 
@@ -24562,7 +24639,7 @@
   [expr-bases : i64]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     ResultTcUnit.Ok
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -24660,7 +24737,7 @@
   [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (let
       [expr : ast.AstExpr
@@ -24714,7 +24791,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [allow : bool]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (let
       [expr : ast.AstExpr
@@ -24844,7 +24921,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [allow : bool]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     ResultTcUnit.Ok
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
@@ -24909,7 +24986,7 @@
           else-branch
           allow))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -24922,7 +24999,7 @@
                 (tc-source-expr-spmd-broadcast-scope-ok expr-bases body allow)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body-box)
           (let
             [body : ast.AstExpr
@@ -25037,7 +25114,7 @@
           (ast.ast-expr-segment-bases-get expr-bases place-box)]
         (tc-source-expr-spmd-broadcast-scope-ok expr-bases place allow))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
@@ -25053,7 +25130,7 @@
                   allow)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -25071,7 +25148,7 @@
                 (tc-source-expr-spmd-broadcast-scope-ok expr-bases body true)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (let
             [start : ast.AstExpr
@@ -25092,7 +25169,7 @@
                 (tc-source-expr-spmd-broadcast-scope-ok expr-bases value true)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             _
@@ -25204,7 +25281,7 @@
             (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases body allow)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (match (tc-source-resource-binding-list-spmd-broadcast-scope-ok
             expr-bases
@@ -25401,11 +25478,8 @@
         params
         ret)
         [(ResultTcElidedSignature.Ok signature)
-          (match (tc-source-param-list-policy-ok
-            ctx
-            (struct-get signature params))
-            [(ResultTcUnit.Ok)
-              (tc-source-type-policy-ok ctx (struct-get signature ret))]
+          (match (tc-source-param-list-policy-ok ctx signature.params)
+            [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx signature.ret)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
         [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstMaybeType.No)
@@ -25416,7 +25490,7 @@
         0
         (ast.ast-param-list-new))
         [(ResultTcElidedParams.Ok inputs)
-          (tc-source-param-list-policy-ok ctx (struct-get inputs params))]
+          (tc-source-param-list-policy-ok ctx inputs.params)]
         [(ResultTcElidedParams.Err message) (ResultTcUnit.Err message)])]))
 
 (define (tc-source-expr-policy-ok
@@ -25472,7 +25546,7 @@
           then-branch
           else-branch))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -25484,7 +25558,7 @@
               [(ResultTcUnit.Ok) (tc-source-expr-policy-ok ctx expr-bases body)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : ast.AstExpr
@@ -25613,7 +25687,7 @@
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (tc-source-expr-pair-policy-ok ctx expr-bases inner value))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
@@ -25623,7 +25697,7 @@
                 (tc-source-match-arm-list-policy-ok ctx expr-bases arms)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ index-ty start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -25637,7 +25711,7 @@
                 (tc-source-expr-triple-policy-ok ctx expr-bases start end body)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             _
             _
@@ -25668,7 +25742,7 @@
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             _
@@ -25757,7 +25831,7 @@
             (tc-source-expr-list-policy-ok ctx expr-bases body)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (match (tc-source-resource-binding-list-policy-ok
             ctx
@@ -25923,9 +25997,8 @@
           ret)
           [(ResultTcElidedSignature.Ok signature)
             (let
-              [signature-params : ast.AstParamList
-                (struct-get signature params)]
-              [signature-ret : ast.AstType (struct-get signature ret)]
+              [signature-params : ast.AstParamList signature.params]
+              [signature-ret : ast.AstType signature.ret]
               [body : ast.AstExpr
                 (ast.ast-expr-segment-bases-get expr-bases body-box)]
               (match (tc-source-param-list-policy-ok ctx signature-params)
@@ -26048,7 +26121,7 @@
           (tc-source-expr-policy-ok ctx expr-bases body))]
       [(ast.AstDecl.Unsafe inner-box)
         (let
-          [inner : ast.AstDecl (box-get inner-box)]
+          [inner : ast.AstDecl (__tl-box-place inner-box)]
           (tc-source-decl-policy-ok ctx inner))])))
 
 (defenum ResultTcSourcePolicyDiagnostic
@@ -26097,7 +26170,7 @@
                 ctx
                 (tc-env-key-name-text target-module)
                 target-module)
-              (box-get body-box)
+              (__tl-box-place body-box)
               (ast.ast-decl-path-list-new)
               decl-path
               target-module)
@@ -26146,7 +26219,7 @@
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList (box-get decls-box)]
+          [decls : ast.AstDeclList (__tl-box-place decls-box)]
           (tc-source-decl-list-policy-diagnostic-in-module
             ctx
             decls
@@ -26258,13 +26331,13 @@
       (match b
         [(ast.AstType.Func b-args b-ret)
           (and
-            (tc-type-list-eq (box-get a-args) (box-get b-args))
+            (tc-type-list-eq (__tl-box-place a-args) (__tl-box-place b-args))
             (tc-type-eq (ast.ty-node-get a-ret) (ast.ty-node-get b-ret)))]
         [_ false])]
     [(ast.AstType.Tuple a-elems)
       (match b
         [(ast.AstType.Tuple b-elems)
-          (tc-type-list-eq (box-get a-elems) (box-get b-elems))]
+          (tc-type-list-eq (__tl-box-place a-elems) (__tl-box-place b-elems))]
         [_ false])]
     [(ast.AstType.Array a-elem a-len)
       (match b
@@ -26325,7 +26398,9 @@
         [(ast.AstType.EnumArgs b-name b-lifetimes)
           (and
             (tc-nominal-name-id-eq? a-name b-name)
-            (tc-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (tc-lifetime-list-eq
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(ast.AstType.Struct a-name)
       (match b
@@ -26336,7 +26411,9 @@
         [(ast.AstType.StructArgs b-name b-lifetimes)
           (and
             (tc-nominal-name-id-eq? a-name b-name)
-            (tc-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (tc-lifetime-list-eq
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(ast.AstType.Var a-name)
       (match b
@@ -26347,7 +26424,9 @@
         [(ast.AstType.VarArgs b-name b-lifetimes)
           (and
             (tc-nominal-name-id-eq? a-name b-name)
-            (tc-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
+            (tc-lifetime-list-eq
+              (__tl-box-place a-lifetimes)
+              (__tl-box-place b-lifetimes)))]
         [_ false])]
     [(ast.AstType.Consume a-inner)
       (match b
@@ -26448,7 +26527,7 @@
   [lifetime-id : i64]
   [stack : TcNameIdList]
   [index : i64]) : TcVariance
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     (TcVariance.TcVarianceBivariant)
     (match (ast.ast-field-def-list-get
       fields
@@ -26475,7 +26554,7 @@
   [lifetime-id : i64]
   [stack : TcNameIdList]
   [index : i64]) : TcVariance
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     (TcVariance.TcVarianceBivariant)
     (match (ast.ast-variant-def-list-get
       variants
@@ -26598,7 +26677,7 @@
       (tc-variance-merge
         (tc-type-list-lifetime-variance
           ctx
-          (box-get params)
+          (__tl-box-place params)
           lifetime-id
           stack
           (tc-variance-flip position))
@@ -26611,7 +26690,7 @@
     [(ast.AstType.Tuple elems)
       (tc-type-list-lifetime-variance
         ctx
-        (box-get elems)
+        (__tl-box-place elems)
         lifetime-id
         stack
         position)]
@@ -26696,7 +26775,7 @@
       (tc-nominal-args-lifetime-variance-at
         ctx
         name
-        (box-get lifetimes)
+        (__tl-box-place lifetimes)
         lifetime-id
         stack
         position
@@ -26705,13 +26784,13 @@
       (tc-nominal-args-lifetime-variance-at
         ctx
         name
-        (box-get lifetimes)
+        (__tl-box-place lifetimes)
         lifetime-id
         stack
         position
         0)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (if (tc-lifetime-list-contains (box-get lifetimes) lifetime-id)
+      (if (tc-lifetime-list-contains (__tl-box-place lifetimes) lifetime-id)
         (TcVariance.TcVarianceInvariant)
         (TcVariance.TcVarianceBivariant))]
     [(ast.AstType.Consume inner)
@@ -26863,8 +26942,8 @@
                       (tc-type-list-coercible?
                         ctx
                         env
-                        (box-get expected-params)
-                        (box-get actual-params)
+                        (__tl-box-place expected-params)
+                        (__tl-box-place actual-params)
                         true)
                       (tc-type-coercible-core?
                         ctx
@@ -26878,8 +26957,8 @@
                     (tc-type-list-coercible?
                       ctx
                       env
-                      (box-get expected-elems)
-                      (box-get actual-elems)
+                      (__tl-box-place expected-elems)
+                      (__tl-box-place actual-elems)
                       false)]
                   [_ false])]
               [(ast.AstType.Array expected-elem expected-len)
@@ -26955,8 +27034,8 @@
                         ctx
                         env
                         expected-name
-                        (box-get expected-lifetimes)
-                        (box-get actual-lifetimes)))]
+                        (__tl-box-place expected-lifetimes)
+                        (__tl-box-place actual-lifetimes)))]
                   [_ false])]
               [(ast.AstType.StructArgs expected-name expected-lifetimes)
                 (match actual
@@ -26967,8 +27046,8 @@
                         ctx
                         env
                         expected-name
-                        (box-get expected-lifetimes)
-                        (box-get actual-lifetimes)))]
+                        (__tl-box-place expected-lifetimes)
+                        (__tl-box-place actual-lifetimes)))]
                   [_ false])]
               [(ast.AstType.Consume expected-inner)
                 (match actual
@@ -27179,8 +27258,8 @@
                 ctx
                 env
                 want-name
-                (box-get want-lifetimes)
-                (box-get got-lifetimes)
+                (__tl-box-place want-lifetimes)
+                (__tl-box-place got-lifetimes)
                 0)
               "")]
           [_ ""])]
@@ -27192,8 +27271,8 @@
                 ctx
                 env
                 want-name
-                (box-get want-lifetimes)
-                (box-get got-lifetimes)
+                (__tl-box-place want-lifetimes)
+                (__tl-box-place got-lifetimes)
                 0)
               "")]
           [_ ""])]
@@ -27600,7 +27679,7 @@
   [variants : (& variants ast.AstVariantDefList)]
   [stack : TcNameIdList]
   [index : i64]) : bool
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     true
     (match (ast.ast-variant-def-list-get
       variants
@@ -27759,7 +27838,10 @@
     [(ast.AstType.Consume inner)
       (tc-type-move-kind-with-stack ctx (tc-context-type-get ctx inner) stack)]
     [(ast.AstType.Tuple elems)
-      (if (tc-type-move-kind-copyable-type-list? ctx (box-get elems) stack)
+      (if (tc-type-move-kind-copyable-type-list?
+        ctx
+        (__tl-box-place elems)
+        stack)
         (TcMoveKind.Copyable)
         (TcMoveKind.MoveOnly))]
     [(ast.AstType.Array elem _)
@@ -27779,7 +27861,11 @@
         (ast.ast-lifetime-list-new)
         stack)]
     [(ast.AstType.EnumArgs name lifetimes)
-      (tc-type-move-kind-nominal-with-stack ctx name (box-get lifetimes) stack)]
+      (tc-type-move-kind-nominal-with-stack
+        ctx
+        name
+        (__tl-box-place lifetimes)
+        stack)]
     [(ast.AstType.Struct name)
       (tc-type-move-kind-nominal-with-stack
         ctx
@@ -27787,7 +27873,11 @@
         (ast.ast-lifetime-list-new)
         stack)]
     [(ast.AstType.StructArgs name lifetimes)
-      (tc-type-move-kind-nominal-with-stack ctx name (box-get lifetimes) stack)]
+      (tc-type-move-kind-nominal-with-stack
+        ctx
+        name
+        (__tl-box-place lifetimes)
+        stack)]
     ;; Unresolved names and invalid type variables must never accidentally
     ;; become Copyable.
     [(ast.AstType.Var _) (TcMoveKind.MoveOnly)]
@@ -27974,13 +28064,13 @@
   [name : String]
   [ptr : ast.AstExpr]
   [tail0 : ast.AstExprList]) : ResultTcType
-  (if (> (struct-get (& tail0) len) 0)
+  (if (> tail0.len 0)
     (let
       [value : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& tail0) 0 0))]
       [tail1 : ast.AstExprList (ast.ast-expr-list-tail-from-ref (& tail0) 1)]
       (if (tc-atomic-cas-name? name)
-        (if (> (struct-get (& tail1) len) 0)
+        (if (> tail1.len 0)
           (tc-atomic-cas-call
             ctx
             env
@@ -28003,7 +28093,7 @@
   [args : ast.AstExprList]) : ResultTcType
   (match (tc-require-unsafe env name)
     [(ResultTcUnit.Ok)
-      (if (> (struct-get (& args) len) 0)
+      (if (> args.len 0)
         (let
           [ptr : ast.AstExpr
             (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -28068,7 +28158,7 @@
                 (tc-struct-get-result-type-id ctx receiver-ty field)]
               [_
                 (ResultTcType.Err
-                  "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")])]
+                  "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")])]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (match (tc-expr-with-expected-or-actual-id
@@ -28090,13 +28180,13 @@
                         "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")]
                     [_
                       (ResultTcType.Err
-                        "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")])]
+                        "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")])]
                 [(ResultTcType.Err message) (ResultTcType.Err message)]))
             (ResultTcType.Err "typecheck: array index must be integer"))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [_
       (ResultTcType.Err
-        "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")]))
+        "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")]))
 
 (define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
   (if (tc-in-unsafe? env)
@@ -28139,7 +28229,7 @@
       [(ast.AstType.StructArgs _ _) true]
       [(ast.AstType.DynArray _) true]
       [(ast.AstType.Tuple elems)
-        (tc-dyn-array-elem-list-supported? env (box-get elems))]
+        (tc-dyn-array-elem-list-supported? env (__tl-box-place elems))]
       [(ast.AstType.Ref _ _)
         (tc-reference-lifetimes-visible?
           env
@@ -28353,9 +28443,8 @@
       (tc-spmd-env-fill-from-type-env rest-env bindings index)]
     [(TcTypeEnvSpineStep.Bind name-id ty rest-env)
       (begin
-        (array-set!
-          bindings
-          index
+        (set!
+          (array-ref bindings index)
           (tc-spmd-binding
             name-id
             ty
@@ -28375,17 +28464,17 @@
 
 (define (tc-spmd-env-bindings [env : TcSpmdEnv]) : (__tl_dyn-array
     TcSpmdBinding)
-  (struct-get env bindings))
+  env.bindings)
 
 (define (tc-spmd-env-len [env : TcSpmdEnv]) : i64
-  (struct-get env len))
+  env.len)
 
 (define (tc-spmd-env-mark [env : TcSpmdEnv]) : TcSpmdEnvMark
   (TcSpmdEnvMark (tc-spmd-env-len env)))
 
 (define (tc-spmd-env-restore [env : TcSpmdEnv] [mark : TcSpmdEnvMark]) : TcSpmdEnv
   (let
-    [mark-len : i64 (struct-get mark len)]
+    [mark-len : i64 mark.len]
     [current-len : i64 (tc-spmd-env-len env)]
     [restored-len : i64
       (if (< mark-len 0)
@@ -28403,7 +28492,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (tc-spmd-env-copy-bindings dst src (+ index 1) count))))
 
 (define (tc-spmd-env-bind-id
@@ -28429,9 +28518,8 @@
       (array.make-array TcSpmdBinding new-len)]
     (begin
       (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
-      (array-set!
-        new-bindings
-        old-len
+      (set!
+        (array-ref new-bindings old-len)
         (tc-spmd-binding name-id ty class scope role))
       (TcSpmdEnv new-bindings new-len))))
 
@@ -28443,12 +28531,8 @@
     TcSpmdLookup.Missing
     (let
       [binding : TcSpmdBinding (array-ref bindings index)]
-      (if (= (struct-get binding name) name-id)
-        (TcSpmdLookup.Found
-          (struct-get binding ty)
-          (struct-get binding class)
-          (struct-get binding scope)
-          (struct-get binding role))
+      (if (= binding.name name-id)
+        (TcSpmdLookup.Found binding.ty binding.class binding.scope binding.role)
         (tc-spmd-env-lookup-from bindings (- index 1) name-id)))))
 
 (define (tc-spmd-env-lookup-id [env : TcSpmdEnv] [name-id : i64]) : TcSpmdLookup
@@ -28465,8 +28549,8 @@
     false
     (let
       [binding : TcSpmdBinding (array-ref bindings index)]
-      (if (= (struct-get binding name) name-id)
-        (match (struct-get binding scope)
+      (if (= binding.name name-id)
+        (match binding.scope
           [(TcSpmdScope.Local) true]
           [(TcSpmdScope.Outer)
             (tc-spmd-env-has-local-from? bindings (- index 1) name-id)])
@@ -28486,8 +28570,8 @@
     false
     (let
       [binding : TcSpmdBinding (array-ref bindings index)]
-      (if (= (struct-get binding name) name-id)
-        (match (struct-get binding scope)
+      (if (= binding.name name-id)
+        (match binding.scope
           [(TcSpmdScope.Outer) true]
           [(TcSpmdScope.Local)
             (tc-spmd-env-has-outer-from? bindings (- index 1) name-id)])
@@ -28507,8 +28591,8 @@
     -1
     (let
       [binding : TcSpmdBinding (array-ref bindings index)]
-      (if (= (struct-get binding name) name-id)
-        (match (struct-get binding scope)
+      (if (= binding.name name-id)
+        (match binding.scope
           [(TcSpmdScope.Local) index]
           [(TcSpmdScope.Outer)
             (tc-spmd-env-local-index bindings (- index 1) name-id)])
@@ -28531,15 +28615,14 @@
         [old-binding : TcSpmdBinding (array-ref old-bindings local-index)]
         (begin
           (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
-          (array-set!
-            new-bindings
-            local-index
+          (set!
+            (array-ref new-bindings local-index)
             (tc-spmd-binding
-              (struct-get old-binding name)
-              (struct-get old-binding ty)
+              old-binding.name
+              old-binding.ty
               class
-              (struct-get old-binding scope)
-              (struct-get old-binding role)))
+              old-binding.scope
+              old-binding.role))
           (TcSpmdEnv new-bindings old-len))))))
 
 (define (tc-spmd-env-pop [env : TcSpmdEnv] [count : i64]) : TcSpmdEnv
@@ -28557,15 +28640,14 @@
     (let
       [binding : TcSpmdBinding (array-ref src index)]
       (begin
-        (array-set!
-          dst
-          index
+        (set!
+          (array-ref dst index)
           (tc-spmd-binding
-            (struct-get binding name)
-            (struct-get binding ty)
-            (struct-get binding class)
+            binding.name
+            binding.ty
+            binding.class
             TcSpmdScope.Outer
-            (struct-get binding role)))
+            binding.role))
         (tc-spmd-env-mark-outer-into dst src (+ index 1) count)))))
 
 (define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
@@ -28584,10 +28666,10 @@
   [right-len : i64]
   [index : i64]) : TcSpmdClass
   (if (>= index right-len)
-    (struct-get left class)
+    left.class
     (let
       [right : TcSpmdBinding (array-ref right-bindings index)]
-      (tc-spmd-merge-class (struct-get left class) (struct-get right class)))))
+      (tc-spmd-merge-class left.class right.class))))
 
 (define (tc-spmd-env-merge-classes-into
   [dst : (__tl_dyn-array TcSpmdBinding)]
@@ -28601,19 +28683,18 @@
     (let
       [left : TcSpmdBinding (array-ref left-bindings index)]
       (begin
-        (array-set!
-          dst
-          index
+        (set!
+          (array-ref dst index)
           (tc-spmd-binding
-            (struct-get left name)
-            (struct-get left ty)
+            left.name
+            left.ty
             (tc-spmd-env-merge-binding-class
               left
               right-bindings
               right-len
               index)
-            (struct-get left scope)
-            (struct-get left role)))
+            left.scope
+            left.role))
         (tc-spmd-env-merge-classes-into
           dst
           left-bindings
@@ -28675,10 +28756,8 @@
         (arena.tl_arena_set owner))]
     [base : TcTypeEnv (tc-bind-id (tc-empty-env) base-id (ast.AstType.String))]
     [first-cache : TcTypeEnv (tc-env-with-cache base)]
-    [grown : TcTypeEnv
-      (TcTypeEnv (struct-get base store) (struct-get base head) 0)]
-    [latest-cache : TcTypeEnv
-      (TcTypeEnv (struct-get first-cache store) (struct-get first-cache head) 0)]
+    [grown : TcTypeEnv (TcTypeEnv base.store base.head 0)]
+    [latest-cache : TcTypeEnv (TcTypeEnv first-cache.store first-cache.head 0)]
     [index : i64 0]
     [cache-index : i64 0]
     [binding-restored? : bool false]
@@ -28757,20 +28836,14 @@
     [segment-base : TcTypeEnv
       (tc-bind-id (tc-empty-env) segment-id (ast.AstType.String))]
     [segment-grown : TcTypeEnv
-      (TcTypeEnv
-        (struct-get segment-base store)
-        (struct-get segment-base head)
-        0)]
+      (TcTypeEnv segment-base.store segment-base.head 0)]
     [segment-index : i64 0]
     [cache-segment-id : i64 (ci.intern "cache-segment-base")]
     [cache-segment-base : TcTypeEnv
       (tc-bind-id (tc-empty-env) cache-segment-id (ast.AstType.String))]
     [cache-segment-first : TcTypeEnv (tc-env-with-cache cache-segment-base)]
     [cache-segment-latest : TcTypeEnv
-      (TcTypeEnv
-        (struct-get cache-segment-first store)
-        (struct-get cache-segment-first head)
-        0)]
+      (TcTypeEnv cache-segment-first.store cache-segment-first.head 0)]
     [cache-segment-index : i64 0]
     [env : TcTypeEnv
       (tc-bind-return-type
@@ -29042,7 +29115,7 @@
       (tc-type-env-bind-many-endpoints
         base
         (* (tc-local-cache-threshold) (+ (tc-local-cache-partial-layer-cap) 1)))]
-    [deep : TcTypeEnv (struct-get bound env)]
+    [deep : TcTypeEnv bound.env]
     [layered : TcTypeEnv (tc-env-with-cache-layer-over-explicit deep)]
     (and
       (tc-type-env-cache-head? deep)
@@ -29057,10 +29130,10 @@
       (match (tc-lookup-id deep global-id)
         [(ResultTcType.Ok (ast.AstType.String)) true]
         [_ false])
-      (match (tc-lookup-id deep (struct-get bound first-id))
+      (match (tc-lookup-id deep bound.first-id)
         [(ResultTcType.Ok (ast.AstType.I64)) true]
         [_ false])
-      (match (tc-lookup-id deep (struct-get bound last-id))
+      (match (tc-lookup-id deep bound.last-id)
         [(ResultTcType.Ok (ast.AstType.I64)) true]
         [_ false])
       ;; Explicitly layering a module-sized prefix must flatten all partial
@@ -29072,10 +29145,10 @@
       (match (tc-lookup-id layered global-id)
         [(ResultTcType.Ok (ast.AstType.String)) true]
         [_ false])
-      (match (tc-lookup-id layered (struct-get bound first-id))
+      (match (tc-lookup-id layered bound.first-id)
         [(ResultTcType.Ok (ast.AstType.I64)) true]
         [_ false])
-      (match (tc-lookup-id layered (struct-get bound last-id))
+      (match (tc-lookup-id layered bound.last-id)
         [(ResultTcType.Ok (ast.AstType.I64)) true]
         [_ false]))))
 
@@ -29408,7 +29481,7 @@
                     [_ false])]
                 [repaired-index : i64
                   (match (tc_i64_i64_map.get
-                    (& (box-get (struct-get stack lookup-cache)))
+                    (& (__tl-box-place stack.lookup-cache))
                     name-id)
                     [(tc_i64_i64_map.LookupFound index) index]
                     [(tc_i64_i64_map.LookupMissing) -1])]
@@ -29434,7 +29507,7 @@
         [mark : TcTypeEnvScopedSidecarMark
           (tc-type-env-scoped-sidecar-mark sidecar stack-mark)]
         [generation-before : i64
-          (tc-type-env-scoped-stack-cache-generation (struct-get sidecar stack))]
+          (tc-type-env-scoped-stack-cache-generation sidecar.stack)]
         (begin
           (set!
             sidecar
@@ -29483,7 +29556,7 @@
                       (= generation generation-before))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (struct-get sidecar stack)
+                  sidecar.stack
                   TcTypeEnvScopedMarkerKind.UnsafeDecl)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -29517,14 +29590,10 @@
               (tc-type-env-scoped-sidecar-restore! (&mut sidecar) mark)
               (and
                 before-restore
-                (= (tc-type-env-scoped-stack-len (struct-get sidecar stack)) 1)
+                (= (tc-type-env-scoped-stack-len sidecar.stack) 1)
+                (= (tc-type-env-scoped-stack-mark-count sidecar.stack) 0)
                 (=
-                  (tc-type-env-scoped-stack-mark-count
-                    (struct-get sidecar stack))
-                  0)
-                (=
-                  (tc-type-env-scoped-stack-cache-generation
-                    (struct-get sidecar stack))
+                  (tc-type-env-scoped-stack-cache-generation sidecar.stack)
                   (+ generation-before 1))
                 (match (tc-type-env-scoped-sidecar-lookup-id sidecar fn-id)
                   [(TcTypeEnvScopedLookup.Missing) true]
@@ -29649,9 +29718,9 @@
       (let
         [outer-save : TcTypeEnvScopedCarrierSave
           (tc-type-env-scoped-carrier-save carrier)]
-        [outer-mark : TcTypeEnvScopedCarrierMark (struct-get outer-save mark)]
+        [outer-mark : TcTypeEnvScopedCarrierMark outer-save.mark]
         (begin
-          (set! carrier (struct-get outer-save carrier))
+          (set! carrier outer-save.carrier)
           (set!
             carrier
             (tc-type-env-scoped-carrier-push-region carrier _inner-id))
@@ -29746,7 +29815,9 @@
                     (and unsafe c-abi-fnptr)]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (struct-get (tc-type-env-scoped-carrier-sidecar deep) stack)
+                  (__tl-project-field
+                    (tc-type-env-scoped-carrier-sidecar deep)
+                    stack)
                   TcTypeEnvScopedMarkerKind.DefaultBoundary)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -29756,7 +29827,9 @@
                     (= marker-id (tc-default-boundary-id))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (struct-get (tc-type-env-scoped-carrier-sidecar deep) stack)
+                  (__tl-project-field
+                    (tc-type-env-scoped-carrier-sidecar deep)
+                    stack)
                   TcTypeEnvScopedMarkerKind.CleanupOwner)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -29768,7 +29841,9 @@
                       (string.eq (ci.intern-str owner) "resource"))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (struct-get (tc-type-env-scoped-carrier-sidecar deep) stack)
+                  (__tl-project-field
+                    (tc-type-env-scoped-carrier-sidecar deep)
+                    stack)
                   TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -29780,7 +29855,9 @@
                       (string.eq (ci.intern-str owner) "arena"))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (struct-get (tc-type-env-scoped-carrier-sidecar deep) stack)
+                  (__tl-project-field
+                    (tc-type-env-scoped-carrier-sidecar deep)
+                    stack)
                   TcTypeEnvScopedMarkerKind.AtomicArenaOwner)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -30311,7 +30388,7 @@
         (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))))
 
 (define (tc-expr-list-len [exprs : ast.AstExprList]) : i64
-  (struct-get (& exprs) len))
+  exprs.len)
 
 (define (tc-expr-list-types
   [ctx : TcContext]
@@ -30329,7 +30406,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstTypeList)]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-expr-id ctx env (ast.ast-expr-list-get exprs index 0))
       [(ResultTcType.Ok ty)
@@ -30351,7 +30428,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [elem-ty : ast.AstType]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-expr-with-expected-or-actual-id
       ctx
@@ -30399,7 +30476,10 @@
   (match ty
     [(ast.AstType.Func _ _) out]
     [(ast.AstType.Tuple elems)
-      (tc-signature-lifetime-type-list-collect-into (box-get elems) skip-id out)]
+      (tc-signature-lifetime-type-list-collect-into
+        (__tl-box-place elems)
+        skip-id
+        out)]
     [(ast.AstType.Array elem _)
       (tc-signature-lifetime-type-collect-into
         (ast.ty-node-get elem)
@@ -30445,11 +30525,11 @@
         skip-id
         out)]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into (__tl-box-place lifetimes) out)]
     [(ast.AstType.Consume inner)
       (tc-signature-lifetime-type-collect-into
         (ast.ty-node-get inner)
@@ -30523,7 +30603,7 @@
                 (tc-type-env-scoped-carrier-with-sidecar
                   out
                   (tc-type-env-scoped-sidecar-bind-marker-id
-                    (struct-get out sidecar)
+                    out.sidecar
                     (tc-signature-lifetime-marker-id)
                     (ast.AstType.Var lifetime)
                     TcTypeEnvScopedMarkerKind.Other)))
@@ -30860,7 +30940,7 @@
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
   [isa : ast.AstDispatchIsa]) : bool
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     false
     (match (ast.ast-dispatch-variant-list-get
       variants
@@ -30874,7 +30954,7 @@
 (define (tc-dispatch-variant-list-duplicate-isa-from?
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]) : bool
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     false
     (match (ast.ast-dispatch-variant-list-get
       variants
@@ -30893,7 +30973,7 @@
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
   [count : i64]) : i64
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     count
     (match (ast.ast-dispatch-variant-list-get
       variants
@@ -30981,7 +31061,7 @@
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
   [expected : ast.AstMaybeType]) : ResultTcType
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     (match expected
       [(ast.AstMaybeType.Some ty) (ResultTcType.Ok ty)]
       [(ast.AstMaybeType.No)
@@ -31061,8 +31141,8 @@
         [(ResultTcElidedSignature.Ok signature)
           (ResultTcType.Ok
             (ast.ast-ty-func
-              (tc-param-type-list ctx (struct-get signature params))
-              (tc-resolve-type ctx (struct-get signature ret))))]
+              (tc-param-type-list ctx signature.params)
+              (tc-resolve-type ctx signature.ret)))]
         [(ResultTcElidedSignature.Err message) (ResultTcType.Err message)])]
     [(ast.AstDecl.Extern decl-meta _ _ _ ty)
       (ResultTcType.Ok (tc-resolve-type ctx ty))]
@@ -31070,7 +31150,7 @@
       (tc-dispatch-decl-type ctx name variants)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (tc-top-decl-type ctx inner))]
     [_ (ResultTcType.Err "typecheck: declaration has no value type")]))
 
@@ -31212,7 +31292,7 @@
   [lifetimes : ast.AstLifetimeList]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : ResultTcEnv
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     (ResultTcEnv.Ok env)
     (match (ast.ast-variant-def-list-get
       variants
@@ -31299,10 +31379,15 @@
     [(ast.AstDecl.ModuleBody name body-box)
       (let
         [module : String (tc-env-key-name-text name)]
-        (tc-build-top-env-list-in-module ctx (box-get body-box) env module name))]
+        (tc-build-top-env-list-in-module
+          ctx
+          (__tl-box-place body-box)
+          env
+          module
+          name))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (match inner
           [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
             (match (tc-top-decl-type
@@ -31488,8 +31573,8 @@
   ;; is preserved by stopping the loop with `ok`.
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [index : i64 0]
     [current-env : TcTypeEnv env]
     [current-module : String module]
@@ -31560,7 +31645,7 @@
   [lifetimes : ast.AstLifetimeList]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : TcTypeEnv
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     env
     (match (ast.ast-variant-def-list-get
       variants
@@ -31636,7 +31721,9 @@
                         (&mut modules)
                         cur-module-id
                         slot-count)
-                      (array-set! decls slot-count (ast.ast-decl-list-new))
+                      (set!
+                        (array-ref decls slot-count)
+                        (ast.ast-decl-list-new))
                       (ast.ast-decl-list-push
                         (&mut (array-ref decls slot-count))
                         decl)
@@ -31650,11 +31737,10 @@
 (define (tc-import-alias-summary-index-lookup
   [index : TcImportAliasSummaryIndex]
   [target-module-id : i64]) : TcImportAliasSummaryLookup
-  (match (tc_i64_i64_map.get (struct-get index modules) target-module-id)
+  (match (tc_i64_i64_map.get index.modules target-module-id)
     [(tc_i64_i64_map.LookupFound slot)
-      (if (and (>= slot 0) (< slot (struct-get index count)))
-        (TcImportAliasSummaryLookup.Found
-          (array-ref (struct-get index decls) slot))
+      (if (and (>= slot 0) (< slot index.count))
+        (TcImportAliasSummaryLookup.Found (array-ref index.decls slot))
         (TcImportAliasSummaryLookup.Missing))]
     [(tc_i64_i64_map.LookupMissing) (TcImportAliasSummaryLookup.Missing)]))
 
@@ -31668,7 +31754,7 @@
         index
         (cload.compiler-load-surface-summary-list-count summaries))
         (if (=
-          (struct-get
+          (__tl-project-field
             (cload.compiler-load-surface-summary-list-at summaries index)
             module-id)
           target-module-id)
@@ -31700,7 +31786,7 @@
   (match decl
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (match inner
           [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
             (match (tc-import-alias-source-value-type env module name)
@@ -31932,8 +32018,8 @@
     [message : String ""]
     [ok : bool true]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-offset : i64 decls.offset]
     [index : i64 0]
     (begin
       (while (and ok (< index count))
@@ -32054,8 +32140,8 @@
       (tc-import-alias-summary-index-build all-decls)]
     [seen-aliases : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-offset : i64 decls.offset]
     [index : i64 0]
     (begin
       (while (and ok (< index count))
@@ -32132,9 +32218,9 @@
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList (box-get decls-box)]
+          [decls : ast.AstDeclList (__tl-box-place decls-box)]
           [body-state : TcBodyState (tc-context-body-state ctx)]
-          [job-state : TcJobState (struct-get body-state job-state)]
+          [job-state : TcJobState body-state.job-state]
           [membership-state : TcTopEnvMembershipState
             (tc-job-state-topenv-membership job-state)]
           [base-env : TcTypeEnv (tc-default-env-with-job-state job-state)]
@@ -32145,8 +32231,8 @@
             (tc-topenv-membership-begin!
               membership-state
               base-env
-              (struct-get body-state intern-table-id)
-              (struct-get body-state intern-generation))]
+              body-state.intern-table-id
+              body-state.intern-generation)]
           (match (tc-build-top-env-list ctx decls base-env)
             [(ResultTcEnv.Ok env)
               (let
@@ -32238,7 +32324,7 @@
   [seen : (&mut seen tc_i64_i64_map.Map)]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : unit
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     unit
     (match (ast.ast-variant-def-list-get
       variants
@@ -32273,7 +32359,7 @@
   [decl : ast.AstDecl]) : unit
   (match decl
     [(ast.AstDecl.Unsafe inner-box)
-      (tc-module-local-root-shadow-decl-note! seen (box-get inner-box))]
+      (tc-module-local-root-shadow-decl-note! seen (__tl-box-place inner-box))]
     [(ast.AstDecl.Def _ name _ _)
       (tc-module-local-root-shadow-name-note! seen name)]
     [(ast.AstDecl.DefFn _ name _ _ _ _)
@@ -32315,10 +32401,8 @@
             (tc-module-local-root-shadow-decl-note!
               seen
               (array-ref
-                (struct-get decls slots)
-                (+
-                  (struct-get decls offset)
-                  (array-ref tc-module-decl-index-positions j))))
+                decls.slots
+                (+ decls.offset (array-ref tc-module-decl-index-positions j))))
             (set! j (+ j 1))))))))
 
 (define (tc-module-local-name-should-bind!
@@ -32376,7 +32460,7 @@
   [lifetimes : ast.AstLifetimeList]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : TcTypeEnv
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     env
     (match (ast.ast-variant-def-list-get
       variants
@@ -32409,7 +32493,7 @@
   (match decl
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         ;; Unsafety is carried by the local env binding, not the canonical
         ;; top-env key, so unsafe value declarations must always be overlaid.
         (match inner
@@ -32539,7 +32623,7 @@
           [(ast.AstProgram.Program decls-box)
             (tc-bind-import-alias-module
               ctx
-              (box-get decls-box)
+              (__tl-box-place decls-box)
               env
               target-module
               cbi.compiler-builtin-id-fix-empty
@@ -32583,10 +32667,8 @@
             (let
               [decl : ast.AstDecl
                 (array-ref
-                  (struct-get decls slots)
-                  (+
-                    (struct-get decls offset)
-                    (array-ref tc-module-decl-index-positions j)))]
+                  decls.slots
+                  (+ decls.offset (array-ref tc-module-decl-index-positions j)))]
               (begin
                 (match decl
                   [(ast.AstDecl.Module _) unit]
@@ -32622,7 +32704,7 @@
         [(ast.AstProgram.Program decls-box)
           (tc-module-local-env-list
             (tc-context-with-module-id ctx module module-id)
-            (box-get decls-box)
+            (__tl-box-place decls-box)
             top-env
             module
             module-id
@@ -32638,12 +32720,12 @@
   [cache : TcModuleLocalEnvCache]
   [module-id : i64]
   [index : i64]) : TcMaybeTypeEnv
-  (if (>= index (struct-get (& cache) len))
+  (if (>= index cache.len)
     (TcMaybeTypeEnv.No)
     (let
-      [entry : TcModuleLocalEnvEntry (array-ref (struct-get cache slots) index)]
-      (if (= (struct-get entry module-id) module-id)
-        (TcMaybeTypeEnv.Some (struct-get entry env))
+      [entry : TcModuleLocalEnvEntry (array-ref cache.slots index)]
+      (if (= entry.module-id module-id)
+        (TcMaybeTypeEnv.Some entry.env)
         (tc-module-local-env-cache-lookup-at cache module-id (+ index 1))))))
 
 (define (tc-module-local-env-cache-lookup
@@ -32656,17 +32738,17 @@
   [module-id : i64]
   [env : TcTypeEnv]) : TcModuleLocalEnvCache
   (let
-    [n : i64 (struct-get cache len)]
-    [src : (__tl_dyn-array TcModuleLocalEnvEntry) (struct-get cache slots)]
+    [n : i64 cache.len]
+    [src : (__tl_dyn-array TcModuleLocalEnvEntry) cache.slots]
     [slots : (__tl_dyn-array TcModuleLocalEnvEntry)
       (array.make-array TcModuleLocalEnvEntry (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (array-ref src i))
+          (set! (array-ref slots i) (array-ref src i))
           (set! i (+ i 1))))
-      (array-set! slots n (TcModuleLocalEnvEntry module-id env))
+      (set! (array-ref slots n) (TcModuleLocalEnvEntry module-id env))
       (TcModuleLocalEnvCache slots (+ n 1)))))
 
 (define (tc-module-local-env-cached-id
@@ -33067,7 +33149,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [elem-ty : ast.AstType]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-expr-with-expected-or-actual-id
       ctx
@@ -33241,7 +33323,7 @@
   [types : (& types ast.AstTypeList)]
   [index : i64]
   [out : (&mut out ast.AstTypeList)]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (if (>= index (ast.ast-type-list-len types))
       ResultTcUnit.Ok
       (ResultTcUnit.Err "typecheck: tuple element type mismatch"))
@@ -33306,9 +33388,9 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [expected : ast.AstType]) : ResultTcType
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultTcType.Ok (ast.AstType.Unit))
-    (if (= (+ index 1) (struct-get exprs len))
+    (if (= (+ index 1) exprs.len)
       (tc-expr-with-expected-or-actual-id
         ctx
         env
@@ -33548,7 +33630,7 @@
           else-branch
           expected))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (match (tc-expr-id ctx env scrutinee-box)
             [(ResultTcType.Ok scrut-ty)
@@ -33573,7 +33655,7 @@
             ctx
             env
             exprs
-            (box-get expected-elems))]
+            (__tl-box-place expected-elems))]
         [_ (tc-expr ctx env expr)])]
     [(ast.AstExpr.Begin exprs)
       (tc-begin-list-with-expected ctx env exprs expected)]
@@ -33585,7 +33667,7 @@
         expected
         TcMaybeAstSourceSpan.No)]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -33619,11 +33701,11 @@
         [arena : ast.AstExpr (ast.ast-node-get arena-box)]
         (tc-in-arena-expr-with-expected-scoped ctx env arena body expected))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (tc-with-resource-expr-with-expected ctx env bindings body expected)])]
     [(ast.AstExpr.Borrow mutable lifetime-id place-box)
-      (match (tc-normalize-dotted-local-field-node! env place-box)
+      (match (tc-normalize-dotted-local-field-node! ctx env place-box)
         [(ResultTcUnit.Ok)
           (let
             [lifetime : ast.AstBorrowLifetime
@@ -33663,7 +33745,7 @@
             (tc-ctfe-value-type-with-expected ctx value expected)]
           [(ctfe_support.ResultCtfe.Err diag)
             (ResultTcType.Err
-              (cdiag.compiler-diagnostic-message (box-get diag)))]))]
+              (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))]
     [(ast.AstExpr.Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id maybe-ty-id)
         [(ast.AstMaybeType.No) (tc-init-expr ctx env expected)]
@@ -33773,7 +33855,7 @@
   [expected : ast.AstType]) : ResultTcType
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (tc-expr-result-with-expected-or-actual
             ctx
@@ -33816,9 +33898,9 @@
             [body-state : TcBodyState (tc-context-body-state ctx)]
             (begin
               (tc-body-type-fact-record! body-state expr-id ty)
-              (if (struct-get body-state inlay-hint-enabled)
+              (if body-state.inlay-hint-enabled
                 (tc-inlay-hint-maybe-record-expr-for-state
-                  (struct-get body-state inlay-hint-state)
+                  body-state.inlay-hint-state
                   expr
                   ty)
                 unit)))]
@@ -33830,11 +33912,13 @@
     [expr : ast.AstExpr (ast.ast-node-get expr-id)]
     (match expr
       [(ast.AstExpr.Var name)
-        (if (or
-          (not (tc-env-key-has-name-id? name))
-          (< (tc-name-first-dot-id name) 0))
+        (if (< (tc-dotted-name-first-dot-id name) 0)
           (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)
-          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+          (match (tc-normalize-dotted-local-field-direct-node!
+            ctx
+            env
+            expr-id
+            expr)
             [(ResultTcUnit.Ok)
               (tc-expr-id-after-dotted-local-field-normalization
                 ctx
@@ -33842,11 +33926,13 @@
                 expr-id)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
       [(ast.AstExpr.Set name _)
-        (if (or
-          (not (tc-env-key-has-name-id? name))
-          (< (tc-name-first-dot-id name) 0))
+        (if (< (tc-dotted-name-first-dot-id name) 0)
           (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)
-          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+          (match (tc-normalize-dotted-local-field-direct-node!
+            ctx
+            env
+            expr-id
+            expr)
             [(ResultTcUnit.Ok)
               (tc-expr-id-after-dotted-local-field-normalization
                 ctx
@@ -33887,7 +33973,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstTypeList)]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-body-type-fact-lookup
       state
@@ -33901,7 +33987,7 @@
 (define (tc-body-type-fact-list-types
   [state : TcBodyState]
   [exprs : ast.AstExprList]) : ResultTcTypeList
-  (if (struct-get (tc-body-state-data-value state) type-facts-consuming)
+  (if (__tl-project-field (tc-body-state-data-value state) type-facts-consuming)
     (let
       [out : ast.AstTypeList (ast.ast-type-list-new)]
       (match (tc-body-type-fact-list-types-into-at state (& exprs) 0 (&mut out))
@@ -33996,15 +34082,18 @@
       [(ast.AstExpr.Var name)
         (if (or
           (macro-hygiene-global-id? name)
-          (tc-structural-local-name-id? name)
-          (< (tc-name-first-dot-id name) 0))
+          (< (tc-dotted-name-first-dot-id name) 0))
           (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
             ctx
             env
             expr
             expected
             allow-mut-by-value-borrow)
-          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+          (match (tc-normalize-dotted-local-field-direct-node!
+            ctx
+            env
+            expr-id
+            expr)
             [(ResultTcUnit.Ok)
               (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
                 ctx
@@ -34016,15 +34105,18 @@
       [(ast.AstExpr.Set name _)
         (if (or
           (macro-hygiene-global-id? name)
-          (tc-structural-local-name-id? name)
-          (< (tc-name-first-dot-id name) 0))
+          (< (tc-dotted-name-first-dot-id name) 0))
           (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
             ctx
             env
             expr
             expected
             allow-mut-by-value-borrow)
-          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+          (match (tc-normalize-dotted-local-field-direct-node!
+            ctx
+            env
+            expr-id
+            expr)
             [(ResultTcUnit.Ok)
               (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
                 ctx
@@ -34305,8 +34397,10 @@
                   compile-profile
                   (compiler-tc-env-profile-note-scoped-tail-fallback))
                 (tc-default-builtin-unshadowed-scan-id?
-                  (struct-get
-                    (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                  (__tl-project-field
+                    (__tl-project-field
+                      tc-type-env-scoped-runtime-carrier
+                      sidecar)
                     persistent)
                   name-id))])]
         (begin
@@ -34470,7 +34564,7 @@
         [(ast.AstProgram.Program decls-box)
           (match (tc-source-dotted-alias-target-id-in-context
             ctx
-            (box-get decls-box)
+            (__tl-box-place decls-box)
             (tc-context-module-id ctx)
             alias-id)
             [(TcMaybeNameId.Some target-id) target-id]
@@ -34586,11 +34680,11 @@
     (begin
       (while (<= j wanted-len)
         (begin
-          (array-set! first-row j j)
+          (set! (array-ref first-row j) j)
           (set! j (+ j 1))))
       (while (<= i candidate-len)
         (begin
-          (array-set! second-row 0 i)
+          (set! (array-ref second-row 0) i)
           (set! j 1)
           (while (<= j wanted-len)
             (let
@@ -34612,12 +34706,12 @@
                 (if (< substitution best)
                   (set! best substitution)
                   unit)
-                (array-set! second-row j best)
+                (set! (array-ref second-row j) best)
                 (set! j (+ j 1)))))
           (set! j 0)
           (while (<= j wanted-len)
             (begin
-              (array-set! first-row j (array-ref second-row j))
+              (set! (array-ref first-row j) (array-ref second-row j))
               (set! j (+ j 1))))
           (set! i (+ i 1))))
       (array-ref first-row wanted-len))))
@@ -35020,7 +35114,7 @@
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
       (tc-call-field-list-name-at (& fields) index)]
     [(ast.AstDecl.Unsafe inner-box)
-      (tc-call-decl-param-name-at (box-get inner-box) index)]
+      (tc-call-decl-param-name-at (__tl-box-place inner-box) index)]
     [_ TcMaybeNameId.No]))
 
 (define (tc-call-parameter-name-at
@@ -35029,7 +35123,7 @@
   [index : i64]) : TcMaybeNameId
   (match (ast.ast-expr-unspan func)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ _)
           (tc-call-param-list-name-at (& params) index)])]
     [_
@@ -35162,9 +35256,9 @@
 (define (tc-lifetime-constructor-ret? [ret : ast.AstType]) : bool
   (match ret
     [(ast.AstType.StructArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [_ false]))
 
 (define (tc-call-lifetime-constructor-for-func?
@@ -35210,10 +35304,11 @@
   (match ty
     [(ast.AstType.Func args ret)
       (ast.ast-ty-func
-        (tc-lifetime-subst-type-list subst (box-get args))
+        (tc-lifetime-subst-type-list subst (__tl-box-place args))
         (tc-lifetime-subst-type subst (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
-      (ast.ast-ty-tuple (tc-lifetime-subst-type-list subst (box-get elems)))]
+      (ast.ast-ty-tuple
+        (tc-lifetime-subst-type-list subst (__tl-box-place elems)))]
     [(ast.AstType.Array elem len)
       (ast.ast-ty-array
         (tc-lifetime-subst-type subst (ast.ty-node-get elem))
@@ -35244,15 +35339,15 @@
     [(ast.AstType.EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
         name
-        (tc-lifetime-subst-list subst (box-get lifetimes)))]
+        (tc-lifetime-subst-list subst (__tl-box-place lifetimes)))]
     [(ast.AstType.StructArgs name lifetimes)
       (ast.ast-ty-struct-args
         name
-        (tc-lifetime-subst-list subst (box-get lifetimes)))]
+        (tc-lifetime-subst-list subst (__tl-box-place lifetimes)))]
     [(ast.AstType.VarArgs name lifetimes)
       (ast.ast-ty-var-args
         name
-        (tc-lifetime-subst-list subst (box-get lifetimes)))]
+        (tc-lifetime-subst-list subst (__tl-box-place lifetimes)))]
     [(ast.AstType.Consume inner)
       (ast.ast-ty-consume
         (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
@@ -35581,8 +35676,8 @@
                 params
                 subst
                 formal-name
-                (box-get formal-lifetimes)
-                (box-get actual-lifetimes)
+                (__tl-box-place formal-lifetimes)
+                (__tl-box-place actual-lifetimes)
                 position)
               (ResultTcLifetimeSubst.Err
                 (tc-call-lifetime-subst-mismatch-message)))]
@@ -35599,8 +35694,8 @@
                 params
                 subst
                 formal-name
-                (box-get formal-lifetimes)
-                (box-get actual-lifetimes)
+                (__tl-box-place formal-lifetimes)
+                (__tl-box-place actual-lifetimes)
                 position)
               (ResultTcLifetimeSubst.Err
                 (tc-call-lifetime-subst-mismatch-message)))]
@@ -35615,8 +35710,8 @@
               env
               params
               subst
-              (box-get formal-params)
-              (box-get actual-params)
+              (__tl-box-place formal-params)
+              (__tl-box-place actual-params)
               (tc-variance-flip position))
               [(ResultTcLifetimeSubst.Ok next-subst)
                 (tc-infer-lifetime-subst-from-type
@@ -35640,8 +35735,8 @@
               env
               params
               subst
-              (box-get formal-elems)
-              (box-get actual-elems)
+              (__tl-box-place formal-elems)
+              (__tl-box-place actual-elems)
               position)]
           [_
             (ResultTcLifetimeSubst.Err
@@ -35992,14 +36087,11 @@
     [data : TcBodyStateData (tc-body-state-data-value state)]
     (if (and
       (>= key 0)
-      (or
-        (struct-get data type-facts-recording)
-        (struct-get data type-facts-consuming)))
+      (or data.type-facts-recording data.type-facts-consuming))
       (let
         [slot : i64 (tc-body-type-fact-slot state key)]
-        (if (and (>= slot 0) (< slot (struct-get data type-fact-count)))
-          (TcBodyTypeFact.Hit
-            (array.ref (struct-get data type-fact-types) slot))
+        (if (and (>= slot 0) (< slot data.type-fact-count))
+          (TcBodyTypeFact.Hit (array.ref data.type-fact-types slot))
           (TcBodyTypeFact.Miss)))
       (TcBodyTypeFact.Miss))))
 
@@ -36047,7 +36139,7 @@
     (if (tc-call-immutable-ref-formal? ctx want)
       (match (ast.ast-expr-unspan arg)
         [(ast.AstExpr.Var name)
-          (if (tc-dotted-local-field-name-id? env name)
+          (if (tc-dotted-place-name-id? ctx env name)
             (match (tc-call-arg-expr-type ctx env arg)
               [(ResultTcType.Ok got)
                 (if (tc-call-actual-immutable-reference? ctx got)
@@ -36107,7 +36199,7 @@
         (ResultTcExpr.Ok arg)
         (match (ast.ast-expr-unspan arg)
           [(ast.AstExpr.Var name)
-            (if (tc-dotted-local-field-name-id? env name)
+            (if (tc-dotted-place-name-id? ctx env name)
               (match (tc-call-arg-expr-type ctx env arg)
                 [(ResultTcType.Ok got)
                   (if (tc-call-actual-immutable-reference? ctx got)
@@ -36223,7 +36315,7 @@
   [index : i64]
   [lifetimes : ast.AstLifetimeList]
   [subst : TcLifetimeSubst]) : ResultTcLifetimeSubst
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
       (ResultTcLifetimeSubst.Ok subst)
       (ResultTcLifetimeSubst.Err
@@ -36324,8 +36416,10 @@
   (let
     [lifetimes : ast.AstLifetimeList
       (match ret
-        [(ast.AstType.StructArgs _ params-lifetimes) (box-get params-lifetimes)]
-        [(ast.AstType.EnumArgs _ params-lifetimes) (box-get params-lifetimes)]
+        [(ast.AstType.StructArgs _ params-lifetimes)
+          (__tl-box-place params-lifetimes)]
+        [(ast.AstType.EnumArgs _ params-lifetimes)
+          (__tl-box-place params-lifetimes)]
         [_ (ast.ast-lifetime-list-new)])]
     (match (tc-infer-call-lifetime-subst
       ctx
@@ -36433,7 +36527,7 @@
           (match kind
             [(ast.AstExternKind.Function)
               (TcMaybeExternAbi.Some
-                (ast.ast-extern-metadata-abi (box-get metadata)))]
+                (ast.ast-extern-metadata-abi (__tl-box-place metadata)))]
             [(ast.AstExternKind.Value) (TcMaybeExternAbi.No)])]
         [_ (TcMaybeExternAbi.No)])
       (TcMaybeExternAbi.No))))
@@ -36465,8 +36559,7 @@
     (tc-expr-c-abi-fnptr?
       ctx
       env
-      (ast.ast-node-get
-        (ast.ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0)))))
+      (ast.ast-node-get (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
 
 (define (tc-hygiene-c-abi-fnptr-binding?
   [ctx : TcContext]
@@ -36510,7 +36603,7 @@
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (tc-expr-c-abi-fnptr? ctx env inner))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -36737,7 +36830,7 @@
               [(ast.AstProgram.Program decls-box)
                 (match (tc-source-dotted-alias-target-id-in-context
                   ctx
-                  (box-get decls-box)
+                  (__tl-box-place decls-box)
                   current-module-id
                   alias-id)
                   [(TcMaybeNameId.Some target-id) target-id]
@@ -36797,7 +36890,7 @@
   [expr : ast.AstExpr]) : TcMaybeNameId
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Call func-box args)
-      (if (= (struct-get (& args) len) 1)
+      (if (= args.len 1)
         (let
           [owner-expr : ast.AstExpr
             (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -36901,13 +36994,13 @@
   [index : i64]) : ResultTcExprList
   (if (>= index (ast.ast-type-list-len params))
     (ResultTcExprList.Ok (ast.ast-expr-list-tail-from-ref args index))
-    (if (< index (struct-get args len))
+    (if (< index args.len)
       (tc-call-varargs-tail-args-at func args params (+ index 1))
       (ResultTcExprList.Err
         (tc-call-arity-count-message
           func
           (ast.ast-type-list-len params)
-          (struct-get args len))))))
+          args.len)))))
 
 (define (tc-type-list-append [a : ast.AstTypeList] [b : ast.AstTypeList]) : ast.AstTypeList
   (let
@@ -36958,7 +37051,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstTypeList)]) : ResultTcUnit
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     ResultTcUnit.Ok
     (let
       [arg : ast.AstExpr
@@ -37196,14 +37289,14 @@
     [data : TcThreadNameKindStateData (tc-thread-name-kind-state-data state)]
     (begin
       (if (and
-        (= (struct-get data intern-generation) generation)
-        (= (struct-get data intern-table-id) table-id))
+        (= data.intern-generation generation)
+        (= data.intern-table-id table-id))
         unit
         (begin
-          (tc-cache-map-clear! (&mut (struct-get data kinds)))
-          (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
-          (set! (struct-get data intern-generation) generation)
-          (set! (struct-get data intern-table-id) table-id)
+          (tc-cache-map-clear! (&mut data.kinds))
+          (set! data.epoch (+ data.epoch 1))
+          (set! data.intern-generation generation)
+          (set! data.intern-table-id table-id)
           (tc-thread-name-kind-state-data-set! state data)))
       data)))
 
@@ -37226,23 +37319,20 @@
     [data : TcThreadNameKindStateData
       (tc-thread-name-kind-ensure-owner! state table-id generation)]
     [key : i64 (ci.intern-id-value source-name-id)]
-    (if (not (struct-get data accelerator-enabled))
+    (if (not data.accelerator-enabled)
       (tc-thread-name-kind-compute name)
       (let
-        [packed : i64
-          (tc_i64_i64_map.get-value-or (& (struct-get data kinds)) key 0)]
-        (if (= (shr packed 2) (struct-get data epoch))
+        [packed : i64 (tc_i64_i64_map.get-value-or (& data.kinds) key 0)]
+        (if (= (shr packed 2) data.epoch)
           (bit-and packed 3)
           (let
             [kind : i64 (tc-thread-name-kind-compute name)]
             (begin
-              (tc-cache-map-grow-in-owner!
-                (&mut (struct-get data kinds))
-                (struct-get data owner-arena))
+              (tc-cache-map-grow-in-owner! (&mut data.kinds) data.owner-arena)
               (tc_i64_i64_map.insert-ref!
-                (&mut (struct-get data kinds))
+                (&mut data.kinds)
                 key
-                (bit-or (shl (struct-get data epoch) 2) kind))
+                (bit-or (shl data.epoch 2) kind))
               (tc-thread-name-kind-state-data-set! state data)
               kind)))))))
 
@@ -37283,10 +37373,8 @@
             (= a-cached 1)
             (= a-new-owner 0)
             (= uncached 2)
-            (= (tc_i64_i64_map.len (& (struct-get data kinds))) 1)
-            (<
-              (tc_i64_i64_map.capacity (& (struct-get data kinds)))
-              (ci.intern-capacity))))))))
+            (= (tc_i64_i64_map.len (& data.kinds)) 1)
+            (< (tc_i64_i64_map.capacity (& data.kinds)) (ci.intern-capacity))))))))
 
 (cfg
   test
@@ -37310,8 +37398,8 @@
       [(ci.InternSourceNameResolution.ParsedIdentity owned-id)
         (tc-thread-name-kind-owned
           (tc-job-state-thread-name-kind (tc-context-job-state ctx))
-          (struct-get session table-id)
-          (struct-get session reset-generation)
+          session.table-id
+          session.reset-generation
           (ci.intern-id-from-renderable owned-id)
           name)]
       [(ci.InternSourceNameResolution.GeneratedIdentity owned-id lookup)
@@ -37320,8 +37408,8 @@
             (if (= owned-id resolved-id)
               (tc-thread-name-kind-owned
                 (tc-job-state-thread-name-kind (tc-context-job-state ctx))
-                (struct-get session table-id)
-                (struct-get session reset-generation)
+                session.table-id
+                session.reset-generation
                 (ci.intern-id-from-renderable owned-id)
                 name)
               (tc-thread-name-kind-compute name))]
@@ -37383,7 +37471,7 @@
       "typecheck: channel send expects channel and message parameters")))
 
 (define (tc-thread-channel-send-message-arg [args : ast.AstExprList]) : ResultTcExpr
-  (if (= (struct-get (& args) len) 2)
+  (if (= args.len 2)
     (ResultTcExpr.Ok (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0)))
     (ResultTcExpr.Err
       "typecheck: channel send expects channel and message arguments")))
@@ -37586,7 +37674,7 @@
   [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(ast.AstType.Func task-params task-ret-box)
-      (if (ast.ast-type-list-empty? (box-get task-params))
+      (if (ast.ast-type-list-empty? (__tl-box-place task-params))
         (tc-thread-safe-spawn-task-ret-type?
           ctx
           source-name
@@ -37724,7 +37812,7 @@
   [stack : TcStringList]
   [owner-proof : bool]
   [index : i64]) : TcThreadTransferClass
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     (TcThreadTransferClass.Shareable)
     (match (ast.ast-field-def-list-get
       fields
@@ -37762,7 +37850,7 @@
   [stack : TcStringList]
   [owner-proof : bool]
   [index : i64]) : TcThreadTransferClass
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     (TcThreadTransferClass.Shareable)
     (match (ast.ast-variant-def-list-get
       variants
@@ -37897,7 +37985,7 @@
           (tc-thread-transfer-type-list-class
             ctx
             env
-            (box-get elems)
+            (__tl-box-place elems)
             stack
             owner-proof))]
       [(ast.AstType.Array elem _)
@@ -37917,7 +38005,7 @@
           stack
           owner-proof)]
       [(ast.AstType.StructArgs name lifetimes)
-        (if (> (tc-lifetime-list-count (box-get lifetimes)) 0)
+        (if (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)
           (tc-thread-transfer-region-reject)
           (tc-thread-transfer-struct-class
             ctx
@@ -37935,7 +38023,7 @@
           stack
           owner-proof)]
       [(ast.AstType.EnumArgs name lifetimes)
-        (if (> (tc-lifetime-list-count (box-get lifetimes)) 0)
+        (if (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)
           (tc-thread-transfer-region-reject)
           (tc-thread-transfer-enum-class
             ctx
@@ -38200,7 +38288,7 @@
   [arg : ast.AstExpr]) : TcNameIdList
   (match (ast.ast-expr-unspan arg)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (if (= (ast.ast-param-list-len (& params)) 0)
             (tc-thread-safe-spawn-captured-owner-regions
@@ -38218,7 +38306,7 @@
   [arg : ast.AstExpr]) : ResultTcUnit
   (match (ast.ast-expr-unspan arg)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (if (= (ast.ast-param-list-len (& params)) 0)
             (tc-check-thread-safe-spawn-captures
@@ -38278,7 +38366,7 @@
           lookup-name
           params
           ret)
-          (if (= (struct-get (& args) len) 1)
+          (if (= args.len 1)
             (let
               [arg : ast.AstExpr
                 (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -38508,7 +38596,7 @@
   [constructor-target : ast.AstMaybeType]
   [arity-msg : TcArityMessage]
   [c-abi-args : bool]) : ResultTcUnit
-  (match (tc-normalize-dotted-local-field-expr-list! env args)
+  (match (tc-normalize-dotted-local-field-expr-list! ctx env args)
     [(ResultTcUnit.Ok)
       (tc-check-call-args-with-message-at
         ctx
@@ -38532,7 +38620,7 @@
   [constructor-target : ast.AstMaybeType]
   [arity-msg : TcArityMessage]
   [c-abi-args : bool]) : ResultTcUnit
-  (match (tc-normalize-dotted-local-field-expr-list! env args)
+  (match (tc-normalize-dotted-local-field-expr-list! ctx env args)
     [(ResultTcUnit.Ok)
       (tc-check-call-args-with-message-at
         ctx
@@ -38577,7 +38665,7 @@
   [arity-msg : TcArityMessage]
   [c-abi-args : bool]
   [thread-spawn-args : bool]) : ResultTcUnit
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
       ResultTcUnit.Ok
       (ResultTcUnit.Err (tc-arity-message-text arity-msg)))
@@ -38722,7 +38810,7 @@
   [args : ast.AstExprList]) : ResultTcType
   (match (ast.ast-expr-unspan func)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -38740,7 +38828,7 @@
                       env
                       func
                       args
-                      (box-get params)
+                      (__tl-box-place params)
                       (ast.ty-node-get ret))]
                   [_
                     (ResultTcType.Err
@@ -38756,7 +38844,7 @@
                 env
                 func
                 args
-                (box-get params)
+                (__tl-box-place params)
                 (ast.ty-node-get ret))]
             [(ast.AstType.Region _ inner)
               (match (ast.ty-node-get inner)
@@ -38765,10 +38853,10 @@
                     ctx
                     env
                     args
-                    (box-get params)
+                    (__tl-box-place params)
                     false
                     (ast.AstMaybeType.No)
-                    (TcArityMessage.Detailed func args (box-get params))
+                    (TcArityMessage.Detailed func args (__tl-box-place params))
                     (tc-expr-c-abi-fnptr? ctx env func))
                     [(ResultTcUnit.Ok)
                       (ResultTcType.Ok
@@ -38810,7 +38898,7 @@
   [env : TcTypeEnv]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (let
       [owner-expr : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -38849,7 +38937,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (let
       [phase-expr : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -38892,7 +38980,7 @@
   [env : TcTypeEnv]
   [args : ast.AstExprList]) : ResultTcType
   (unless
-    (= (struct-get (& args) len) 1)
+    (= args.len 1)
     (return
       (ResultTcType.Err
         "typecheck: arena.destroy-safe! expects exactly one argument")))
@@ -38939,7 +39027,7 @@
     [func : ast.AstExpr (ast.ast-node-get func-id)]
     (match (ast.ast-expr-unspan func)
       [(ast.AstExpr.Lambda lambda-box)
-        (match (box-get lambda-box)
+        (match (__tl-box-place lambda-box)
           [(ast.AstLambda.Lambda params maybe-ret body-box)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -38962,7 +39050,7 @@
                           env
                           func
                           args
-                          (box-get params)
+                          (__tl-box-place params)
                           (ast.ty-node-get ret))]
                       [_
                         (ResultTcType.Err
@@ -38978,7 +39066,7 @@
                   env
                   func
                   args
-                  (box-get params)
+                  (__tl-box-place params)
                   (ast.ty-node-get ret))]
               [(ast.AstType.Region _ inner)
                 (match (ast.ty-node-get inner)
@@ -38987,10 +39075,13 @@
                       ctx
                       env
                       args
-                      (box-get params)
+                      (__tl-box-place params)
                       false
                       (ast.AstMaybeType.No)
-                      (TcArityMessage.Detailed func args (box-get params))
+                      (TcArityMessage.Detailed
+                        func
+                        args
+                        (__tl-box-place params))
                       (tc-expr-c-abi-fnptr? ctx env func))
                       [(ResultTcUnit.Ok)
                         (ResultTcType.Ok
@@ -39119,7 +39210,7 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [ret : ast.AstType]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (let
       [arg : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -39134,7 +39225,7 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [ret : ast.AstType]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (let
       [arg : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -39149,7 +39240,7 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [ret : ast.AstType]) : ResultTcType
-  (if (= (struct-get (& args) len) 2)
+  (if (= args.len 2)
     (let
       [left : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -39307,7 +39398,7 @@
   [env : TcTypeEnv]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 2)
+  (if (= args.len 2)
     (let
       [str : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -39452,7 +39543,7 @@
   [name-id : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (let
       [arg : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -39481,7 +39572,7 @@
 (define (tc-one-arg-layout-query-runtime-call
   [name : String]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (ResultTcType.Err
       (str_cat.str-cat
         "typecheck: "
@@ -39491,7 +39582,7 @@
       (str_cat.str-cat "typecheck: " name " expects exactly one type argument"))))
 
 (define (tc-offset-layout-query-runtime-call [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 2)
+  (if (= args.len 2)
     (ResultTcType.Err
       "typecheck: offset-of is compile-time only; wrap it in (comptime ...)")
     (ResultTcType.Err
@@ -39556,7 +39647,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [selected : tc_i64_i64_map.Map
           (tc_i64_i64_map.with-capacity
             (if (< (ast.ast-decl-list-len (& decls)) 8)
@@ -39569,8 +39660,8 @@
         ;; `-decl-key`, once here) -- three 104 B copies per declaration to read
         ;; a name id and a module id. The backing slot is matched in place, and
         ;; the wrapper peel now runs only on an `AstDecl.Unsafe` row.
-        [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-        [decl-offset : i64 (struct-get decls offset)]
+        [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+        [decl-offset : i64 decls.offset]
         (begin
           (while (< index count)
             (let
@@ -39668,7 +39759,7 @@
                 (if (surface_facts.surface-typecheck-facts-recording?)
                   (clone_support.clone-root-add-type
                     (tc-context-pools ctx)
-                    (box-get decls-box)
+                    (__tl-box-place decls-box)
                     (tc-clone-able-set ctx)
                     (clone_support.CloneRootEntries.Empty)
                     resolved
@@ -39683,7 +39774,7 @@
               tc-clone-root-collection-roots
               (clone_support.clone-root-add-type
                 (tc-context-pools ctx)
-                (box-get decls-box)
+                (__tl-box-place decls-box)
                 (tc-clone-able-set ctx)
                 (tc-global-shared-view tc-clone-root-collection-roots)
                 resolved
@@ -39736,10 +39827,9 @@
     (let
       [facts : surface_facts.SurfaceTypecheckFacts
         (surface_facts.surface-typecheck-facts-current)]
-      [decl-keys : (__tl_dyn-array i64) (struct-get facts clone-decl-keys)]
-      [root-keys : (__tl_dyn-array i64) (struct-get facts clone-root-keys)]
-      [call-indices : (__tl_dyn-array i64)
-        (struct-get facts clone-call-indices)]
+      [decl-keys : (__tl_dyn-array i64) facts.clone-decl-keys]
+      [root-keys : (__tl_dyn-array i64) facts.clone-root-keys]
+      [call-indices : (__tl_dyn-array i64) facts.clone-call-indices]
       [count : i64 (array-length decl-keys)]
       [index : i64 0]
       [previous-arena : i64 (arena.tl_arena_current)]
@@ -39796,7 +39886,7 @@
     (match (tc-context-program ctx)
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList (box-get decls-box)]
+          [decls : ast.AstDeclList (__tl-box-place decls-box)]
           [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
           (clone_support.clone-fixpoint
             pools
@@ -39833,7 +39923,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (let
       [arg : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -39857,7 +39947,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (let
       [arg : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -39879,7 +39969,7 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 1)
+  (if (= args.len 1)
     (let
       [arg : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -39916,7 +40006,7 @@
   [args : ast.AstExprList]) : ResultTcType
   (match (tc-require-unsafe env "tls-current-arena-set!")
     [(ResultTcUnit.Ok)
-      (if (= (struct-get (& args) len) 1)
+      (if (= args.len 1)
         (let
           [value : ast.AstExpr
             (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -40114,7 +40204,7 @@
   [func : ast.AstExpr]
   [kind : TcSliceViewCallKind]
   [args : ast.AstExprList]) : ResultTcType
-  (if (= (struct-get (& args) len) 3)
+  (if (= args.len 3)
     (let
       [source : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -40442,7 +40532,7 @@
   [init : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan init)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (let
             [body : ast.AstExpr
@@ -40461,7 +40551,7 @@
   [init : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan init)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (let
             [expr-bases : i64 (tc-context-expr-bases ctx)]
@@ -40478,7 +40568,7 @@
     (tc-move-only-capturing-lambda-init? ctx env init)
     (match (ast.ast-expr-unspan init)
       [(ast.AstExpr.Lambda lambda-box)
-        (match (box-get lambda-box)
+        (match (__tl-box-place lambda-box)
           [(ast.AstLambda.Lambda params _ body-box)
             (=
               (tc-lambda-call-capability ctx env params body-box)
@@ -40498,7 +40588,7 @@
   [index : i64]
   [name : String]
   [bound : TcStringList]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     true
     (and
       (tc-ref-closure-local-uses-ok?
@@ -40585,7 +40675,7 @@
               allow-copy-alias
               (match (ast.ast-expr-unspan init)
                 [(ast.AstExpr.Lambda lambda-box)
-                  (match (box-get lambda-box)
+                  (match (__tl-box-place lambda-box)
                     [(ast.AstLambda.Lambda params _ lambda-body-box)
                       (tc-expr-uses-free-name?
                         expr-bases
@@ -40677,7 +40767,7 @@
   [name : String]
   [bound : TcStringList]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     true
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -40757,7 +40847,7 @@
           (tc-ref-closure-local-uses-ok? expr-bases then-branch name bound)
           (tc-ref-closure-local-uses-ok? expr-bases else-branch name bound)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -40774,7 +40864,7 @@
                 name
                 (tc-let-binding-list-add-bound-names bindings bound))))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (let
             [body : ast.AstExpr
@@ -40925,7 +41015,7 @@
           (tc-ref-closure-local-uses-ok? expr-bases inner name bound)
           (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
@@ -40938,7 +41028,7 @@
                 name
                 bound)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -40956,7 +41046,7 @@
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             _
             index
@@ -40984,7 +41074,7 @@
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             index
@@ -41068,7 +41158,7 @@
           (tc-ref-closure-local-uses-ok? expr-bases arena name bound)
           (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (and
             (tc-ref-closure-resource-binding-list-local-uses-ok?
@@ -41301,54 +41391,48 @@
 ;; interleave without resetting one another's records.
 ;; --------------------------------------------------------------------------
 (define (tc-inlay-hint-state-enabled? [state : TcInlayHintState]) : bool
-  (struct-get (tc-inlay-hint-state-data state) enabled))
+  (__tl-project-field (tc-inlay-hint-state-data state) enabled))
 
 (define (tc-inlay-hint-storage-ensure-for-state! [state : TcInlayHintState]) : unit
   (let
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
-    (if (= (array-length (struct-get data lines)) tc-inlay-hint-capacity)
+    (if (= (array-length data.lines) tc-inlay-hint-capacity)
       unit
       (let
         [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 (struct-get data fixed-storage-arena)]
+        [owner : i64 data.fixed-storage-arena]
         [_set-owner : unit
           (unsafe
             (arena.tl_arena_set owner))]
         (begin
-          (set!
-            (struct-get data lines)
-            (array.make-array i64 tc-inlay-hint-capacity))
-          (set!
-            (struct-get data cols)
-            (array.make-array i64 tc-inlay-hint-capacity))
-          (set!
-            (struct-get data types)
-            (array.make-array String tc-inlay-hint-capacity))
+          (set! data.lines (array.make-array i64 tc-inlay-hint-capacity))
+          (set! data.cols (array.make-array i64 tc-inlay-hint-capacity))
+          (set! data.types (array.make-array String tc-inlay-hint-capacity))
           ;; Arena allocation chains segments; retain the newest owner head so
           ;; a later switch keeps allocating on the live chain.
-          (set! (struct-get data fixed-storage-arena) (arena.tl_arena_current))
+          (set! data.fixed-storage-arena (arena.tl_arena_current))
           (tc-inlay-hint-state-data-set! state data)
           (unsafe
             (arena.tl_arena_set
               (if (= previous owner)
-                (struct-get data fixed-storage-arena)
+                data.fixed-storage-arena
                 previous))))))))
 
 (define (tc-inlay-hint-string-arena-ensure-for-state!
   [state : TcInlayHintState]) : i64
   (let
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
-    (if (= (struct-get data string-arena) 0)
+    (if (= data.string-arena 0)
       (let
         [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (arena.tl_arena_make_small)]
         (begin
-          (set! (struct-get data string-arena) owner)
+          (set! data.string-arena owner)
           (tc-inlay-hint-state-data-set! state data)
           (unsafe
             (arena.tl_arena_set previous))
-          (struct-get data string-arena)))
-      (struct-get data string-arena))))
+          data.string-arena))
+      data.string-arena)))
 
 (define (tc-inlay-hint-string-arena-finish-for-state!
   [state : TcInlayHintState]
@@ -41358,7 +41442,7 @@
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     [head : i64 (arena.tl_arena_current)]
     (begin
-      (set! (struct-get data string-arena) head)
+      (set! data.string-arena head)
       (tc-inlay-hint-state-data-set! state data)
       (unsafe
         (arena.tl_arena_set
@@ -41371,13 +41455,13 @@
   [state : TcInlayHintState]) : unit
   (let
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
-    [string-arena : i64 (struct-get data string-arena)]
+    [string-arena : i64 data.string-arena]
     (begin
       (if (= string-arena 0)
         unit
         (unsafe
           (arena.tl_arena_destroy string-arena)))
-      (set! (struct-get data string-arena) 0)
+      (set! data.string-arena 0)
       (tc-inlay-hint-state-data-set! state data))))
 
 (define (tc-inlay-hints-reset-for-state! [state : TcInlayHintState]) : unit
@@ -41385,8 +41469,8 @@
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     (begin
       ;; Make any strings held in fixed slots unreachable before freeing them.
-      (set! (struct-get data enabled) false)
-      (set! (struct-get data count) 0)
+      (set! data.enabled false)
+      (set! data.count 0)
       (tc-inlay-hint-state-data-set! state data)
       (tc-inlay-hint-string-arena-release-for-state! state))))
 
@@ -41397,36 +41481,36 @@
       [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
       (begin
         ;; Clear the logical range before destroying the prior generation.
-        (set! (struct-get data count) 0)
+        (set! data.count 0)
         (tc-inlay-hint-state-data-set! state data)
         (tc-inlay-hint-string-arena-release-for-state! state)
         (let
           [latest : TcInlayHintStateData (tc-inlay-hint-state-data state)]
-          (set! (struct-get latest enabled) true)
+          (set! latest.enabled true)
           (tc-inlay-hint-state-data-set! state latest))))))
 
 (define (tc-inlay-hints-disable-for-state! [state : TcInlayHintState]) : unit
   (let
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     (begin
-      (set! (struct-get data enabled) false)
+      (set! data.enabled false)
       (tc-inlay-hint-state-data-set! state data))))
 
 (define (tc-inlay-hints-size-for-state [state : TcInlayHintState]) : i64
   (let
-    [count : i64 (struct-get (tc-inlay-hint-state-data state) count)]
+    [count : i64 (__tl-project-field (tc-inlay-hint-state-data state) count)]
     (if (< count tc-inlay-hint-capacity)
       count
       tc-inlay-hint-capacity)))
 
 (define (tc-inlay-hint-line-at-for-state [state : TcInlayHintState] [i : i64]) : i64
-  (array-ref (struct-get (tc-inlay-hint-state-data state) lines) i))
+  (array-ref (__tl-project-field (tc-inlay-hint-state-data state) lines) i))
 
 (define (tc-inlay-hint-col-at-for-state [state : TcInlayHintState] [i : i64]) : i64
-  (array-ref (struct-get (tc-inlay-hint-state-data state) cols) i))
+  (array-ref (__tl-project-field (tc-inlay-hint-state-data state) cols) i))
 
 (define (tc-inlay-hint-type-at-for-state [state : TcInlayHintState] [i : i64]) : String
-  (array-ref (struct-get (tc-inlay-hint-state-data state) types) i))
+  (array-ref (__tl-project-field (tc-inlay-hint-state-data state) types) i))
 
 (define (tc-inlay-hint-record-for-state!
   [state : TcInlayHintState]
@@ -41437,21 +41521,21 @@
   ;; of a transient typecheck/tool arena.
   (let
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
-    [slot : i64 (% (struct-get data count) tc-inlay-hint-capacity)]
+    [slot : i64 (% data.count tc-inlay-hint-capacity)]
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (tc-inlay-hint-string-arena-ensure-for-state! state)]
     [_set-owner : unit
       (unsafe
         (arena.tl_arena_set owner))]
     (begin
-      (array-set! (struct-get data lines) slot line)
-      (array-set! (struct-get data cols) slot col)
-      (array-set! (struct-get data types) slot (string.copy (& ty)))
+      (set! (array-ref data.lines slot) line)
+      (set! (array-ref data.cols slot) col)
+      (set! (array-ref data.types slot) (string.copy (& ty)))
       (tc-inlay-hint-string-arena-finish-for-state! state previous owner)
       (let
         [latest : TcInlayHintStateData (tc-inlay-hint-state-data state)]
         (begin
-          (set! (struct-get latest count) (+ (struct-get latest count) 1))
+          (set! latest.count (+ latest.count 1))
           (tc-inlay-hint-state-data-set! state latest))))))
 
 ;; Serial/test adapters retain the historical no-state surface.
@@ -41580,7 +41664,7 @@
               [(ResultTcUnit.Ok)
                 (match (ast.ast-expr-unspan init)
                   [(ast.AstExpr.Lambda lambda-box)
-                    (match (box-get lambda-box)
+                    (match (__tl-box-place lambda-box)
                       [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
                         (let
                           [lambda-body : ast.AstExpr
@@ -41627,7 +41711,7 @@
             [(ResultTcUnit.Ok)
               (match (ast.ast-expr-unspan init)
                 [(ast.AstExpr.Lambda lambda-box)
-                  (match (box-get lambda-box)
+                  (match (__tl-box-place lambda-box)
                     [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
                       (let
                         [lambda-body : ast.AstExpr
@@ -41677,9 +41761,9 @@
               (let
                 [body-state : TcBodyState (tc-context-body-state ctx)]
                 (begin
-                  (if (struct-get body-state inlay-hint-enabled)
+                  (if body-state.inlay-hint-enabled
                     (tc-inlay-hint-maybe-record-for-state
-                      (struct-get body-state inlay-hint-state)
+                      body-state.inlay-hint-state
                       maybe-ty
                       init
                       init-ty)
@@ -41774,7 +41858,7 @@
             [(ast.AstType.Func args ret)
               (let
                 [ret-ty : ast.AstType (ast.ty-node-get ret)]
-                [args : ast.AstTypeList (box-get args)]
+                [args : ast.AstTypeList (__tl-box-place args)]
                 (if (= (ast.ast-type-list-len (& args)) 1)
                   (let
                     [arg-ty : ast.AstType
@@ -41868,9 +41952,9 @@
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcType
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultTcType.Ok (ast.AstType.Unit))
-    (if (= (+ index 1) (struct-get exprs len))
+    (if (= (+ index 1) exprs.len)
       (tc-expr-id ctx env (ast.ast-expr-list-get exprs index 0))
       (match (tc-expr-id ctx env (ast.ast-expr-list-get exprs index 0))
         [(ResultTcType.Ok _) (tc-begin-list-at ctx env exprs (+ index 1))]
@@ -41931,7 +42015,7 @@
         (ResultTcSpmdInlineHelper.Ok
           (TcSpmdInlineHelper.Some name-id module-id params ret body)))]
     [(ast.AstDecl.Extern _ _ (ast.AstExternKind.Function) metadata ty)
-      (match (ast.ast-extern-metadata-imported-spmd (box-get metadata))
+      (match (ast.ast-extern-metadata-imported-spmd (__tl-box-place metadata))
         [(ast.AstImportedSpmdMetadata.No)
           (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))]
         [(ast.AstImportedSpmdMetadata.Package _ callables)
@@ -41939,7 +42023,7 @@
             (TcSpmdInlineHelper.Imported ty callables))])]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (tc-spmd-inline-helper-from-decl expr-bases name-id module-id inner))]
     [_ (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))]))
 
@@ -42069,7 +42153,7 @@
   [seen-class : TcSpmdClass]) : ResultTcSpmdInlineCallState
   (cond
     [(>= index (ast.ast-param-list-len params))
-      (if (>= index (struct-get args len))
+      (if (>= index args.len)
         (ResultTcSpmdInlineCallState.Ok
           (TcSpmdInlineCallState
             caller-spmd-env
@@ -42080,13 +42164,13 @@
           (tc-call-arity-count-message
             func
             (ast.ast-param-list-len params)
-            (struct-get args len))))]
-    [(>= index (struct-get args len))
+            args.len)))]
+    [(>= index args.len)
       (ResultTcSpmdInlineCallState.Err
         (tc-call-arity-count-message
           func
           (ast.ast-param-list-len params)
-          (struct-get args len)))]
+          args.len))]
     [else
       (let
         [arg : ast.AstExpr
@@ -42196,10 +42280,10 @@
           index
           (ast.ast-imported-spmd-callable-fallback))]
       [specializations : ast.AstImportedSpmdSpecializationList
-        (struct-get callable specializations)]
+        callable.specializations]
       (or
         (and
-          (string.eq (ci.intern-str (struct-get callable signature)) signature)
+          (string.eq (ci.intern-str callable.signature) signature)
           (>
             (ast.ast-imported-spmd-specialization-list-len (& specializations))
             0))
@@ -42220,7 +42304,7 @@
           index
           (ast.ast-imported-spmd-specialization-fallback))]
       (or
-        (string.eq (ci.intern-str (struct-get item result)) "v")
+        (string.eq (ci.intern-str item.result) "v")
         (tc-spmd-imported-specializations-have-varying-result-at?
           specializations
           (+ index 1))))))
@@ -42238,10 +42322,10 @@
           index
           (ast.ast-imported-spmd-callable-fallback))]
       [specializations : ast.AstImportedSpmdSpecializationList
-        (struct-get callable specializations)]
+        callable.specializations]
       (or
         (and
-          (string.eq (ci.intern-str (struct-get callable signature)) signature)
+          (string.eq (ci.intern-str callable.signature) signature)
           (tc-spmd-imported-specializations-have-varying-result-at?
             (& specializations)
             0))
@@ -42369,7 +42453,7 @@
     [(TcContext program _ _ _ _ _ _ _ _)
       (match program
         [(ast.AstProgram.Program decls-box)
-          (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
+          (tc-spmd-program-imports-atomic? (__tl-box-place decls-box))])]))
 
 (define (tc-spmd-atomic-imported-symbol-for-name
   [ctx : TcContext]
@@ -42403,7 +42487,7 @@
               [(ast.AstExternKind.Function)
                 (let
                   [symbol : String
-                    (ast.ast-extern-metadata-symbol (box-get metadata))]
+                    (ast.ast-extern-metadata-symbol (__tl-box-place metadata))]
                   (if (tc-spmd-atomic-public-symbol? symbol)
                     (TcMaybeString.Some symbol)
                     (TcMaybeString.No)))]
@@ -42570,7 +42654,7 @@
         [(TcSpmdInlineHelper.Imported fn-ty callables)
           (let
             [callable-items : ast.AstImportedSpmdCallableList
-              (box-get callables)]
+              (__tl-box-place callables)]
             (tc-spmd-imported-call
               ctx
               expr-bases
@@ -42764,7 +42848,7 @@
 
 (define (tc-spmd-foreach-index-unsupported) : ResultTcUnit
   (ResultTcUnit.Err
-    "typecheck: foreach does not support non-contiguous array-set! destination indexes; use the foreach index plus a uniform offset"))
+    "typecheck: foreach does not support non-contiguous array element destination indexes; use the foreach index plus a uniform offset"))
 
 (define (tc-spmd-foreach-uniform-offset
   [ctx : TcContext]
@@ -42990,7 +43074,7 @@
   [spmd-env : TcSpmdEnv]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-spmd-masked-if-expr
       ctx
@@ -43124,7 +43208,7 @@
             (tc-spmd-masked-if-expr ctx expr-bases env spmd-env right)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -43255,7 +43339,7 @@
               [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (tc-spmd-masked-if-match
             ctx
@@ -43302,7 +43386,7 @@
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
     [(ast.AstExpr.BoxTake _)
-      (tc-spmd-masked-if-unsupported "box-take inside masked branches")]
+      (tc-spmd-masked-if-unsupported "move from Box inside masked branches")]
     [(ast.AstExpr.WithRegion _ _)
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
@@ -43416,7 +43500,7 @@
   [spmd-env : TcSpmdEnv]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcSpmdExprListInfo
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultTcSpmdExprListInfo.Ok
       (TcSpmdExprListInfo TcSpmdClass.Uniform spmd-env))
     (let
@@ -43462,7 +43546,7 @@
   [spmd-env : TcSpmdEnv]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcSpmdExprInfo
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultTcSpmdExprInfo.Ok
       (TcSpmdExprInfo (ast.AstType.Unit) TcSpmdClass.Uniform spmd-env))
     (let
@@ -43470,7 +43554,7 @@
         (ast.ast-expr-segment-bases-get
           expr-bases
           (ast.ast-expr-list-get exprs index 0))]
-      (if (= (+ index 1) (struct-get exprs len))
+      (if (= (+ index 1) exprs.len)
         (tc-spmd-expr ctx expr-bases env spmd-env expr)
         (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
           [(ResultTcSpmdExprInfo.Ok info)
@@ -43507,14 +43591,14 @@
       (match pattern
         [(ast.AstPattern.Variant _ args-box)
           (tc-pattern-list-add-bound-name-ids
-            (box-get args-box)
+            (__tl-box-place args-box)
             TcNameIdList.Nil)]
         [_ TcNameIdList.Nil])]
     [(ast.AstType.EnumArgs _ _)
       (match pattern
         [(ast.AstPattern.Variant _ args-box)
           (tc-pattern-list-add-bound-name-ids
-            (box-get args-box)
+            (__tl-box-place args-box)
             TcNameIdList.Nil)]
         [_ TcNameIdList.Nil])]
     [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
@@ -43566,7 +43650,7 @@
   [scrut-class : TcSpmdClass]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     ResultTcUnit.Ok
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -43655,7 +43739,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [class : TcSpmdClass]
   [index : i64]) : ResultTcSpmdExprListInfo
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (ResultTcSpmdExprListInfo.Ok (TcSpmdExprListInfo class spmd-env))
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -43756,7 +43840,7 @@
   [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-spmd-scan-body-no-nested-spmd
       expr-bases
@@ -43849,7 +43933,7 @@
   [expr-bases : i64]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     ResultTcUnit.Ok
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
@@ -43887,7 +43971,7 @@
         (ast.ast-expr-segment-bases-get expr-bases then-box)
         (ast.ast-expr-segment-bases-get expr-bases else-box))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (match (tc-spmd-scan-body-no-nested-let-bindings expr-bases bindings)
             [(ResultTcUnit.Ok)
@@ -43896,7 +43980,7 @@
                 (ast.ast-expr-segment-bases-get expr-bases body-box))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body-box)
           (tc-spmd-scan-body-no-nested-spmd
             expr-bases
@@ -43974,7 +44058,7 @@
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases place-box))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (match (tc-spmd-scan-body-no-nested-spmd
             expr-bases
@@ -44033,7 +44117,7 @@
         [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list expr-bases body)]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (match (tc-spmd-scan-body-no-nested-resource-bindings
             expr-bases
@@ -44315,8 +44399,8 @@
     [(ast.AstExpr.SpmdProgramCount)
       (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdClass.Uniform)]
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-expr-id env name)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
             (tc-spmd-reduce-class
               ctx
@@ -44393,7 +44477,7 @@
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -44808,8 +44892,8 @@
     [(ast.AstExpr.SpmdProgramCount)
       (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-expr-id env name)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
             (tc-spmd-expr-typed
               ctx
@@ -44944,7 +45028,7 @@
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -45317,8 +45401,8 @@
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-set-expr-id env name value-box)
+        (if (tc-dotted-place-name-id? ctx env name)
+          (match (tc-dotted-local-field-set-expr-id-after-check name value-box)
             [(ResultTcExprId.Ok virtual-id)
               (tc-spmd-expr-typed
                 ctx
@@ -45347,7 +45431,7 @@
             [(ResultTcSpmdExprInfo.Err message)
               (ResultTcSpmdExprInfo.Err message)])))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
@@ -45379,7 +45463,7 @@
               [(ResultTcSpmdExprInfo.Err message)
                 (ResultTcSpmdExprInfo.Err message)]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -45861,18 +45945,18 @@
       (tc-string-list-add bound (tc-env-key-name-text name))]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-pattern-list-add-bound-names patterns bound))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-pattern-list-add-bound-names patterns bound))]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name)
       (tc-string-list-add bound (tc-env-key-name-text name))]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-pattern-list-add-bound-names patterns bound))]
     [(ast.AstPattern.Literal _) bound]))
 
@@ -45885,7 +45969,7 @@
   [patterns : (& patterns ast.AstPatternList)]
   [bound : TcStringList]
   [index : i64]) : TcStringList
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     bound
     (tc-pattern-list-add-bound-names-at
       patterns
@@ -45900,13 +45984,13 @@
   (match pattern
     [(ast.AstPattern.Var name _) (tc-name-id-list-add bound name)]
     [(ast.AstPattern.Tuple patterns-box)
-      (tc-pattern-list-add-bound-name-ids (box-get patterns-box) bound)]
+      (tc-pattern-list-add-bound-name-ids (__tl-box-place patterns-box) bound)]
     [(ast.AstPattern.Array patterns-box)
-      (tc-pattern-list-add-bound-name-ids (box-get patterns-box) bound)]
+      (tc-pattern-list-add-bound-name-ids (__tl-box-place patterns-box) bound)]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name) (tc-name-id-list-add bound name)]
     [(ast.AstPattern.Variant _ patterns-box)
-      (tc-pattern-list-add-bound-name-ids (box-get patterns-box) bound)]
+      (tc-pattern-list-add-bound-name-ids (__tl-box-place patterns-box) bound)]
     [(ast.AstPattern.Literal _) bound]))
 
 (define (tc-pattern-list-add-bound-name-ids
@@ -45918,7 +46002,7 @@
   [patterns : (& patterns ast.AstPatternList)]
   [bound : TcNameIdList]
   [index : i64]) : TcNameIdList
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     bound
     (tc-pattern-list-add-bound-name-ids-at
       patterns
@@ -46003,7 +46087,7 @@
   [index : i64]
   [name : String]
   [bound : TcStringList]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (or
       (tc-expr-uses-free-name?
@@ -46100,7 +46184,7 @@
   [name : String]
   [bound : TcStringList]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -46203,7 +46287,7 @@
           (tc-expr-uses-free-name? expr-bases then-branch name bound)
           (tc-expr-uses-free-name? expr-bases else-branch name bound)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -46220,7 +46304,7 @@
                 name
                 (tc-let-binding-list-add-bound-names bindings bound))))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (let
             [body : ast.AstExpr
@@ -46427,7 +46511,7 @@
           (tc-expr-uses-free-name? expr-bases inner name bound)
           (tc-expr-uses-free-name? expr-bases value name bound)))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
@@ -46436,7 +46520,7 @@
               (tc-expr-uses-free-name? expr-bases scrutinee name bound)
               (tc-match-arms-use-free-name? expr-bases arms name bound)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -46454,7 +46538,7 @@
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             _
             index
@@ -46482,7 +46566,7 @@
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             index
@@ -46566,7 +46650,7 @@
           (tc-expr-uses-free-name? expr-bases arena name bound)
           (tc-expr-list-uses-free-name? expr-bases body name bound)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (or
             (tc-resource-binding-list-uses-free-name?
@@ -46769,7 +46853,7 @@
   [target-1 : i64]
   [target-2 : i64]
   [bound : TcNameIdList]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (or
       (tc-expr-uses-free-source-id?
@@ -46913,7 +46997,7 @@
   [target-2 : i64]
   [bound : TcNameIdList]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -46943,18 +47027,18 @@
       (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-pattern-list-add-bound-source-ids patterns bound))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-pattern-list-add-bound-source-ids patterns bound))]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name)
       (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (tc-pattern-list-add-bound-source-ids patterns bound))]
     [(ast.AstPattern.Literal _) bound]))
 
@@ -46967,7 +47051,7 @@
   [patterns : (& patterns ast.AstPatternList)]
   [bound : TcNameIdList]
   [index : i64]) : TcNameIdList
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     bound
     (tc-pattern-list-add-bound-source-ids-at
       patterns
@@ -47125,7 +47209,7 @@
             target-2
             bound)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -47144,7 +47228,7 @@
                 target-2
                 (tc-let-binding-list-add-bound-source-ids bindings bound))))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (let
             [body : ast.AstExpr
@@ -47452,7 +47536,7 @@
             target-2
             bound)))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
@@ -47471,7 +47555,7 @@
                 target-2
                 bound)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -47500,7 +47584,7 @@
                 target-2
                 (tc-name-id-list-add bound (tc-env-key-source-id-or-neg index)))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             _
             index
@@ -47544,7 +47628,7 @@
                 target-2
                 (tc-name-id-list-add bound (tc-env-key-source-id-or-neg index)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             index
@@ -47710,7 +47794,7 @@
             target-2
             bound)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (or
             (tc-resource-binding-list-uses-free-source-id?
@@ -47926,7 +48010,7 @@
   [index : i64]
   [name : String]
   [bound : TcStringList]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (or
       (tc-expr-sets-free-name?
@@ -48023,7 +48107,7 @@
   [name : String]
   [bound : TcStringList]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -48098,7 +48182,7 @@
           (tc-expr-sets-free-name? expr-bases then-branch name bound)
           (tc-expr-sets-free-name? expr-bases else-branch name bound)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -48115,7 +48199,7 @@
                 name
                 (tc-let-binding-list-add-bound-names bindings bound))))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (let
             [body : ast.AstExpr
@@ -48322,7 +48406,7 @@
           (tc-expr-sets-free-name? expr-bases inner name bound)
           (tc-expr-sets-free-name? expr-bases value name bound)))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
@@ -48331,7 +48415,7 @@
               (tc-expr-sets-free-name? expr-bases scrutinee name bound)
               (tc-match-arms-set-free-name? expr-bases arms name bound)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -48349,7 +48433,7 @@
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             _
             index
@@ -48377,7 +48461,7 @@
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             index
@@ -48461,7 +48545,7 @@
           (tc-expr-sets-free-name? expr-bases arena name bound)
           (tc-expr-list-sets-free-name? expr-bases body name bound)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (or
             (tc-resource-binding-list-sets-free-name?
@@ -48638,8 +48722,7 @@
   (if (ast.ast-expr-list-empty? (& exprs))
     false
     (tc-expr-result-uses-cleanup-owner?
-      (ast.ast-node-get
-        (ast.ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0))
+      (ast.ast-node-get (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0))
       owners
       bound)))
 
@@ -48654,7 +48737,7 @@
   [index : i64]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (or
       (tc-expr-result-uses-cleanup-owner?
@@ -48678,7 +48761,7 @@
   [owners : TcStringList]
   [bound : TcStringList]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -48718,7 +48801,7 @@
           (tc-expr-result-uses-cleanup-owner? then-branch owners bound)
           (tc-expr-result-uses-cleanup-owner? else-branch owners bound)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -48727,11 +48810,11 @@
               owners
               (tc-let-binding-list-add-bound-names bindings bound)))])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match _ arms)
           (tc-match-arms-result-use-cleanup-owner? arms owners bound)])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ _ _ body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -48740,7 +48823,7 @@
               owners
               (tc-string-list-add bound (tc-env-key-name-text index))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ index _ _ _ _ value-box)
           (let
             [value : ast.AstExpr (ast.ast-node-get value-box)]
@@ -48749,7 +48832,7 @@
               owners
               (tc-string-list-add bound (tc-env-key-name-text index))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ index _ _ _ prefix _ _ value-box body-box)
           (let
             [value : ast.AstExpr (ast.ast-node-get value-box)]
@@ -48817,7 +48900,7 @@
     [(ast.AstExpr.InArena _ body)
       (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (tc-expr-list-result-uses-cleanup-owner?
             body
@@ -49115,15 +49198,15 @@
 (define (tc-program-enum-index-ensure! [decls : ast.AstDeclList]) : unit
   (if (and
     tc-program-enum-index-ready
-    (= tc-program-enum-index-decl-count (struct-get decls len))
-    (= tc-program-enum-index-decl-offset (struct-get decls offset))
+    (= tc-program-enum-index-decl-count decls.len)
+    (= tc-program-enum-index-decl-offset decls.offset)
     (= tc-program-enum-index-generation (ci.intern-generation)))
     unit
     (let
       [_reset : unit (tc-program-enum-index-reset!)]
-      [count : i64 (struct-get decls len)]
-      [decl-offset : i64 (struct-get decls offset)]
-      [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+      [count : i64 decls.len]
+      [decl-offset : i64 decls.offset]
+      [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
       [prev-arena : i64 (arena.tl_arena_current)]
       [index-arena : i64 (arena.tl_arena_make)]
       [_switch : unit
@@ -49174,16 +49257,14 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [_ensure : unit (tc-program-enum-index-ensure! decls)]
         (match (tc_i64_i64_map.get
           (& tc-program-enum-index-positions)
           (csym.compiler-symbol-name-id-key enum-name-id))
           [(tc_i64_i64_map.LookupFound position)
             (tc-program-enum-variants-from-indexed-decl
-              (array-ref
-                (struct-get decls slots)
-                (+ (struct-get decls offset) position))
+              (array-ref decls.slots (+ decls.offset position))
               enum-name)]
           [(tc_i64_i64_map.LookupMissing)
             (parser.ResultAstVariantDefList.Err
@@ -49933,7 +50014,7 @@
   [fields : (& fields ast.AstFieldDefList)]
   [stack : TcStringList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     ResultTcUnit.Ok
     (match (ast.ast-field-def-list-get
       fields
@@ -49960,7 +50041,7 @@
   [variants : (& variants ast.AstVariantDefList)]
   [stack : TcStringList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     ResultTcUnit.Ok
     (match (ast.ast-variant-def-list-get
       variants
@@ -50042,7 +50123,7 @@
   [stack : TcStringList]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(ast.AstType.Tuple elems)
-      (tc-inline-aggregate-type-list-finite-ok ctx (box-get elems) stack)]
+      (tc-inline-aggregate-type-list-finite-ok ctx (__tl-box-place elems) stack)]
     [(ast.AstType.Array elem _)
       (tc-inline-aggregate-type-finite-ok
         ctx
@@ -50115,7 +50196,7 @@
   [stack : TcStringList]) : ResultTcInlineFieldsLayout
   (let
     [layout : TcInlineFieldLayoutList
-      (tc-inline-field-layout-list-with-count (struct-get fields len))]
+      (tc-inline-field-layout-list-with-count fields.len)]
     (tc-inline-aggregate-field-defs-layout-at
       ctx
       (& fields)
@@ -50133,7 +50214,7 @@
   [max-align : i64]
   [stack : TcStringList]
   [layout : TcInlineFieldLayoutList]) : ResultTcInlineFieldsLayout
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     (match (tc-inline-aggregate-finish-layout cursor max-align)
       [(TcLayoutInfo size align)
         (ResultTcInlineFieldsLayout.Ok
@@ -50321,7 +50402,7 @@
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
   (let
     [layout : TcInlineVariantLayoutList
-      (tc-inline-variant-layout-list-with-count (struct-get variants len))]
+      (tc-inline-variant-layout-list-with-count variants.len)]
     (tc-inline-aggregate-variants-layout-at
       ctx
       (& variants)
@@ -50339,7 +50420,7 @@
   [stack : TcStringList]
   [index : i64]
   [layout : TcInlineVariantLayoutList]) : ResultTcInlineAggregateLayout
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     (ResultTcInlineAggregateLayout.Ok
       (TcInlineAggregateLayout.Enum
         (tc-align-up max-size max-align)
@@ -50425,15 +50506,17 @@
 
 (define (tc-agg-layout-cache-table-storage-ensure!) : unit
   (if (=
-    (array-length (struct-get (& tc-lazy-global-table-state) agg-layout-cache))
+    (array-length
+      (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
     tc-agg-layout-cache-capacity)
     unit
     (let
       [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
       (in-arena
         owner
-        (set!
-          (struct-get tc-lazy-global-table-state agg-layout-cache)
+        (__tl-project-set-field
+          tc-lazy-global-table-state
+          agg-layout-cache
           (array.make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity))))))
 
 ;; `make-array` does not produce valid Empty enum slots, so the fill is
@@ -50449,9 +50532,12 @@
           (tc-agg-layout-cache-storage-reset!)
           (while (< i tc-agg-layout-cache-capacity)
             (begin
-              (array-set!
-                (struct-get (& tc-lazy-global-table-state) agg-layout-cache)
-                i
+              (set!
+                (array-ref
+                  (__tl-project-field
+                    tc-lazy-global-table-state
+                    agg-layout-cache)
+                  i)
                 (TcAggLayoutCacheSlot.Empty))
               (set! i (+ i 1))))
           (set! tc-agg-layout-cache-generation (ci.intern-generation)))))))
@@ -50473,7 +50559,7 @@
     (begin
       (while (< steps tc-agg-layout-cache-capacity)
         (match (tc-global-array-element-shared-view
-          (struct-get (& tc-lazy-global-table-state) agg-layout-cache)
+          (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
           cursor)
           [(TcAggLayoutCacheSlot.Empty) (return cursor)]
           [(TcAggLayoutCacheSlot.Full cached-id _)
@@ -50494,9 +50580,10 @@
   [slot : i64]
   [name-id : i64]
   [layout : TcInlineAggregateLayout]) : unit
-  (array-set!
-    (struct-get (& tc-lazy-global-table-state) agg-layout-cache)
-    slot
+  (set!
+    (array-ref
+      (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
+      slot)
     (TcAggLayoutCacheSlot.Full name-id layout)))
 
 (define (tc-inline-aggregate-layout-kind-dispatch
@@ -50548,7 +50635,7 @@
       (begin
         (tc-agg-layout-cache-store! slot name-id layout)
         (match (tc-global-array-element-shared-view
-          (struct-get tc-lazy-global-table-state agg-layout-cache)
+          (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
           slot)
           [(TcAggLayoutCacheSlot.Full _ cached)
             (ResultTcInlineAggregateLayout.Ok cached)]
@@ -50589,7 +50676,7 @@
                 handle
                 stack))
             (match (tc-global-array-element-shared-view
-              (struct-get tc-lazy-global-table-state agg-layout-cache)
+              (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
               slot)
               [(TcAggLayoutCacheSlot.Full _ layout)
                 (begin
@@ -50705,7 +50792,12 @@
     [(ast.AstType.VarArgs _ _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.Tuple types)
-      (tc-inline-aggregate-type-list-layout ctx (box-get types) 0 0 stack)]
+      (tc-inline-aggregate-type-list-layout
+        ctx
+        (__tl-box-place types)
+        0
+        0
+        stack)]
     [(ast.AstType.Array elem count)
       (match (tc-inline-aggregate-type-layout-with-stack
         ctx
@@ -50816,15 +50908,17 @@
 
 (define (tc-agg-size-cache-storage-ensure!) : unit
   (if (=
-    (array-length (struct-get (& tc-lazy-global-table-state) agg-size-cache))
+    (array-length
+      (__tl-project-field tc-lazy-global-table-state agg-size-cache))
     tc-agg-scalar-cache-capacity)
     unit
     (let
       [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
       (in-arena
         owner
-        (set!
-          (struct-get tc-lazy-global-table-state agg-size-cache)
+        (__tl-project-set-field
+          tc-lazy-global-table-state
+          agg-size-cache
           (array.make-array i64 tc-agg-scalar-cache-capacity))))))
 
 (define (tc-agg-size-cache-ensure!) : unit
@@ -50837,9 +50931,10 @@
         (begin
           (while (< i tc-agg-scalar-cache-capacity)
             (begin
-              (array-set!
-                (struct-get (& tc-lazy-global-table-state) agg-size-cache)
-                i
+              (set!
+                (array-ref
+                  (__tl-project-field tc-lazy-global-table-state agg-size-cache)
+                  i)
                 0)
               (set! i (+ i 1))))
           (set! tc-agg-size-cache-generation (ci.intern-generation)))))))
@@ -50869,7 +50964,7 @@
         (let
           [cached : i64
             (array-ref
-              (struct-get (& tc-lazy-global-table-state) agg-size-cache)
+              (__tl-project-field tc-lazy-global-table-state agg-size-cache)
               key)]
           (if (> cached 0)
             (- cached 1)
@@ -50882,9 +50977,12 @@
                 (let
                   [size : i64 (tc-inline-aggregate-layout-size layout)]
                   (begin
-                    (array-set!
-                      (struct-get (& tc-lazy-global-table-state) agg-size-cache)
-                      key
+                    (set!
+                      (array-ref
+                        (__tl-project-field
+                          tc-lazy-global-table-state
+                          agg-size-cache)
+                        key)
                       (+ size 1))
                     size))]
               [(ResultTcInlineAggregateLayout.Err _) fallback])))))))
@@ -50897,15 +50995,17 @@
 
 (define (tc-agg-align-cache-storage-ensure!) : unit
   (if (=
-    (array-length (struct-get (& tc-lazy-global-table-state) agg-align-cache))
+    (array-length
+      (__tl-project-field tc-lazy-global-table-state agg-align-cache))
     tc-agg-scalar-cache-capacity)
     unit
     (let
       [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
       (in-arena
         owner
-        (set!
-          (struct-get tc-lazy-global-table-state agg-align-cache)
+        (__tl-project-set-field
+          tc-lazy-global-table-state
+          agg-align-cache
           (array.make-array i64 tc-agg-scalar-cache-capacity))))))
 
 (define (tc-agg-align-cache-ensure!) : unit
@@ -50918,9 +51018,12 @@
         (begin
           (while (< i tc-agg-scalar-cache-capacity)
             (begin
-              (array-set!
-                (struct-get (& tc-lazy-global-table-state) agg-align-cache)
-                i
+              (set!
+                (array-ref
+                  (__tl-project-field
+                    tc-lazy-global-table-state
+                    agg-align-cache)
+                  i)
                 0)
               (set! i (+ i 1))))
           (set! tc-agg-align-cache-generation (ci.intern-generation)))))))
@@ -50945,7 +51048,7 @@
         (let
           [cached : i64
             (array-ref
-              (struct-get (& tc-lazy-global-table-state) agg-align-cache)
+              (__tl-project-field tc-lazy-global-table-state agg-align-cache)
               key)]
           (if (> cached 0)
             (- cached 1)
@@ -50958,11 +51061,12 @@
                 (let
                   [align : i64 (tc-inline-aggregate-layout-align layout)]
                   (begin
-                    (array-set!
-                      (struct-get
-                        (& tc-lazy-global-table-state)
-                        agg-align-cache)
-                      key
+                    (set!
+                      (array-ref
+                        (__tl-project-field
+                          tc-lazy-global-table-state
+                          agg-align-cache)
+                        key)
                       (+ align 1))
                     align))]
               [(ResultTcInlineAggregateLayout.Err _) fallback])))))))
@@ -50980,15 +51084,16 @@
 (define (tc-agg-regwords-cache-storage-ensure!) : unit
   (if (=
     (array-length
-      (struct-get (& tc-lazy-global-table-state) agg-regwords-cache))
+      (__tl-project-field tc-lazy-global-table-state agg-regwords-cache))
     tc-agg-scalar-cache-capacity)
     unit
     (let
       [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
       (in-arena
         owner
-        (set!
-          (struct-get tc-lazy-global-table-state agg-regwords-cache)
+        (__tl-project-set-field
+          tc-lazy-global-table-state
+          agg-regwords-cache
           (array.make-array i64 tc-agg-scalar-cache-capacity))))))
 
 (define (tc-agg-caches-reset!) : unit
@@ -51008,9 +51113,12 @@
         (begin
           (while (< i tc-agg-scalar-cache-capacity)
             (begin
-              (array-set!
-                (struct-get (& tc-lazy-global-table-state) agg-regwords-cache)
-                i
+              (set!
+                (array-ref
+                  (__tl-project-field
+                    tc-lazy-global-table-state
+                    agg-regwords-cache)
+                  i)
                 0)
               (set! i (+ i 1))))
           (set! tc-agg-regwords-cache-generation (ci.intern-generation)))))))
@@ -51037,7 +51145,7 @@
         (let
           [cached : i64
             (array-ref
-              (struct-get (& tc-lazy-global-table-state) agg-regwords-cache)
+              (__tl-project-field tc-lazy-global-table-state agg-regwords-cache)
               key)]
           (if (> cached 0)
             (- cached 1)
@@ -51053,11 +51161,12 @@
                       (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
                       0)]
                   (begin
-                    (array-set!
-                      (struct-get
-                        (& tc-lazy-global-table-state)
-                        agg-regwords-cache)
-                      key
+                    (set!
+                      (array-ref
+                        (__tl-project-field
+                          tc-lazy-global-table-state
+                          agg-regwords-cache)
+                        key)
                       (+ words 1))
                     words))]
               [(ResultTcInlineAggregateLayout.Err _) 0])))))))
@@ -51221,7 +51330,7 @@
   [seen : TcStringList]) : ResultTcReprCLayout
   (let
     [layout : TcReprCFieldLayoutList
-      (tc-repr-c-field-layout-list-with-count (struct-get fields len))]
+      (tc-repr-c-field-layout-list-with-count fields.len)]
     (tc-repr-c-fields-layout-at
       ctx
       owner
@@ -51241,7 +51350,7 @@
   [max-align : i64]
   [seen : TcStringList]
   [layout : TcReprCFieldLayoutList]) : ResultTcReprCLayout
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     (if (= max-align 0)
       (ResultTcReprCLayout.Err
         "typecheck: repr c struct needs at least one field")
@@ -51483,8 +51592,8 @@
     ;; declaration that passed the test, plus a second out-of-line call for the
     ;; test itself). Every arm here binds only an i64 name, so the projection
     ;; match loads the tag and one word.
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-offset : i64 decls.offset]
     (begin
       (while (< index count)
         (begin
@@ -51539,7 +51648,7 @@
       (match program
         [(ast.AstProgram.Program decls-box)
           (let
-            [decls : ast.AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (__tl-box-place decls-box)]
             (begin
               (ctfe_support.ctfe-build-seen-reset!)
               (tc-ctfe-layouts-from-decls
@@ -51738,7 +51847,7 @@
   [ctx : TcContext]
   [enum-name : i64]
   [variants : ast.AstVariantDefList]) : ResultTcResultInfo
-  (if (= (struct-get (& variants) len) 2)
+  (if (= variants.len 2)
     (let
       [first : ast.AstVariantDef
         (ast.ast-variant-def-list-get
@@ -51855,7 +51964,7 @@
       (match (tc-context-program ctx)
         [(ast.AstProgram.Program decls-box)
           (let
-            [decls : ast.AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (__tl-box-place decls-box)]
             (tc-variant-owner-name-list
               decls
               (csym.compiler-registry-handle-owner-index handle)
@@ -52207,7 +52316,7 @@
       (match (tc-struct-field-type-with-args-id
         ctx
         struct-name
-        (box-get lifetimes)
+        (__tl-box-place lifetimes)
         field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok
@@ -52216,7 +52325,7 @@
     [(ast.AstType.Ref lifetime referent-ty)
       (match (tc-struct-get-result-type-id
         ctx
-        (ast.ty-node-get referent-ty)
+        (tc-context-type-get ctx referent-ty)
         field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok (tc-tag-region lifetime field-ty))]
@@ -52224,7 +52333,7 @@
     [(ast.AstType.MutRef lifetime referent-ty)
       (match (tc-struct-get-result-type-id
         ctx
-        (ast.ty-node-get referent-ty)
+        (tc-context-type-get ctx referent-ty)
         field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok (tc-tag-region lifetime field-ty))]
@@ -52259,8 +52368,22 @@
             "MatchArmList"
             (tc-macro-match-arm-type)
             field-id)]
-        [else (ResultTcType.Err "typecheck: struct-get requires struct")])]
-    [_ (ResultTcType.Err "typecheck: struct-get requires struct")]))
+        [else
+          (ResultTcType.Err
+            (str_cat.str-cat
+              "typecheck: field projection ."
+              (ci.intern-str field-id)
+              " requires struct, got "
+              (tc-type-render
+                (tc-type-strip-region (tc-resolve-type ctx receiver-ty)))))])]
+    [_
+      (ResultTcType.Err
+        (str_cat.str-cat
+          "typecheck: field projection ."
+          (ci.intern-str field-id)
+          " requires struct, got "
+          (tc-type-render
+            (tc-type-strip-region (tc-resolve-type ctx receiver-ty)))))]))
 
 (define (tc-borrow-place-var-by-value [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
   (match (tc-type-outer-region ty)
@@ -52273,11 +52396,11 @@
 (define (tc-reference-containing-place-borrow-ok? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
     [(ast.AstType.EnumArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [_ false]))
 
 (define (tc-borrow-place-var [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
@@ -52342,7 +52465,7 @@
           (match (tc-struct-field-type-with-args-id
             ctx
             struct-name
-            (box-get lifetimes)
+            (__tl-box-place lifetimes)
             field-id)
             [(ResultTcType.Ok field-ty)
               (ResultTcBorrowPlace.Ok
@@ -52350,7 +52473,7 @@
             [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])]
         [_
           (ResultTcBorrowPlace.Err
-            "typecheck: struct-get borrow requires struct place")])]))
+            "typecheck: field projection borrow requires struct place")])]))
 
 (define (tc-borrow-place-tuple-field
   [ctx : TcContext]
@@ -52360,7 +52483,7 @@
     [(TcBorrowPlace lifetime tuple-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
         [(ast.AstType.Tuple elems)
-          (match (tc-type-list-ref (box-get elems) index)
+          (match (tc-type-list-ref (__tl-box-place elems) index)
             [(ResultTcType.Ok elem-ty)
               (ResultTcBorrowPlace.Ok
                 (tc-borrow-place-projected-type lifetime elem-ty))]
@@ -52407,8 +52530,7 @@
               lifetime
               (tc-borrow-referent-type (ast.ty-node-get inner-ty))))]
         [_
-          (ResultTcBorrowPlace.Err
-            "typecheck: box-get borrow requires Box place")])]))
+          (ResultTcBorrowPlace.Err "typecheck: deref borrow requires Box place")])]))
 
 (define (tc-borrow-place-deref
   [ctx : TcContext]
@@ -52437,8 +52559,8 @@
   [expr : ast.AstExpr]) : ResultTcBorrowPlace
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-expr-id env name)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
             (tc-borrow-place
               ctx
@@ -52584,8 +52706,8 @@
   [expr : ast.AstExpr]) : ResultTcNameId
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-expr-id env name)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
             (tc-store-place-lifetime ctx env (ast.ast-node-get virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcNameId.Err message)])
@@ -52808,7 +52930,7 @@
       (ResultTcTypeList.Ok
         (tc-project-type-list-from-region-container
           tuple-ty
-          (box-get elem-types-box)))]
+          (__tl-box-place elem-types-box)))]
     [_
       (ResultTcTypeList.Err "typecheck: tuple pattern requires Tuple scrutinee")]))
 
@@ -52929,9 +53051,9 @@
     [(ast.AstPattern.Binding _) (tc-bind-sub-pattern ctx env pattern elem-ty)]
     [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
     [(ast.AstPattern.Tuple patterns-box)
-      (tc-bind-tuple-pattern ctx env elem-ty (box-get patterns-box))]
+      (tc-bind-tuple-pattern ctx env elem-ty (__tl-box-place patterns-box))]
     [(ast.AstPattern.Array patterns-box)
-      (tc-bind-array-pattern ctx env elem-ty (box-get patterns-box))]
+      (tc-bind-array-pattern ctx env elem-ty (__tl-box-place patterns-box))]
     [(ast.AstPattern.Variant name _)
       (match (tc-type-strip-region (tc-resolve-type ctx elem-ty))
         [(ast.AstType.Struct _) (tc-bind-sub-pattern ctx env pattern elem-ty)]
@@ -53043,7 +53165,7 @@
   [inner-ty : ast.AstType]) : bool
   (let
     [args-ref : (& args ast.AstPatternList) (& args)]
-    (if (= (struct-get args-ref len) 1)
+    (if (= args-ref.len 1)
       (tc-box-pattern-inner-supported?
         ctx
         (ast.ast-pattern-list-get args-ref 0 (ast.ast-pattern-fallback))
@@ -53063,18 +53185,18 @@
         [(ast.AstType.Tuple elem-types-box)
           (tc-pattern-list-irrefutable?
             ctx
-            (box-get patterns-box)
-            (box-get elem-types-box))]
+            (__tl-box-place patterns-box)
+            (__tl-box-place elem-types-box))]
         [_ false])]
     [(ast.AstPattern.Array patterns-box)
-      (tc-array-pattern-irrefutable? ctx (box-get patterns-box) inner-ty)]
+      (tc-array-pattern-irrefutable? ctx (__tl-box-place patterns-box) inner-ty)]
     [(ast.AstPattern.Variant name args-box)
       (if (tc-box-pattern-name? name)
         (match (tc-type-strip-region (tc-resolve-type ctx inner-ty))
           [(ast.AstType.Box nested-inner)
             (tc-box-pattern-args-supported?
               ctx
-              (box-get args-box)
+              (__tl-box-place args-box)
               (ast.ty-node-get nested-inner))]
           [_ false])
         (match (tc-type-strip-region (tc-resolve-type ctx inner-ty))
@@ -53086,7 +53208,7 @@
               inner-ty
               (tc-env-key-name-text name)
               name
-              (box-get args-box))]
+              (__tl-box-place args-box))]
           [(ast.AstType.StructArgs struct-name _)
             (tc-struct-pattern-irrefutable?
               ctx
@@ -53095,7 +53217,7 @@
               inner-ty
               (tc-env-key-name-text name)
               name
-              (box-get args-box))]
+              (__tl-box-place args-box))]
           [_ false]))]
     [_ false]))
 
@@ -53106,7 +53228,7 @@
   [inner-ty : ast.AstType]) : ResultTcEnv
   (let
     [args-ref : (& args ast.AstPatternList) (& args)]
-    (if (= (struct-get args-ref len) 1)
+    (if (= args-ref.len 1)
       (let
         [inner : ast.AstPattern
           (ast.ast-pattern-list-get args-ref 0 (ast.ast-pattern-fallback))]
@@ -53189,7 +53311,7 @@
         (match (tc-lifetime-subst-from-nominal-args-id
           ctx
           struct-name-id
-          (box-get lifetimes))
+          (__tl-box-place lifetimes))
           [(ResultTcLifetimeSubst.Ok subst)
             (ResultTcTypeList.Ok
               (tc-project-type-list-from-region-container
@@ -53200,7 +53322,7 @@
         (match (tc-lifetime-subst-from-nominal-args-id
           ctx
           struct-name-id
-          (box-get lifetimes))
+          (__tl-box-place lifetimes))
           [(ResultTcLifetimeSubst.Ok subst)
             (ResultTcTypeList.Ok
               (tc-project-type-list-from-region-container
@@ -53297,12 +53419,12 @@
       [(ast.AstPattern.Binding name) (ResultTcEnv.Ok (tc-bind-id env name ty))]
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(ast.AstPattern.Tuple patterns-box)
-        (tc-bind-tuple-pattern ctx env ty (box-get patterns-box))]
+        (tc-bind-tuple-pattern ctx env ty (__tl-box-place patterns-box))]
       [(ast.AstPattern.Array patterns-box)
-        (tc-bind-array-pattern ctx env ty (box-get patterns-box))]
+        (tc-bind-array-pattern ctx env ty (__tl-box-place patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
-          [args : ast.AstPatternList (box-get args-box)]
+          [args : ast.AstPatternList (__tl-box-place args-box)]
           (match (tc-type-strip-region ty)
             [(ast.AstType.Struct struct-name)
               (tc-bind-struct-pattern
@@ -53360,12 +53482,12 @@
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
       [(ast.AstPattern.Tuple patterns-box)
-        (tc-bind-tuple-pattern ctx env ty (box-get patterns-box))]
+        (tc-bind-tuple-pattern ctx env ty (__tl-box-place patterns-box))]
       [(ast.AstPattern.Array patterns-box)
-        (tc-bind-array-pattern ctx env ty (box-get patterns-box))]
+        (tc-bind-array-pattern ctx env ty (__tl-box-place patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
-          [args : ast.AstPatternList (box-get args-box)]
+          [args : ast.AstPatternList (__tl-box-place args-box)]
           (match (tc-type-strip-region ty)
             [(ast.AstType.Expr)
               (tc-bind-expr-variant-pattern ctx env name args)]
@@ -53384,7 +53506,7 @@
                 env
                 enum-name
                 name
-                (box-get lifetimes)
+                (__tl-box-place lifetimes)
                 args
                 (tc-type-outer-regions ty))]
             [(ast.AstType.Struct struct-name)
@@ -53598,14 +53720,14 @@
         env
         lifetime
         elem-ty
-        (box-get patterns-box))]
+        (__tl-box-place patterns-box))]
     [(ast.AstPattern.Array patterns-box)
       (tc-bind-borrowed-array-pattern
         ctx
         env
         lifetime
         elem-ty
-        (box-get patterns-box))]
+        (__tl-box-place patterns-box))]
     [(ast.AstPattern.Variant name args-box)
       (match (tc-type-strip-region (tc-resolve-type ctx elem-ty))
         [(ast.AstType.Struct struct-name)
@@ -53618,7 +53740,7 @@
             elem-ty
             (tc-env-key-name-text name)
             name
-            (box-get args-box))]
+            (__tl-box-place args-box))]
         [(ast.AstType.StructArgs struct-name _)
           (tc-bind-borrowed-struct-pattern
             ctx
@@ -53629,7 +53751,7 @@
             elem-ty
             (tc-env-key-name-text name)
             name
-            (box-get args-box))]
+            (__tl-box-place args-box))]
         [_
           (ResultTcEnv.Err
             "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern")])]
@@ -53770,17 +53892,17 @@
           env
           lifetime
           ty
-          (box-get patterns-box))]
+          (__tl-box-place patterns-box))]
       [(ast.AstPattern.Array patterns-box)
         (tc-bind-borrowed-array-pattern
           ctx
           env
           lifetime
           ty
-          (box-get patterns-box))]
+          (__tl-box-place patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
-          [args : ast.AstPatternList (box-get args-box)]
+          [args : ast.AstPatternList (__tl-box-place args-box)]
           (match (tc-type-strip-region ty)
             [(ast.AstType.Enum enum-name)
               (tc-bind-borrowed-variant-pattern
@@ -53798,7 +53920,7 @@
                 lifetime
                 enum-name
                 name
-                (box-get lifetimes)
+                (__tl-box-place lifetimes)
                 args)]
             [(ast.AstType.Box _)
               (if (tc-box-pattern-name? name)
@@ -53855,7 +53977,7 @@
         (ast.ast-pattern-list-new))]
     [(ast.AstPattern.Variant variant-name args-box)
       (let
-        [args : ast.AstPatternList (box-get args-box)]
+        [args : ast.AstPatternList (__tl-box-place args-box)]
         (tc-bind-borrowed-variant-pattern
           ctx
           env
@@ -53919,7 +54041,7 @@
               env
               lifetime
               enum-name
-              (box-get lifetimes)
+              (__tl-box-place lifetimes)
               pattern)]
           [(ast.AstType.Tuple _)
             (match pattern
@@ -53932,7 +54054,7 @@
                   env
                   lifetime
                   referent-ty
-                  (box-get patterns-box))]
+                  (__tl-box-place patterns-box))]
               [_
                 (ResultTcEnv.Err
                   "typecheck: borrowed tuple match requires (tuple ...), binding, or wildcard pattern")])]
@@ -53947,7 +54069,7 @@
                   env
                   lifetime
                   referent-ty
-                  (box-get patterns-box))]
+                  (__tl-box-place patterns-box))]
               [_
                 (ResultTcEnv.Err
                   "typecheck: borrowed fixed-array match requires (array ...), binding, or wildcard pattern")])]
@@ -53982,7 +54104,7 @@
             (tc-type-outer-regions scrut-ty))]
         [(ast.AstPattern.Variant variant-name args-box)
           (let
-            [args : ast.AstPatternList (box-get args-box)]
+            [args : ast.AstPatternList (__tl-box-place args-box)]
             (tc-bind-variant-pattern
               ctx
               env
@@ -54001,18 +54123,18 @@
             env
             enum-name
             variant-name
-            (box-get lifetimes)
+            (__tl-box-place lifetimes)
             (ast.ast-pattern-list-new)
             (tc-type-outer-regions scrut-ty))]
         [(ast.AstPattern.Variant variant-name args-box)
           (let
-            [args : ast.AstPatternList (box-get args-box)]
+            [args : ast.AstPatternList (__tl-box-place args-box)]
             (tc-bind-variant-pattern
               ctx
               env
               enum-name
               variant-name
-              (box-get lifetimes)
+              (__tl-box-place lifetimes)
               args
               (tc-type-outer-regions scrut-ty)))]
         [_ (ResultTcEnv.Err "typecheck: unsupported enum match pattern")])]
@@ -54030,7 +54152,7 @@
             scrut-ty
             (ci.intern-str pattern-name)
             pattern-name
-            (box-get args-box))]
+            (__tl-box-place args-box))]
         [_
           (ResultTcEnv.Err
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
@@ -54048,7 +54170,7 @@
             scrut-ty
             (ci.intern-str pattern-name)
             pattern-name
-            (box-get args-box))]
+            (__tl-box-place args-box))]
         [_
           (ResultTcEnv.Err
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
@@ -54058,7 +54180,7 @@
         [(ast.AstPattern.Binding name)
           (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
         [(ast.AstPattern.Tuple patterns-box)
-          (tc-bind-tuple-pattern ctx env scrut-ty (box-get patterns-box))]
+          (tc-bind-tuple-pattern ctx env scrut-ty (__tl-box-place patterns-box))]
         [_
           (ResultTcEnv.Err
             "typecheck: tuple match requires (tuple ...), binding, or wildcard pattern")])]
@@ -54068,7 +54190,7 @@
         [(ast.AstPattern.Binding name)
           (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
         [(ast.AstPattern.Array patterns-box)
-          (tc-bind-array-pattern ctx env scrut-ty (box-get patterns-box))]
+          (tc-bind-array-pattern ctx env scrut-ty (__tl-box-place patterns-box))]
         [_
           (ResultTcEnv.Err
             "typecheck: fixed-array match requires (array ...), binding, or wildcard pattern")])]
@@ -54086,7 +54208,7 @@
           (tc-bind-literal-pattern env lit scrut-ty)]
         [(ast.AstPattern.Variant name args-box)
           (let
-            [args : ast.AstPatternList (box-get args-box)]
+            [args : ast.AstPatternList (__tl-box-place args-box)]
             (if (tc-box-pattern-name? name)
               (tc-bind-box-pattern ctx env args (ast.ty-node-get inner-ty))
               (ResultTcEnv.Err
@@ -54172,7 +54294,7 @@
   [expected : ast.AstType]) : ResultTcType
   (let
     [arms-ref : (& arms ast.AstMatchArmList) (& arms)]
-    (if (= (struct-get arms-ref len) 0)
+    (if (= arms-ref.len 0)
       (ResultTcType.Err "typecheck: match must have at least one arm")
       (tc-check-match-arm-types-with-expected-at
         ctx
@@ -54189,7 +54311,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [expected : ast.AstType]
   [index : i64]) : ResultTcType
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (ResultTcType.Ok expected)
     (match (tc-match-arm-type-with-expected
       ctx
@@ -54214,7 +54336,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
   [want : ast.AstType]) : ResultTcType
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (ResultTcType.Ok want)
     (let
       [arm : ast.AstMatchArm
@@ -54246,7 +54368,7 @@
   [rest : (& rest ast.AstMatchArmList)]
   [index : i64]
   [first-ty : ast.AstType]) : ResultTcType
-  (if (>= index (struct-get rest len))
+  (if (>= index rest.len)
     (ResultTcType.Ok first-ty)
     (let
       [second-arm : ast.AstMatchArm
@@ -54305,7 +54427,7 @@
   [arms : ast.AstMatchArmList]) : ResultTcType
   (let
     [arms-ref : (& arms ast.AstMatchArmList) (& arms)]
-    (if (= (struct-get arms-ref len) 0)
+    (if (= arms-ref.len 0)
       (ResultTcType.Err "typecheck: match must have at least one arm")
       (let
         [arm : ast.AstMatchArm
@@ -54534,7 +54656,7 @@
             [(ast.AstProgram.Program decls-box)
               (match (tc-source-dotted-alias-target-id-in-context
                 ctx
-                (box-get decls-box)
+                (__tl-box-place decls-box)
                 (tc-context-module-id ctx)
                 alias-id)
                 [(TcMaybeNameId.Some target-id) target-id]
@@ -54610,7 +54732,7 @@
         [(ast.AstProgram.Program decls-box)
           (match (tc-source-dotted-alias-target-id-in-context
             ctx
-            (box-get decls-box)
+            (__tl-box-place decls-box)
             (tc-context-module-id ctx)
             alias-id)
             [(TcMaybeNameId.Some target-module-id)
@@ -54702,7 +54824,7 @@
           [(ast.AstProgram.Program decls-box)
             (match (tc-source-dotted-alias-target-id-in-context
               ctx
-              (box-get decls-box)
+              (__tl-box-place decls-box)
               (tc-context-module-id ctx)
               alias-id)
               [(TcMaybeNameId.Some target-module-id)
@@ -54873,7 +54995,7 @@
   [variant-id : i64]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : option_i64.Option
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     option_i64.None
     (match (ast.ast-variant-def-list-get
       variants
@@ -55119,7 +55241,7 @@
       (ResultTcEnv.Ok (tc-bind-id env name (ast.AstType.Expr)))]
     [(ast.AstPattern.Variant variant-name args-box)
       (let
-        [args : ast.AstPatternList (box-get args-box)]
+        [args : ast.AstPatternList (__tl-box-place args-box)]
         (tc-bind-expr-variant-pattern ctx env variant-name args))]
     [_ (ResultTcEnv.Err "typecheck: unsupported Expr match pattern")]))
 
@@ -55139,7 +55261,7 @@
         (tc-bind-sub-pattern-list
           ctx
           env
-          (box-get args-box)
+          (__tl-box-place args-box)
           (tc-type-list2 (ast.AstType.Expr) (ast.AstType.Expr)))
         (ResultTcEnv.Err
           (str_cat.str-cat
@@ -55157,7 +55279,7 @@
       (if (tc-expr-clause-pattern-name? name)
         (tc-pattern-list-irrefutable?
           ctx
-          (box-get args-box)
+          (__tl-box-place args-box)
           (tc-type-list2 (ast.AstType.Expr) (ast.AstType.Expr)))
         false)]
     [_ false]))
@@ -55167,7 +55289,7 @@
   [variants : ast.AstVariantDefList]
   [enum-id : i64]
   [pattern-id : i64]) : TcMaybeNameId
-  (if (= (struct-get (& variants) len) 1)
+  (if (= variants.len 1)
     (match (ast.ast-variant-def-list-get
       (& variants)
       0
@@ -55270,13 +55392,16 @@
     [(ast.AstPattern.Tuple patterns-box)
       (match (tc-tuple-pattern-element-types ctx field-ty)
         [(ResultTcTypeList.Ok elem-types)
-          (tc-pattern-list-irrefutable? ctx (box-get patterns-box) elem-types)]
+          (tc-pattern-list-irrefutable?
+            ctx
+            (__tl-box-place patterns-box)
+            elem-types)]
         [(ResultTcTypeList.Err _) false])]
     [(ast.AstPattern.Array patterns-box)
-      (tc-array-pattern-irrefutable? ctx (box-get patterns-box) field-ty)]
+      (tc-array-pattern-irrefutable? ctx (__tl-box-place patterns-box) field-ty)]
     [(ast.AstPattern.Variant name args-box)
       (let
-        [args : ast.AstPatternList (box-get args-box)]
+        [args : ast.AstPatternList (__tl-box-place args-box)]
         (match (tc-type-strip-region (tc-resolve-type ctx field-ty))
           [(ast.AstType.Enum enum-name)
             (match (tc-context-enum-variants-id
@@ -55380,7 +55505,7 @@
       (tc-variant-name-matches-id? ctx enum-id name variant-id)]
     [(ast.AstPattern.Variant name args-box)
       (let
-        [args : ast.AstPatternList (box-get args-box)]
+        [args : ast.AstPatternList (__tl-box-place args-box)]
         (and
           (tc-variant-name-matches-id? ctx enum-id name variant-id)
           (tc-variant-pattern-irrefutable-id? ctx enum-id variant-id args)))]
@@ -55399,7 +55524,7 @@
   [enum-id : i64]
   [variant-id : i64]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern _)
@@ -55440,7 +55565,7 @@
   [enum-id : i64]
   [variant-id : i64]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern _)
@@ -55466,7 +55591,7 @@
   [variants : (& variants ast.AstVariantDefList)]
   [arms : ast.AstMatchArmList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     ResultTcUnit.Ok
     (match (ast.ast-variant-def-list-get
       variants
@@ -55491,7 +55616,7 @@
 (define (tc-match-arms-have-catchall-at?
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern _)
@@ -55511,7 +55636,7 @@
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern _)
@@ -55530,7 +55655,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [want : bool]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern _)
@@ -55562,7 +55687,7 @@
           (if (tc-box-pattern-name? name)
             (tc-box-pattern-args-supported?
               ctx
-              (box-get args-box)
+              (__tl-box-place args-box)
               (ast.ty-node-get inner-ty))
             false)]
         [_ false])]
@@ -55578,7 +55703,7 @@
             scrut-ty
             (tc-env-key-name-text name)
             name
-            (box-get args-box))]
+            (__tl-box-place args-box))]
         [_ false])]
     [(ast.AstType.StructArgs struct-name _)
       (match pattern
@@ -55592,7 +55717,7 @@
             scrut-ty
             (tc-env-key-name-text name)
             name
-            (box-get args-box))]
+            (__tl-box-place args-box))]
         [_ false])]
     [(ast.AstType.Tuple elem-types-box)
       (match pattern
@@ -55601,15 +55726,18 @@
         [(ast.AstPattern.Tuple patterns-box)
           (tc-pattern-list-irrefutable?
             ctx
-            (box-get patterns-box)
-            (box-get elem-types-box))]
+            (__tl-box-place patterns-box)
+            (__tl-box-place elem-types-box))]
         [_ false])]
     [(ast.AstType.Array _ _)
       (match pattern
         [(ast.AstPattern.Wildcard) true]
         [(ast.AstPattern.Binding _) true]
         [(ast.AstPattern.Array patterns-box)
-          (tc-array-pattern-irrefutable? ctx (box-get patterns-box) scrut-ty)]
+          (tc-array-pattern-irrefutable?
+            ctx
+            (__tl-box-place patterns-box)
+            scrut-ty)]
         [_ false])]
     [(ast.AstType.Ref _ referent-box)
       (match (tc-type-strip-region
@@ -55621,8 +55749,8 @@
             [(ast.AstPattern.Tuple patterns-box)
               (tc-pattern-list-irrefutable?
                 ctx
-                (box-get patterns-box)
-                (box-get elem-types-box))]
+                (__tl-box-place patterns-box)
+                (__tl-box-place elem-types-box))]
             [_ false])]
         [(ast.AstType.Array _ _)
           (match pattern
@@ -55631,7 +55759,7 @@
             [(ast.AstPattern.Array patterns-box)
               (tc-array-pattern-irrefutable?
                 ctx
-                (box-get patterns-box)
+                (__tl-box-place patterns-box)
                 (ast.ty-node-get referent-box))]
             [_ false])]
         [_
@@ -55665,7 +55793,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [seen-catchall : bool]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     ResultTcUnit.Ok
     (if seen-catchall
       (ResultTcUnit.Err "typecheck: unreachable match arm after wildcard `_`")
@@ -55907,7 +56035,7 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-value-pure-at expr-bases inner in-index))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -55933,7 +56061,7 @@
         "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md 5.15)")]
     [(ast.AstExpr.ArraySet _ _ _)
       (ResultTcUnit.Err
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+        "array element assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(ast.AstExpr.ArrayTake _ _ _)
       (ResultTcUnit.Err
         "`array-take!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
@@ -56417,7 +56545,7 @@
   [env : TcTypeEnv]
   [args : (& args ast.AstExprList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     (ResultTcUnit.Ok)
     (match (tc-expr
       ctx
@@ -56485,7 +56613,7 @@
         [(ast.AstType.Box inner-ty)
           (ResultTcType.Ok
             (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
-        [_ (ResultTcType.Err "typecheck: box-get requires Box type")])]
+        [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-box-get-expr-with-expected-or-actual
@@ -56509,7 +56637,7 @@
             (if (tc-type-compatible? expected projected)
               (ResultTcType.Ok (tc-contextual-result-type expected projected))
               (ResultTcType.Ok projected)))]
-        [_ (ResultTcType.Err "typecheck: box-get requires Box type")])]
+        [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-deref-result-type [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcType
@@ -56668,7 +56796,7 @@
         (match (tc-lifetime-subst-from-nominal-args-id
           ctx
           struct-name-id
-          (box-get lifetimes))
+          (__tl-box-place lifetimes))
           [(ResultTcLifetimeSubst.Ok subst)
             (tc-lifetime-subst-type-list subst field-types)]
           [(ResultTcLifetimeSubst.Err _) field-types])]
@@ -56676,7 +56804,7 @@
         (match (tc-lifetime-subst-from-nominal-args-id
           ctx
           struct-name-id
-          (box-get lifetimes))
+          (__tl-box-place lifetimes))
           [(ResultTcLifetimeSubst.Ok subst)
             (tc-lifetime-subst-type-list subst field-types)]
           [(ResultTcLifetimeSubst.Err _) field-types])]
@@ -56694,7 +56822,7 @@
         (match (tc-lifetime-subst-from-nominal-args-id
           ctx
           enum-name-id
-          (box-get lifetimes))
+          (__tl-box-place lifetimes))
           [(ResultTcLifetimeSubst.Ok subst)
             (tc-lifetime-subst-type-list subst field-types)]
           [(ResultTcLifetimeSubst.Err _) field-types])]
@@ -56702,7 +56830,7 @@
         (match (tc-lifetime-subst-from-nominal-args-id
           ctx
           enum-name-id
-          (box-get lifetimes))
+          (__tl-box-place lifetimes))
           [(ResultTcLifetimeSubst.Ok subst)
             (tc-lifetime-subst-type-list subst field-types)]
           [(ResultTcLifetimeSubst.Err _) field-types])]
@@ -56852,7 +56980,7 @@
         [(ast.AstType.Tuple elems)
           (match (tc-init-aggregate-layout-ok ctx resolved)
             [(ResultTcUnit.Ok)
-              (tc-init-type-list-supported ctx env (box-get elems))]
+              (tc-init-type-list-supported ctx env (__tl-box-place elems))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
         [(ast.AstType.Array elem count)
           (if (< count 0)
@@ -56902,7 +57030,7 @@
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-quasiquote-template-ok
       ctx
@@ -57458,8 +57586,8 @@
           (tc-lambda-expr-normalized-with-capture-check
             ctx
             env
-            (struct-get signature params)
-            (ast.AstMaybeType.Some (struct-get signature ret))
+            signature.params
+            (ast.AstMaybeType.Some signature.ret)
             body
             allow-immutable-reference-captures)]
         [(ResultTcElidedSignature.Err message) (ResultTcType.Err message)])]
@@ -57474,7 +57602,7 @@
           (tc-lambda-expr-normalized-with-capture-check
             ctx
             env
-            (struct-get inputs params)
+            inputs.params
             (ast.AstMaybeType.No)
             body
             allow-immutable-reference-captures)]
@@ -57490,7 +57618,7 @@
   (match (tc-lambda-expr-with-capture-check ctx env params maybe-ret body false)
     [(ResultTcType.Ok fn-ty)
       (if (and
-        (struct-get
+        (__tl-project-field
           (tc-body-state-data-value (tc-context-body-state ctx))
           type-facts-recording)
         (tc-lambda-capture-has-move-only?
@@ -57550,7 +57678,7 @@
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
     [(ast.AstType.Slice _)
       (ResultTcArrayReceiver.Err
-        "typecheck: array-set! requires mutable array access")]
+        "typecheck: set! array element requires mutable array access")]
     [(ast.AstType.MutRef _ referent-ty)
       (match (tc-type-strip-region
         (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
@@ -57562,8 +57690,10 @@
       ;; Shared borrows, including shared Slice borrows, are readable but
       ;; never writable.  Preserve the focused mutable-access diagnostic.
       (ResultTcArrayReceiver.Err
-        "typecheck: array-set! requires mutable array access")]
-    [_ (ResultTcArrayReceiver.Err "typecheck: array-set! requires array type")]))
+        "typecheck: set! array element requires mutable array access")]
+    [_
+      (ResultTcArrayReceiver.Err
+        "typecheck: set! array element requires array type")]))
 
 (define (tc-fixed-array-take-receiver
   [ctx : TcContext]
@@ -57589,9 +57719,23 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [array : ast.AstExpr]) : bool
-  (match (tc-move-root-projection-var-id (tc-context-expr-bases ctx) array)
-    [(TcMaybeNameId.Some root-id) (tc-cleanup-owner-active-id? env root-id)]
-    [(TcMaybeNameId.No) false]))
+  (match (ast.ast-expr-unspan array)
+    [(ast.AstExpr.Var name)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check name)
+          [(ResultTcExprId.Ok virtual-id)
+            (tc-fixed-array-take-active-cleanup-owner-place?
+              ctx
+              env
+              (ast.ast-expr-segment-bases-get
+                (tc-context-expr-bases ctx)
+                virtual-id))]
+          [(ResultTcExprId.Err _) false])
+        (tc-cleanup-owner-active-id? env name))]
+    [_
+      (match (tc-move-root-projection-var-id (tc-context-expr-bases ctx) array)
+        [(TcMaybeNameId.Some root-id) (tc-cleanup-owner-active-id? env root-id)]
+        [(TcMaybeNameId.No) false])]))
 
 (define (tc-fixed-array-take-type
   [ctx : TcContext]
@@ -57691,13 +57835,19 @@
   [index : i64]) : ResultTcType
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(ast.AstType.Tuple elems)
-      (match (tc-type-list-ref (box-get elems) index)
+      (match (tc-type-list-ref (__tl-box-place elems) index)
         [(ResultTcType.Ok elem-ty)
           (ResultTcType.Ok
             (tc-project-from-region-container receiver-ty elem-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstType.MutRef _ referent-ty)
-      (tc-tuple-set-element-type ctx (ast.ty-node-get referent-ty) index)]
+      (let
+        [referent : ast.AstType (tc-context-type-get ctx referent-ty)]
+        (match (tc-type-strip-region (tc-resolve-type ctx referent))
+          [(ast.AstType.Tuple _) (tc-tuple-set-element-type ctx referent index)]
+          [_
+            (ResultTcType.Err
+              "typecheck: set! tuple element mutable reference requires tuple")]))]
     [(ast.AstType.Ref _ _)
       (ResultTcType.Err
         "typecheck: set! tuple element requires mutable tuple access")]
@@ -57947,7 +58097,8 @@
       [(ctfe_support.ResultCtfeQuoteType.Ok ty _)
         (ResultTcType.Ok (tc-resolve-type ctx ty))]
       [(ctfe_support.ResultCtfeQuoteType.Err diag)
-        (ResultTcType.Err (cdiag.compiler-diagnostic-message (box-get diag)))])))
+        (ResultTcType.Err
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))
 
 (define (tc-for-owned-body-unit
   [ctx : TcContext]
@@ -58124,7 +58275,7 @@
         (tc-lookup-id env name)
         (let
           [name-text : String (tc-hygiene-name-text-id name)]
-          (if (tc-dotted-local-field-name-id? env name)
+          (if (tc-dotted-place-name-id? ctx env name)
             (match (tc-dotted-local-field-expr-id-after-check name)
               [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
               [(ResultTcExprId.Err message) (ResultTcType.Err message)])
@@ -58156,7 +58307,7 @@
               [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -58174,7 +58325,7 @@
                   [(ResultTcType.Err message) (ResultTcType.Err message)])]
               [(ResultTcEnv.Err message) (ResultTcType.Err message)]))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -58193,7 +58344,7 @@
         [(ResultTcType.Ok tuple-ty)
           (match (tc-type-strip-region tuple-ty)
             [(ast.AstType.Tuple tys)
-              (match (tc-type-list-ref (box-get tys) index)
+              (match (tc-type-list-ref (__tl-box-place tys) index)
                 [(ResultTcType.Ok elem-ty)
                   (ResultTcType.Ok
                     (tc-project-from-region-container tuple-ty elem-ty))]
@@ -58295,7 +58446,7 @@
                             container-ty
                             elem-ty
                             value
-                            "typecheck: array-set! value type mismatch")])]
+                            "typecheck: array assignment value type mismatch")])]
                     [(ResultTcArrayReceiver.Err message)
                       (ResultTcType.Err message)])
                   (ResultTcType.Err "typecheck: array index must be integer"))]
@@ -58425,7 +58576,7 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Set name value-box)
-      (if (tc-dotted-local-field-name-id? env name)
+      (if (tc-dotted-place-name-id? ctx env name)
         (match (tc-dotted-local-field-set-expr-id-after-check name value-box)
           [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
           [(ResultTcExprId.Err message) (ResultTcType.Err message)])
@@ -58446,7 +58597,7 @@
                   "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Borrow mutable lifetime-id place-box)
-      (match (tc-normalize-dotted-local-field-node! env place-box)
+      (match (tc-normalize-dotted-local-field-node! ctx env place-box)
         [(ResultTcUnit.Ok)
           (tc-borrow-expr
             ctx
@@ -58494,7 +58645,7 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -58547,7 +58698,7 @@
                 [(ResultTcType.Err message) (ResultTcType.Err message)])
               (ResultTcType.Err "typecheck: foreach index type must be integer")))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             op
             index
@@ -58601,7 +58752,7 @@
               (ResultTcType.Err
                 "typecheck: spmd-reduce index type must be integer")))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             op
             index
@@ -58728,7 +58879,7 @@
     [(ast.AstExpr.SpmdProgramIndex) (ResultTcType.Ok (ast.AstType.I64))]
     [(ast.AstExpr.SpmdProgramCount) (ResultTcType.Ok (ast.AstType.I64))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (match (tc-expr-id ctx env scrutinee-box)
             [(ResultTcType.Ok scrut-ty) (tc-match-expr ctx env scrut-ty arms)]
@@ -58755,7 +58906,7 @@
         [arena : ast.AstExpr (ast.ast-node-get arena-box)]
         (tc-in-arena-expr-scoped ctx env arena body))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (tc-with-resource-expr ctx env bindings body)])]
     [(ast.AstExpr.Box inner-box)
@@ -58785,7 +58936,7 @@
           [(ctfe_support.ResultCtfe.Ok value _) (tc-ctfe-value-type ctx value)]
           [(ctfe_support.ResultCtfe.Err diag)
             (ResultTcType.Err
-              (cdiag.compiler-diagnostic-message (box-get diag)))]))]
+              (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))]
     [(ast.AstExpr.Quote _) (ResultTcType.Ok (ast.AstType.Expr))]
     [(ast.AstExpr.Quasiquote template-box)
       (let
@@ -59044,7 +59195,10 @@
 (define (tc-check-extern-native-slice-ref [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(ast.AstType.Func args ret)
-      (match (tc-check-extern-native-slice-ref-args-at ctx (box-get args) 0)
+      (match (tc-check-extern-native-slice-ref-args-at
+        ctx
+        (__tl-box-place args)
+        0)
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
         [(ResultTcUnit.Ok)
           (if (tc-extern-native-slice-ref-type? ctx (ast.ty-node-get ret))
@@ -59072,7 +59226,7 @@
 (define (tc-check-extern-c-abi [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
   (match ty
     [(ast.AstType.Func args ret)
-      (match (tc-check-extern-arg-abi ctx (box-get args))
+      (match (tc-check-extern-arg-abi ctx (__tl-box-place args))
         [(ResultTcUnit.Ok)
           (if (tc-extern-abi-value-type-ok? ctx (ast.ty-node-get ret))
             ResultTcUnit.Ok
@@ -59147,7 +59301,7 @@
           (CompilerTypecheckSummary values functions (+ externs 1))]
         [(ast.AstDecl.Unsafe inner-box)
           (let
-            [inner : ast.AstDecl (box-get inner-box)]
+            [inner : ast.AstDecl (__tl-box-place inner-box)]
             (tc-summary-add-decl summary inner))]
         [_ summary])]))
 
@@ -59503,7 +59657,7 @@
   [template? : bool]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ResultTcUnit.Ok
     (match (tc-comptime-purity-node-mode
       ctx
@@ -59665,7 +59819,7 @@
   [template? : bool]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     ResultTcUnit.Ok
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -59781,7 +59935,7 @@
         then-branch
         else-branch)]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (match (tc-comptime-purity-let-bindings-mode
             ctx
@@ -59802,7 +59956,7 @@
                 body)]
             [(ResultTcStringList.Err message) (ResultTcUnit.Err message)])])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body)
           (tc-comptime-purity-node-mode
             ctx
@@ -59985,7 +60139,7 @@
     [(ast.AstExpr.Borrow _ _ place)
       (tc-comptime-purity-node-mode ctx env bound chain seen template? place)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut arms)
           (match (tc-comptime-purity-node-mode
             ctx
@@ -60006,7 +60160,7 @@
                 arms)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ start end body)
           (match (tc-comptime-purity-node2-mode
             ctx
@@ -60028,7 +60182,7 @@
                 body)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ index _ start end init value)
           (match (tc-comptime-purity-node3-mode
             ctx
@@ -60051,7 +60205,7 @@
                 value)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ index _ start end prefix _ init value body)
           (match (tc-comptime-purity-node3-mode
             ctx
@@ -60178,7 +60332,7 @@
             body)]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (match (tc-comptime-purity-resource-bindings-mode
             ctx
@@ -60706,13 +60860,11 @@
 
 (define (tc-macro-abstract-state-restore! [state : TcMacroAbstractState]) : unit
   (begin
-    (set! tc-macro-abstract-active (struct-get state active))
-    (set! tc-macro-abstract-macro-name (struct-get state macro-name))
-    (set! tc-macro-abstract-param-name (struct-get state param-name))
-    (set! tc-macro-abstract-kind-mask (struct-get state kind-mask))
-    (set!
-      tc-macro-abstract-cleanup-owning-mask
-      (struct-get state cleanup-owning-mask))))
+    (set! tc-macro-abstract-active state.active)
+    (set! tc-macro-abstract-macro-name state.macro-name)
+    (set! tc-macro-abstract-param-name state.param-name)
+    (set! tc-macro-abstract-kind-mask state.kind-mask)
+    (set! tc-macro-abstract-cleanup-owning-mask state.cleanup-owning-mask)))
 
 ;; --- persisted abstract-validation proofs (#5296) -----------------------------
 ;;
@@ -60942,7 +61094,7 @@
           (string.string-length
             (&
               (array-ref
-                (struct-get
+                (__tl-project-field
                   tc-lazy-global-table-state
                   macro-abstract-proof-qualified-keys)
                 cursor)))
@@ -60950,18 +61102,19 @@
         (if (>= (* required-count 2) requested-capacity)
           unit
           (begin
-            (array-set!
-              (struct-get
-                tc-lazy-global-table-state
-                macro-abstract-proof-qualified-keys)
-              cursor
+            (set!
+              (array-ref
+                (__tl-project-field
+                  tc-lazy-global-table-state
+                  macro-abstract-proof-qualified-keys)
+                cursor)
               (text-copy macro-key))
             (set! required-count (+ required-count 1))
             (set! active? true)))]
       [(string.eq
           (&
             (array-ref
-              (struct-get
+              (__tl-project-field
                 tc-lazy-global-table-state
                 macro-abstract-proof-qualified-keys)
               cursor))
@@ -60976,7 +61129,7 @@
 (define (tc-macro-abstract-proof-qualified-key-storage-ensure!) : unit
   (if (=
     (array-length
-      (struct-get
+      (__tl-project-field
         tc-lazy-global-table-state
         macro-abstract-proof-qualified-keys))
     requested-capacity)
@@ -60985,10 +61138,9 @@
       [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
       (in-arena
         owner
-        (set!
-          (struct-get
-            tc-lazy-global-table-state
-            macro-abstract-proof-qualified-keys)
+        (__tl-project-set-field
+          tc-lazy-global-table-state
+          macro-abstract-proof-qualified-keys
           (array.make-array String requested-capacity))))))
 
 (define (record-count [macro-key : String]) : unit
@@ -61007,11 +61159,12 @@
           (begin
             (while (< index requested-capacity)
               (begin
-                (array-set!
-                  (struct-get
-                    tc-lazy-global-table-state
-                    macro-abstract-proof-qualified-keys)
-                  index
+                (set!
+                  (array-ref
+                    (__tl-project-field
+                      tc-lazy-global-table-state
+                      macro-abstract-proof-qualified-keys)
+                    index)
                   "")
                 (set! index (+ index 1))))
             (set! required-count 0)
@@ -61042,7 +61195,7 @@
     (let
       [slot : String
         (tc-global-array-element-shared-view
-          (struct-get
+          (__tl-project-field
             tc-lazy-global-table-state
             macro-abstract-proof-qualified-keys)
           cursor)]
@@ -61085,10 +61238,10 @@
       (begin
         (while (< index additional-capacity)
           (begin
-            (array-set! function-names index "")
-            (array-set! local-names index "")
-            (array-set! storage-identity-vars index 0)
-            (array-set! storage-module-vars index 0)
+            (set! (array-ref function-names index) "")
+            (set! (array-ref local-names index) "")
+            (set! (array-ref storage-identity-vars index) 0)
+            (set! (array-ref storage-module-vars index) 0)
             (set! index (+ index 1))))
         (set! item-count 0)
         (set! block-generation (ci.intern-generation))
@@ -61131,11 +61284,15 @@
                   (if (>= (* item-count 2) additional-capacity)
                     (set! done true)
                     (begin
-                      (array-set! function-names cursor (text-copy generator))
-                      (array-set! local-names cursor (text-copy item))
-                      (array-set! storage-identity-vars cursor key)
-                      (array-set! storage-module-vars cursor (+ module-id 1))
-                      (array-set! augmented-decls cursor decl)
+                      (set!
+                        (array-ref function-names cursor)
+                        (text-copy generator))
+                      (set! (array-ref local-names cursor) (text-copy item))
+                      (set! (array-ref storage-identity-vars cursor) key)
+                      (set!
+                        (array-ref storage-module-vars cursor)
+                        (+ module-id 1))
+                      (set! (array-ref augmented-decls cursor) decl)
                       (set! item-count (+ item-count 1))
                       (set! done true)))]
                 [(and
@@ -61191,8 +61348,8 @@
       (begin
         (while (< index store-capacity)
           (begin
-            (array-set! identity-bytes index 0)
-            (array-set! operand-count index 0)
+            (set! (array-ref identity-bytes index) 0)
+            (set! (array-ref operand-count index) 0)
             (set! index (+ index 1))))
         (set! identity-count 0)
         (set! generation-cell (ci.intern-generation))
@@ -61229,8 +61386,8 @@
                   ;; Scratch is consumed by the immediately following note.  Keep
                   ;; caller Strings directly here; persistent rows copy them into
                   ;; the per-program proof key arena during commit.
-                  (array-set! expected-key index type-key)
-                  (array-set! expected-kind index kind)
+                  (set! (array-ref expected-key index) type-key)
+                  (set! (array-ref expected-kind index) kind)
                   (set! scratch-count (+ scratch-count 1))))])])]))
 
 (define (scratch-reset-functions) : unit
@@ -61351,13 +61508,11 @@
   (if (>= index scratch-count)
     unit
     (begin
-      (array-set!
-        declared-types
-        (+ (* slot expected-count) index)
+      (set!
+        (array-ref declared-types (+ (* slot expected-count) index))
         (text-copy (array-ref expected-key index)))
-      (array-set!
-        macro-type-kinds
-        (+ (* slot expected-count) index)
+      (set!
+        (array-ref macro-type-kinds (+ (* slot expected-count) index))
         (text-copy (array-ref expected-kind index)))
       (scratch-result slot (+ index 1)))))
 
@@ -61395,8 +61550,8 @@
                   (if (>= (* identity-count 2) store-capacity)
                     (set! done true)
                     (begin
-                      (array-set! identity-bytes cursor key)
-                      (array-set! operand-count cursor scratch-count)
+                      (set! (array-ref identity-bytes cursor) key)
+                      (set! (array-ref operand-count cursor) scratch-count)
                       (if (< scratch-count 0)
                         unit
                         (scratch-result cursor 0))
@@ -61409,7 +61564,7 @@
                       (< scratch-count 0)
                       (not (= (array-ref operand-count cursor) scratch-count))
                       (not (matches-signature cursor 0 scratch-count)))
-                      (array-set! operand-count cursor -1)
+                      (set! (array-ref operand-count cursor) -1)
                       unit)
                     (set! done true))]
                 [else
@@ -61544,8 +61699,8 @@
         (set! active-invalid true)
         false)
       (begin
-        (array-set! uniform-values digit-count value)
-        (array-set! inject-texts digit-count text)
+        (set! (array-ref uniform-values digit-count) value)
+        (set! (array-ref inject-texts digit-count) text)
         (set! digit-count (+ digit-count 1))
         true))))
 
@@ -61907,8 +62062,9 @@
                             (match right
                               [(ast.AstType.Func other result)
                                 (let
-                                  [list : ast.AstTypeList (box-get args)]
-                                  [elems : ast.AstTypeList (box-get other)]
+                                  [list : ast.AstTypeList (__tl-box-place args)]
+                                  [elems : ast.AstTypeList
+                                    (__tl-box-place other)]
                                   [index : i64 0]
                                   [ok : bool true]
                                   (begin
@@ -61946,8 +62102,10 @@
                             (match right
                               [(ast.AstType.Tuple second)
                                 (let
-                                  [list : ast.AstTypeList (box-get first)]
-                                  [elems : ast.AstTypeList (box-get second)]
+                                  [list : ast.AstTypeList
+                                    (__tl-box-place first)]
+                                  [elems : ast.AstTypeList
+                                    (__tl-box-place second)]
                                   [index : i64 0]
                                   [ok : bool true]
                                   (begin
@@ -62174,8 +62332,10 @@
                             (set! active-invalid true)
                             false)
                           (begin
-                            (array-set! local-alias-names local-ordinal name)
-                            (array-set! next-locals local-ordinal name-id)
+                            (set!
+                              (array-ref local-alias-names local-ordinal)
+                              name)
+                            (set! (array-ref next-locals local-ordinal) name-id)
                             (set! local-ordinal (+ local-ordinal 1))
                             true)))
                       (tc-proof-reuse-session-ast-param-list-exact?
@@ -62251,6 +62411,90 @@
                   (string.eq (ci.intern-str base-id) "clone")))
               (string.eq (ci.intern-str name-id) "clone"))))]
       [_ false])))
+
+;; Public field projection is represented by one dotted Var until ordinary
+;; typechecking lowers it to StructGet.  Macro hygiene may allocate a distinct
+;; opaque dotted id for each otherwise identical expansion, so compare the
+;; structural prefix/final identities instead of requiring the aggregate id to
+;; be shared.  Preserve the plain-Var lexical bookkeeping at the root and mark
+;; the projection as context-sensitive just like the retained StructGet bridge.
+(define (tc-proof-reuse-session-var-name-exact?
+  [left-id : i64]
+  [right-id : i64]) : bool
+  (cond
+    [(and
+        (ci.intern-renderable-id? left-id)
+        (ci.intern-renderable-id? right-id)
+        (not (ci.intern-qualified? left-id))
+        (not (ci.intern-qualified? right-id))
+        (ci.intern-dotted? left-id)
+        (ci.intern-dotted? right-id))
+      (begin
+        (set! checked-context true)
+        (and
+          (tc-proof-reuse-session-var-name-exact?
+            (ci.intern-dotted-prefix-id left-id)
+            (ci.intern-dotted-prefix-id right-id))
+          (qualified-name
+            (ci.intern-dotted-final-id left-id)
+            (ci.intern-dotted-final-id right-id))))]
+    [(not (qualified-name left-id right-id)) false]
+    [(= left-id right-id)
+      (if (or allow-cleanup (>= (pair-index left-id right-id 0) 0))
+        true
+        (begin
+          (set! local-use true)
+          true))]
+    [else false]))
+
+;; Native TLCI output may retain a public dotted Var while a source or shell
+;; path has already normalized the same projection to StructGet.  Admit that
+;; mixed representation only by recursively proving the exact receiver path
+;; and final field identity; this is the same conservative surface as a pair
+;; of StructGet nodes, not a broader name-spelling equivalence.
+(define (tc-proof-reuse-session-dotted-left-struct-get-exact?
+  [ctx : TcContext]
+  [left-name-id : i64]
+  [right-receiver-id : i64]
+  [right-field-id : i64]) : bool
+  (if (and
+    (ci.intern-renderable-id? left-name-id)
+    (not (ci.intern-qualified? left-name-id))
+    (ci.intern-dotted? left-name-id)
+    (qualified-name (ci.intern-dotted-final-id left-name-id) right-field-id)
+    (>= right-receiver-id 0)
+    (<
+      right-receiver-id
+      (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
+    (begin
+      (set! checked-context true)
+      (tc-proof-reuse-session-ast-expr-exact?
+        ctx
+        (ast.AstExpr.Var (ci.intern-dotted-prefix-id left-name-id))
+        (tc-context-expr-get ctx right-receiver-id)))
+    false))
+
+(define (tc-proof-reuse-session-struct-get-left-dotted-exact?
+  [ctx : TcContext]
+  [left-receiver-id : i64]
+  [left-field-id : i64]
+  [right-name-id : i64]) : bool
+  (if (and
+    (ci.intern-renderable-id? right-name-id)
+    (not (ci.intern-qualified? right-name-id))
+    (ci.intern-dotted? right-name-id)
+    (qualified-name left-field-id (ci.intern-dotted-final-id right-name-id))
+    (>= left-receiver-id 0)
+    (<
+      left-receiver-id
+      (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
+    (begin
+      (set! checked-context true)
+      (tc-proof-reuse-session-ast-expr-exact?
+        ctx
+        (tc-context-expr-get ctx left-receiver-id)
+        (ast.AstExpr.Var (ci.intern-dotted-prefix-id right-name-id))))
+    false))
 
 (define (tc-proof-reuse-session-ast-expr-exact?
   [ctx : TcContext]
@@ -62413,15 +62657,13 @@
           [(ast.AstExpr.Var name)
             (match expr
               [(ast.AstExpr.Var name-id)
-                (if (not (qualified-name name-id name))
-                  false
-                  (if (= name-id name)
-                    (if (or allow-cleanup (>= (pair-index name-id name 0) 0))
-                      true
-                      (begin
-                        (set! local-use true)
-                        true))
-                    false))]
+                (tc-proof-reuse-session-var-name-exact? name-id name)]
+              [(ast.AstExpr.StructGet left field)
+                (tc-proof-reuse-session-struct-get-left-dotted-exact?
+                  ctx
+                  left
+                  field
+                  name)]
               [_ false])]
           [(ast.AstExpr.Binary value first second)
             (match expr
@@ -62478,6 +62720,12 @@
                   (and
                     (tc-proof-reuse-session-ast-expr-id-exact? ctx left right)
                     (qualified-name field second)))]
+              [(ast.AstExpr.Var name-id)
+                (tc-proof-reuse-session-dotted-left-struct-get-exact?
+                  ctx
+                  name-id
+                  right
+                  second)]
               [_ false])]
           ;; Keep this audited surface deliberately small; every other
           ;; expression constructor falls through to concrete checking.
@@ -62598,8 +62846,8 @@
               [ok : bool
                 (tc-proof-reuse-session-ast-decl-exact?
                   ctx
-                  (box-get left-box)
-                  (box-get right-box))]
+                  (__tl-box-place left-box)
+                  (__tl-box-place right-box))]
               (begin
                 ;; Keep the DefStruct exception scoped to a direct declaration;
                 ;; an unsafe wrapper remains concrete-only conservatively.
@@ -62691,21 +62939,24 @@
     [existing : i64 (tc-macro-abstract-proof-find macro-key-id param-name-id 0)]
     (begin
       (if (>= existing 0)
-        (array-set! tc-macro-abstract-proof-kind-masks existing kind-mask)
+        (set! (array-ref tc-macro-abstract-proof-kind-masks existing) kind-mask)
         (if (>= tc-macro-abstract-proof-count tc-macro-abstract-proof-capacity)
           unit
           (begin
-            (array-set!
-              tc-macro-abstract-proof-macro-keys
-              tc-macro-abstract-proof-count
+            (set!
+              (array-ref
+                tc-macro-abstract-proof-macro-keys
+                tc-macro-abstract-proof-count)
               macro-key-id)
-            (array-set!
-              tc-macro-abstract-proof-param-keys
-              tc-macro-abstract-proof-count
+            (set!
+              (array-ref
+                tc-macro-abstract-proof-param-keys
+                tc-macro-abstract-proof-count)
               param-name-id)
-            (array-set!
-              tc-macro-abstract-proof-kind-masks
-              tc-macro-abstract-proof-count
+            (set!
+              (array-ref
+                tc-macro-abstract-proof-kind-masks
+                tc-macro-abstract-proof-count)
               kind-mask)
             (set!
               tc-macro-abstract-proof-count
@@ -62816,7 +63067,7 @@
         (=
           (tc-macro-abstract-call-id (ast.ast-node-get func) bound)
           (cbi.compiler-builtin-ctfe-ref 210))
-        (= (struct-get args len) 1)
+        (= args.len 1)
         (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound))]
     [_ false]))
 
@@ -62981,7 +63232,7 @@
   [expr : ast.AstExpr]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcUnit
-  (if (or (not tc-macro-abstract-active) template? (= (struct-get args len) 0))
+  (if (or (not tc-macro-abstract-active) template? (= args.len 0))
     ResultTcUnit.Ok
     (let
       [call-id : i64 (tc-macro-abstract-call-id func bound)]
@@ -63027,7 +63278,7 @@
         (=
           (tc-macro-abstract-call-id (ast.ast-node-get func) bound)
           (cbi.compiler-builtin-ctfe-ref 71))
-        (= (struct-get args len) 1)
+        (= args.len 1)
         (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound))]
     [_ false]))
 
@@ -63056,7 +63307,7 @@
         (if (tc-macro-abstract-cleanup-owning-call? cond-expr bound)
           TcMacroAbstractGuard.CleanupOwning
           (if (and
-            (= (struct-get args len) 2)
+            (= args.len 2)
             (>= raw-id 0)
             (ctfe_support.ctfe-string-eq-helper-name-id?
               (tc-hygiene-name-text-id raw-id)
@@ -63322,13 +63573,16 @@
       (or
         (tc-generated-type-list-dependent-construct-at?
           ctx
-          (& (box-get args))
+          (& (__tl-box-place args))
           0)
         (tc-generated-type-dependent-construct?
           ctx
           (tc-context-type-get ctx ret)))]
     [(ast.AstType.Tuple elems)
-      (tc-generated-type-list-dependent-construct-at? ctx (& (box-get elems)) 0)]
+      (tc-generated-type-list-dependent-construct-at?
+        ctx
+        (& (__tl-box-place elems))
+        0)]
     [(ast.AstType.Array _ _) true]
     [(ast.AstType.DynArray elem)
       (tc-generated-type-dependent-construct?
@@ -63367,11 +63621,11 @@
         ctx
         (tc-context-type-get ctx elem))]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.VarArgs _ lifetimes)
-      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+      (> (tc-lifetime-list-count (__tl-box-place lifetimes)) 0)]
     [(ast.AstType.Consume inner)
       (tc-generated-type-dependent-construct?
         ctx
@@ -63432,17 +63686,17 @@
       [(ast.AstPattern.Tuple items)
         (tc-generated-pattern-list-dependent-construct-at?
           ctx
-          (& (box-get items))
+          (& (__tl-box-place items))
           0)]
       [(ast.AstPattern.Array items)
         (tc-generated-pattern-list-dependent-construct-at?
           ctx
-          (& (box-get items))
+          (& (__tl-box-place items))
           0)]
       [(ast.AstPattern.Variant _ items)
         (tc-generated-pattern-list-dependent-construct-at?
           ctx
-          (& (box-get items))
+          (& (__tl-box-place items))
           0)]
       [_ false])))
 
@@ -63594,7 +63848,7 @@
             ctx
             (tc-context-expr-get ctx else-id)))]
       [(ast.AstExpr.Let let-box)
-        (match (box-get let-box)
+        (match (__tl-box-place let-box)
           [(ast.AstLet.Let bindings body-id)
             (or
               (tc-generated-let-bindings-dependent-construct-at?
@@ -63605,7 +63859,7 @@
                 ctx
                 (tc-context-expr-get ctx body-id)))])]
       [(ast.AstExpr.Lambda lambda-box)
-        (match (box-get lambda-box)
+        (match (__tl-box-place lambda-box)
           [(ast.AstLambda.Lambda params ret body-id)
             (or
               (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
@@ -63738,7 +63992,7 @@
           ctx
           (tc-context-expr-get ctx place-id))]
       [(ast.AstExpr.Match match-box)
-        (match (box-get match-box)
+        (match (__tl-box-place match-box)
           [(ast.AstMatch.Match scrutinee-id arms)
             (or
               (tc-generated-expr-dependent-construct?
@@ -63746,7 +64000,7 @@
                 (tc-context-expr-get ctx scrutinee-id))
               (tc-generated-match-arms-dependent-construct-at? ctx (& arms) 0))])]
       [(ast.AstExpr.Foreach fe-box)
-        (match (box-get fe-box)
+        (match (__tl-box-place fe-box)
           [(ast.AstForeach.Foreach _ elem-ty start-id end-id body-id)
             (or
               (tc-generated-type-dependent-construct? ctx elem-ty)
@@ -63760,7 +64014,7 @@
                 ctx
                 (tc-context-expr-get ctx body-id)))])]
       [(ast.AstExpr.SpmdReduce reduce-box)
-        (match (box-get reduce-box)
+        (match (__tl-box-place reduce-box)
           [(ast.AstSpmdReduce.Reduce
               _
               _
@@ -63784,7 +64038,7 @@
                 ctx
                 (tc-context-expr-get ctx value-id)))])]
       [(ast.AstExpr.SpmdScan scan-box)
-        (match (box-get scan-box)
+        (match (__tl-box-place scan-box)
           [(ast.AstSpmdScan.Scan
               _
               _
@@ -63861,7 +64115,7 @@
             (tc-context-expr-get ctx arena-id))
           (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
       [(ast.AstExpr.WithResource wr-box)
-        (match (box-get wr-box)
+        (match (__tl-box-place wr-box)
           [(ast.AstWithResource.WithResource bindings body)
             (or
               (tc-generated-resource-bindings-dependent-construct-at?
@@ -64165,11 +64419,11 @@
       ;; Nested generated-module imports keep their own concrete checks.
       [(ast.AstDecl.Import _ _) true]
       [(ast.AstDecl.Unsafe inner-box)
-        (tc-generated-decl-dependent-construct? ctx (box-get inner-box))]
+        (tc-generated-decl-dependent-construct? ctx (__tl-box-place inner-box))]
       [(ast.AstDecl.ModuleBody _ decls-box)
         (tc-generated-decl-list-dependent-construct-at?
           ctx
-          (& (box-get decls-box))
+          (& (__tl-box-place decls-box))
           0)]
       [_ false])))
 
@@ -64263,7 +64517,8 @@
                               (tc-check-defmacro-produced-type ctx ret value))]
                           [(ctfe_support.ResultCtfe.Err diag)
                             (ResultTcUnit.Err
-                              (cdiag.compiler-diagnostic-message (box-get diag)))])))]
+                              (cdiag.compiler-diagnostic-message
+                                (__tl-box-place diag)))])))]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
@@ -64401,12 +64656,11 @@
   [owner-origin-id : i64]
   [move-aware : bool]) : TcMoveCleanupOwners
   (let
-    [slots : (__tl_dyn-array TcMoveCleanupOwner) (struct-get owners slots)]
-    [len : i64 (struct-get owners len)]
+    [slots : (__tl_dyn-array TcMoveCleanupOwner) owners.slots]
+    [len : i64 owners.len]
     (begin
-      (array-set!
-        slots
-        index
+      (set!
+        (array-ref slots index)
         (TcMoveCleanupOwner name-id owner-origin-id move-aware))
       (TcMoveCleanupOwners slots len))))
 
@@ -64480,25 +64734,25 @@
     0))
 
 (define (tc-moved-roots [set : TcMovedSet]) : tc_i64_i64_map.Map
-  (struct-get set roots))
+  set.roots)
 
 (define (tc-moved-partials [set : TcMovedSet]) : tc_i64_i64_map.Map
-  (struct-get set partials))
+  set.partials)
 
 (define (tc-moved-paths [set : TcMovedSet]) : TcMovedPathFacts
-  (struct-get set paths))
+  set.paths)
 
 (define (tc-moved-path-facts-len [facts : TcMovedPathFacts]) : i64
   (match facts
     [(TcMovedPathFacts.Nil) 0]
     [(TcMovedPathFacts.Cons _ rest)
-      (+ 1 (tc-moved-path-facts-len (box-get rest)))]))
+      (+ 1 (tc-moved-path-facts-len (__tl-box-place rest)))]))
 
 (define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
-  (struct-get set hidden-atomic-users))
+  set.hidden-atomic-users)
 
 (define (tc-moved-param-storage-origins [set : TcMovedSet]) : i64
-  (struct-get set param-storage-origins))
+  set.param-storage-origins)
 
 (define (tc-param-storage-origin-node-read [address : i64]) : TcParamStorageOriginNode
   (unsafe
@@ -64512,7 +64766,9 @@
     [cell : (__tl_dyn-array TcParamStorageOriginNode)
       (array.make-array TcParamStorageOriginNode 1)]
     (begin
-      (array-set! cell 0 (TcParamStorageOriginNode name-id parameter-id parent))
+      (set!
+        (array-ref cell 0)
+        (TcParamStorageOriginNode name-id parameter-id parent))
       (unsafe
         (cast
           (ptr->int
@@ -64529,15 +64785,13 @@
         (let
           [node : TcParamStorageOriginNode
             (tc-param-storage-origin-node-read cursor)]
-          (if (= (struct-get node name-id) name-id)
+          (if (= node.name-id name-id)
             (begin
-              (if (>= (struct-get node parameter-id) 0)
-                (set!
-                  result
-                  (TcMaybeNameId.Some (struct-get node parameter-id)))
+              (if (>= node.parameter-id 0)
+                (set! result (TcMaybeNameId.Some node.parameter-id))
                 unit)
               (set! done true))
-            (set! cursor (struct-get node parent)))))
+            (set! cursor node.parent))))
       result)))
 
 (define (tc-param-storage-origin-bind
@@ -64560,21 +64814,18 @@
     (let
       [node : TcParamStorageOriginNode
         (tc-param-storage-origin-node-read cursor)]
-      [name-id : i64 (struct-get node name-id)]
+      [name-id : i64 node.name-id]
       (if (tc-name-id-list-contains seen name-id)
-        (tc-param-storage-origins-union-at (struct-get node parent) seen out)
+        (tc-param-storage-origins-union-at node.parent seen out)
         (tc-param-storage-origins-union-at
-          (struct-get node parent)
+          node.parent
           (tc-name-id-list-cons seen name-id)
           (if (and
-            (>= (struct-get node parameter-id) 0)
+            (>= node.parameter-id 0)
             (match (tc-param-storage-origin-lookup out name-id)
               [(TcMaybeNameId.Some _) false]
               [(TcMaybeNameId.No) true]))
-            (tc-param-storage-origin-bind
-              out
-              name-id
-              (struct-get node parameter-id))
+            (tc-param-storage-origin-bind out name-id node.parameter-id)
             out))))))
 
 (define (tc-param-storage-origins-union [a : i64] [b : i64]) : i64
@@ -64755,7 +65006,7 @@
   "clone the owner before moving it again, reinitialize the moved place before reuse, or keep the owner move inside a narrower scope")
 
 (define (tc-move-path-root-id [path : TcMovePath]) : i64
-  (struct-get path root))
+  path.root)
 
 (define tc-move-path-segment-kind-field : i64
   0)
@@ -64786,9 +65037,8 @@
       (array.make-array TcMovePathSegmentStoreData 1)]
     [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (TcMovePathSegmentStoreData
           (array.make-array TcMovePathSegmentNode 4)
           0
@@ -64803,7 +65053,7 @@
   [data : (&mut data TcMovePathSegmentStoreData)]
   [required : i64]) : unit
   (let
-    [old : (__tl_dyn-array TcMovePathSegmentNode) (struct-get data nodes)]
+    [old : (__tl_dyn-array TcMovePathSegmentNode) data.nodes]
     [old-capacity : i64 (array.length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
@@ -64813,7 +65063,7 @@
           (set! next-capacity (* next-capacity 2)))
         (let
           [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 (struct-get data owner-arena)]
+          [owner : i64 data.owner-arena]
           (begin
             (unsafe
               (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
@@ -64822,19 +65072,15 @@
                 (array.make-array TcMovePathSegmentNode next-capacity)]
               [index : i64 0]
               (begin
-                (while (< index (struct-get data len))
+                (while (< index data.len)
                   (let
                     [node : TcMovePathSegmentNode (array-ref old index)]
                     (begin
-                      (array-set!
-                        next
-                        index
-                        (TcMovePathSegmentNode
-                          (struct-get node parent)
-                          (struct-get node kind)
-                          (struct-get node value)))
+                      (set!
+                        (array-ref next index)
+                        (TcMovePathSegmentNode node.parent node.kind node.value))
                       (set! index (+ index 1)))))
-                (set! (struct-get data nodes) next)))
+                (set! data.nodes next)))
             (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
 
 (define (tc-move-path-segments-node
@@ -64842,39 +65088,37 @@
   [index : i64]) : TcMovePathSegmentNode
   (let
     [data : TcMovePathSegmentStoreData
-      (tc-move-path-segment-store-read (struct-get segments store-address))]
-    (array-ref (struct-get data nodes) index)))
+      (tc-move-path-segment-store-read segments.store-address)]
+    (array-ref data.nodes index)))
 
 (define (tc-move-path-segments-storage-node-count
   [segments : TcMovePathSegments]) : i64
-  (if (= (struct-get segments store-address) 0)
+  (if (= segments.store-address 0)
     0
-    (struct-get
-      (tc-move-path-segment-store-read (struct-get segments store-address))
+    (__tl-project-field
+      (tc-move-path-segment-store-read segments.store-address)
       len)))
 
 (define (tc-move-path-segments-storage-capacity [segments : TcMovePathSegments]) : i64
-  (if (= (struct-get segments store-address) 0)
+  (if (= segments.store-address 0)
     0
     (array.length
-      (struct-get
-        (tc-move-path-segment-store-read (struct-get segments store-address))
+      (__tl-project-field
+        (tc-move-path-segment-store-read segments.store-address)
         nodes))))
 
 (define (tc-move-path-segments-eq?
   [a : TcMovePathSegments]
   [b : TcMovePathSegments]) : bool
   (let
-    [remaining : i64 (struct-get a len)]
-    (if (not (= remaining (struct-get b len)))
+    [remaining : i64 a.len]
+    (if (not (= remaining b.len))
       false
-      (if (and
-        (= (struct-get a store-address) (struct-get b store-address))
-        (= (struct-get a tail) (struct-get b tail)))
+      (if (and (= a.store-address b.store-address) (= a.tail b.tail))
         true
         (let
-          [a-index : i64 (struct-get a tail)]
-          [b-index : i64 (struct-get b tail)]
+          [a-index : i64 a.tail]
+          [b-index : i64 b.tail]
           [equal : bool true]
           (begin
             (while (and equal (> remaining 0))
@@ -64885,12 +65129,12 @@
                   (tc-move-path-segments-node b b-index)]
                 (begin
                   (if (and
-                    (= (struct-get a-node kind) (struct-get b-node kind))
-                    (= (struct-get a-node value) (struct-get b-node value)))
+                    (= a-node.kind b-node.kind)
+                    (= a-node.value b-node.value))
                     unit
                     (set! equal false))
-                  (set! a-index (struct-get a-node parent))
-                  (set! b-index (struct-get b-node parent))
+                  (set! a-index a-node.parent)
+                  (set! b-index b-node.parent)
                   (set! remaining (- remaining 1)))))
             equal))))))
 
@@ -64898,15 +65142,15 @@
   [prefix : TcMovePathSegments]
   [value : TcMovePathSegments]) : bool
   (let
-    [prefix-len : i64 (struct-get prefix len)]
-    [value-len : i64 (struct-get value len)]
+    [prefix-len : i64 prefix.len]
+    [value-len : i64 value.len]
     (if (= prefix-len 0)
       true
       (if (> prefix-len value-len)
         false
         (let
-          [prefix-index : i64 (struct-get prefix tail)]
-          [value-index : i64 (struct-get value tail)]
+          [prefix-index : i64 prefix.tail]
+          [value-index : i64 value.tail]
           [value-depth : i64 value-len]
           [remaining : i64 prefix-len]
           [equal : bool true]
@@ -64916,12 +65160,10 @@
                 [node : TcMovePathSegmentNode
                   (tc-move-path-segments-node value value-index)]
                 (begin
-                  (set! value-index (struct-get node parent))
+                  (set! value-index node.parent)
                   (set! value-depth (- value-depth 1)))))
             (if (and
-              (=
-                (struct-get prefix store-address)
-                (struct-get value store-address))
+              (= prefix.store-address value.store-address)
               (= prefix-index value-index))
               true
               (begin
@@ -64933,34 +65175,24 @@
                       (tc-move-path-segments-node value value-index)]
                     (begin
                       (if (and
-                        (=
-                          (struct-get prefix-node kind)
-                          (struct-get value-node kind))
-                        (=
-                          (struct-get prefix-node value)
-                          (struct-get value-node value)))
+                        (= prefix-node.kind value-node.kind)
+                        (= prefix-node.value value-node.value))
                         unit
                         (set! equal false))
-                      (set! prefix-index (struct-get prefix-node parent))
-                      (set! value-index (struct-get value-node parent))
+                      (set! prefix-index prefix-node.parent)
+                      (set! value-index value-node.parent)
                       (set! remaining (- remaining 1)))))
                 equal))))))))
 
 (define (tc-move-path-eq? [a : TcMovePath] [b : TcMovePath]) : bool
-  (and
-    (= (struct-get a root) (struct-get b root))
-    (tc-move-path-segments-eq? (struct-get a segments) (struct-get b segments))))
+  (and (= a.root b.root) (tc-move-path-segments-eq? a.segments b.segments)))
 
 (define (tc-move-path-conflicts? [a : TcMovePath] [b : TcMovePath]) : bool
   (and
-    (= (struct-get a root) (struct-get b root))
+    (= a.root b.root)
     (or
-      (tc-move-path-segments-prefix?
-        (struct-get a segments)
-        (struct-get b segments))
-      (tc-move-path-segments-prefix?
-        (struct-get b segments)
-        (struct-get a segments)))))
+      (tc-move-path-segments-prefix? a.segments b.segments)
+      (tc-move-path-segments-prefix? b.segments a.segments))))
 
 ;; Render a move/borrow place in user-facing source syntax: struct fields as
 ;; `.field`, tuple elements as `.N`, and array elements as `[N]`, so
@@ -64968,12 +65200,12 @@
 ;; encodings. Refs #5149.
 (define (tc-move-path-segments-render [segments : TcMovePathSegments]) : String
   (let
-    [length : i64 (struct-get segments len)]
+    [length : i64 segments.len]
     (if (= length 0)
       ""
       (let
         [order : (__tl_dyn-array i64) (array.make-array i64 length)]
-        [cursor : i64 (struct-get segments tail)]
+        [cursor : i64 segments.tail]
         [write-index : i64 (- length 1)]
         [read-index : i64 0]
         [out : String ""]
@@ -64983,8 +65215,8 @@
               [node : TcMovePathSegmentNode
                 (tc-move-path-segments-node segments cursor)]
               (begin
-                (array-set! order write-index cursor)
-                (set! cursor (struct-get node parent))
+                (set! (array-ref order write-index) cursor)
+                (set! cursor node.parent)
                 (set! write-index (- write-index 1)))))
           (while (< read-index length)
             (let
@@ -64994,35 +65226,32 @@
                   (array-ref order read-index))]
               (begin
                 (cond
-                  [(= (struct-get node kind) tc-move-path-segment-kind-field)
+                  [(= node.kind tc-move-path-segment-kind-field)
                     (set!
                       out
                       (str_cat.str-cat
                         out
                         "."
-                        (tc-env-key-name-text (struct-get node value))))]
-                  [(= (struct-get node kind) tc-move-path-segment-kind-tuple)
+                        (tc-env-key-name-text node.value)))]
+                  [(= node.kind tc-move-path-segment-kind-tuple)
                     (set!
                       out
-                      (str_cat.str-cat
-                        out
-                        "."
-                        (string.int->string (struct-get node value))))]
+                      (str_cat.str-cat out "." (string.int->string node.value)))]
                   [else
                     (set!
                       out
                       (str_cat.str-cat
                         out
                         "["
-                        (string.int->string (struct-get node value))
+                        (string.int->string node.value)
                         "]"))])
                 (set! read-index (+ read-index 1)))))
           out)))))
 
 (define (tc-move-path-render [path : TcMovePath]) : String
   (str_cat.str-cat
-    (tc-env-key-name-text (struct-get path root))
-    (tc-move-path-segments-render (struct-get path segments))))
+    (tc-env-key-name-text path.root)
+    (tc-move-path-segments-render path.segments)))
 
 (define (tc-moved-path-kind-eq? [a : TcMovedPathKind] [b : TcMovedPathKind]) : bool
   (match a
@@ -65060,8 +65289,8 @@
 
 (define (tc-move-path-segments-hash [segments : TcMovePathSegments]) : i64
   (let
-    [cursor : i64 (struct-get segments tail)]
-    [remaining : i64 (struct-get segments len)]
+    [cursor : i64 segments.tail]
+    [remaining : i64 segments.len]
     [out : i64 17]
     (begin
       (while (> remaining 0)
@@ -65070,16 +65299,16 @@
             (tc-move-path-segments-node segments cursor)]
           [seed : i64
             (cond
-              [(= (struct-get node kind) tc-move-path-segment-kind-field) 23]
-              [(= (struct-get node kind) tc-move-path-segment-kind-tuple) 29]
+              [(= node.kind tc-move-path-segment-kind-field) 23]
+              [(= node.kind tc-move-path-segment-kind-tuple) 29]
               [else 31])]
           (begin
             (set!
               out
               (tc-move-path-hash-combine
-                (tc-move-path-hash-combine seed (struct-get node value))
+                (tc-move-path-hash-combine seed node.value)
                 out))
-            (set! cursor (struct-get node parent))
+            (set! cursor node.parent)
             (set! remaining (- remaining 1)))))
       out)))
 
@@ -65103,7 +65332,7 @@
   (TcMovedPathFact path kind origin))
 
 (define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
-  (struct-get fact origin))
+  fact.origin)
 
 ;; An index that owns its storage. Used wherever a fact is known up front, so
 ;; the seed cell that only a deferred index needs is never created.
@@ -65166,10 +65395,13 @@
     [(TcMovedPathFacts.Nil) (TcMovedPathFactsRemove.Missing)]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (tc-move-path-eq? (struct-get fact path) path)
-        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
-        (TcMovedPathFactsRemove.Removed (box-get rest))
-        (match (tc-moved-path-facts-remove-exact (box-get rest) path kind)
+        (tc-move-path-eq? fact.path path)
+        (tc-moved-path-kind-eq? fact.kind kind))
+        (TcMovedPathFactsRemove.Removed (__tl-box-place rest))
+        (match (tc-moved-path-facts-remove-exact
+          (__tl-box-place rest)
+          path
+          kind)
           [(TcMovedPathFactsRemove.Missing) (TcMovedPathFactsRemove.Missing)]
           [(TcMovedPathFactsRemove.Removed tail)
             (TcMovedPathFactsRemove.Removed
@@ -65183,10 +65415,13 @@
     [(TcMovedPathFacts.Nil) false]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (tc-move-path-eq? (struct-get fact path) path)
-        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
+        (tc-move-path-eq? fact.path path)
+        (tc-moved-path-kind-eq? fact.kind kind))
         true
-        (tc-moved-path-facts-contains-exact-kind? (box-get rest) path kind))]))
+        (tc-moved-path-facts-contains-exact-kind?
+          (__tl-box-place rest)
+          path
+          kind))]))
 
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
@@ -65226,12 +65461,12 @@
     [(TcMovedPathFacts.Nil) TcMoveConflict.No]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (tc-move-path-eq? (struct-get fact path) path)
-        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
+        (tc-move-path-eq? fact.path path)
+        (tc-moved-path-kind-eq? fact.kind kind))
         (TcMoveConflict.Some
-          (tc-move-path-render (struct-get fact path))
+          (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-exact-conflict-kind-at (box-get rest) path kind))]))
+        (tc-moved-path-exact-conflict-kind-at (__tl-box-place rest) path kind))]))
 
 (define (tc-moved-path-exact-conflict-kind
   [set : TcMovedSet]
@@ -65489,12 +65724,12 @@
     [(TcMovedPathFacts.Nil) TcMoveConflict.No]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (tc-moved-base-path-kind? (struct-get fact kind))
-        (tc-move-path-conflicts? (struct-get fact path) path))
+        (tc-moved-base-path-kind? fact.kind)
+        (tc-move-path-conflicts? fact.path path))
         (TcMoveConflict.Some
-          (tc-move-path-render (struct-get fact path))
+          (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-conflict-at (box-get rest) path))]))
+        (tc-moved-path-conflict-at (__tl-box-place rest) path))]))
 
 (define (tc-moved-path-conflict-kind-at
   [facts : TcMovedPathFacts]
@@ -65504,12 +65739,12 @@
     [(TcMovedPathFacts.Nil) TcMoveConflict.No]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (tc-moved-path-kind-eq? (struct-get fact kind) kind)
-        (tc-move-path-conflicts? (struct-get fact path) path))
+        (tc-moved-path-kind-eq? fact.kind kind)
+        (tc-move-path-conflicts? fact.path path))
         (TcMoveConflict.Some
-          (tc-move-path-render (struct-get fact path))
+          (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-conflict-kind-at (box-get rest) path kind))]))
+        (tc-moved-path-conflict-kind-at (__tl-box-place rest) path kind))]))
 
 (define (tc-moved-path-conflict-kind
   [set : TcMovedSet]
@@ -65533,8 +65768,8 @@
     [(TcMovedPathFacts.Cons fact rest)
       (let
         [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-root (box-get rest) root-id)]
-        (if (= (tc-move-path-root-id (struct-get fact path)) root-id)
+          (tc-moved-path-facts-remove-root (__tl-box-place rest) root-id)]
+        (if (= (tc-move-path-root-id fact.path) root-id)
           tail
           (TcMovedPathFacts.Cons fact (box tail))))]))
 
@@ -65558,12 +65793,12 @@
     [(TcMovedPathFacts.Nil) false]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (match (struct-get fact kind)
+        (match fact.kind
           [(TcMovedPathKind.Move) true]
           [_ false])
-        (= (tc-move-path-root-id (struct-get fact path)) root-id))
+        (= (tc-move-path-root-id fact.path) root-id))
         true
-        (tc-moved-any-root-path-at? (box-get rest) root-id))]))
+        (tc-moved-any-root-path-at? (__tl-box-place rest) root-id))]))
 
 (define (tc-moved-any-root-path? [set : TcMovedSet] [root-id : i64]) : bool
   (tc-moved-any-root-path-at? (tc-moved-paths set) root-id))
@@ -65575,14 +65810,14 @@
     [(TcMovedPathFacts.Nil) TcMoveConflict.No]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (match (struct-get fact kind)
+        (match fact.kind
           [(TcMovedPathKind.Move) true]
           [_ false])
-        (= (tc-move-path-root-id (struct-get fact path)) root-id))
+        (= (tc-move-path-root-id fact.path) root-id))
         (TcMoveConflict.Some
-          (tc-move-path-render (struct-get fact path))
+          (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-root-path-conflict-loop (box-get rest) root-id))]))
+        (tc-moved-root-path-conflict-loop (__tl-box-place rest) root-id))]))
 
 (define (tc-moved-root-path-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
   (tc-moved-root-path-conflict-loop (tc-moved-paths set) root-id))
@@ -65612,11 +65847,11 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (tc-moved-union-path-loop
-        (box-get rest)
+        (__tl-box-place rest)
         (tc-moved-add-path-fact
           out
-          (struct-get fact path)
-          (struct-get fact kind)
+          fact.path
+          fact.kind
           (tc-moved-path-fact-origin fact)))]))
 
 (define (tc-moved-union-id-loop
@@ -65812,21 +66047,20 @@
   [value : i64]) : TcMovePathSegments
   (let
     [address : i64
-      (if (= (struct-get segments store-address) 0)
+      (if (= segments.store-address 0)
         (tc-move-path-segment-store-new)
-        (struct-get segments store-address))]
+        segments.store-address)]
     [data : TcMovePathSegmentStoreData
       (tc-move-path-segment-store-read address)]
-    [index : i64 (struct-get data len)]
+    [index : i64 data.len]
     (begin
       (tc-move-path-segment-store-grow! (&mut data) (+ index 1))
-      (array-set!
-        (struct-get data nodes)
-        index
-        (TcMovePathSegmentNode (struct-get segments tail) kind value))
-      (set! (struct-get data len) (+ index 1))
+      (set!
+        (array-ref data.nodes index)
+        (TcMovePathSegmentNode segments.tail kind value))
+      (set! data.len (+ index 1))
       (tc-move-path-segment-store-write! address data)
-      (TcMovePathSegments address index (+ (struct-get segments len) 1)))))
+      (TcMovePathSegments address index (+ segments.len 1)))))
 
 (define (tc-move-path-segments-append-field
   [segments : TcMovePathSegments]
@@ -65854,18 +66088,18 @@
 
 (define (tc-move-path-append [base : TcMovePath] [field-id : i64]) : TcMovePath
   (TcMovePath
-    (struct-get base root)
-    (tc-move-path-segments-append-field (struct-get base segments) field-id)))
+    base.root
+    (tc-move-path-segments-append-field base.segments field-id)))
 
 (define (tc-move-tuple-index-path [base : TcMovePath] [index : i64]) : TcMovePath
   (TcMovePath
-    (struct-get base root)
-    (tc-move-path-segments-append-tuple (struct-get base segments) index)))
+    base.root
+    (tc-move-path-segments-append-tuple base.segments index)))
 
 (define (tc-move-array-index-path [base : TcMovePath] [index : i64]) : TcMovePath
   (TcMovePath
-    (struct-get base root)
-    (tc-move-path-segments-append-array (struct-get base segments) index)))
+    base.root
+    (tc-move-path-segments-append-array base.segments index)))
 
 (define (tc-move-path-dense-storage-smoke?) : bool
   (let
@@ -65966,7 +66200,7 @@
         (string.eq (tc-move-path-render sibling-path) "dense-root.alpha.2[4]")
         (= (tc-move-path-segments-hash mixed) expected-hash)
         (= (tc-move-path-segments-storage-node-count mixed) 5)
-        (= (struct-get deep len) 128)
+        (= deep.len 128)
         (= (tc-move-path-segments-storage-node-count deep) 128)
         (= (tc-move-path-segments-storage-capacity deep) 128)
         (string.eq (tc-move-path-segments-render deep) deep-render)))))
@@ -66352,8 +66586,8 @@
   [place : ast.AstExpr]) : TcMaybeNameId
   (match (ast.ast-expr-unspan place)
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-expr-id env name)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
             (tc-param-storage-place-origin
               ctx
@@ -66520,7 +66754,7 @@
         [(ast.AstProgram.Program decls-box)
           (match (tc-source-dotted-alias-target-id-in-context
             ctx
-            (box-get decls-box)
+            (__tl-box-place decls-box)
             (tc-context-module-id ctx)
             alias-id)
             [(TcMaybeNameId.Some target-id) target-id]
@@ -66935,7 +67169,7 @@
   [variants : (& variants ast.AstVariantDefList)]
   [depth : i64]
   [index : i64]) : bool
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     true
     (match (ast.ast-variant-def-list-get
       variants
@@ -67062,7 +67296,11 @@
     [(ast.AstType.Consume inner)
       (tc-move-global-copyable-type? ctx (tc-context-type-get ctx inner) depth)]
     [(ast.AstType.Tuple elems)
-      (tc-move-global-copyable-type-list-at? ctx (& (box-get elems)) depth 0)]
+      (tc-move-global-copyable-type-list-at?
+        ctx
+        (& (__tl-box-place elems))
+        depth
+        0)]
     [(ast.AstType.Array elem _)
       (tc-move-global-copyable-type? ctx (tc-context-type-get ctx elem) depth)]
     [(ast.AstType.Enum name) (tc-move-global-copyable-nominal? ctx name depth)]
@@ -67985,7 +68223,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : TcMoveResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (if (>= index (ast.ast-type-list-len types))
       (TcMoveResult.Ok moved)
       (TcMoveResult.Err (tc-call-arity-invariant-message "move-check")))
@@ -68065,7 +68303,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : TcMoveResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (if (>= index (ast.ast-type-list-len types))
       (TcMoveResult.Ok moved)
       (TcMoveResult.Err (tc-call-arity-invariant-message "move-check")))
@@ -68218,13 +68456,13 @@
   [params : ast.AstTypeList]) : TcMoveResult
   (if (and
     (tc-thread-safe-spawn-call-signature? ctx env func params)
-    (= (struct-get (& args) len) 1))
+    (= args.len 1))
     (let
       [arg : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
       (match (ast.ast-expr-unspan arg)
         [(ast.AstExpr.Lambda lambda-box)
-          (match (box-get lambda-box)
+          (match (__tl-box-place lambda-box)
             [(ast.AstLambda.Lambda lambda-params _ body-box)
               (if (= (ast.ast-param-list-len (& lambda-params)) 0)
                 (tc-move-check-thread-spawn-transferred-captures
@@ -68360,7 +68598,7 @@
 
 (define (tc-move-call-param-types-from-type [fn-ty : ast.AstType]) : ResultTcTypeList
   (match (tc-type-strip-region fn-ty)
-    [(ast.AstType.Func params _) (ResultTcTypeList.Ok (box-get params))]
+    [(ast.AstType.Func params _) (ResultTcTypeList.Ok (__tl-box-place params))]
     [(ast.AstType.Enum _) (ResultTcTypeList.Ok (ast.ast-type-list-new))]
     [(ast.AstType.EnumArgs _ _) (ResultTcTypeList.Ok (ast.ast-type-list-new))]
     [_ (ResultTcTypeList.Err "typecheck: call target is not a function")]))
@@ -68431,7 +68669,7 @@
   (match (tc-type-strip-region fn-ty)
     [(ast.AstType.Func params ret)
       (let
-        [params-list : ast.AstTypeList (box-get params)]
+        [params-list : ast.AstTypeList (__tl-box-place params)]
         [ret-ty : ast.AstType (ast.ty-node-get ret)]
         (ResultTcBorrowCallInfo.Ok
           params-list
@@ -68546,7 +68784,7 @@
   [moved : TcMovedSet]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : TcMoveResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (TcMoveResult.Ok moved)
     (match (tc-move-check-expr-id
       ctx
@@ -68794,13 +69032,13 @@
   [roots : TcMoveCleanupOwners]
   [scope : ast.AstExpr]
   [index : i64]) : TcMoveResult
-  (if (>= index (struct-get (& roots) len))
+  (if (>= index roots.len)
     (TcMoveResult.Ok moved)
     (let
-      [owner : TcMoveCleanupOwner (array-ref (struct-get roots slots) index)]
-      [name-id : i64 (struct-get owner name-id)]
+      [owner : TcMoveCleanupOwner (array-ref roots.slots index)]
+      [name-id : i64 owner.name-id]
       (cond
-        [(struct-get owner move-aware)
+        [owner.move-aware
           (tc-move-check-cleanup-owner-exit
             expr-bases
             (tc-moved-remove-root-state moved name-id)
@@ -68815,7 +69053,7 @@
               expr-bases
               (tc-moved-root-conflict moved name-id)
               (tc-hygiene-name-text-id name-id)
-              (struct-get owner owner-origin-id)
+              owner.owner-origin-id
               scope))]
         [else
           (tc-move-check-cleanup-owner-exit
@@ -68861,14 +69099,14 @@
       (match pattern
         [(ast.AstPattern.Variant _ patterns-box)
           (let
-            [patterns : ast.AstPatternList (box-get patterns-box)]
+            [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
             (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
         [_ TcNameIdList.Nil])]
     [(ast.AstType.EnumArgs _ _)
       (match pattern
         [(ast.AstPattern.Variant _ patterns-box)
           (let
-            [patterns : ast.AstPatternList (box-get patterns-box)]
+            [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
             (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
         [_ TcNameIdList.Nil])]
     [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
@@ -68908,7 +69146,7 @@
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : TcMoveResult
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (TcMoveResult.Ok moved)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -69048,7 +69286,7 @@
   [call-expr : ast.AstExpr]
   [kind : TcSliceViewCallKind]
   [args : ast.AstExprList]) : TcMoveResult
-  (if (= (struct-get (& args) len) 3)
+  (if (= args.len 3)
     (let
       [source : ast.AstExpr
         (ast.ast-expr-segment-bases-get
@@ -69117,6 +69355,113 @@
         call-expr
         "typecheck: slice-view expects exactly three arguments"))))
 
+;; Borrowing a place observes every receiver and index but never performs the
+;; by-value transfer represented by public `deref`. Rebuild only the place
+;; spine with the seed's non-consuming BoxGet node, then reuse the ordinary
+;; move checker for conflict diagnostics and index evaluation.
+(define (tc-move-borrow-place-read-expr-id
+  [expr-bases : i64]
+  [expr : ast.AstExpr]) : i64
+  (match expr
+    [(ast.AstExpr.Spanned inner-box span)
+      (ast.ast-expr-spanned
+        (tc-move-borrow-place-read-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases inner-box))
+        span)]
+    [(ast.AstExpr.Ann inner-box ty-id)
+      (ast.ast-expr-ann-id
+        (tc-move-borrow-place-read-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases inner-box))
+        ty-id)]
+    [(ast.AstExpr.Cast inner-box ty-id)
+      (ast.ast-expr-cast-id
+        (tc-move-borrow-place-read-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases inner-box))
+        ty-id)]
+    [(ast.AstExpr.StructGet receiver-box field)
+      (ast.ast-expr-struct-get-id
+        (tc-move-borrow-place-read-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases receiver-box))
+        field)]
+    [(ast.AstExpr.TupleRef receiver-box index)
+      (ast.ast-expr-tuple-ref
+        (tc-move-borrow-place-read-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases receiver-box))
+        index)]
+    [(ast.AstExpr.ArrayRef receiver-box index-box)
+      (ast.ast-expr-array-ref
+        (tc-move-borrow-place-read-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases receiver-box))
+        index-box)]
+    [(ast.AstExpr.BoxGet receiver-box)
+      (ast.ast-expr-box-get
+        (tc-move-borrow-place-read-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases receiver-box)))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (ast.ast-expr-box-get
+        (tc-move-borrow-place-read-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases receiver-box)))]
+    [_ (ast.ast-node-push expr)]))
+
+(define (tc-move-check-borrow-place
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [place : ast.AstExpr]) : TcMoveResult
+  (tc-move-check-expr-id
+    ctx
+    expr-bases
+    env
+    locals
+    loop-carried
+    moved
+    (tc-move-borrow-place-read-expr-id expr-bases place)))
+
+(define (tc-move-cleanup-overwrite-message) : String
+  "typecheck: cannot overwrite initialized cleanup-owning place; move or clean up the old value first")
+
+(define (tc-move-place-definitely-uninitialized?
+  [expr-bases : i64]
+  [moved : TcMovedSet]
+  [place : ast.AstExpr]) : bool
+  (match (tc-move-direct-root-base-path expr-bases place)
+    [(TcMaybeMovePath.Some path)
+      (if (= path.segments.len 0)
+        (tc-moved-contains? moved path.root)
+        (match (tc-moved-path-exact-conflict-kind
+          moved
+          path
+          (TcMovedPathKind.Move))
+          [(TcMoveConflict.Some _ _) true]
+          [TcMoveConflict.No false]))]
+    [(TcMaybeMovePath.No) false]))
+
+(define (tc-move-check-cleanup-overwrite
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [place : ast.AstExpr]) : ResultTcUnit
+  (match (tc-expr ctx env place)
+    [(ResultTcType.Ok place-ty)
+      (if (and
+        (tc-cleanup-owning-aggregate-type? ctx place-ty)
+        (not (tc-move-place-definitely-uninitialized? expr-bases moved place)))
+        (ResultTcUnit.Err (tc-move-cleanup-overwrite-message))
+        ResultTcUnit.Ok)]
+    [(ResultTcType.Err _) ResultTcUnit.Ok]))
+
 (define (tc-move-loop-flow-normal) : TcMoveLoopFlow
   (TcMoveLoopFlow true false false false))
 
@@ -69131,37 +69476,27 @@
 
 (define (tc-move-loop-flow-seq [first : TcMoveLoopFlow] [rest : TcMoveLoopFlow]) : TcMoveLoopFlow
   (TcMoveLoopFlow
-    (and (struct-get first normal) (struct-get rest normal))
-    (or
-      (struct-get first repeat)
-      (and (struct-get first normal) (struct-get rest repeat)))
-    (or
-      (struct-get first breaks)
-      (and (struct-get first normal) (struct-get rest breaks)))
-    (or
-      (struct-get first exit)
-      (and (struct-get first normal) (struct-get rest exit)))))
+    (and first.normal rest.normal)
+    (or first.repeat (and first.normal rest.repeat))
+    (or first.breaks (and first.normal rest.breaks))
+    (or first.exit (and first.normal rest.exit))))
 
 (define (tc-move-loop-flow-branches [a : TcMoveLoopFlow] [b : TcMoveLoopFlow]) : TcMoveLoopFlow
   (TcMoveLoopFlow
-    (or (struct-get a normal) (struct-get b normal))
-    (or (struct-get a repeat) (struct-get b repeat))
-    (or (struct-get a breaks) (struct-get b breaks))
-    (or (struct-get a exit) (struct-get b exit))))
+    (or a.normal b.normal)
+    (or a.repeat b.repeat)
+    (or a.breaks b.breaks)
+    (or a.exit b.exit)))
 
 (define (tc-move-loop-flow-reaches-repeat?
   [flow : TcMoveLoopFlow]
   [continuation-repeats : bool]) : bool
-  (or
-    (struct-get flow repeat)
-    (and (struct-get flow normal) continuation-repeats)))
+  (or flow.repeat (and flow.normal continuation-repeats)))
 
 (define (tc-move-loop-flow-reaches-break?
   [flow : TcMoveLoopFlow]
   [continuation-breaks : bool]) : bool
-  (or
-    (struct-get flow breaks)
-    (and (struct-get flow normal) continuation-breaks)))
+  (or flow.breaks (and flow.normal continuation-breaks)))
 
 (define (tc-move-loop-flow-exprs-at
   [ctx : TcContext]
@@ -69169,7 +69504,7 @@
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : TcMoveLoopFlow
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (tc-move-loop-flow-normal)
     (tc-move-loop-flow-seq
       (tc-move-loop-flow-expr
@@ -69226,7 +69561,7 @@
   [env : TcTypeEnv]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : TcMoveLoopFlow
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (TcMoveLoopFlow false false false false)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
@@ -69285,7 +69620,7 @@
             env
             (ast.ast-expr-segment-bases-get expr-bases else-box))))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (tc-move-loop-flow-let-bindings-at
             ctx
@@ -69295,7 +69630,7 @@
             0
             body-box)])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (tc-move-loop-flow-seq
             (tc-move-loop-flow-expr
@@ -69314,9 +69649,9 @@
             (ast.ast-expr-segment-bases-get expr-bases inner-box))]
         (TcMoveLoopFlow
           false
-          (struct-get inner-flow repeat)
-          (struct-get inner-flow breaks)
-          (or (struct-get inner-flow normal) (struct-get inner-flow exit))))]
+          inner-flow.repeat
+          inner-flow.breaks
+          (or inner-flow.normal inner-flow.exit)))]
     [(ast.AstExpr.Break) (tc-move-loop-flow-break)]
     [(ast.AstExpr.Continue) (tc-move-loop-flow-repeat)]
     [(ast.AstExpr.Try inner-box)
@@ -69328,9 +69663,9 @@
             env
             (ast.ast-expr-segment-bases-get expr-bases inner-box))]
         (TcMoveLoopFlow
-          (struct-get inner-flow normal)
-          (struct-get inner-flow repeat)
-          (struct-get inner-flow breaks)
+          inner-flow.normal
+          inner-flow.repeat
+          inner-flow.breaks
           true))]
     ;; Nested loops own their break/continue edges and can execute zero times,
     ;; so they normally continue in the surrounding loop.
@@ -69356,7 +69691,7 @@
         (or prior? breaks?)
         (cond
           [(and prior? breaks?)
-            (box (tc-moved-union prior (box-get break-moved-box)))]
+            (box (tc-moved-union prior (__tl-box-place break-moved-box)))]
           [prior? (box prior)]
           [else break-moved-box]))]
     [(TcMoveLoopResult.Err message) (TcMoveLoopResult.Err message)]))
@@ -69376,7 +69711,9 @@
             (cond
               [(and normal-a? normal-b?)
                 (box
-                  (tc-moved-union (box-get moved-a-box) (box-get moved-b-box)))]
+                  (tc-moved-union
+                    (__tl-box-place moved-a-box)
+                    (__tl-box-place moved-b-box)))]
               [normal-a? moved-a-box]
               [normal-b? moved-b-box]
               [else (box fallback)])
@@ -69384,7 +69721,9 @@
             (cond
               [(and breaks-a? breaks-b?)
                 (box
-                  (tc-moved-union (box-get break-a-box) (box-get break-b-box)))]
+                  (tc-moved-union
+                    (__tl-box-place break-a-box)
+                    (__tl-box-place break-b-box)))]
               [breaks-a? break-a-box]
               [else break-b-box]))])]))
 
@@ -69400,7 +69739,7 @@
   [index : i64]
   [continuation-repeats : bool]
   [continuation-breaks : bool]) : TcMoveLoopResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (TcMoveLoopResult.Ok true (box moved) false (box (tc-moved-empty)))
     (let
       [expr-id : i64 (ast.ast-expr-list-get exprs index 0)]
@@ -69426,7 +69765,7 @@
           (if normal?
             (tc-move-loop-result-add-breaks
               breaks?
-              (box-get break-moved-box)
+              (__tl-box-place break-moved-box)
               (tc-move-check-loop-exprs-at
                 ctx
                 expr-bases
@@ -69434,7 +69773,7 @@
                 locals
                 loop-carried
                 outer-loop-carried
-                (box-get moved1-box)
+                (__tl-box-place moved1-box)
                 exprs
                 (+ index 1)
                 continuation-repeats
@@ -69543,14 +69882,14 @@
                     env
                     locals
                     active-loop-carried
-                    (box-get moved1-box)
+                    (__tl-box-place moved1-box)
                     init-box
                     binding-ty)
                     [(TcMoveResult.Err message) (TcMoveLoopResult.Err message)]
                     [(TcMoveResult.Ok moved2)
                       (tc-move-loop-result-add-breaks
                         breaks?
-                        (box-get break-moved-box)
+                        (__tl-box-place break-moved-box)
                         (tc-move-check-loop-let-bindings-at
                           ctx
                           expr-bases
@@ -69598,7 +69937,7 @@
   [index : i64]
   [continuation-repeats : bool]
   [continuation-breaks : bool]) : TcMoveLoopResult
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (TcMoveLoopResult.Ok false (box moved) false (box (tc-moved-empty)))
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -69646,14 +69985,14 @@
                         (tc-moved-union
                           moved
                           (tc-move-remove-bound-root-states
-                            (box-get arm-moved-box)
+                            (__tl-box-place arm-moved-box)
                             bound)))
                       breaks?
                       (box
                         (tc-moved-union
                           moved
                           (tc-move-remove-bound-root-states
-                            (box-get arm-break-box)
+                            (__tl-box-place arm-break-box)
                             bound))))
                     (tc-move-check-loop-match-arms-at
                       ctx
@@ -69756,9 +70095,9 @@
             (if normal?
               (tc-move-loop-result-add-breaks
                 cond-breaks?
-                (box-get cond-break-moved-box)
+                (__tl-box-place cond-break-moved-box)
                 (tc-move-loop-result-branches
-                  (box-get movedc-box)
+                  (__tl-box-place movedc-box)
                   (tc-move-check-loop-expr
                     ctx
                     expr-bases
@@ -69766,7 +70105,7 @@
                     (tc-moved-clone locals)
                     (tc-moved-clone loop-carried)
                     (tc-moved-clone outer-loop-carried)
-                    (tc-moved-clone (box-get movedc-box))
+                    (tc-moved-clone (__tl-box-place movedc-box))
                     (ast.ast-expr-segment-bases-get expr-bases then-box)
                     continuation-repeats
                     continuation-breaks)
@@ -69777,7 +70116,7 @@
                     (tc-moved-clone locals)
                     (tc-moved-clone loop-carried)
                     (tc-moved-clone outer-loop-carried)
-                    (tc-moved-clone (box-get movedc-box))
+                    (tc-moved-clone (__tl-box-place movedc-box))
                     (ast.ast-expr-segment-bases-get expr-bases else-box)
                     continuation-repeats
                     continuation-breaks)))
@@ -69787,7 +70126,7 @@
                 cond-breaks?
                 cond-break-moved-box))]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (tc-move-check-loop-let-bindings-at
             ctx
@@ -69803,7 +70142,7 @@
             continuation-repeats
             continuation-breaks)])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (let
             [scrut : ast.AstExpr
@@ -69833,7 +70172,7 @@
                   scrut-break-box)
                 (if normal?
                   (let
-                    [moveds : TcMovedSet (box-get moveds-box)]
+                    [moveds : TcMovedSet (__tl-box-place moveds-box)]
                     (match (tc-body-type-fact-expr-id
                       "move.loop_match_scrutinee"
                       ctx
@@ -69853,7 +70192,7 @@
                           [(TcMoveResult.Ok moveds1)
                             (tc-move-loop-result-add-breaks
                               scrut-breaks?
-                              (box-get scrut-break-box)
+                              (__tl-box-place scrut-break-box)
                               (tc-move-check-loop-match-arms-at
                                 ctx
                                 expr-bases
@@ -69882,7 +70221,7 @@
                       [(ResultTcType.Err _)
                         (tc-move-loop-result-add-breaks
                           scrut-breaks?
-                          (box-get scrut-break-box)
+                          (__tl-box-place scrut-break-box)
                           (tc-move-check-loop-match-arms-at
                             ctx
                             expr-bases
@@ -69943,7 +70282,7 @@
           expr)
           [(TcMoveResult.Ok moved1)
             (TcMoveLoopResult.Ok
-              (struct-get flow normal)
+              flow.normal
               (box moved1)
               false
               (box (tc-moved-empty)))]
@@ -70116,8 +70455,8 @@
     [(ast.AstExpr.Var name)
       (let
         [name-text : String (tc-hygiene-name-text-id name)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-expr-id env name)
+        (if (tc-dotted-place-name-id? ctx env name)
+          (match (tc-dotted-local-field-expr-id-after-check name)
             [(ResultTcExprId.Ok virtual-id)
               (tc-move-check-expr-id
                 ctx
@@ -70300,7 +70639,7 @@
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
         [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (match (tc-move-check-let-bindings
             ctx
@@ -70321,7 +70660,7 @@
                 body-box)]
             [(TcMoveBindings.Err message) (TcMoveResult.Err message)])])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : ast.AstExpr
@@ -70548,23 +70887,32 @@
                   moved1
                   index)
                   [(TcMoveResult.Ok moved2)
-                    (match (tc-move-check-expr
+                    (match (tc-move-check-cleanup-overwrite
                       ctx
                       expr-bases
                       env
-                      locals
-                      loop-carried
                       moved2
-                      value)
-                      [(TcMoveResult.Ok moved3)
-                        (TcMoveResult.Ok
-                          (tc-move-reinitialize-array-set-path
-                            expr-bases
-                            locals
-                            moved3
-                            array
-                            index))]
-                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                      (ast.AstExpr.ArrayRef array-box index-box))
+                      [(ResultTcUnit.Ok)
+                        (match (tc-move-check-expr
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          loop-carried
+                          moved2
+                          value)
+                          [(TcMoveResult.Ok moved3)
+                            (TcMoveResult.Ok
+                              (tc-move-reinitialize-array-set-path
+                                expr-bases
+                                locals
+                                moved3
+                                array
+                                index))]
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)])]
+                      [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
@@ -70663,23 +71011,35 @@
               moved
               receiver)
               [(TcMoveResult.Ok moved1)
-                (match (tc-move-check-expr
+                (match (tc-move-check-cleanup-overwrite
                   ctx
                   expr-bases
                   env
-                  locals
-                  loop-carried
                   moved1
-                  value)
-                  [(TcMoveResult.Ok moved2)
-                    (TcMoveResult.Ok
-                      (tc-move-reinitialize-struct-set-path
-                        expr-bases
-                        locals
-                        moved2
-                        receiver
-                        field))]
-                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  (if (ast.ast-tuple-set-field-id? field)
+                    (ast.AstExpr.TupleRef
+                      receiver-box
+                      (ast.ast-tuple-set-index-from-field-id field))
+                    (ast.AstExpr.StructGet receiver-box field)))
+                  [(ResultTcUnit.Ok)
+                    (match (tc-move-check-expr
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      loop-carried
+                      moved1
+                      value)
+                      [(TcMoveResult.Ok moved2)
+                        (TcMoveResult.Ok
+                          (tc-move-reinitialize-struct-set-path
+                            expr-bases
+                            locals
+                            moved2
+                            receiver
+                            field))]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.ArrayPush array-box value-box)
@@ -70761,7 +71121,7 @@
                 [(TcMoveLoopResult.Ok _ _ body-breaks? body-break-box)
                   (TcMoveResult.Ok
                     (if body-breaks?
-                      (tc-moved-union movedc (box-get body-break-box))
+                      (tc-moved-union movedc (__tl-box-place body-break-box))
                       movedc))]
                 [(TcMoveLoopResult.Err message) (TcMoveResult.Err message)]))]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
@@ -70772,8 +71132,8 @@
     [(ast.AstExpr.Set name rhs-box)
       (let
         [rhs : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-set-expr-id env name rhs-box)
+        (if (tc-dotted-place-name-id? ctx env name)
+          (match (tc-dotted-local-field-set-expr-id-after-check name rhs-box)
             [(ResultTcExprId.Ok virtual-id)
               (tc-move-check-expr
                 ctx
@@ -70784,49 +71144,57 @@
                 moved
                 (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
             [(ResultTcExprId.Err message) (TcMoveResult.Err message)])
-          (match (tc-move-check-expr-id
+          (match (tc-move-check-cleanup-overwrite
             ctx
             expr-bases
             env
-            locals
-            loop-carried
             moved
-            rhs-box)
-            [(TcMoveResult.Ok moved1)
-              (match (tc-move-check-closure-assignment-facts
+            (ast.AstExpr.Var name))
+            [(ResultTcUnit.Ok)
+              (match (tc-move-check-expr-id
                 ctx
                 expr-bases
                 env
                 locals
-                name
-                rhs)
-                [(ResultTcUnit.Ok)
-                  (match (tc-move-after-bind-id
+                loop-carried
+                moved
+                rhs-box)
+                [(TcMoveResult.Ok moved1)
+                  (match (tc-move-check-closure-assignment-facts
                     ctx
                     expr-bases
                     env
                     locals
-                    loop-carried
-                    moved1
-                    rhs-box)
-                    [(TcMoveResult.Ok moved2)
-                      (match (tc-lookup-id env name)
-                        [(ResultTcType.Ok binding-ty)
-                          (TcMoveResult.Ok
-                            (tc-param-storage-rebind-from-init
-                              ctx
-                              expr-bases
-                              env
-                              moved2
-                              name
-                              binding-ty
-                              rhs))]
-                        [(ResultTcType.Err _)
-                          (TcMoveResult.Ok
-                            (tc-moved-remove-root-state moved2 name))])]
-                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
-            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
+                    name
+                    rhs)
+                    [(ResultTcUnit.Ok)
+                      (match (tc-move-after-bind-id
+                        ctx
+                        expr-bases
+                        env
+                        locals
+                        loop-carried
+                        moved1
+                        rhs-box)
+                        [(TcMoveResult.Ok moved2)
+                          (match (tc-lookup-id env name)
+                            [(ResultTcType.Ok binding-ty)
+                              (TcMoveResult.Ok
+                                (tc-param-storage-rebind-from-init
+                                  ctx
+                                  expr-bases
+                                  env
+                                  moved2
+                                  name
+                                  binding-ty
+                                  rhs))]
+                            [(ResultTcType.Err _)
+                              (TcMoveResult.Ok
+                                (tc-moved-remove-root-state moved2 name))])]
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                    [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(ResultTcUnit.Err message) (TcMoveResult.Err message)])))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -70850,7 +71218,7 @@
             inner
             "mutably borrow")
             [(ResultTcUnit.Ok)
-              (tc-move-check-expr
+              (tc-move-check-borrow-place
                 ctx
                 expr-bases
                 env
@@ -70859,7 +71227,7 @@
                 moved
                 inner)]
             [(ResultTcUnit.Err message) (TcMoveResult.Err message)])
-          (tc-move-check-expr
+          (tc-move-check-borrow-place
             ctx
             expr-bases
             env
@@ -70868,7 +71236,7 @@
             moved
             inner)))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (let
             [scrut : ast.AstExpr
@@ -70937,7 +71305,7 @@
                       arms)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -70981,14 +71349,16 @@
                         [(TcMoveLoopResult.Ok _ _ breaks? break-moved-box)
                           (TcMoveResult.Ok
                             (if breaks?
-                              (tc-moved-union moved2 (box-get break-moved-box))
+                              (tc-moved-union
+                                moved2
+                                (__tl-box-place break-moved-box))
                               moved2))]
                         [(TcMoveLoopResult.Err message)
                           (TcMoveResult.Err message)]))]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ a-box b-box c-box d-box)
           (let
             [a : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases a-box)]
@@ -71034,7 +71404,7 @@
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             index
@@ -71245,7 +71615,7 @@
               exprs)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings exprs)
           (match (tc-move-check-resource-bindings
             ctx
@@ -71345,26 +71715,34 @@
           moved
           box-expr)
           [(TcMoveResult.Ok moved1)
-            (match (tc-move-check-expr-id
+            (match (tc-move-check-cleanup-overwrite
               ctx
               expr-bases
               env
-              locals
-              loop-carried
               moved1
-              value-box)
-              [(TcMoveResult.Ok moved2)
-                (match (tc-move-after-bind-id
+              (ast.AstExpr.BoxTake box-box))
+              [(ResultTcUnit.Ok)
+                (match (tc-move-check-expr-id
                   ctx
                   expr-bases
                   env
                   locals
                   loop-carried
-                  moved2
+                  moved1
                   value-box)
-                  [(TcMoveResult.Ok moved3) (TcMoveResult.Ok moved3)]
+                  [(TcMoveResult.Ok moved2)
+                    (match (tc-move-after-bind-id
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      loop-carried
+                      moved2
+                      value-box)
+                      [(TcMoveResult.Ok moved3) (TcMoveResult.Ok moved3)]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(ResultTcUnit.Err message) (TcMoveResult.Err message)])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.TypeLiteral _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Init _) (TcMoveResult.Ok moved)]
@@ -71769,7 +72147,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
   [result-ty : ast.AstType]) : TcMoveResult
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (TcMoveResult.Ok moved)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -71870,7 +72248,7 @@
             result-ty)]
         [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (tc-move-check-global-result-expr-id
             ctx
@@ -71882,7 +72260,7 @@
             body-box
             result-ty)])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match _ arms)
           (tc-move-check-global-result-match-arms-at
             ctx
@@ -71955,7 +72333,7 @@
         exprs
         result-ty)]
     [(ast.AstExpr.WithResource resource-box)
-      (match (box-get resource-box)
+      (match (__tl-box-place resource-box)
         [(ast.AstWithResource.WithResource bindings body)
           (tc-move-check-global-result-expr-list
             ctx
@@ -72017,7 +72395,7 @@
         inner-box
         result-ty)]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ index _ _ _ _ value-box)
           (tc-move-check-global-result-expr-id
             ctx
@@ -72029,7 +72407,7 @@
             value-box
             result-ty)])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ index _ _ _ prefix _ _ value-box body-box)
           (let
             [value-shadowed : TcNameIdList (tc-name-id-list-add shadowed index)]
@@ -72184,7 +72562,7 @@
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     ResultTcUnit.Ok
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -72234,7 +72612,7 @@
             (ast.ast-expr-segment-bases-get expr-bases else-box))]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (match (tc-move-result-let-binding-facts-at
             ctx
@@ -72254,7 +72632,7 @@
                 (ast.ast-expr-segment-bases-get expr-bases body-box))]
             [(TcMoveBindings.Err message) (ResultTcUnit.Err message)])])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (match (tc-body-type-fact-expr-id
             "move.result_closure_scrutinee"
@@ -72284,7 +72662,7 @@
     [(ast.AstExpr.InArena _ exprs)
       (tc-move-check-tail-closure-expr-list ctx expr-bases env locals exprs)]
     [(ast.AstExpr.WithResource resource-box)
-      (match (box-get resource-box)
+      (match (__tl-box-place resource-box)
         [(ast.AstWithResource.WithResource _ body)
           (tc-move-check-tail-closure-expr-list ctx expr-bases env locals body)])]
     [(ast.AstExpr.Ann inner-box _)
@@ -72337,7 +72715,7 @@
   [index : i64]
   [result-ty : ast.AstType]
   [joined : TcMovedSet]) : TcMoveResult
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (TcMoveResult.Ok joined)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
@@ -72418,7 +72796,7 @@
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
         [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (match (tc-move-result-let-binding-facts-at
             ctx
@@ -72501,7 +72879,7 @@
         exprs
         result-ty)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match _ arms)
           (tc-move-check-result-match-arms-at
             ctx
@@ -72855,7 +73233,7 @@
       (tc-closure-local-fact-move-only-code?
         (tc-closure-local-fact-code locals name-id))]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (tc-lambda-capture-has-move-only-with-locals?
             ctx
@@ -73064,7 +73442,7 @@
   [init : ast.AstExpr]) : i64
   (match (ast.ast-expr-unspan init)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (tc-lambda-call-capability-with-locals ctx env locals params body-box)])]
     [_ (tc-closure-call-capability-shared)]))
@@ -73083,7 +73461,7 @@
   [init : ast.AstExpr]) : i64
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (let
             [body : ast.AstExpr
@@ -73272,12 +73650,12 @@
   (match facts
     [(TcMovedPathFacts.Nil) (TcMaybeNameId.No)]
     [(TcMovedPathFacts.Cons fact rest)
-      (if (tc-move-path-eq? (struct-get fact path) path)
-        (match (struct-get fact kind)
+      (if (tc-move-path-eq? fact.path path)
+        (match fact.kind
           [(TcMovedPathKind.BorrowLending binding-id)
             (TcMaybeNameId.Some binding-id)]
-          [_ (tc-borrow-check-lending-binding-at (box-get rest) path)])
-        (tc-borrow-check-lending-binding-at (box-get rest) path))]))
+          [_ (tc-borrow-check-lending-binding-at (__tl-box-place rest) path)])
+        (tc-borrow-check-lending-binding-at (__tl-box-place rest) path))]))
 
 (define (tc-borrow-check-lending-binding
   [facts : TcMovedPathFacts]
@@ -73304,13 +73682,13 @@
     [(TcMovedPathFacts.Nil) false]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (tc-move-path-eq? (struct-get fact path) path)
-        (match (struct-get fact kind)
+        (tc-move-path-eq? fact.path path)
+        (match fact.kind
           [(TcMovedPathKind.BorrowLendingUsed used-id) (= used-id binding-id)]
           [_ false]))
         true
         (tc-borrow-check-lending-binding-used-at?
-          (box-get rest)
+          (__tl-box-place rest)
           path
           binding-id))]))
 
@@ -73323,17 +73701,20 @@
     [(TcMovedPathFacts.Cons fact rest)
       (let
         [out2 : TcMovedSet
-          (match (struct-get fact kind)
+          (match fact.kind
             [(TcMovedPathKind.BorrowLending fact-binding-id)
               (if (= fact-binding-id binding-id)
                 (tc-moved-add-path-fact
                   out
-                  (struct-get fact path)
+                  fact.path
                   (TcMovedPathKind.BorrowLendingUsed binding-id)
                   (tc-moved-path-fact-origin fact))
                 out)]
             [_ out])]
-        (tc-borrow-check-note-lending-use-at (box-get rest) binding-id out2))]))
+        (tc-borrow-check-note-lending-use-at
+          (__tl-box-place rest)
+          binding-id
+          out2))]))
 
 (define (tc-borrow-check-note-lending-use
   [borrowed : TcMovedSet]
@@ -73351,10 +73732,10 @@
     [(TcMovedPathFacts.Cons fact rest)
       (let
         [out2 : TcMovedSet
-          (match (struct-get fact kind)
+          (match fact.kind
             [(TcMovedPathKind.BorrowLendingUsed _)
               (let
-                [path : TcMovePath (struct-get fact path)]
+                [path : TcMovePath fact.path]
                 (match (tc-borrow-check-lending-binding
                   (tc-moved-paths out)
                   path)
@@ -73366,7 +73747,7 @@
                       (tc-moved-path-fact-origin fact))]
                   [(TcMaybeNameId.No) out]))]
             [_ out])]
-        (tc-borrow-check-propagate-lending-uses-at (box-get rest) out2))]))
+        (tc-borrow-check-propagate-lending-uses-at (__tl-box-place rest) out2))]))
 
 (define (tc-borrow-check-propagate-lending-uses
   [from : TcMovedSet]
@@ -73388,7 +73769,7 @@
     [(TcMovedPathFacts.Cons fact rest)
       (let
         [out2 : TcMovedSet
-          (match (struct-get fact kind)
+          (match fact.kind
             [(TcMovedPathKind.BorrowLending binding-id)
               (if (tc-expr-uses-free-name?
                 expr-bases
@@ -73397,7 +73778,7 @@
                 bound)
                 (tc-moved-add-path-fact
                   out
-                  (struct-get fact path)
+                  fact.path
                   (TcMovedPathKind.BorrowLendingUsed binding-id)
                   (tc-moved-path-fact-origin fact))
                 out)]
@@ -73406,7 +73787,7 @@
           expr-bases
           body
           bound
-          (box-get rest)
+          (__tl-box-place rest)
           out2))]))
 
 (define (tc-borrow-check-note-called-lambda-capture-uses
@@ -73415,7 +73796,7 @@
   [func : ast.AstExpr]) : TcMovedSet
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (tc-borrow-check-note-called-lambda-capture-uses-at
             expr-bases
@@ -73449,10 +73830,10 @@
     [(TcMovedPathFacts.Cons fact rest)
       (let
         [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-lending (box-get rest) path)]
+          (tc-moved-path-facts-remove-lending (__tl-box-place rest) path)]
         (if (and
-          (tc-move-path-eq? (struct-get fact path) path)
-          (match (struct-get fact kind)
+          (tc-move-path-eq? fact.path path)
+          (match fact.kind
             [(TcMovedPathKind.BorrowLending _) true]
             [(TcMovedPathKind.BorrowLendingUsed _) true]
             [_ false]))
@@ -73681,7 +74062,7 @@
       locals
       (ast.ast-expr-segment-bases-get
         expr-bases
-        (ast.ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0)))))
+        (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
 
 ;; Recover a direct place borrow from the value position of an expression.
 ;; Indirect call/aggregate results deliberately return No so their existing
@@ -73735,8 +74116,8 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (let
-        [path : TcMovePath (struct-get fact path)]
-        [kind : TcMovedPathKind (struct-get fact kind)]
+        [path : TcMovePath fact.path]
+        [kind : TcMovedPathKind fact.kind]
         [keep-kind : bool
           (match kind
             [(TcMovedPathKind.BorrowShared) true]
@@ -73774,7 +74155,7 @@
           ctx
           env
           outer-locals
-          (box-get rest)
+          (__tl-box-place rest)
           result-lifetimes
           direct-path
           out2))]))
@@ -73825,16 +74206,13 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (let
-        [path : TcMovePath (struct-get fact path)]
+        [path : TcMovePath fact.path]
         [shared : bool
-          (match (struct-get fact kind)
+          (match fact.kind
             [(TcMovedPathKind.BorrowShared) true]
             [_ false])]
         [new : bool
-          (match (tc-moved-path-exact-conflict-kind
-            prior
-            path
-            (struct-get fact kind))
+          (match (tc-moved-path-exact-conflict-kind prior path fact.kind)
             [(TcMoveConflict.Some _ _) false]
             [TcMoveConflict.No true])]
         [out2 : TcMovedSet
@@ -73856,7 +74234,7 @@
           env
           locals
           prior
-          (box-get rest)
+          (__tl-box-place rest)
           binding-id
           result-lifetimes
           origin
@@ -73920,12 +74298,12 @@
     [(TcMovedPathFacts.Nil) false]
     [(TcMovedPathFacts.Cons fact rest)
       (if (and
-        (tc-move-path-eq? (struct-get fact path) path)
-        (match (struct-get fact kind)
+        (tc-move-path-eq? fact.path path)
+        (match fact.kind
           [(TcMovedPathKind.BorrowPending _) true]
           [_ false]))
         true
-        (tc-borrow-check-pending-path-at? (box-get rest) path))]))
+        (tc-borrow-check-pending-path-at? (__tl-box-place rest) path))]))
 
 (define (tc-borrow-check-add-pending-markers-at
   [expr-bases : i64]
@@ -73940,9 +74318,9 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (let
-        [path : TcMovePath (struct-get fact path)]
+        [path : TcMovePath fact.path]
         [out2 : TcMovedSet
-          (match (struct-get fact kind)
+          (match fact.kind
             [(TcMovedPathKind.BorrowLending binding-id)
               (if (or
                 (tc-expr-list-uses-free-name?
@@ -73971,7 +74349,7 @@
           locals
           exprs
           scope-id
-          (box-get rest)
+          (__tl-box-place rest)
           out2))]))
 
 (define (tc-borrow-check-add-pending-markers
@@ -74007,17 +74385,17 @@
     [(TcMovedPathFacts.Cons fact rest)
       (let
         [out2 : TcMovedSet
-          (match (struct-get fact kind)
+          (match fact.kind
             [(TcMovedPathKind.BorrowLending _)
               (tc-moved-add-path-fact
                 out
-                (struct-get fact path)
+                fact.path
                 (TcMovedPathKind.BorrowPending scope-id)
                 (tc-moved-path-fact-origin fact))]
             [_ out])]
         (tc-borrow-check-add-all-pending-markers-at
           scope-id
-          (box-get rest)
+          (__tl-box-place rest)
           out2))]))
 
 (define (tc-borrow-check-add-all-pending-markers
@@ -74041,8 +74419,10 @@
     [(TcMovedPathFacts.Cons fact rest)
       (let
         [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-pending-scope (box-get rest) scope-id)]
-        (if (match (struct-get fact kind)
+          (tc-moved-path-facts-remove-pending-scope
+            (__tl-box-place rest)
+            scope-id)]
+        (if (match fact.kind
           [(TcMovedPathKind.BorrowPending fact-scope-id)
             (= fact-scope-id scope-id)]
           [_ false])
@@ -74074,9 +74454,9 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (let
-        [path : TcMovePath (struct-get fact path)]
+        [path : TcMovePath fact.path]
         [shared : bool
-          (match (struct-get fact kind)
+          (match fact.kind
             [(TcMovedPathKind.BorrowShared) true]
             [_ false])]
         [out2 : TcMovedSet
@@ -74131,7 +74511,7 @@
           locals
           exprs
           protected
-          (box-get rest)
+          (__tl-box-place rest)
           out2))]))
 
 (define (tc-borrow-check-prune-before-exprs
@@ -74499,7 +74879,7 @@
     [(ast.AstType.EnumArgs _ _) true]
     [(ast.AstType.StructArgs _ _) true]
     [(ast.AstType.Tuple elems)
-      (tc-type-list-contains-reference? (box-get elems))]
+      (tc-type-list-contains-reference? (__tl-box-place elems))]
     [_ false]))
 
 ;; The ordinary returned-call effect uses the inferred result type, which can
@@ -74618,7 +74998,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     (TcBorrowCheckResult.Ok borrowed)
     (match (tc-borrow-check-add-bound-returned-call-arg-borrow
       ctx
@@ -74748,8 +75128,8 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (let
-        [path : TcMovePath (struct-get fact path)]
-        [kind : TcMovedPathKind (struct-get fact kind)]
+        [path : TcMovePath fact.path]
+        [kind : TcMovedPathKind fact.kind]
         [borrow-kind : bool
           (match kind
             [(TcMovedPathKind.BorrowShared) true]
@@ -74789,7 +75169,7 @@
           expr-bases
           env
           prior
-          (box-get rest)
+          (__tl-box-place rest)
           value
           out2))]))
 
@@ -75250,14 +75630,14 @@
       (match pattern
         [(ast.AstPattern.Variant _ patterns-box)
           (let
-            [patterns : ast.AstPatternList (box-get patterns-box)]
+            [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
             (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
         [_ TcNameIdList.Nil])]
     [(ast.AstType.EnumArgs _ _)
       (match pattern
         [(ast.AstPattern.Variant _ patterns-box)
           (let
-            [patterns : ast.AstPatternList (box-get patterns-box)]
+            [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
             (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
         [_ TcNameIdList.Nil])]
     [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
@@ -75365,7 +75745,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (if (>= index (ast.ast-type-list-len types))
       (TcBorrowCheckResult.Ok borrowed)
       (TcBorrowCheckResult.Err (tc-call-arity-invariant-message "borrow-check")))
@@ -75407,10 +75787,10 @@
   (match facts
     [(TcMovedPathFacts.Nil) (TcBorrowCheckResult.Ok borrowed)]
     [(TcMovedPathFacts.Cons fact rest)
-      (match (struct-get fact kind)
+      (match fact.kind
         [(TcMovedPathKind.BorrowTwoPhaseMut)
           (let
-            [path : TcMovePath (struct-get fact path)]
+            [path : TcMovePath fact.path]
             (match (tc-moved-path-conflict borrowed path)
               [(TcMoveConflict.Some _ _)
                 (TcBorrowCheckResult.Err
@@ -75426,13 +75806,13 @@
                 (tc-borrow-check-activate-two-phase-mut-borrows-loop
                   expr-bases
                   borrowed
-                  (box-get rest)
+                  (__tl-box-place rest)
                   primary)]))]
         [_
           (tc-borrow-check-activate-two-phase-mut-borrows-loop
             expr-bases
             borrowed
-            (box-get rest)
+            (__tl-box-place rest)
             primary)])]))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows
@@ -75553,7 +75933,7 @@
   [index : i64]) : TcBorrowCheckResult
   (begin
     (when
-      (>= index (struct-get exprs len))
+      (>= index exprs.len)
       (return
         (if (>= index (ast.ast-type-list-len types))
           (if reserved
@@ -75787,7 +76167,7 @@
   [args : (& args ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
       (TcBorrowCheckResult.Ok borrowed)
       (TcBorrowCheckResult.Err (tc-call-arity-invariant-message "borrow-check")))
@@ -76028,7 +76408,7 @@
   [protected : TcMovedSet]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (TcBorrowCheckResult.Ok borrowed)
     (let
       [head : i64 (ast.ast-expr-list-get exprs index 0)]
@@ -76206,7 +76586,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [lifetime : i64]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (if (tc-borrow-check-expr-stores-lifetime?
       ctx
@@ -76289,7 +76669,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [lifetime : i64]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
@@ -76364,7 +76744,7 @@
           (ast.ast-expr-segment-bases-get expr-bases else-box)
           lifetime))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (or
             (tc-borrow-check-let-bindings-store-lifetime?
@@ -76380,7 +76760,7 @@
               (ast.ast-expr-segment-bases-get expr-bases body-box)
               lifetime))])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (or
             (tc-borrow-check-expr-stores-lifetime?
@@ -76396,8 +76776,8 @@
               arms
               lifetime))])]
     [(ast.AstExpr.Set name rhs-box)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-set-expr-id env name rhs-box)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-set-expr-id-after-check name rhs-box)
           [(ResultTcExprId.Ok virtual-id)
             (tc-borrow-check-expr-stores-lifetime?
               ctx
@@ -76458,8 +76838,8 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (let
-        [path : TcMovePath (struct-get fact path)]
-        [kind : TcMovedPathKind (struct-get fact kind)]
+        [path : TcMovePath fact.path]
+        [kind : TcMovedPathKind fact.kind]
         [out2 : TcMovedSet
           (if (or
             (match (tc-moved-path-exact-conflict-kind before path kind)
@@ -76478,7 +76858,7 @@
           ctx
           loop-env
           before
-          (box-get rest)
+          (__tl-box-place rest)
           out2))]))
 
 (define (tc-borrow-check-loop-protect-carried-facts
@@ -76505,8 +76885,8 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (let
-        [path : TcMovePath (struct-get fact path)]
-        [kind : TcMovedPathKind (struct-get fact kind)]
+        [path : TcMovePath fact.path]
+        [kind : TcMovedPathKind fact.kind]
         [out2 : TcMovedSet
           (if (match (tc-moved-path-exact-conflict-kind out path kind)
             [(TcMoveConflict.Some _ _) true]
@@ -76531,7 +76911,7 @@
           expr-bases
           env
           expr
-          (box-get rest)
+          (__tl-box-place rest)
           out2))]))
 
 (define (tc-borrow-check-loop-protect-stored-facts
@@ -76590,7 +76970,9 @@
             (cond
               [(and normal-a? normal-b?)
                 (box
-                  (tc-moved-union (box-get normal-a-box) (box-get normal-b-box)))]
+                  (tc-moved-union
+                    (__tl-box-place normal-a-box)
+                    (__tl-box-place normal-b-box)))]
               [normal-a? normal-a-box]
               [normal-b? normal-b-box]
               [else (box fallback)])
@@ -76598,14 +76980,18 @@
             (cond
               [(and repeat-a? repeat-b?)
                 (box
-                  (tc-moved-union (box-get repeat-a-box) (box-get repeat-b-box)))]
+                  (tc-moved-union
+                    (__tl-box-place repeat-a-box)
+                    (__tl-box-place repeat-b-box)))]
               [repeat-a? repeat-a-box]
               [else repeat-b-box])
             (or breaks-a? breaks-b?)
             (cond
               [(and breaks-a? breaks-b?)
                 (box
-                  (tc-moved-union (box-get break-a-box) (box-get break-b-box)))]
+                  (tc-moved-union
+                    (__tl-box-place break-a-box)
+                    (__tl-box-place break-b-box)))]
               [breaks-a? break-a-box]
               [else break-b-box]))])]))
 
@@ -76630,13 +77016,13 @@
         (or repeat-prior? repeats?)
         (cond
           [(and repeat-prior? repeats?)
-            (box (tc-moved-union repeat-prior (box-get repeat-box)))]
+            (box (tc-moved-union repeat-prior (__tl-box-place repeat-box)))]
           [repeat-prior? (box repeat-prior)]
           [else repeat-box])
         (or break-prior? breaks?)
         (cond
           [(and break-prior? breaks?)
-            (box (tc-moved-union break-prior (box-get break-box)))]
+            (box (tc-moved-union break-prior (__tl-box-place break-box)))]
           [break-prior? (box break-prior)]
           [else break-box]))]))
 
@@ -76681,7 +77067,7 @@
                   ctx
                   loop-env
                   entry
-                  (box-get normal-box)
+                  (__tl-box-place normal-box)
                   remove-root-id)))
             unit)
           (if repeats?
@@ -76693,7 +77079,7 @@
                   ctx
                   loop-env
                   entry
-                  (box-get repeat-box)
+                  (__tl-box-place repeat-box)
                   remove-root-id)))
             unit)
           (if breaks?
@@ -76705,7 +77091,7 @@
                   ctx
                   loop-env
                   entry
-                  (box-get break-box)
+                  (__tl-box-place break-box)
                   remove-root-id)))
             unit)
           (TcBorrowCheckResult.Ok out)))]))
@@ -76760,17 +77146,17 @@
             (let
               [repeat-clean : TcMovedSet
                 (tc-borrow-check-remove-pending-markers
-                  (box-get repeat-box)
+                  (__tl-box-place repeat-box)
                   pending-scope-id)]
               [break-clean : TcMovedSet
                 (tc-borrow-check-remove-pending-markers
-                  (box-get break-box)
+                  (__tl-box-place break-box)
                   pending-scope-id)]
               (if normal?
                 (let
                   [normal-clean : TcMovedSet
                     (tc-borrow-check-remove-pending-markers
-                      (box-get normal-box)
+                      (__tl-box-place normal-box)
                       pending-scope-id)]
                   [protected1 : TcMovedSet
                     (tc-borrow-check-loop-protect-stored-facts
@@ -76837,7 +77223,7 @@
   [protected : TcMovedSet]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : TcBorrowLoopResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (TcBorrowLoopResult.Ok
       true
       (box borrowed)
@@ -76888,17 +77274,17 @@
           (let
             [repeat-clean : TcMovedSet
               (tc-borrow-check-remove-pending-markers
-                (box-get repeat-box)
+                (__tl-box-place repeat-box)
                 head-id)]
             [break-clean : TcMovedSet
               (tc-borrow-check-remove-pending-markers
-                (box-get break-box)
+                (__tl-box-place break-box)
                 head-id)]
             (if normal?
               (let
                 [normal-clean : TcMovedSet
                   (tc-borrow-check-remove-pending-markers
-                    (box-get normal-box)
+                    (__tl-box-place normal-box)
                     head-id)]
                 [protected1 : TcMovedSet
                   (tc-borrow-check-loop-protect-stored-facts
@@ -77035,7 +77421,7 @@
   [protected : TcMovedSet]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (TcBorrowCheckResult.Ok borrowed)
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
@@ -77131,7 +77517,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [joined : TcMovedSet]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (TcBorrowCheckResult.Ok joined)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -77265,7 +77651,7 @@
                 (TcBorrowCheckResult.Err message)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -77301,7 +77687,7 @@
               [(TcBorrowCheckBindings.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (let
             [scrut : ast.AstExpr
@@ -77412,7 +77798,7 @@
               borrowedc
               (ast.ast-expr-segment-bases-get expr-bases else-box)))])]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (match (tc-borrow-check-let-bindings
             ctx
@@ -77451,21 +77837,21 @@
                         ctx
                         loop-env
                         borrowed
-                        (box-get normal-box)))
+                        (__tl-box-place normal-box)))
                     repeats?
                     (box
                       (tc-borrow-check-loop-visible-body-borrows
                         ctx
                         loop-env
                         borrowed
-                        (box-get repeat-box)))
+                        (__tl-box-place repeat-box)))
                     breaks?
                     (box
                       (tc-borrow-check-loop-visible-body-borrows
                         ctx
                         loop-env
                         borrowed
-                        (box-get break-box))))])])])]
+                        (__tl-box-place break-box))))])])])]
     [(ast.AstExpr.Return _)
       (match (tc-borrow-check-expr ctx expr-bases env locals borrowed expr)
         [(TcBorrowCheckResult.Ok borrowed1)
@@ -77509,11 +77895,11 @@
             [flow : TcMoveLoopFlow
               (tc-move-loop-flow-expr ctx expr-bases env expr)]
             (TcBorrowLoopResult.Ok
-              (struct-get flow normal)
+              flow.normal
               (box borrowed1)
-              (struct-get flow repeat)
+              flow.repeat
               (box borrowed1)
-              (struct-get flow breaks)
+              flow.breaks
               (box borrowed1)))])]))
 
 (define (tc-borrow-check-read-exprs
@@ -77533,7 +77919,7 @@
   [borrowed : TcMovedSet]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (TcBorrowCheckResult.Ok borrowed)
     (let
       [head : ast.AstExpr
@@ -77653,7 +78039,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     (TcBorrowCheckResult.Ok borrowed)
     (let
       [arg : ast.AstExpr
@@ -77767,8 +78153,8 @@
             bound
             body
             closure-id
-            (box-get rest))]
-        (match (struct-get fact kind)
+            (__tl-box-place rest))]
+        (match fact.kind
           [(TcMovedPathKind.BorrowLending binding-id)
             (let
               [captured : bool
@@ -77781,9 +78167,9 @@
                 (let
                   [rebound : TcMovedPathFact
                     (TcMovedPathFact
-                      (struct-get fact path)
+                      fact.path
                       (TcMovedPathKind.BorrowLending closure-id)
-                      (struct-get fact origin))]
+                      fact.origin)]
                   (if (tc-closure-local-fact-copyable-code?
                     (tc-closure-local-fact-code locals binding-id))
                     (TcMovedPathFacts.Cons
@@ -77806,10 +78192,10 @@
       (let
         [tail : TcMovedPathFacts
           (tc-borrow-check-copy-lambda-lending-facts
-            (box-get rest)
+            (__tl-box-place rest)
             source-id
             closure-id)]
-        (match (struct-get fact kind)
+        (match fact.kind
           [(TcMovedPathKind.BorrowLending binding-id)
             (if (= binding-id source-id)
               (TcMovedPathFacts.Cons
@@ -77817,9 +78203,9 @@
                 (box
                   (TcMovedPathFacts.Cons
                     (TcMovedPathFact
-                      (struct-get fact path)
+                      fact.path
                       (TcMovedPathKind.BorrowLending closure-id)
-                      (struct-get fact origin))
+                      fact.origin)
                     (box tail))))
               (TcMovedPathFacts.Cons fact (box tail)))]
           [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
@@ -77836,10 +78222,10 @@
     [(TcMovedPathFacts.Nil) out]
     [(TcMovedPathFacts.Cons fact rest)
       (let
-        [path : TcMovePath (struct-get fact path)]
+        [path : TcMovePath fact.path]
         [out2 : TcMovedSet
           (if (and
-            (match (struct-get fact kind)
+            (match fact.kind
               [(TcMovedPathKind.BorrowShared) true]
               [_ false])
             (tc-name-id-list-contains
@@ -77850,7 +78236,7 @@
         (tc-borrow-check-add-closure-lending-for-lifetimes
           ctx
           env
-          (box-get rest)
+          (__tl-box-place rest)
           lifetimes
           closure-id
           origin
@@ -77937,7 +78323,7 @@
   [init : ast.AstExpr]) : TcMovedSet
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (let
             [body : ast.AstExpr
@@ -78291,7 +78677,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [joined : TcMovedSet]
   [index : i64]) : TcBorrowCheckResult
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (TcBorrowCheckResult.Ok joined)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -78370,7 +78756,7 @@
   [call-expr : ast.AstExpr]
   [kind : TcSliceViewCallKind]
   [args : ast.AstExprList]) : TcBorrowCheckResult
-  (if (= (struct-get (& args) len) 3)
+  (if (= args.len 3)
     (let
       [source : ast.AstExpr
         (ast.ast-expr-segment-bases-get
@@ -78572,8 +78958,8 @@
               (TcBorrowCheckResult.Err message)])))]
     [(ast.AstExpr.Literal _) (TcBorrowCheckResult.Ok borrowed)]
     [(ast.AstExpr.Var name)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-expr-id env name)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check name)
           [(ResultTcExprId.Ok virtual-id)
             (tc-borrow-check-expr-id
               ctx
@@ -78749,7 +79135,7 @@
               (TcBorrowCheckResult.Err message)])]
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (match (tc-borrow-check-let-bindings
             ctx
@@ -78802,7 +79188,7 @@
             [(TcBorrowCheckBindings.Err message)
               (TcBorrowCheckResult.Err message)])])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (match (tc-borrow-check-expr-id
             ctx
@@ -79182,7 +79568,7 @@
                               ctx
                               env
                               borrowedc
-                              (box-get normal-box))))
+                              (__tl-box-place normal-box))))
                         unit)
                       (if repeats?
                         (set!
@@ -79193,7 +79579,7 @@
                               ctx
                               env
                               borrowedc
-                              (box-get repeat-box))))
+                              (__tl-box-place repeat-box))))
                         unit)
                       (if breaks?
                         (set!
@@ -79204,7 +79590,7 @@
                               ctx
                               env
                               borrowedc
-                              (box-get break-box))))
+                              (__tl-box-place break-box))))
                         unit)
                       out)))]
               [(TcBorrowLoopResult.Err message)
@@ -79217,8 +79603,8 @@
     [(ast.AstExpr.Set name rhs-box)
       (let
         [rhs : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-set-expr-id env name rhs-box)
+        (if (tc-dotted-place-name-id? ctx env name)
+          (match (tc-dotted-local-field-set-expr-id-after-check name rhs-box)
             [(ResultTcExprId.Ok virtual-id)
               (tc-borrow-check-expr
                 ctx
@@ -79327,7 +79713,7 @@
             [(TcBorrowCheckResult.Err message)
               (TcBorrowCheckResult.Err message)])))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (let
             [scrut : ast.AstExpr
@@ -79358,7 +79744,7 @@
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -79411,7 +79797,7 @@
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ a-box b-box c-box d-box)
           (let
             [a : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases a-box)]
@@ -79450,7 +79836,7 @@
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             index
@@ -79644,7 +80030,7 @@
                 (TcBorrowCheckResult.Err message)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings exprs)
           (match (tc-borrow-check-resource-bindings
             ctx
@@ -79930,7 +80316,7 @@
 ;; --- borrow-check relevance gate --------------------------------------------
 ;;
 ;; The borrow checker can only fire on borrow-relevant constructs: `&` borrow
-;; creation, box-take consumption, `with-region` blocks, calls to functions
+;; creation, consuming Box dereference, `with-region` blocks, calls to functions
 ;; whose signature mentions a region, and region-typed parameters/results
 ;; (which seed borrowed places). A body with none of those checks out as a pure
 ;; pass-through (measured: 72.6% of self-compile bodies), so the gate answers
@@ -80088,7 +80474,7 @@
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases else-box)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (or
             (tc-borrow-gate-let-bindings-relevant? ctx expr-bases bindings 0)
@@ -80097,7 +80483,7 @@
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases body-box)))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
           (or
             (tc-borrow-gate-params-relevant? ctx params)
@@ -80220,7 +80606,7 @@
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Borrow _ _ _) true]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (or
             (tc-borrow-gate-expr-ty-has-region? ctx scrutinee-box)
@@ -80230,7 +80616,7 @@
               (ast.ast-expr-segment-bases-get expr-bases scrutinee-box))
             (tc-borrow-gate-match-arms-relevant? ctx expr-bases arms 0))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
           (or
             (tc-borrow-gate-expr-relevant?
@@ -80246,7 +80632,7 @@
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases body-box)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (or
             (tc-borrow-gate-expr-relevant?
@@ -80266,7 +80652,7 @@
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases value-box)))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             _
@@ -80354,7 +80740,7 @@
           (ast.ast-expr-segment-bases-get expr-bases arena-box))
         (tc-borrow-gate-exprs-relevant? ctx expr-bases body))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (or
             (tc-borrow-gate-resource-bindings-relevant?
@@ -80656,7 +81042,7 @@
     [state : TcMacroCallSiteState
       (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    (if (not (struct-get data enabled))
+    (if (not data.enabled)
       unit
       (match (tc-macro-call-head ctx func)
         [(TcMaybeMacroCallHead.Some source-name-id span)
@@ -80667,7 +81053,7 @@
                 (not (ci.intern-generated-id-active? source-name-id))
                 (> (ast.ast-source-span-start-line span) 0)
                 (> (ast.ast-source-span-start-col span) 0))]
-            (if (if (struct-get data active-editable)
+            (if (if data.active-editable
               source-head
               true)
               (tc-macro-call-site-state-record!
@@ -80977,8 +81363,8 @@
       [count : i64 (ast.ast-decl-list-len (& decls))]
       [position : i64 0]
       [current-module-id : i64 module-id]
-      [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-      [decl-offset : i64 (struct-get decls offset)]
+      [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+      [decl-offset : i64 decls.offset]
       [seen : tc_i64_i64_map.Map
         (tc_i64_i64_map.with-capacity
           (+ (* (ctfe_support.ctfe-metadata-decl-capacity decls) 2) 1))]
@@ -81106,11 +81492,11 @@
                         name))
                     unit))]
               [(ast.AstDecl.Unsafe inner-box)
-                (if (macro-decl-reflection-relevant? (box-get inner-box))
+                (if (macro-decl-reflection-relevant? (__tl-box-place inner-box))
                   (set! safe false)
                   unit)]
               [(ast.AstDecl.ModuleBody _ body-box)
-                (if (macro-decls-reflection-relevant? (box-get body-box))
+                (if (macro-decls-reflection-relevant? (__tl-box-place body-box))
                   (set! safe false)
                   unit)]
               [_ unit])
@@ -81157,14 +81543,12 @@
           layouts
           reflections)
           (let
-            [required-layouts : i64 (+ (struct-get layouts len) needed)]
-            [required-reflections : i64 (+ (struct-get reflections len) needed)]
+            [required-layouts : i64 (+ layouts.len needed)]
+            [required-reflections : i64 (+ reflections.len needed)]
             [grew? : bool
               (or
-                (> required-layouts (array.length (struct-get layouts slots)))
-                (>
-                  required-reflections
-                  (array.length (struct-get reflections slots))))]
+                (> required-layouts (array.length layouts.slots))
+                (> required-reflections (array.length reflections.slots)))]
             [previous-arena : i64 (arena.tl_arena_current)]
             [_profile-start : unit
               (cfg
@@ -81347,7 +81731,9 @@
       (set! macro-live-registries-ready false)
       (set! macro-live-registries-fallback true)
       (set! macro-live-symbols-value (csym.compiler-symbols-empty))
-      (array-set! macro-live-registries-cell 0 (csym.compiler-registries-empty))
+      (set!
+        (array-ref macro-live-registries-cell 0)
+        (csym.compiler-registries-empty))
       ;; The completed expansion no longer has a consumer for either retained
       ;; generation. Release both here instead of carrying their raw handles
       ;; into the next independent typecheck entry.
@@ -81413,7 +81799,7 @@
     [(ast.AstDecl.IncludeBin _ _) false]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) false]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-registry-incremental-safe? (box-get inner-box))]
+      (macro-decl-registry-incremental-safe? (__tl-box-place inner-box))]
     [_ false]))
 
 (define (macro-decls-registry-incremental-safe? [decls : ast.AstDeclList]) : bool
@@ -81445,11 +81831,11 @@
         (= alias cbi.compiler-builtin-id-fix-empty))]
     [(ast.AstDecl.Unsafe inner-box)
       (macro-decl-has-unqualified-import-of-module?
-        (box-get inner-box)
+        (__tl-box-place inner-box)
         module-id)]
     [(ast.AstDecl.ModuleBody _ body-box)
       (macro-decls-have-unqualified-import-of-module?
-        (box-get body-box)
+        (__tl-box-place body-box)
         module-id)]
     [_ false]))
 
@@ -81463,8 +81849,8 @@
   [module-id : i64]) : bool
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-offset : i64 decls.offset]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -81494,7 +81880,7 @@
     module-id)
     [(csym.ResultCompilerRegistries.Ok registries)
       (begin
-        (array-set! macro-live-registries-cell 0 registries)
+        (set! (array-ref macro-live-registries-cell 0) registries)
         (set! macro-live-registries-ready true)
         (set! macro-live-registries-fallback false)
         true)]
@@ -81513,7 +81899,7 @@
       module-id)
       [(csym.ResultCompilerRegistries.Ok registries)
         (begin
-          (array-set! macro-live-registries-cell 0 registries)
+          (set! (array-ref macro-live-registries-cell 0) registries)
           true)]
       [(csym.ResultCompilerRegistries.Err _) false])
     false))
@@ -81536,7 +81922,7 @@
       (match (csym.build-compiler-registries-with-symbols program symbols)
         [(csym.ResultCompilerRegistries.Ok registries)
           (begin
-            (array-set! macro-live-registries-cell 0 registries)
+            (set! (array-ref macro-live-registries-cell 0) registries)
             (set! macro-live-registries-ready true)
             (set! macro-live-registries-fallback false)
             (csym.ResultCompilerRegistries.Ok
@@ -81549,7 +81935,7 @@
     [(ast.AstProgram.Program decls-box)
       (let
         [decl-count : i64
-          (csym.compiler-decl-list-index-count (box-get decls-box))]
+          (csym.compiler-decl-list-index-count (__tl-box-place decls-box))]
         (+
           decl-count
           (if (< decl-count 256)
@@ -81570,7 +81956,7 @@
           [(csym.ResultCompilerRegistries.Ok registries)
             (begin
               (set! macro-live-symbols-value symbols)
-              (array-set! macro-live-registries-cell 0 registries)
+              (set! (array-ref macro-live-registries-cell 0) registries)
               (set! macro-live-symbols-ready true)
               (set! macro-live-symbols-fallback false)
               (csym.ResultCompilerSymbols.Ok
@@ -81579,7 +81965,7 @@
             (csym.ResultCompilerSymbols.Err message)])]
       [(csym.ResultCompilerSymbolsDiagnostic.Err diag)
         (csym.ResultCompilerSymbols.Err
-          (cdiag.compiler-diagnostic-message (box-get diag)))])))
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))
 
 (define (macro-live-symbols-build-fresh
   [program : ast.AstProgram]
@@ -81633,7 +82019,7 @@
         (tc-global-shared-view macro-live-symbols-value))
         [(csym.ResultCompilerRegistries.Ok registries)
           (begin
-            (array-set! macro-live-registries-cell 0 registries)
+            (set! (array-ref macro-live-registries-cell 0) registries)
             (csym.ResultCompilerSymbols.Ok
               (tc-global-shared-view macro-live-symbols-value)))]
         [(csym.ResultCompilerRegistries.Err message)
@@ -81984,13 +82370,15 @@
       macro-decl-generation-escape-capacity)
       (set! macro-decl-generation-escape-overflow true)
       (begin
-        (array-set!
-          macro-decl-generation-escape-kinds
-          macro-decl-generation-escape-count
+        (set!
+          (array-ref
+            macro-decl-generation-escape-kinds
+            macro-decl-generation-escape-count)
           kind)
-        (array-set!
-          macro-decl-generation-escape-keys
-          macro-decl-generation-escape-count
+        (set!
+          (array-ref
+            macro-decl-generation-escape-keys
+            macro-decl-generation-escape-count)
           key)
         (set!
           macro-decl-generation-escape-count
@@ -82258,7 +82646,7 @@
     [(TcMaybeAstSourceSpan.No) diag]))
 
 (define (macro-active-decl-path-id [ctx : TcContext]) : i64
-  (struct-get
+  (__tl-project-field
     (tc-macro-call-site-state-active-decl
       (tc-job-state-macro-call-sites (tc-context-job-state ctx)))
     path-id))
@@ -82283,24 +82671,24 @@
       [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
       [display : String (macro-decl-name-display macro-name-id module-id)]
       [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (struct-get data fixed-storage-arena)]
+      [owner : i64 data.fixed-storage-arena]
       [_set-owner : unit
         (unsafe
           (arena.tl_arena_set owner))]
       (begin
         (tc_i64_i64_map.insert-ref!
-          (&mut (struct-get data definition-paths))
+          (&mut data.definition-paths)
           (ci.intern display)
           (ci.intern path))
         ;; Hash-table growth must remain owned by the job state. Indexing also
         ;; runs inside per-declaration generations, which are destroyed after
         ;; each splice; retaining their current arena would leave stale slots.
-        (set! (struct-get data fixed-storage-arena) (arena.tl_arena_current))
+        (set! data.fixed-storage-arena (arena.tl_arena_current))
         (tc-macro-call-site-state-data-set! state data)
         (unsafe
           (arena.tl_arena_set
             (if (= previous owner)
-              (struct-get data fixed-storage-arena)
+              data.fixed-storage-arena
               previous)))))))
 
 (define (macro-definition-path-id
@@ -82310,9 +82698,7 @@
     [state : TcMacroCallSiteState
       (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    (match (tc_i64_i64_map.get
-      (& (struct-get data definition-paths))
-      macro-display-name-id)
+    (match (tc_i64_i64_map.get (& data.definition-paths) macro-display-name-id)
       [(tc_i64_i64_map.LookupFound path-id) path-id]
       [(tc_i64_i64_map.LookupMissing) (macro-active-decl-path-id ctx)])))
 
@@ -82325,7 +82711,11 @@
     [(ast.AstDecl.DefMacro _ name _ _ _)
       (macro-definition-path-record! ctx module-id name path)]
     [(ast.AstDecl.Unsafe inner)
-      (macro-definition-path-note-decl! ctx module-id (box-get inner) path)]
+      (macro-definition-path-note-decl!
+        ctx
+        module-id
+        (__tl-box-place inner)
+        path)]
     [_ unit]))
 
 (define (macro-definition-paths-index!
@@ -82364,7 +82754,7 @@
             path
             call-expr
             macro-name
-            (box-get diag))))]))
+            (__tl-box-place diag))))]))
 
 (define (macro-output-syntax-id-at [name-id : i64] [site : String]) : i64
   (cond
@@ -82470,7 +82860,7 @@
     [count : i64 (ast.ast-decl-list-len (& items))]
     [index : i64 count]
     [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
-    [item-offset : i64 (struct-get items offset)]
+    [item-offset : i64 items.offset]
     (begin
       (while (> index 0)
         (begin
@@ -82478,16 +82868,14 @@
           ;; `out` is freshly allocated here, so it cannot alias `items`.
           (ast.ast-decl-list-push-from
             (&mut out)
-            (& (struct-get items slots))
+            (& items.slots)
             (+ item-offset index))))
       out)))
 
 (define (macro-decl-list-with-prefix-reserve
   [items : ast.AstDeclList]
   [reserve : i64]) : ast.AstDeclList
-  (if (and
-    (>= (struct-get items offset) reserve)
-    (struct-get items prependable))
+  (if (and (>= items.offset reserve) items.prependable)
     items
     (let
       [count : i64 (ast.ast-decl-list-len (& items))]
@@ -82496,9 +82884,9 @@
       [reserved : ast.AstDeclList (ast.AstDeclList slots reserve count true)]
       (begin
         (ast.ast-decl-list-copy-to
-          (&mut (struct-get reserved slots))
-          (& (struct-get items slots))
-          (struct-get items offset)
+          (&mut reserved.slots)
+          (& items.slots)
+          items.offset
           reserve
           0
           count)
@@ -82516,13 +82904,10 @@
   (let
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len items)]
-    [item-offset : i64 (struct-get items offset)]
+    [item-offset : i64 items.offset]
     (while (< index count)
       (begin
-        (ast.ast-decl-list-push-from
-          out
-          (& (struct-get items slots))
-          (+ item-offset index))
+        (ast.ast-decl-list-push-from out (& items.slots) (+ item-offset index))
         (set! index (+ index 1))))))
 
 (define (macro-decl-list-append
@@ -82531,19 +82916,17 @@
   (let
     [left-len : i64 (ast.ast-decl-list-len (& left))]
     [right-len : i64 (ast.ast-decl-list-len (& right))]
-    [right-slots : (__tl_dyn-array ast.AstDecl) (struct-get right slots)]
+    [right-slots : (__tl_dyn-array ast.AstDecl) right.slots]
     (if (and
-      (<= left-len (struct-get right offset))
-      (struct-get right prependable)
+      (<= left-len right.offset)
+      right.prependable
       (not
         (unsafe
           (=
-            (ptr->int
-              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
-            (ptr->int
-              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
       (let
-        [new-offset : i64 (- (struct-get right offset) left-len)]
+        [new-offset : i64 (- right.offset left-len)]
         (begin
           ;; Macro expansion walks a suffix of the current whole-program vector.
           ;; Its consumed prefix is dead after the splice context is rebuilt, so
@@ -82552,8 +82935,8 @@
           ;; is required because the left copy may otherwise overlap the writes.
           (ast.ast-decl-list-copy-to
             (&mut right-slots)
-            (& (struct-get left slots))
-            (struct-get left offset)
+            (& left.slots)
+            left.offset
             new-offset
             0
             left-len)
@@ -82590,7 +82973,7 @@
                       (- (ast.ast-decl-list-len result) 1)
                       1
                       (parser.compiler-parse-decl-list-storage-key (& rest))
-                      (- (struct-get rest offset) 1)
+                      (- rest.offset 1)
                       decl
                       false)
                     (set! current-module-id next-module))]
@@ -82604,11 +82987,11 @@
                       (- (ast.ast-decl-list-len result) 1)
                       1
                       (parser.compiler-parse-decl-list-storage-key (& rest))
-                      (- (struct-get rest offset) 1)
+                      (- rest.offset 1)
                       decl
                       false)
                     (macro-flatten-module-body-decls-into-with-origins
-                      (box-get body-box)
+                      (__tl-box-place body-box)
                       target-module-id
                       result
                       out-origins)
@@ -82620,7 +83003,7 @@
                       (- (ast.ast-decl-list-len result) 1)
                       1
                       (parser.compiler-parse-decl-list-storage-key (& rest))
-                      (- (struct-get rest offset) 1)
+                      (- rest.offset 1)
                       decl
                       false))]
                 [_
@@ -82631,7 +83014,7 @@
                       (- (ast.ast-decl-list-len result) 1)
                       1
                       (parser.compiler-parse-decl-list-storage-key (& rest))
-                      (- (struct-get rest offset) 1)
+                      (- rest.offset 1)
                       decl
                       false))])
               (set! cursor rest))]))
@@ -82708,9 +83091,7 @@
 (define (macro-decl-path-list-with-prefix-reserve
   [items : ast.AstDeclPathList]
   [reserve : i64]) : ast.AstDeclPathList
-  (if (and
-    (>= (struct-get items offset) reserve)
-    (struct-get items prependable))
+  (if (and (>= items.offset reserve) items.prependable)
     items
     (let
       [count : i64 (ast.ast-decl-path-list-len (& items))]
@@ -82721,15 +83102,15 @@
       (begin
         (ast.ast-decl-path-list-copy-to
           (&mut slots)
-          (& (struct-get items slots))
-          (struct-get items offset)
+          (& items.slots)
+          items.offset
           reserve
           0
           count)
         (ast.ast-decl-module-list-copy-to
           (&mut owner-ids)
-          (& (struct-get items owner-ids))
-          (struct-get items offset)
+          (& items.owner-ids)
+          items.offset
           reserve
           0
           count)
@@ -82758,32 +83139,30 @@
   (let
     [left-len : i64 (ast.ast-decl-path-list-len (& left))]
     [right-len : i64 (ast.ast-decl-path-list-len (& right))]
-    [right-slots : (__tl_dyn-array String) (struct-get right slots)]
-    [right-owner-ids : (__tl_dyn-array i64) (struct-get right owner-ids)]
+    [right-slots : (__tl_dyn-array String) right.slots]
+    [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
     (if (and
-      (<= left-len (struct-get right offset))
-      (struct-get right prependable)
+      (<= left-len right.offset)
+      right.prependable
       (not
         (unsafe
           (=
-            (ptr->int
-              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
-            (ptr->int
-              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
       (let
-        [new-offset : i64 (- (struct-get right offset) left-len)]
+        [new-offset : i64 (- right.offset left-len)]
         (begin
           (ast.ast-decl-path-list-copy-to
             (&mut right-slots)
-            (& (struct-get left slots))
-            (struct-get left offset)
+            (& left.slots)
+            left.offset
             new-offset
             0
             left-len)
           (ast.ast-decl-module-list-copy-to
             (&mut right-owner-ids)
-            (& (struct-get left owner-ids))
-            (struct-get left offset)
+            (& left.owner-ids)
+            left.offset
             new-offset
             0
             left-len)
@@ -82805,17 +83184,13 @@
   test
   (define (macro-decl-list-slots-address [items : ast.AstDeclList]) : i64
     (unsafe
-      (cast
-        (ptr->int (ptr-cast (array-data (struct-get items slots)) : (Ptr u8)))
-        : i64))))
+      (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64))))
 
 (cfg
   test
   (define (macro-decl-path-list-slots-address [items : ast.AstDeclPathList]) : i64
     (unsafe
-      (cast
-        (ptr->int (ptr-cast (array-data (struct-get items slots)) : (Ptr u8)))
-        : i64))))
+      (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64))))
 
 (cfg
   test
@@ -82850,8 +83225,8 @@
       [reused : ast.AstDeclList (macro-decl-list-append left right)]
       [alias-left : ast.AstDeclList
         (begin
-          (array-set! (struct-get right slots) 0 (ast.AstDecl.Module alias-id))
-          (ast.AstDeclList (struct-get right slots) 0 1 false))]
+          (set! (array-ref right.slots 0) (ast.AstDecl.Module alias-id))
+          (ast.AstDeclList right.slots 0 1 false))]
       [copied : ast.AstDeclList (macro-decl-list-append alias-left right)]
       [reserved : ast.AstDeclList (macro-decl-list-with-prefix-reserve right 8)]
       [reserved-address : i64 (macro-decl-list-slots-address reserved)]
@@ -82868,7 +83243,7 @@
         (macro-decl-list-prefix-rev-current-suffix prefix-rev reserved)]
       (and
         (= (macro-decl-list-slots-address reused) right-address)
-        (= (struct-get reused offset) 1)
+        (= reused.offset 1)
         (= (ast.ast-decl-list-len (& reused)) 3)
         (macro-decl-module-eq? (ast.ast-decl-list-ref reused 0) left-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref reused 1) right-a-id)
@@ -82877,9 +83252,9 @@
         (macro-decl-module-eq? (ast.ast-decl-list-ref copied 0) alias-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref copied 1) right-a-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref copied 2) right-b-id)
-        (= (struct-get reserved offset) 8)
+        (= reserved.offset 8)
         (= (macro-decl-list-slots-address prefixed) reserved-address)
-        (= (struct-get prefixed offset) 6)
+        (= prefixed.offset 6)
         (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 0) prefix-a-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 1) prefix-b-id)
         (macro-decl-module-eq? (ast.ast-decl-list-ref prefixed 2) right-a-id)
@@ -82913,14 +83288,9 @@
       [reused : ast.AstDeclPathList (macro-decl-path-list-append left right)]
       [alias-left : ast.AstDeclPathList
         (begin
-          (array-set! (struct-get right slots) 0 "alias")
-          (array-set! (struct-get right owner-ids) 0 alias-id)
-          (ast.AstDeclPathList
-            (struct-get right slots)
-            (struct-get right owner-ids)
-            0
-            1
-            false))]
+          (set! (array-ref right.slots 0) "alias")
+          (set! (array-ref right.owner-ids 0) alias-id)
+          (ast.AstDeclPathList right.slots right.owner-ids 0 1 false))]
       [copied : ast.AstDeclPathList
         (macro-decl-path-list-append alias-left right)]
       [reserved : ast.AstDeclPathList
@@ -82941,7 +83311,7 @@
         (macro-decl-path-list-prefix-rev-current-suffix prefix-rev reserved)]
       (and
         (= (macro-decl-path-list-slots-address reused) right-address)
-        (= (struct-get reused offset) 1)
+        (= reused.offset 1)
         (= (ast.ast-decl-path-list-len (& reused)) 3)
         (string.eq (ast.ast-decl-path-list-get (& reused) 0 "") "left")
         (string.eq (ast.ast-decl-path-list-get (& reused) 1 "") "right-a")
@@ -82956,9 +83326,9 @@
         (= (ast.ast-decl-path-list-owner-id (& copied) 0 -1) alias-id)
         (= (ast.ast-decl-path-list-owner-id (& copied) 1 -1) right-a-id)
         (= (ast.ast-decl-path-list-owner-id (& copied) 2 -1) right-b-id)
-        (= (struct-get reserved offset) 8)
+        (= reserved.offset 8)
         (= (macro-decl-path-list-slots-address prefixed) reserved-address)
-        (= (struct-get prefixed offset) 6)
+        (= prefixed.offset 6)
         (string.eq (ast.ast-decl-path-list-get (& prefixed) 0 "") "prefix-a")
         (string.eq (ast.ast-decl-path-list-get (& prefixed) 1 "") "prefix-b")
         (string.eq (ast.ast-decl-path-list-get (& prefixed) 2 "") "right-a")
@@ -82984,7 +83354,7 @@
   [suffix : ast.AstDeclList]) : ast.AstDeclList
   (let
     [prefix-count : i64 (ast.ast-decl-list-len (& prefix-rev))]
-    [suffix-offset : i64 (struct-get suffix offset)]
+    [suffix-offset : i64 suffix.offset]
     (if (<= prefix-count suffix-offset)
       (let
         [cursor : ast.AstDeclList prefix-rev]
@@ -82996,13 +83366,13 @@
               [(ast.AstDeclListStep.Nil) (set! done true)]
               [(ast.AstDeclListStep.Cons decl rest)
                 (begin
-                  (array-set! (struct-get suffix slots) write-index decl)
+                  (set! (array-ref suffix.slots write-index) decl)
                   (set! write-index (- write-index 1))
                   (set! cursor rest))]))
           (ast.AstDeclList
-            (struct-get suffix slots)
+            suffix.slots
             (- suffix-offset prefix-count)
-            (+ prefix-count (struct-get suffix len))
+            (+ prefix-count suffix.len)
             false)))
       (macro-decl-list-append (macro-decl-list-reverse prefix-rev) suffix))))
 
@@ -83011,7 +83381,7 @@
   [suffix : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
     [prefix-count : i64 (ast.ast-decl-path-list-len (& prefix-rev))]
-    [suffix-offset : i64 (struct-get suffix offset)]
+    [suffix-offset : i64 suffix.offset]
     (if (<= prefix-count suffix-offset)
       (let
         [cursor : ast.AstDeclPathList prefix-rev]
@@ -83029,18 +83399,15 @@
                 [(ast.AstDeclPathListStep.Nil) (set! done true)]
                 [(ast.AstDeclPathListStep.Cons path rest)
                   (begin
-                    (array-set! (struct-get suffix slots) write-index path)
-                    (array-set!
-                      (struct-get suffix owner-ids)
-                      write-index
-                      owner-id)
+                    (set! (array-ref suffix.slots write-index) path)
+                    (set! (array-ref suffix.owner-ids write-index) owner-id)
                     (set! write-index (- write-index 1))
                     (set! cursor rest))])))
           (ast.AstDeclPathList
-            (struct-get suffix slots)
-            (struct-get suffix owner-ids)
+            suffix.slots
+            suffix.owner-ids
             (- suffix-offset prefix-count)
-            (+ prefix-count (struct-get suffix len))
+            (+ prefix-count suffix.len)
             false)))
       (macro-decl-path-list-append
         (macro-decl-path-list-reverse prefix-rev)
@@ -83092,7 +83459,7 @@
       (array.make-array MacroProgramSegmentNodeData 1)]
     (begin
       (cfg compile-profile (compiler-tc-walk-segment-node-note!))
-      (array-set! cell 0 (MacroProgramSegmentNodeData decls paths next))
+      (set! (array-ref cell 0) (MacroProgramSegmentNodeData decls paths next))
       (cast
         (unsafe
           (ptr->int
@@ -83112,9 +83479,8 @@
     [cell : (__tl_dyn-array MacroSegmentedProgramViewData)
       (array.make-array MacroSegmentedProgramViewData 1)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (MacroSegmentedProgramViewData
           prefix-rev
           prefix-paths-rev
@@ -83177,8 +83543,8 @@
         [data : MacroSegmentedProgramViewData
           (macro-segmented-program-view-data address)]
         (begin
-          (set! (struct-get data prefix-rev) prefix-rev)
-          (set! (struct-get data prefix-paths-rev) prefix-paths-rev)
+          (set! data.prefix-rev prefix-rev)
+          (set! data.prefix-paths-rev prefix-paths-rev)
           (macro-segmented-program-view-data-set! address data))))))
 
 (define (macro-segmented-program-normalize-head! [state : TcJobState]) : MacroSegmentedProgramViewData
@@ -83188,17 +83554,15 @@
       (macro-segmented-program-view-data address)]
     [done : bool false]
     (begin
-      (while (and (not done) (> (struct-get data head) 0))
+      (while (and (not done) (> data.head 0))
         (let
           [node : MacroProgramSegmentNodeData
-            (macro-program-segment-node-data (struct-get data head))]
-          (if (<
-            (struct-get data cursor)
-            (ast.ast-decl-list-len (& (struct-get node decls))))
+            (macro-program-segment-node-data data.head)]
+          (if (< data.cursor (ast.ast-decl-list-len (& node.decls)))
             (set! done true)
             (begin
-              (set! (struct-get data head) (struct-get node next))
-              (set! (struct-get data cursor) 0)))))
+              (set! data.head node.next)
+              (set! data.cursor 0)))))
       (macro-segmented-program-view-data-set! address data)
       data)))
 
@@ -83208,36 +83572,33 @@
     (let
       [data : MacroSegmentedProgramViewData
         (macro-segmented-program-normalize-head! state)]
-      (or (<= (struct-get data queue-len) 0) (= (struct-get data head) 0)))))
+      (or (<= data.queue-len 0) (= data.head 0)))))
 
 (define (macro-segmented-program-current-decl [state : TcJobState]) : ast.AstDecl
   (let
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-normalize-head! state)]
     [node : MacroProgramSegmentNodeData
-      (macro-program-segment-node-data (struct-get data head))]
-    (ast.ast-decl-list-ref (struct-get node decls) (struct-get data cursor))))
+      (macro-program-segment-node-data data.head)]
+    (ast.ast-decl-list-ref node.decls data.cursor)))
 
 (define (macro-segmented-program-current-path [state : TcJobState]) : String
   (let
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-normalize-head! state)]
     [node : MacroProgramSegmentNodeData
-      (macro-program-segment-node-data (struct-get data head))]
-    (ast.ast-decl-path-list-get
-      (& (struct-get node paths))
-      (struct-get data cursor)
-      "")))
+      (macro-program-segment-node-data data.head)]
+    (ast.ast-decl-path-list-get (& node.paths) data.cursor "")))
 
 (define (macro-segmented-program-current-owner-id [state : TcJobState]) : i64
   (let
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-normalize-head! state)]
     [node : MacroProgramSegmentNodeData
-      (macro-program-segment-node-data (struct-get data head))]
+      (macro-program-segment-node-data data.head)]
     (ast.ast-decl-path-list-owner-id
-      (& (struct-get node paths))
-      (struct-get data cursor)
+      (& node.paths)
+      data.cursor
       cbi.compiler-builtin-id-fix-empty)))
 
 (define (macro-segmented-program-advance! [state : TcJobState]) : unit
@@ -83246,10 +83607,10 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-normalize-head! state)]
     (begin
-      (if (> (struct-get data queue-len) 0)
+      (if (> data.queue-len 0)
         (begin
-          (set! (struct-get data cursor) (+ (struct-get data cursor) 1))
-          (set! (struct-get data queue-len) (- (struct-get data queue-len) 1)))
+          (set! data.cursor (+ data.cursor 1))
+          (set! data.queue-len (- data.queue-len 1)))
         unit)
       (macro-segmented-program-view-data-set! address data)
       (macro-segmented-program-normalize-head! state)
@@ -83260,9 +83621,9 @@
     [len : i64 (ast.ast-decl-path-list-len (& paths))]
     [drop : i64 (cond [(< count 0) 0] [(> count len) len] [else count])]
     (ast.AstDeclPathList
-      (struct-get paths slots)
-      (struct-get paths owner-ids)
-      (+ (struct-get paths offset) drop)
+      paths.slots
+      paths.owner-ids
+      (+ paths.offset drop)
       (- len drop)
       false)))
 
@@ -83275,13 +83636,15 @@
         count)]
     [slots : (__tl_dyn-array ast.AstDecl)
       (array.make-array ast.AstDecl capacity)]
-    [src-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [src-offset : i64 (struct-get decls offset)]
+    [src-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [src-offset : i64 decls.offset]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (array-ref src-slots (+ src-offset index)))
+          (set!
+            (array-ref slots index)
+            (array-ref src-slots (+ src-offset index)))
           (set! index (+ index 1))))
       (ast.AstDeclList slots 0 count true))))
 
@@ -83299,13 +83662,11 @@
     (begin
       (while (< index decl-count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.ast-decl-path-list-get (& paths) index ""))
-          (array-set!
-            owner-ids
-            index
+          (set!
+            (array-ref owner-ids index)
             (ast.ast-decl-path-list-owner-id
               (& paths)
               index
@@ -83322,23 +83683,23 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-normalize-head! state)]
     [node : MacroProgramSegmentNodeData
-      (macro-program-segment-node-data (struct-get data head))]
-    [next-index : i64 (+ (struct-get data cursor) 1)]
-    [node-decls : ast.AstDeclList (struct-get node decls)]
-    [node-paths : ast.AstDeclPathList (struct-get node paths)]
+      (macro-program-segment-node-data data.head)]
+    [next-index : i64 (+ data.cursor 1)]
+    [node-decls : ast.AstDeclList node.decls]
+    [node-paths : ast.AstDeclPathList node.paths]
     [node-count : i64 (ast.ast-decl-list-len (& node-decls))]
     [suffix-count : i64 (- node-count next-index)]
     [suffix-head : i64
       (if (> suffix-count 0)
         (macro-program-segment-node-new-current
           (ast.AstDeclList
-            (struct-get node-decls slots)
-            (+ (struct-get node-decls offset) next-index)
+            node-decls.slots
+            (+ node-decls.offset next-index)
             suffix-count
             false)
           (macro-segmented-path-drop node-paths next-index)
-          (struct-get node next))
-        (struct-get node next))]
+          node.next)
+        node.next)]
     [middle-count : i64 (ast.ast-decl-list-len (& middle))]
     [stable-middle : ast.AstDeclList (macro-segmented-decl-copy-current middle)]
     [stable-paths : ast.AstDeclPathList
@@ -83352,12 +83713,10 @@
         suffix-head)]
     (begin
       (cfg compile-profile (compiler-tc-walk-segment-split-note! middle-count))
-      (set! (struct-get data head) next-head)
-      (set! (struct-get data cursor) 0)
-      (set!
-        (struct-get data queue-len)
-        (+ (- (struct-get data queue-len) 1) middle-count))
-      (set! (struct-get data generation) (+ (struct-get data generation) 1))
+      (set! data.head next-head)
+      (set! data.cursor 0)
+      (set! data.queue-len (+ (- data.queue-len 1) middle-count))
+      (set! data.generation (+ data.generation 1))
       (macro-segmented-program-view-data-set! address data))))
 
 (define (macro-segmented-program-splice-current!
@@ -83383,9 +83742,7 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    (+
-      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))
-      (struct-get data queue-len))))
+    (+ (ast.ast-decl-list-len (& data.prefix-rev)) data.queue-len)))
 
 (define (macro-segmented-program-decl-at
   [state : TcJobState]
@@ -83395,18 +83752,18 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix : ast.AstDeclList data.prefix-rev]
     [prefix-count : i64 (ast.ast-decl-list-len (& prefix))]
     (if (or
       (< logical-index 0)
-      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      (>= logical-index (+ prefix-count data.queue-len)))
       fallback
       (if (< logical-index prefix-count)
         (ast.ast-decl-list-ref prefix (- (- prefix-count 1) logical-index))
         (let
           [remaining : i64 (- logical-index prefix-count)]
-          [node-address : i64 (struct-get data head)]
-          [node-index : i64 (struct-get data cursor)]
+          [node-address : i64 data.head]
+          [node-index : i64 data.cursor]
           [found : bool false]
           [out : ast.AstDecl fallback]
           (begin
@@ -83414,7 +83771,7 @@
               (let
                 [node : MacroProgramSegmentNodeData
                   (macro-program-segment-node-data node-address)]
-                [decls : ast.AstDeclList (struct-get node decls)]
+                [decls : ast.AstDeclList node.decls]
                 [available : i64
                   (- (ast.ast-decl-list-len (& decls)) node-index)]
                 (if (< remaining available)
@@ -83425,7 +83782,7 @@
                     (set! found true))
                   (begin
                     (set! remaining (- remaining available))
-                    (set! node-address (struct-get node next))
+                    (set! node-address node.next)
                     (set! node-index 0)))))
             out))))))
 
@@ -83437,12 +83794,11 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    [prefix : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
-    [prefix-count : i64
-      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))]
+    [prefix : ast.AstDeclPathList data.prefix-paths-rev]
+    [prefix-count : i64 (ast.ast-decl-list-len (& data.prefix-rev))]
     (if (or
       (< logical-index 0)
-      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      (>= logical-index (+ prefix-count data.queue-len)))
       fallback
       (if (< logical-index prefix-count)
         (ast.ast-decl-path-list-get
@@ -83451,8 +83807,8 @@
           fallback)
         (let
           [remaining : i64 (- logical-index prefix-count)]
-          [node-address : i64 (struct-get data head)]
-          [node-index : i64 (struct-get data cursor)]
+          [node-address : i64 data.head]
+          [node-index : i64 data.cursor]
           [found : bool false]
           [out : String ""]
           (begin
@@ -83460,7 +83816,7 @@
               (let
                 [node : MacroProgramSegmentNodeData
                   (macro-program-segment-node-data node-address)]
-                [decls : ast.AstDeclList (struct-get node decls)]
+                [decls : ast.AstDeclList node.decls]
                 [available : i64
                   (- (ast.ast-decl-list-len (& decls)) node-index)]
                 (if (< remaining available)
@@ -83468,13 +83824,13 @@
                     (set!
                       out
                       (ast.ast-decl-path-list-get
-                        (& (struct-get node paths))
+                        (& node.paths)
                         (+ node-index remaining)
                         fallback))
                     (set! found true))
                   (begin
                     (set! remaining (- remaining available))
-                    (set! node-address (struct-get node next))
+                    (set! node-address node.next)
                     (set! node-index 0)))))
             (if found
               out
@@ -83488,12 +83844,11 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    [prefix : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
-    [prefix-count : i64
-      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))]
+    [prefix : ast.AstDeclPathList data.prefix-paths-rev]
+    [prefix-count : i64 (ast.ast-decl-list-len (& data.prefix-rev))]
     (if (or
       (< logical-index 0)
-      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      (>= logical-index (+ prefix-count data.queue-len)))
       fallback
       (if (< logical-index prefix-count)
         (ast.ast-decl-path-list-owner-id
@@ -83502,8 +83857,8 @@
           fallback)
         (let
           [remaining : i64 (- logical-index prefix-count)]
-          [node-address : i64 (struct-get data head)]
-          [node-index : i64 (struct-get data cursor)]
+          [node-address : i64 data.head]
+          [node-index : i64 data.cursor]
           [found : bool false]
           [out : i64 fallback]
           (begin
@@ -83511,7 +83866,7 @@
               (let
                 [node : MacroProgramSegmentNodeData
                   (macro-program-segment-node-data node-address)]
-                [decls : ast.AstDeclList (struct-get node decls)]
+                [decls : ast.AstDeclList node.decls]
                 [available : i64
                   (- (ast.ast-decl-list-len (& decls)) node-index)]
                 (if (< remaining available)
@@ -83519,13 +83874,13 @@
                     (set!
                       out
                       (ast.ast-decl-path-list-owner-id
-                        (& (struct-get node paths))
+                        (& node.paths)
                         (+ node-index remaining)
                         fallback))
                     (set! found true))
                   (begin
                     (set! remaining (- remaining available))
-                    (set! node-address (struct-get node next))
+                    (set! node-address node.next)
                     (set! node-index 0)))))
             out))))))
 
@@ -83547,20 +83902,17 @@
 
 (define (macro-segmented-program-borrow-decl
   [item : MacroSegmentedProgramBorrow]) : ast.AstDecl
-  (ast.ast-decl-list-ref (struct-get item decls) (struct-get item index)))
+  (ast.ast-decl-list-ref item.decls item.index))
 
 (define (macro-segmented-program-borrow-path
   [item : MacroSegmentedProgramBorrow]) : String
-  (ast.ast-decl-path-list-get
-    (& (struct-get item paths))
-    (struct-get item index)
-    ""))
+  (ast.ast-decl-path-list-get (& item.paths) item.index ""))
 
 (define (macro-segmented-program-borrow-owner-id
   [item : MacroSegmentedProgramBorrow]) : i64
   (ast.ast-decl-path-list-owner-id
-    (& (struct-get item paths))
-    (struct-get item index)
+    (& item.paths)
+    item.index
     cbi.compiler-builtin-id-fix-empty))
 
 (define (macro-segmented-program-iter [state : TcJobState]) : MacroSegmentedProgramIter
@@ -83568,54 +83920,54 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix : ast.AstDeclList data.prefix-rev]
     (MacroSegmentedProgramIter
       prefix
-      (struct-get data prefix-paths-rev)
+      data.prefix-paths-rev
       (- (ast.ast-decl-list-len (& prefix)) 1)
-      (struct-get data head)
-      (struct-get data cursor))))
+      data.head
+      data.cursor)))
 
 ;; Allocation-free logical step across the reversed prefix and ordered segment
 ;; chain. Expansion-time derived indexes use this instead of restarting an
 ;; indexed head scan for every declaration.
 (define (macro-segmented-program-step [iter : MacroSegmentedProgramIter]) : MacroSegmentedProgramStep
-  (if (>= (struct-get iter prefix-index) 0)
+  (if (>= iter.prefix-index 0)
     (let
-      [index : i64 (struct-get iter prefix-index)]
+      [index : i64 iter.prefix-index]
       (MacroSegmentedProgramStep.Cons
         (MacroSegmentedProgramBorrow
-          (struct-get iter prefix-rev)
-          (struct-get iter prefix-paths-rev)
+          iter.prefix-rev
+          iter.prefix-paths-rev
           index)
         (MacroSegmentedProgramIter
-          (struct-get iter prefix-rev)
-          (struct-get iter prefix-paths-rev)
+          iter.prefix-rev
+          iter.prefix-paths-rev
           (- index 1)
-          (struct-get iter node-address)
-          (struct-get iter node-index))))
-    (if (= (struct-get iter node-address) 0)
+          iter.node-address
+          iter.node-index)))
+    (if (= iter.node-address 0)
       (MacroSegmentedProgramStep.Nil)
       (let
         [node : MacroProgramSegmentNodeData
-          (macro-program-segment-node-data (struct-get iter node-address))]
-        [index : i64 (struct-get iter node-index)]
-        [decls : ast.AstDeclList (struct-get node decls)]
+          (macro-program-segment-node-data iter.node-address)]
+        [index : i64 iter.node-index]
+        [decls : ast.AstDeclList node.decls]
         (if (>= index (ast.ast-decl-list-len (& decls)))
           (macro-segmented-program-step
             (MacroSegmentedProgramIter
-              (struct-get iter prefix-rev)
-              (struct-get iter prefix-paths-rev)
+              iter.prefix-rev
+              iter.prefix-paths-rev
               -1
-              (struct-get node next)
+              node.next
               0))
           (MacroSegmentedProgramStep.Cons
-            (MacroSegmentedProgramBorrow decls (struct-get node paths) index)
+            (MacroSegmentedProgramBorrow decls node.paths index)
             (MacroSegmentedProgramIter
-              (struct-get iter prefix-rev)
-              (struct-get iter prefix-paths-rev)
+              iter.prefix-rev
+              iter.prefix-paths-rev
               -1
-              (struct-get iter node-address)
+              iter.node-address
               (+ index 1))))))))
 
 (define (macro-segmented-clone-name-set-note-decl
@@ -83665,11 +84017,11 @@
               (set! iter rest)
               (if (or
                 (ast.ast-decl-list-unwrapped-module-or-import-at?
-                  (& (struct-get item decls))
-                  (struct-get item index))
+                  (& item.decls)
+                  item.index)
                 (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-                  (& (struct-get item decls))
-                  (struct-get item index)))
+                  (& item.decls)
+                  item.index))
                 (let
                   [decl : ast.AstDecl
                     (ast.ast-decl-unwrapped
@@ -83708,8 +84060,8 @@
             (begin
               (set! iter rest)
               (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-                (& (struct-get item decls))
-                (struct-get item index))
+                (& item.decls)
+                item.index)
                 (match (ast.ast-decl-unwrapped
                   (macro-segmented-program-borrow-decl item))
                   [(ast.AstDecl.Module next-module)
@@ -83786,8 +84138,8 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    [prefix-decls : ast.AstDeclList (struct-get data prefix-rev)]
-    [prefix-paths : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
+    [prefix-decls : ast.AstDeclList data.prefix-rev]
+    [prefix-paths : ast.AstDeclPathList data.prefix-paths-rev]
     [prefix-count : i64 (ast.ast-decl-list-len (& prefix-decls))]
     [index : i64 0]
     (begin
@@ -83796,56 +84148,50 @@
       ;; instead of paying an indexed head scan for every output declaration.
       (while (< index prefix-count)
         (begin
-          (array-set!
-            decl-slots
-            index
+          (set!
+            (array-ref decl-slots index)
             (ast.ast-decl-list-ref prefix-decls (- (- prefix-count 1) index)))
-          (array-set!
-            path-slots
-            index
+          (set!
+            (array-ref path-slots index)
             (ast.ast-decl-path-list-get
               (& prefix-paths)
               (- (- prefix-count 1) index)
               ""))
-          (array-set!
-            owner-ids
-            index
+          (set!
+            (array-ref owner-ids index)
             (ast.ast-decl-path-list-owner-id
               (& prefix-paths)
               (- (- prefix-count 1) index)
               cbi.compiler-builtin-id-fix-empty))
           (set! index (+ index 1))))
       (let
-        [node-address : i64 (struct-get data head)]
-        [node-index : i64 (struct-get data cursor)]
+        [node-address : i64 data.head]
+        [node-index : i64 data.cursor]
         (while (and (< index count) (> node-address 0))
           (let
             [node : MacroProgramSegmentNodeData
               (macro-program-segment-node-data node-address)]
-            [decls : ast.AstDeclList (struct-get node decls)]
-            [paths : ast.AstDeclPathList (struct-get node paths)]
+            [decls : ast.AstDeclList node.decls]
+            [paths : ast.AstDeclPathList node.paths]
             [node-count : i64 (ast.ast-decl-list-len (& decls))]
             (begin
               (while (and (< index count) (< node-index node-count))
                 (begin
-                  (array-set!
-                    decl-slots
-                    index
+                  (set!
+                    (array-ref decl-slots index)
                     (ast.ast-decl-list-ref decls node-index))
-                  (array-set!
-                    path-slots
-                    index
+                  (set!
+                    (array-ref path-slots index)
                     (ast.ast-decl-path-list-get (& paths) node-index ""))
-                  (array-set!
-                    owner-ids
-                    index
+                  (set!
+                    (array-ref owner-ids index)
                     (ast.ast-decl-path-list-owner-id
                       (& paths)
                       node-index
                       cbi.compiler-builtin-id-fix-empty))
                   (set! index (+ index 1))
                   (set! node-index (+ node-index 1))))
-              (set! node-address (struct-get node next))
+              (set! node-address node.next)
               (set! node-index 0)))))
       (MacroSegmentedProgramFlatView
         (ast.AstDeclList decl-slots 0 count true)
@@ -83897,15 +84243,13 @@
           [(MacroSegmentedProgramStep.Cons item rest)
             (begin
               (set! iter rest)
-              (match (ast.ast-decl-list-ref-borrowed
-                (& (struct-get item decls))
-                (struct-get item index))
+              (match (ast.ast-decl-list-ref-borrowed (& item.decls) item.index)
                 [(ast.AstDecl.Module _)
                   (set!
                     cur-module-id
                     (ast.ast-decl-list-module-id-at
-                      (& (struct-get item decls))
-                      (struct-get item index)
+                      (& item.decls)
+                      item.index
                       cbi.compiler-builtin-id-fix-empty))]
                 [(ast.AstDecl.Import _ _) unit]
                 [(ast.AstDecl.IncludeStr _ _) unit]
@@ -83950,15 +84294,13 @@
           [(MacroSegmentedProgramStep.Cons item rest)
             (begin
               (set! iter rest)
-              (match (ast.ast-decl-list-ref-borrowed
-                (& (struct-get item decls))
-                (struct-get item index))
+              (match (ast.ast-decl-list-ref-borrowed (& item.decls) item.index)
                 [(ast.AstDecl.Module _)
                   (set!
                     module-id
                     (ast.ast-decl-list-module-id-at
-                      (& (struct-get item decls))
-                      (struct-get item index)
+                      (& item.decls)
+                      item.index
                       cbi.compiler-builtin-id-fix-empty))]
                 [(ast.AstDecl.Import _ _)
                   (if (= module-id current-module-id)
@@ -84005,11 +84347,11 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix : ast.AstDeclList data.prefix-rev]
     [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [node-address : i64 (struct-get data head)]
-    [node-index : i64 (struct-get data cursor)]
+    [node-address : i64 data.head]
+    [node-index : i64 data.cursor]
     (begin
       (while (>= prefix-index 0)
         (begin
@@ -84025,7 +84367,7 @@
         (let
           [node : MacroProgramSegmentNodeData
             (macro-program-segment-node-data node-address)]
-          [decls : ast.AstDeclList (struct-get node decls)]
+          [decls : ast.AstDeclList node.decls]
           [count : i64 (ast.ast-decl-list-len (& decls))]
           (begin
             (while (< node-index count)
@@ -84038,7 +84380,7 @@
                     node-index
                     cur-module-id))
                 (set! node-index (+ node-index 1))))
-            (set! node-address (struct-get node next))
+            (set! node-address node.next)
             (set! node-index 0)))))))
 
 (define (macro-segmented-module-local-env-id
@@ -84050,10 +84392,10 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix : ast.AstDeclList data.prefix-rev]
     [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
-    [node-address : i64 (struct-get data head)]
-    [node-index : i64 (struct-get data cursor)]
+    [node-address : i64 data.head]
+    [node-index : i64 data.cursor]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     ;; This map grows only to root plus target-module names. A whole-program
     ;; reserve retained hundreds of MiB across cached module environments;
@@ -84094,7 +84436,7 @@
         (let
           [node : MacroProgramSegmentNodeData
             (macro-program-segment-node-data node-address)]
-          [decls : ast.AstDeclList (struct-get node decls)]
+          [decls : ast.AstDeclList node.decls]
           [count : i64 (ast.ast-decl-list-len (& decls))]
           (begin
             (while (and ok (< node-index count))
@@ -84121,7 +84463,7 @@
                             (set! ok false))])
                       unit)])
                 (set! node-index (+ node-index 1))))
-            (set! node-address (struct-get node next))
+            (set! node-address node.next)
             (set! node-index 0))))
       (if ok
         (ResultTcEnv.Ok cur-env)
@@ -84245,8 +84587,8 @@
               (let
                 [flat : MacroSegmentedProgramFlatView
                   (macro-segmented-program-flatten-raw state)]
-                [flat-decls : ast.AstDeclList (struct-get flat decls)]
-                [flat-paths : ast.AstDeclPathList (struct-get flat paths)]
+                [flat-decls : ast.AstDeclList flat.decls]
+                [flat-paths : ast.AstDeclPathList flat.paths]
                 [iter : MacroSegmentedProgramIter
                   (macro-segmented-program-iter state)]
                 [iter-index : i64 0]
@@ -84379,7 +84721,7 @@
           [(ast.AstDecl.Module next-module)
             (macro-decls-final-module-id rest next-module)]
           [(ast.AstDecl.ModuleBody next-module body-box)
-            (macro-decls-final-module-id (box-get body-box) next-module)]
+            (macro-decls-final-module-id (__tl-box-place body-box) next-module)]
           [_ (macro-decls-final-module-id rest module-id)]))]))
 
 (define (macro-decls-module-count [decls : ast.AstDeclList]) : i64
@@ -84391,7 +84733,9 @@
         (match decl
           [(ast.AstDecl.Module _) (+ rest-count 1)]
           [(ast.AstDecl.ModuleBody _ body-box)
-            (+ rest-count (+ 1 (macro-decls-module-count (box-get body-box))))]
+            (+
+              rest-count
+              (+ 1 (macro-decls-module-count (__tl-box-place body-box))))]
           [_ rest-count]))]))
 
 (define (macro-identity-key-join [head : String] [tail : String]) : String
@@ -84427,7 +84771,7 @@
   [index : i64]
   [env : ctfe_support.CtfeEnv]
   [fuel : i64]) : spec.ResultGenKey
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (spec.ResultGenKey.Ok "" fuel)
     (let
       [head-expr : ast.AstExpr
@@ -84679,7 +85023,7 @@
   [call-expr : ast.AstExpr]) : spec.ResultGenKey
   (cond
     [(>= param-index (ast.ast-macro-param-list-len params))
-      (if (>= arg-index (struct-get args len))
+      (if (>= arg-index args.len)
         (spec.ResultGenKey.Ok "" fuel)
         (spec.ResultGenKey.Err
           (box
@@ -84719,7 +85063,7 @@
                     ty
                     args
                     arg-index
-                    (struct-get args len)
+                    args.len
                     env
                     fuel
                     call-expr)]
@@ -84735,8 +85079,7 @@
                   arg-index)
                   [(ResultMacroBindingClauseList.Ok clauses)
                     (let
-                      [next-arg-index : i64
-                        (+ arg-index (struct-get (& clauses) len))]
+                      [next-arg-index : i64 (+ arg-index clauses.len)]
                       (match (macro-identity-key-param-exprs-at
                         ctx
                         fallback-module
@@ -84777,7 +85120,7 @@
                     (ctfe_support.ctfe-diagnostic-at-expr
                       call-expr
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
-            (if (>= arg-index (struct-get args len))
+            (if (>= arg-index args.len)
               (spec.ResultGenKey.Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
@@ -84961,7 +85304,7 @@
       (ast.AstDecl.Unsafe
         (box
           (macro-expansion-wrap-decl
-            (box-get inner)
+            (__tl-box-place inner)
             path-id
             origin-path-id
             macro-name-id
@@ -85114,11 +85457,15 @@
           span))]
     [(ast.AstDecl.Unsafe inner-box)
       (ast.ast-decl-unsafe
-        (macro-generated-context-decl (box-get inner-box) definition-module))]
+        (macro-generated-context-decl
+          (__tl-box-place inner-box)
+          definition-module))]
     [(ast.AstDecl.ModuleBody name body-box)
       (ast.ast-decl-module-body-id
         name
-        (macro-generated-context-decls (box-get body-box) definition-module))]
+        (macro-generated-context-decls
+          (__tl-box-place body-box)
+          definition-module))]
     [_ decl]))
 
 (define (macro-generated-context-decls
@@ -85149,7 +85496,8 @@
 (define (macro-decl-import? [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Import decl-meta _) true]
-    [(ast.AstDecl.Unsafe inner-box) (macro-decl-import? (box-get inner-box))]
+    [(ast.AstDecl.Unsafe inner-box)
+      (macro-decl-import? (__tl-box-place inner-box))]
     [_ false]))
 
 (define (macro-decls-contain-generated-key?
@@ -85377,10 +85725,9 @@
       (begin
         (while (< i macro-generated-module-memo-capacity)
           (begin
-            (array-set! macro-generated-module-memo-keys i 0)
-            (array-set!
-              macro-generated-module-memo-catalog-entries
-              i
+            (set! (array-ref macro-generated-module-memo-keys i) 0)
+            (set!
+              (array-ref macro-generated-module-memo-catalog-entries i)
               (MacroGeneratedModuleCatalogEntry.Empty))
             (set! i (+ i 1))))
         (set! macro-generated-module-memo-count 0)
@@ -85432,10 +85779,13 @@
                 [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
                 (if (= slot 0)
                   (begin
-                    (array-set! macro-generated-module-memo-keys cursor key)
-                    (array-set!
-                      macro-generated-module-memo-catalog-entries
-                      cursor
+                    (set!
+                      (array-ref macro-generated-module-memo-keys cursor)
+                      key)
+                    (set!
+                      (array-ref
+                        macro-generated-module-memo-catalog-entries
+                        cursor)
                       (MacroGeneratedModuleCatalogEntry.Catalog
                         target-id
                         catalog
@@ -85462,9 +85812,10 @@
                             entry-path
                             _
                             closure)
-                          (array-set!
-                            macro-generated-module-memo-catalog-entries
-                            cursor
+                          (set!
+                            (array-ref
+                              macro-generated-module-memo-catalog-entries
+                              cursor)
                             (MacroGeneratedModuleCatalogEntry.Catalog
                               entry-target
                               entry-catalog
@@ -85611,10 +85962,9 @@
       (begin
         (while (< i macro-generated-decls-memo-capacity)
           (begin
-            (array-set! macro-generated-decls-memo-keys i 0)
-            (array-set!
-              macro-generated-decls-memo-decls
-              i
+            (set! (array-ref macro-generated-decls-memo-keys i) 0)
+            (set!
+              (array-ref macro-generated-decls-memo-decls i)
               (ast.ast-decl-list-new))
             (set! i (+ i 1))))
         (set! macro-generated-decls-memo-count 0)
@@ -85687,15 +86037,21 @@
                 [slot : i64 (array-ref macro-generated-decls-memo-keys cursor)]
                 (if (= slot 0)
                   (begin
-                    (array-set! macro-generated-decls-memo-keys cursor key)
-                    (array-set! macro-generated-decls-memo-decls cursor decls)
+                    (set!
+                      (array-ref macro-generated-decls-memo-keys cursor)
+                      key)
+                    (set!
+                      (array-ref macro-generated-decls-memo-decls cursor)
+                      decls)
                     (set!
                       macro-generated-decls-memo-count
                       (+ macro-generated-decls-memo-count 1))
                     (set! done true))
                   (if (= slot key)
                     (begin
-                      (array-set! macro-generated-decls-memo-decls cursor decls)
+                      (set!
+                        (array-ref macro-generated-decls-memo-decls cursor)
+                        decls)
                       (set! done true))
                     (begin
                       (set!
@@ -85742,7 +86098,7 @@
       true)
       [(ast.AstProgramCompaction copied _)
         (match copied
-          [(ast.AstProgram.Program decls-box) (box-get decls-box)])])))
+          [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)])])))
 
 (define (macro-generated-module-memo-persist-entry!
   [key : i64]
@@ -85799,9 +86155,10 @@
                       [owned-generator : String (string.copy (& generator))]
                       [owned-path : String (string.copy (& import-path))]
                       [_store : unit
-                        (array-set!
-                          macro-generated-module-memo-catalog-entries
-                          cursor
+                        (set!
+                          (array-ref
+                            macro-generated-module-memo-catalog-entries
+                            cursor)
                           (MacroGeneratedModuleCatalogEntry.Catalog
                             target-id
                             owned-catalog
@@ -85857,7 +86214,9 @@
                     expr-map
                     type-map)]
                 (begin
-                  (array-set! macro-generated-decls-memo-decls cursor owned)
+                  (set!
+                    (array-ref macro-generated-decls-memo-decls cursor)
+                    owned)
                   (set! done true)))
               (begin
                 (set!
@@ -86125,8 +86484,8 @@
   [current-module : String]) : ast.AstDeclList
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [index : i64 0]
     [module : String current-module]
     [out-rev : ast.AstDeclList (ast.ast-decl-list-new)]
@@ -86169,17 +86528,15 @@
           [(MacroSegmentedProgramStep.Cons item rest)
             (begin
               (set! iter rest)
-              (match (ast.ast-decl-list-ref-borrowed
-                (& (struct-get item decls))
-                (struct-get item index))
+              (match (ast.ast-decl-list-ref-borrowed (& item.decls) item.index)
                 [(ast.AstDecl.Module _)
                   (begin
                     (set!
                       module
                       (ci.intern-str
                         (ast.ast-decl-list-module-id-at
-                          (& (struct-get item decls))
-                          (struct-get item index)
+                          (& item.decls)
+                          item.index
                           cbi.compiler-builtin-id-fix-empty)))
                     (if (string.eq module target-module)
                       (set! found true)
@@ -86258,7 +86615,7 @@
             ;; syntax parameter has no operand syntax to distinguish and is
             ;; therefore safe; this preserves the identity of legacy calls
             ;; when a generator adds an optional syntax capability tail.
-            (and variadic (>= index (struct-get args len)))
+            (and variadic (>= index args.len))
             true)
           (macro-generated-identity-shortcut-safe-params-at?
             ctx
@@ -86596,7 +86953,10 @@
         span
         origin)]
     [(ast.AstType.Tuple items)
-      (match (macro-type-list-to-spanned-sexpr (box-get items) span origin)
+      (match (macro-type-list-to-spanned-sexpr
+        (__tl-box-place items)
+        span
+        origin)
         [(ResultMacroSexpr.Ok stail)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-list-prepend
@@ -86605,7 +86965,10 @@
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstType.Func args ret)
-      (match (macro-type-list-to-spanned-sexpr (box-get args) span origin)
+      (match (macro-type-list-to-spanned-sexpr
+        (__tl-box-place args)
+        span
+        origin)
         [(ResultMacroSexpr.Ok sargs)
           (match (macro-type-to-spanned-sexpr (ast.ty-node-get ret) span origin)
             [(ResultMacroSexpr.Ok sret)
@@ -86652,19 +87015,19 @@
         (macro-resolved-nominal-type-sexpr
           (cbi.compiler-builtin-ctfe-ref 106)
           name
-          (box-get lifetimes)
+          (__tl-box-place lifetimes)
           span))]
     [(ast.AstType.EnumArgs name lifetimes)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
           (cbi.compiler-builtin-ctfe-ref 107)
           name
-          (box-get lifetimes)
+          (__tl-box-place lifetimes)
           span))]
     [(ast.AstType.VarArgs name lifetimes)
       (macro-type-named-args-sexpr
         (macro-output-source-identity-id-at name "type-var-args")
-        (box-get lifetimes)
+        (__tl-box-place lifetimes)
         span)]
     [(ast.AstType.Ref region inner)
       (match (macro-type-to-spanned-sexpr (ast.ty-node-get inner) span origin)
@@ -86792,7 +87155,7 @@
   [span : token.SourceSpan]
   [origin : ast.AstExpr]
   [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-pattern-to-spanned-sexpr
       (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
@@ -86827,7 +87190,7 @@
       (ResultMacroSexpr.Ok (macro-literal-to-spanned-sexpr lit span))]
     [(ast.AstPattern.Variant name args-box)
       (match (macro-pattern-list-to-spanned-sexpr
-        (box-get args-box)
+        (__tl-box-place args-box)
         span
         origin)
         [(ResultMacroSexpr.Ok args)
@@ -86841,7 +87204,7 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstPattern.Tuple patterns-box)
       (match (macro-pattern-list-to-spanned-sexpr
-        (box-get patterns-box)
+        (__tl-box-place patterns-box)
         span
         origin)
         [(ResultMacroSexpr.Ok patterns)
@@ -86853,7 +87216,7 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstPattern.Array patterns-box)
       (match (macro-pattern-list-to-spanned-sexpr
-        (box-get patterns-box)
+        (__tl-box-place patterns-box)
         span
         origin)
         [(ResultMacroSexpr.Ok patterns)
@@ -86911,7 +87274,7 @@
   [span : token.SourceSpan]
   [origin : ast.AstExpr]
   [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-match-arm-bracket
       (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
@@ -87031,7 +87394,7 @@
   [span : token.SourceSpan]
   [origin : ast.AstExpr]
   [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (let
       [head-expr : ast.AstExpr
@@ -87215,7 +87578,7 @@
             (macro-form1-id (macro-unop-symbol-id op) sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-id)
           (match (macro-child-to-spanned-sexpr body-id span origin)
             [(ResultMacroSexpr.Ok sbody)
@@ -87244,7 +87607,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-id arms)
           (match (macro-child-to-spanned-sexpr scrutinee-id span origin)
             [(ResultMacroSexpr.Ok sscrutinee)
@@ -87311,7 +87674,7 @@
                 [(ResultMacroSexpr.Ok svalue)
                   (ResultMacroSexpr.Ok
                     (macro-form3-id
-                      (cbi.compiler-builtin-ctfe-ref 184)
+                      (ci.intern "__tl_array-set!")
                       sarray
                       sindex
                       svalue
@@ -87380,7 +87743,7 @@
         [(ResultMacroSexpr.Ok sreceiver)
           (ResultMacroSexpr.Ok
             (macro-form2-id
-              (cbi.compiler-builtin-ctfe-ref 183)
+              (ci.intern "__tl_struct-get")
               sreceiver
               (macro-spanned-symbol-id field span)
               span))]
@@ -87390,16 +87753,31 @@
         [(ResultMacroSexpr.Ok sreceiver)
           (match (macro-child-to-spanned-sexpr value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
-              (ResultMacroSexpr.Ok
-                (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 157)
+              (let
+                [starget : reader.SpannedSexpr
+                  (if (ast.ast-tuple-set-field-id? field)
+                    (let
+                      [index : i64
+                        (ast.ast-tuple-set-index-from-field-id field)]
+                      (macro-form2-id
+                        (cbi.compiler-builtin-ctfe-ref 188)
+                        sreceiver
+                        (reader.SpannedSexpr.Int
+                          index
+                          (string.int->string index)
+                          span)
+                        span))
+                    (macro-form2-id
+                      (ci.intern "__tl_struct-get")
+                      sreceiver
+                      (macro-spanned-symbol-id field span)
+                      span))]
+                (ResultMacroSexpr.Ok
                   (macro-form2-id
-                    (cbi.compiler-builtin-ctfe-ref 183)
-                    sreceiver
-                    (macro-spanned-symbol-id field span)
-                    span)
-                  svalue
-                  span))]
+                    (cbi.compiler-builtin-ctfe-ref 157)
+                    starget
+                    svalue
+                    span)))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Cast inner-id ty-id)
@@ -87481,13 +87859,13 @@
       (match (macro-child-to-spanned-sexpr inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 133) sinner span))]
+            (macro-form1-id (ci.intern "__tl_box-get") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxTake inner-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
-            (macro-form1-id (cbi.compiler-builtin-ctfe-ref 134) sinner span))]
+            (macro-form1-id (ci.intern "__tl_box-take") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxSet receiver-id value-id)
       (match (macro-child-to-spanned-sexpr receiver-id span origin)
@@ -87497,10 +87875,7 @@
               (ResultMacroSexpr.Ok
                 (macro-form2-id
                   (cbi.compiler-builtin-ctfe-ref 157)
-                  (macro-form1-id
-                    (cbi.compiler-builtin-ctfe-ref 133)
-                    sreceiver
-                    span)
+                  (macro-form1-id (ci.intern "__tl_box-get") sreceiver span)
                   svalue
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -87742,7 +88117,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultMacroParsedDecls.Ok (ast.ast-decl-list-new))
     (let
       [head-expr : ast.AstExpr
@@ -87854,7 +88229,7 @@
         (ctfe_support.ctfe-module-macro-export-add-id! module-id name)
         (tc-name-id-list-add acc name))]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-collect-decl-name (box-get inner-box) module-id acc)]
+      (macro-collect-decl-name (__tl-box-place inner-box) module-id acc)]
     [_ acc]))
 
 ;; Index cursor rather than `ast-decl-list-step`: the module arm reads one id
@@ -87866,8 +88241,8 @@
   [acc : TcNameIdList]) : TcNameIdList
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [index : i64 0]
     [cur-module-id : i64 module-id]
     [out : TcNameIdList acc]
@@ -87900,11 +88275,11 @@
 (define (macro-collect-surface-decl-name
   [decl : cload.CompilerLoadSurfaceDecl]
   [acc : TcNameIdList]) : TcNameIdList
-  (match (struct-get decl kind)
+  (match decl.kind
     [(CompilerLoadSurfaceMacro)
       (let
-        [module-id : i64 (struct-get decl module)]
-        [name-id : i64 (struct-get decl name)]
+        [module-id : i64 decl.module]
+        [name-id : i64 decl.name]
         (begin
           (ctfe_support.ctfe-module-macro-export-add-id! module-id name-id)
           (tc-name-id-list-add acc name-id)))]
@@ -87941,7 +88316,7 @@
           (set!
             out
             (macro-collect-surface-decl-names
-              (struct-get
+              (__tl-project-field
                 (cload.compiler-load-surface-summary-list-at summaries index)
                 decls)
               out))
@@ -87998,9 +88373,9 @@
   [target-module-id : i64]
   [base-id : i64]) : bool
   (and
-    (= (struct-get decl module) target-module-id)
-    (= (struct-get decl name) base-id)
-    (match (struct-get decl kind)
+    (= decl.module target-module-id)
+    (= decl.name base-id)
+    (match decl.kind
       [(CompilerLoadSurfaceMacro) true]
       [_ false])))
 
@@ -88031,7 +88406,7 @@
         index
         (cload.compiler-load-surface-summary-list-count summaries))
         (if (macro-surface-decls-macro-in-module?
-          (struct-get
+          (__tl-project-field
             (cload.compiler-load-surface-summary-list-at summaries index)
             decls)
           target-module-id
@@ -88059,8 +88434,8 @@
           [decl : cload.CompilerLoadSurfaceDecl
             (cload.compiler-load-surface-decl-list-at decls index)]
           (if (and
-            (= (struct-get decl module) target-module-id)
-            (match (struct-get decl kind)
+            (= decl.module target-module-id)
+            (match decl.kind
               [(CompilerLoadSurfaceMacro) true]
               [_ false]))
             (return true)
@@ -88077,7 +88452,7 @@
         index
         (cload.compiler-load-surface-summary-list-count summaries))
         (if (macro-surface-decls-module-has-macro?
-          (struct-get
+          (__tl-project-field
             (cload.compiler-load-surface-summary-list-at summaries index)
             decls)
           target-module-id)
@@ -88122,7 +88497,7 @@
       (begin
         (while (< i macro-surface-call-decl-cache-capacity)
           (begin
-            (array-set! macro-surface-call-decl-cache-module-keys i 0)
+            (set! (array-ref macro-surface-call-decl-cache-module-keys i) 0)
             (set! i (+ i 1))))
         (set! macro-surface-call-decl-cache-count 0)
         (set! macro-surface-call-decl-cache-generation (ci.intern-generation))
@@ -88196,15 +88571,15 @@
               (array-ref macro-surface-call-decl-cache-module-keys cursor)]
             (if (= slot 0)
               (begin
-                (array-set!
-                  macro-surface-call-decl-cache-module-keys
-                  cursor
+                (set!
+                  (array-ref macro-surface-call-decl-cache-module-keys cursor)
                   module-key)
-                (array-set!
-                  macro-surface-call-decl-cache-base-keys
-                  cursor
+                (set!
+                  (array-ref macro-surface-call-decl-cache-base-keys cursor)
                   base-key)
-                (array-set! macro-surface-call-decl-cache-values cursor value)
+                (set!
+                  (array-ref macro-surface-call-decl-cache-values cursor)
+                  value)
                 (set!
                   macro-surface-call-decl-cache-count
                   (+ macro-surface-call-decl-cache-count 1))
@@ -88215,7 +88590,9 @@
                   (array-ref macro-surface-call-decl-cache-base-keys cursor)
                   base-key))
                 (begin
-                  (array-set! macro-surface-call-decl-cache-values cursor value)
+                  (set!
+                    (array-ref macro-surface-call-decl-cache-values cursor)
+                    value)
                   (set! done true))
                 (begin
                   (set!
@@ -88231,18 +88608,18 @@
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
   (if (and
-    (= (struct-get decl module) target-module-id)
-    (= (struct-get decl name) base-id)
-    (match (struct-get decl kind)
+    (= decl.module target-module-id)
+    (= decl.name base-id)
+    (match decl.kind
       [(CompilerLoadSurfaceMacro) true]
       [_ false]))
-    (match (struct-get decl signature)
+    (match decl.signature
       [(CompilerLoadSurfaceMacroSignature params ret body-box)
         (begin
           (tc-lazy-import-summary-macro-force-record!)
           (MacroMaybeDecl.Some
-            (struct-get decl name)
-            (struct-get decl module)
+            decl.name
+            decl.module
             -1
             params
             ret
@@ -88291,7 +88668,7 @@
         index
         (cload.compiler-load-surface-summary-list-count summaries))
         (match (macro-surface-decls-call-decl-in-module
-          (struct-get
+          (__tl-project-field
             (cload.compiler-load-surface-summary-list-at summaries index)
             decls)
           target-module-id
@@ -88525,7 +88902,7 @@
     [(ast.AstDecl.Unsafe inner-box)
       (macro-collect-expr-type-decl-name
         expr-bases
-        (box-get inner-box)
+        (__tl-box-place inner-box)
         module-id
         acc)]
     [_ acc]))
@@ -88539,8 +88916,8 @@
   ;; `macro-collect-macro-names`.
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [index : i64 0]
     [cur-module-id : i64 module-id]
     [out : TcNameIdList acc]
@@ -88651,12 +89028,12 @@
   [source-name-id : i64]) : i64
   (let
     [stride : i64 (ci.intern-capacity)]
-    [module-id : i64 (struct-get hygiene definition-module-id)]
+    [module-id : i64 hygiene.definition-module-id]
     [stored-module-id : i64
       (if (csym.compiler-symbol-root-module-id? module-id)
         0
         (+ module-id 1))]
-    [macro-name-id : i64 (struct-get hygiene macro-name-id)]
+    [macro-name-id : i64 hygiene.macro-name-id]
     [macro-id : i64
       (+ (+ stride 1) (+ (* stored-module-id stride) macro-name-id))]
     (begin
@@ -88846,7 +89223,7 @@
   (MacroHygieneEnv -1))
 
 (define (macro-hygiene-env-head [env : MacroHygieneEnv]) : i64
-  (struct-get env head))
+  env.head)
 
 (define (macro-hygiene-env-reset!) : unit
   (set! macro-hygiene-env-slot-count 0))
@@ -88906,10 +89283,10 @@
     [i : i64 index]
     (while (< i macro-hygiene-env-slot-count)
       (begin
-        (array-set! dst-kinds i (array-ref src-kinds i))
-        (array-set! dst-keys i (array-ref src-keys i))
-        (array-set! dst-values i (array-ref src-values i))
-        (array-set! dst-parents i (array-ref src-parents i))
+        (set! (array-ref dst-kinds i) (array-ref src-kinds i))
+        (set! (array-ref dst-keys i) (array-ref src-keys i))
+        (set! (array-ref dst-values i) (array-ref src-values i))
+        (set! (array-ref dst-parents i) (array-ref src-parents i))
         (set! i (+ i 1))))))
 
 (define (macro-hygiene-env-ensure-capacity!) : unit
@@ -88971,12 +89348,11 @@
           (bit-or kind (macro-hygiene-env-output-flat-import-flag))
           kind)]
       (begin
-        (array-set! macro-hygiene-env-kinds index stored-kind)
-        (array-set! macro-hygiene-env-keys index key-id)
-        (array-set! macro-hygiene-env-values index value-id)
-        (array-set!
-          macro-hygiene-env-parents
-          index
+        (set! (array-ref macro-hygiene-env-kinds index) stored-kind)
+        (set! (array-ref macro-hygiene-env-keys index) key-id)
+        (set! (array-ref macro-hygiene-env-values index) value-id)
+        (set!
+          (array-ref macro-hygiene-env-parents index)
           (macro-hygiene-env-head env))
         (set! macro-hygiene-env-slot-count (+ macro-hygiene-env-slot-count 1))
         (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
@@ -89101,45 +89477,55 @@
             name-id))])))
 
 (define (macro-hygiene-output-param-env
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.BracketClause items)
-      (if (> (struct-get (& items) len) 0)
+      (if (> items.len 0)
         (match (ast.ast-expr-unspan
-          (ast.ast-node-get (ast.ast-expr-list-get (& items) 0 0)))
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get (& items) 0 0)))
           [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
           [_ env])
         env)]
     [_ env]))
 
 (define (macro-hygiene-output-param-list-env
+  [expr-bases : i64]
   [items : (& items ast.AstExprList)]
   [index : i64]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     env
     (macro-hygiene-output-param-list-env
+      expr-bases
       items
       (+ index 1)
       (macro-hygiene-output-param-env
-        (ast.ast-node-get (ast.ast-expr-list-get items index 0))
+        expr-bases
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get items index 0))
         env))))
 
 (define (macro-hygiene-output-signature-env
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
   (match (ast.ast-expr-unspan expr)
     [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [(ast.AstExpr.Call func-box params)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases func-box)]
         [with-name : MacroHygieneEnv
           (match (ast.ast-expr-unspan func)
             [(ast.AstExpr.Var name-id)
               (macro-hygiene-output-bind-id env name-id)]
             [_ env])]
-        (macro-hygiene-output-param-list-env (& params) 0 with-name))]
+        (macro-hygiene-output-param-list-env expr-bases (& params) 0 with-name))]
     [_ env]))
 
 (define (macro-hygiene-output-declaration-name-env
@@ -89164,7 +89550,7 @@
   [items : (& items ast.AstExprList)]
   [index : i64]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     env
     (macro-hygiene-output-bind-var-list-env
       items
@@ -89206,7 +89592,7 @@
   [index : i64]
   [pattern-name? : bool]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     env
     (macro-hygiene-output-aggregate-member-list-env
       items
@@ -89221,7 +89607,7 @@
   [items : (& items ast.AstExprList)]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
   (let
-    [count : i64 (struct-get items len)]
+    [count : i64 items.len]
     [with-target : MacroHygieneEnv
       (if (> count 0)
         (match (ast.ast-expr-unspan
@@ -89273,7 +89659,7 @@
   [items : (& items ast.AstExprList)]
   [index : i64]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     env
     (macro-hygiene-output-decl-list-env
       items
@@ -89302,7 +89688,7 @@
               (parser.compiler-parse-dispatch-tag-id
                 (parser.compiler-parse-dispatch-env)
                 source-head-id)]
-            [count : i64 (struct-get (& args) len)]
+            [count : i64 args.len]
             (cond
               [(= source-head-id (cbi.compiler-builtin-ctfe-ref 122))
                 (macro-hygiene-output-decl-list-env (& args) 0 env)]
@@ -89356,19 +89742,19 @@
         module-id)]
     [value-handle : i64
       (csym.compiler-symbols-lookup-value-in-module-id-or
-        (struct-get hygiene symbols)
+        hygiene.symbols
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
     [type-handle : i64
       (csym.compiler-symbols-lookup-type-in-module-id-or
-        (struct-get hygiene symbols)
+        hygiene.symbols
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
     [macro-handle : i64
       (csym.compiler-symbols-lookup-macro-in-module-id-or
-        (struct-get hygiene symbols)
+        hygiene.symbols
         lookup-module-id
         source-name-id
         (csym.compiler-symbols-missing-handle))]
@@ -89386,15 +89772,15 @@
       (let
         [owner-module-id : i64
           (csym.compiler-symbols-owner-module-id-at-index-or
-            (struct-get hygiene symbols)
+            hygiene.symbols
             declaration-id
             fallback)]
         ;; A prior expansion can add a flat unqualified alias after a root
         ;; macro declaration. It is output scope, not a definition-site capture.
         (if (and
           (csym.compiler-symbol-root-module-id? module-id)
-          (>= (struct-get hygiene declaration-id) 0)
-          (> declaration-id (struct-get hygiene declaration-id))
+          (>= hygiene.declaration-id 0)
+          (> declaration-id hygiene.declaration-id)
           (ci.intern-generated-id-active? owner-module-id))
           fallback
           owner-module-id)))))
@@ -89403,8 +89789,8 @@
   [source-name-id : i64]
   [hygiene : MacroHygieneContext]) : i64
   (let
-    [definition-module-id : i64 (struct-get hygiene definition-module-id)]
-    [legacy? : bool (= source-name-id (struct-get hygiene macro-name-id))]
+    [definition-module-id : i64 hygiene.definition-module-id]
+    [legacy? : bool (= source-name-id hygiene.macro-name-id)]
     [first-dot : i64 (tc-name-first-dot-id source-name-id)]
     (if (< first-dot 0)
       (let
@@ -89489,14 +89875,18 @@
                 (let
                   [source-name-id : i64 template-source-id]
                   [leading-id : i64 (ci.intern-leading-dot-id source-name-id)]
-                  (if (and
-                    (>= leading-id 0)
-                    (match (macro-hygiene-env-lookup
-                      env
-                      (ci.intern-template-source-id leading-id))
-                      [(MacroMaybeHygieneName.Some _) true]
-                      [(MacroMaybeHygieneName.No) false]))
-                    source-name-id
+                  [renamed-leading-id : i64
+                    (if (>= leading-id 0)
+                      (match (macro-hygiene-env-lookup
+                        env
+                        (ci.intern-template-source-id leading-id))
+                        [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
+                        [(MacroMaybeHygieneName.No) -1])
+                      -1)]
+                  (if (>= renamed-leading-id 0)
+                    (tc-dotted-name-with-source-id
+                      renamed-leading-id
+                      source-name-id)
                     (begin
                       (when
                         (< source-name-id 0)
@@ -89603,7 +89993,7 @@
       (if (= old next)
         unit
         (begin
-          (array-set! macro-hygiene-produced-refcounts index next)
+          (set! (array-ref macro-hygiene-produced-refcounts index) next)
           (macro-hygiene-produced-note-children!
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases expr-id)
@@ -89615,7 +90005,7 @@
   [shared-path? : bool]) : unit
   (let
     [index : i64 0]
-    (while (< index (struct-get (& exprs) len))
+    (while (< index exprs.len)
       (begin
         (macro-hygiene-produced-note-id!
           expr-bases
@@ -89645,7 +90035,7 @@
   [shared-path? : bool]) : unit
   (let
     [index : i64 0]
-    (while (< index (struct-get (& arms) len))
+    (while (< index arms.len)
       (begin
         (match (ast.ast-match-arm-list-get
           (& arms)
@@ -89705,7 +90095,7 @@
         (macro-hygiene-produced-note-id! expr-bases then-box shared-path?)
         (macro-hygiene-produced-note-id! expr-bases else-box shared-path?))]
     [(ast.AstExpr.Let payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstLet.Let bindings body-box)
           (begin
             (macro-hygiene-produced-note-let-bindings!
@@ -89714,7 +90104,7 @@
               shared-path?)
             (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))])]
     [(ast.AstExpr.Lambda payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstLambda.Lambda _ _ body-box)
           (macro-hygiene-produced-note-id! expr-bases body-box shared-path?)])]
     [(ast.AstExpr.Tuple exprs)
@@ -89818,7 +90208,7 @@
     [(ast.AstExpr.Borrow _ _ place-box)
       (macro-hygiene-produced-note-id! expr-bases place-box shared-path?)]
     [(ast.AstExpr.Match payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstMatch.Match scrutinee-box arms)
           (begin
             (macro-hygiene-produced-note-id!
@@ -89827,14 +90217,14 @@
               shared-path?)
             (macro-hygiene-produced-note-arms! expr-bases arms shared-path?))])]
     [(ast.AstExpr.Foreach payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
           (begin
             (macro-hygiene-produced-note-id! expr-bases start-box shared-path?)
             (macro-hygiene-produced-note-id! expr-bases end-box shared-path?)
             (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))])]
     [(ast.AstExpr.SpmdReduce payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (begin
             (macro-hygiene-produced-note-id! expr-bases start-box shared-path?)
@@ -89842,7 +90232,7 @@
             (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)
             (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))])]
     [(ast.AstExpr.SpmdScan payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstSpmdScan.Scan
             _
             _
@@ -89887,7 +90277,7 @@
         (macro-hygiene-produced-note-id! expr-bases arena-box shared-path?)
         (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?))]
     [(ast.AstExpr.WithResource payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstWithResource.WithResource bindings body)
           (begin
             (macro-hygiene-produced-note-resource-bindings!
@@ -89980,7 +90370,7 @@
           (macro-hygiene-produced-refcounts-ensure! needed)
           (while (< index needed)
             (begin
-              (array-set! macro-hygiene-produced-refcounts index 0)
+              (set! (array-ref macro-hygiene-produced-refcounts index) 0)
               (set! index (+ index 1))))
           (set! macro-hygiene-produced-active true)
           (macro-hygiene-produced-note-id! expr-bases root-id false))))))
@@ -90003,8 +90393,7 @@
   [macro-name : MacroHygieneContext]
   [depth : i64]) : ast.AstExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
     (begin
       (macro-hygiene-expr-list-into
         expr-bases
@@ -90024,7 +90413,7 @@
   [macro-name : MacroHygieneContext]
   [depth : i64]
   [out : (&mut out ast.AstExprList)]) : unit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     unit
     (begin
       (ast.ast-expr-list-push
@@ -90051,11 +90440,10 @@
   [macro-name : MacroHygieneContext]
   [depth : i64]) : ast.AstExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
     [index : i64 0]
     (begin
-      (while (< index (struct-get (& exprs) len))
+      (while (< index exprs.len)
         (begin
           (ast.ast-expr-list-push
             (&mut out)
@@ -90084,7 +90472,7 @@
           (parser.compiler-parse-dispatch-tag-id
             (parser.compiler-parse-dispatch-env)
             source-head-id)]
-        [count : i64 (struct-get args len)]
+        [count : i64 args.len]
         (cond
           [(= tag (parser.compiler-parse-tag-decl-import))
             (macro-hygiene-output-import-env args env)]
@@ -90097,6 +90485,7 @@
                 1
                 (= tag (parser.compiler-parse-tag-decl-defenum))
                 (macro-hygiene-output-signature-env
+                  expr-bases
                   (ast.ast-expr-segment-bases-get
                     expr-bases
                     (ast.ast-expr-list-get args 0 0))
@@ -90109,6 +90498,7 @@
               (= tag (parser.compiler-parse-tag-decl-defdispatch)))
             (if (> count 0)
               (macro-hygiene-output-signature-env
+                expr-bases
                 (ast.ast-expr-segment-bases-get
                   expr-bases
                   (ast.ast-expr-list-get args 0 0))
@@ -90188,11 +90578,11 @@
   (match ty
     [(ast.AstType.Func args ret)
       (ast.ast-ty-func
-        (macro-hygiene-type-list (box-get args) env macro-name)
+        (macro-hygiene-type-list (__tl-box-place args) env macro-name)
         (macro-hygiene-type (ast.ty-node-get ret) env macro-name))]
     [(ast.AstType.Tuple elems)
       (ast.ast-ty-tuple
-        (macro-hygiene-type-list (box-get elems) env macro-name))]
+        (macro-hygiene-type-list (__tl-box-place elems) env macro-name))]
     [(ast.AstType.Array elem count)
       (ast.ast-ty-array
         (macro-hygiene-type (ast.ty-node-get elem) env macro-name)
@@ -90227,15 +90617,15 @@
     [(ast.AstType.EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
         name
-        (macro-hygiene-lifetime-list (box-get lifetimes) env macro-name))]
+        (macro-hygiene-lifetime-list (__tl-box-place lifetimes) env macro-name))]
     [(ast.AstType.StructArgs name lifetimes)
       (ast.ast-ty-struct-args
         name
-        (macro-hygiene-lifetime-list (box-get lifetimes) env macro-name))]
+        (macro-hygiene-lifetime-list (__tl-box-place lifetimes) env macro-name))]
     [(ast.AstType.VarArgs name lifetimes)
       (ast.ast-ty-var-args
         name
-        (macro-hygiene-lifetime-list (box-get lifetimes) env macro-name))]
+        (macro-hygiene-lifetime-list (__tl-box-place lifetimes) env macro-name))]
     [(ast.AstType.Consume inner)
       (ast.ast-ty-consume
         (macro-hygiene-type (ast.ty-node-get inner) env macro-name))]
@@ -90304,8 +90694,7 @@
   [macro-name : MacroHygieneContext]
   [depth : i64]) : MacroHygienePatternList
   (let
-    [out : ast.AstPatternList
-      (ast.ast-pattern-list-with-capacity (struct-get (& patterns) len))]
+    [out : ast.AstPatternList (ast.ast-pattern-list-with-capacity patterns.len)]
     [final-env : MacroHygieneEnv
       (macro-hygiene-pattern-list-into
         (& patterns)
@@ -90323,7 +90712,7 @@
   [macro-name : MacroHygieneContext]
   [depth : i64]
   [out : (&mut out ast.AstPatternList)]) : MacroHygieneEnv
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     env
     (match (macro-hygiene-pattern
       (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
@@ -90358,13 +90747,13 @@
               next-env)]))]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (match (macro-hygiene-pattern-list patterns env macro-name depth)
           [(MacroHygienePatternList.PatternList npatterns next-env)
             (MacroHygienePattern.Pattern (ast.ast-pat-tuple npatterns) next-env)]))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (match (macro-hygiene-pattern-list patterns env macro-name depth)
           [(MacroHygienePatternList.PatternList npatterns next-env)
             (MacroHygienePattern.Pattern (ast.ast-pat-array npatterns) next-env)]))]
@@ -90391,7 +90780,7 @@
                     next-env)])])))]
     [(ast.AstPattern.Variant name args-box)
       (let
-        [args : ast.AstPatternList (box-get args-box)]
+        [args : ast.AstPatternList (__tl-box-place args-box)]
         (match (macro-hygiene-pattern-list args env macro-name depth)
           [(MacroHygienePatternList.PatternList nargs next-env)
             (MacroHygienePattern.Pattern
@@ -90525,8 +90914,7 @@
   [macro-name : MacroHygieneContext]
   [depth : i64]) : ast.AstMatchArmList
   (let
-    [out : ast.AstMatchArmList
-      (ast.ast-match-arm-list-with-capacity (struct-get (& arms) len))]
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
     (begin
       (macro-hygiene-arm-list-into
         expr-bases
@@ -90546,7 +90934,7 @@
   [macro-name : MacroHygieneContext]
   [depth : i64]
   [out : (&mut out ast.AstMatchArmList)]) : unit
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     unit
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -90712,7 +91100,7 @@
           (macro-hygiene-expr expr-bases then-branch env macro-name depth)
           (macro-hygiene-expr expr-bases else-branch env macro-name depth)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : i64 body-box]
@@ -90727,7 +91115,7 @@
                   nbindings
                   (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : i64 body-box]
@@ -90926,7 +91314,7 @@
             macro-name)
           (macro-hygiene-expr expr-bases place env macro-name depth)))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (let
             [scrut : i64 scrut-box]
@@ -90934,7 +91322,7 @@
               (macro-hygiene-expr expr-bases scrut env macro-name depth)
               (macro-hygiene-arm-list expr-bases arms env macro-name depth)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
             [start : i64 start-box]
@@ -90949,7 +91337,7 @@
                   (macro-hygiene-expr expr-bases end env macro-name depth)
                   (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             op
             index
@@ -90979,7 +91367,7 @@
                     macro-name
                     depth))]))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             op
             index
@@ -91082,7 +91470,7 @@
           (macro-hygiene-expr expr-bases arena env macro-name depth)
           (macro-hygiene-expr-list expr-bases body env macro-name depth)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (match (macro-hygiene-resource-bindings
             expr-bases
@@ -91276,7 +91664,7 @@
         (MacroMaybeDecl.Some name module-id declaration-id params ret body))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (macro-decl-from-decl inner module-id declaration-id))]
     [_ (MacroMaybeDecl.No)]))
 
@@ -91354,7 +91742,7 @@
   (let
     [_ensure : unit (tc-module-decl-index-ensure! decls)]
     [slot : i64 (tc-module-decl-index-slot current-module-id)]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     [result : TcMaybeNameId (TcMaybeNameId.No)]
     (if (< slot 0)
       result
@@ -91369,7 +91757,7 @@
                 (array-ref tc-module-import-index-positions index)]
               [target : TcMaybeNameId
                 (macro-import-alias-target-from-wrapped-decl
-                  (array-ref (struct-get decls slots) (+ decl-offset position))
+                  (array-ref decls.slots (+ decl-offset position))
                   alias-id)]
               (begin
                 (match target
@@ -91484,8 +91872,8 @@
 (define (macro-unqualified-import-cache-storage-ensure!) : unit
   (if (=
     (array-length
-      (struct-get
-        (& tc-lazy-global-table-state)
+      (__tl-project-field
+        tc-lazy-global-table-state
         macro-unqualified-import-cache-module-keys))
     macro-unqualified-import-cache-capacity)
     unit
@@ -91494,20 +91882,17 @@
       (in-arena
         owner
         (begin
-          (set!
-            (struct-get
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-module-keys)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            macro-unqualified-import-cache-module-keys
             (array.make-array i64 macro-unqualified-import-cache-capacity))
-          (set!
-            (struct-get
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-name-keys)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            macro-unqualified-import-cache-name-keys
             (array.make-array i64 macro-unqualified-import-cache-capacity))
-          (set!
-            (struct-get
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-values)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            macro-unqualified-import-cache-values
             (array.make-array i64 macro-unqualified-import-cache-capacity)))))))
 
 (define (tc-unused-unsafe-storage-lifetime-fill! [index : i64]) : unit
@@ -91612,8 +91997,10 @@
         (and
           (not (tc-inlay-hint-state-enabled? state))
           (= (tc-inlay-hints-size) 0)
-          (= (struct-get (tc-inlay-hint-state-data state) count) 0)
-          (= (struct-get (tc-inlay-hint-state-data state) string-arena) 0)))
+          (= (__tl-project-field (tc-inlay-hint-state-data state) count) 0)
+          (=
+            (__tl-project-field (tc-inlay-hint-state-data state) string-arena)
+            0)))
       (and readable? clean?))))
 
 (define (tc-inlay-hint-state-isolation-ok?) : bool
@@ -91627,22 +92014,28 @@
     [initially-lazy? : bool
       (and
         (=
-          (array-length (struct-get (tc-inlay-hint-state-data state-a) lines))
+          (array-length
+            (__tl-project-field (tc-inlay-hint-state-data state-a) lines))
           0)
         (=
-          (array-length (struct-get (tc-inlay-hint-state-data state-b) lines))
+          (array-length
+            (__tl-project-field (tc-inlay-hint-state-data state-b) lines))
           0)
         (=
-          (array-length (struct-get (tc-inlay-hint-state-data state-a) cols))
+          (array-length
+            (__tl-project-field (tc-inlay-hint-state-data state-a) cols))
           0)
         (=
-          (array-length (struct-get (tc-inlay-hint-state-data state-b) cols))
+          (array-length
+            (__tl-project-field (tc-inlay-hint-state-data state-b) cols))
           0)
         (=
-          (array-length (struct-get (tc-inlay-hint-state-data state-a) types))
+          (array-length
+            (__tl-project-field (tc-inlay-hint-state-data state-a) types))
           0)
         (=
-          (array-length (struct-get (tc-inlay-hint-state-data state-b) types))
+          (array-length
+            (__tl-project-field (tc-inlay-hint-state-data state-b) types))
           0))]
     [restored-after-enable? : bool false]
     [a-survived? : bool false]
@@ -91670,22 +92063,28 @@
         fixed-capacities?
         (and
           (=
-            (array-length (struct-get (tc-inlay-hint-state-data state-a) lines))
+            (array-length
+              (__tl-project-field (tc-inlay-hint-state-data state-a) lines))
             tc-inlay-hint-capacity)
           (=
-            (array-length (struct-get (tc-inlay-hint-state-data state-a) cols))
+            (array-length
+              (__tl-project-field (tc-inlay-hint-state-data state-a) cols))
             tc-inlay-hint-capacity)
           (=
-            (array-length (struct-get (tc-inlay-hint-state-data state-a) types))
+            (array-length
+              (__tl-project-field (tc-inlay-hint-state-data state-a) types))
             tc-inlay-hint-capacity)
           (=
-            (array-length (struct-get (tc-inlay-hint-state-data state-b) lines))
+            (array-length
+              (__tl-project-field (tc-inlay-hint-state-data state-b) lines))
             tc-inlay-hint-capacity)
           (=
-            (array-length (struct-get (tc-inlay-hint-state-data state-b) cols))
+            (array-length
+              (__tl-project-field (tc-inlay-hint-state-data state-b) cols))
             tc-inlay-hint-capacity)
           (=
-            (array-length (struct-get (tc-inlay-hint-state-data state-b) types))
+            (array-length
+              (__tl-project-field (tc-inlay-hint-state-data state-b) types))
             tc-inlay-hint-capacity)))
       (set!
         a-survived?
@@ -91709,7 +92108,9 @@
         (and
           (not (tc-inlay-hint-state-enabled? state-a))
           (= (tc-inlay-hints-size-for-state state-a) 0)
-          (= (struct-get (tc-inlay-hint-state-data state-a) string-arena) 0)))
+          (=
+            (__tl-project-field (tc-inlay-hint-state-data state-a) string-arena)
+            0)))
       (set!
         b-after-a-reset?
         (and
@@ -91743,8 +92144,12 @@
         a-reset?
         b-after-a-reset?
         reuse-isolated?
-        (= (struct-get (tc-inlay-hint-state-data state-a) string-arena) 0)
-        (= (struct-get (tc-inlay-hint-state-data state-b) string-arena) 0)))))
+        (=
+          (__tl-project-field (tc-inlay-hint-state-data state-a) string-arena)
+          0)
+        (=
+          (__tl-project-field (tc-inlay-hint-state-data state-b) string-arena)
+          0)))))
 
 (define (tc-lazy-table-storage-ok?) : bool
   (let
@@ -91752,68 +92157,83 @@
     [scratch : arena.Arena (arena.make)]
     [initially-lazy? : bool
       (and
-        (= (arena.raw-handle (struct-get tc-lazy-global-table-state owner)) 0)
         (=
-          (array-length
-            (struct-get tc-lazy-global-table-state type-needs-resolution-slots))
-          0)
-        (=
-          (array-length (struct-get tc-lazy-global-table-state agg-size-cache))
-          0)
-        (=
-          (array-length (struct-get tc-lazy-global-table-state agg-align-cache))
+          (arena.raw-handle
+            (__tl-project-field tc-lazy-global-table-state owner))
           0)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state agg-regwords-cache))
+            (__tl-project-field
+              tc-lazy-global-table-state
+              type-needs-resolution-slots))
           0)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids))
+            (__tl-project-field tc-lazy-global-table-state agg-size-cache))
           0)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state lazy-import-stub-alias-ids))
+            (__tl-project-field tc-lazy-global-table-state agg-align-cache))
           0)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state lazy-import-stub-target-ids))
+            (__tl-project-field tc-lazy-global-table-state agg-regwords-cache))
           0)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-module-ids))
+          0)
+        (=
+          (array-length
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-alias-ids))
+          0)
+        (=
+          (array-length
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-target-ids))
+          0)
+        (=
+          (array-length
+            (__tl-project-field
               tc-lazy-global-table-state
               lazy-import-stub-summary-backed))
           0)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state lazy-import-stub-index-slots))
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-index-slots))
           0)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state agg-layout-cache))
+            (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
           0)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               macro-abstract-proof-qualified-keys))
           0)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               macro-unqualified-import-cache-module-keys))
           0)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               macro-unqualified-import-cache-name-keys))
           0)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               macro-unqualified-import-cache-values))
           0))]
@@ -91834,65 +92254,77 @@
       (and
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state type-needs-resolution-slots))
+            (__tl-project-field
+              tc-lazy-global-table-state
+              type-needs-resolution-slots))
           131072)
         (=
-          (array-length (struct-get tc-lazy-global-table-state agg-size-cache))
-          tc-agg-scalar-cache-capacity)
-        (=
-          (array-length (struct-get tc-lazy-global-table-state agg-align-cache))
-          tc-agg-scalar-cache-capacity)
-        (=
           (array-length
-            (struct-get tc-lazy-global-table-state agg-regwords-cache))
+            (__tl-project-field tc-lazy-global-table-state agg-size-cache))
           tc-agg-scalar-cache-capacity)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids))
+            (__tl-project-field tc-lazy-global-table-state agg-align-cache))
+          tc-agg-scalar-cache-capacity)
+        (=
+          (array-length
+            (__tl-project-field tc-lazy-global-table-state agg-regwords-cache))
+          tc-agg-scalar-cache-capacity)
+        (=
+          (array-length
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-module-ids))
           tc-lazy-import-stub-capacity)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state lazy-import-stub-alias-ids))
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-alias-ids))
           tc-lazy-import-stub-capacity)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state lazy-import-stub-target-ids))
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-target-ids))
           tc-lazy-import-stub-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               lazy-import-stub-summary-backed))
           tc-lazy-import-stub-capacity)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state lazy-import-stub-index-slots))
+            (__tl-project-field
+              tc-lazy-global-table-state
+              lazy-import-stub-index-slots))
           tc-lazy-import-stub-capacity)
         (=
           (array-length
-            (struct-get tc-lazy-global-table-state agg-layout-cache))
+            (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
           tc-agg-layout-cache-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               macro-abstract-proof-qualified-keys))
           requested-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               macro-unqualified-import-cache-module-keys))
           macro-unqualified-import-cache-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               macro-unqualified-import-cache-name-keys))
           macro-unqualified-import-cache-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               tc-lazy-global-table-state
               macro-unqualified-import-cache-values))
           macro-unqualified-import-cache-capacity))]
@@ -91901,119 +92333,150 @@
         (arena.set! caller))
       (unsafe
         (arena.destroy scratch))
-      (array-set!
-        (struct-get tc-lazy-global-table-state type-needs-resolution-slots)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            tc-lazy-global-table-state
+            type-needs-resolution-slots)
+          0)
         17)
-      (array-set! (struct-get tc-lazy-global-table-state agg-size-cache) 0 29)
-      (array-set! (struct-get tc-lazy-global-table-state agg-align-cache) 0 31)
-      (array-set!
-        (struct-get tc-lazy-global-table-state agg-regwords-cache)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field tc-lazy-global-table-state agg-size-cache)
+          0)
+        29)
+      (set!
+        (array-ref
+          (__tl-project-field tc-lazy-global-table-state agg-align-cache)
+          0)
+        31)
+      (set!
+        (array-ref
+          (__tl-project-field tc-lazy-global-table-state agg-regwords-cache)
+          0)
         37)
-      (array-set!
-        (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            tc-lazy-global-table-state
+            lazy-import-stub-module-ids)
+          0)
         41)
-      (array-set!
-        (struct-get tc-lazy-global-table-state agg-layout-cache)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
+          0)
         (TcAggLayoutCacheSlot.Empty))
-      (array-set!
-        (struct-get
-          tc-lazy-global-table-state
-          macro-abstract-proof-qualified-keys)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            tc-lazy-global-table-state
+            macro-abstract-proof-qualified-keys)
+          0)
         "tc-lazy-table-storage")
-      (array-set!
-        (struct-get
-          tc-lazy-global-table-state
-          macro-unqualified-import-cache-module-keys)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            tc-lazy-global-table-state
+            macro-unqualified-import-cache-module-keys)
+          0)
         43)
       (let
         [survived? : bool
           (and
             (=
               (array-ref
-                (struct-get
+                (__tl-project-field
                   tc-lazy-global-table-state
                   type-needs-resolution-slots)
                 0)
               17)
             (=
               (array-ref
-                (struct-get tc-lazy-global-table-state agg-size-cache)
+                (__tl-project-field tc-lazy-global-table-state agg-size-cache)
                 0)
               29)
             (=
               (array-ref
-                (struct-get tc-lazy-global-table-state agg-align-cache)
+                (__tl-project-field tc-lazy-global-table-state agg-align-cache)
                 0)
               31)
             (=
               (array-ref
-                (struct-get tc-lazy-global-table-state agg-regwords-cache)
+                (__tl-project-field
+                  tc-lazy-global-table-state
+                  agg-regwords-cache)
                 0)
               37)
             (=
               (array-ref
-                (struct-get
+                (__tl-project-field
                   tc-lazy-global-table-state
                   lazy-import-stub-module-ids)
                 0)
               41)
             (match (tc-global-array-element-shared-view
-              (struct-get tc-lazy-global-table-state agg-layout-cache)
+              (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
               0)
               [(TcAggLayoutCacheSlot.Empty) true]
               [_ false])
             (string.eq
               (array-ref
-                (struct-get
+                (__tl-project-field
                   tc-lazy-global-table-state
                   macro-abstract-proof-qualified-keys)
                 0)
               "tc-lazy-table-storage")
             (=
               (array-ref
-                (struct-get
-                  (& tc-lazy-global-table-state)
+                (__tl-project-field
+                  tc-lazy-global-table-state
                   macro-unqualified-import-cache-module-keys)
                 0)
               43))]
         (begin
-          (array-set!
-            (struct-get tc-lazy-global-table-state type-needs-resolution-slots)
-            0
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                type-needs-resolution-slots)
+              0)
             0)
-          (array-set!
-            (struct-get tc-lazy-global-table-state agg-size-cache)
-            0
+          (set!
+            (array-ref
+              (__tl-project-field tc-lazy-global-table-state agg-size-cache)
+              0)
             0)
-          (array-set!
-            (struct-get tc-lazy-global-table-state agg-align-cache)
-            0
+          (set!
+            (array-ref
+              (__tl-project-field tc-lazy-global-table-state agg-align-cache)
+              0)
             0)
-          (array-set!
-            (struct-get tc-lazy-global-table-state agg-regwords-cache)
-            0
+          (set!
+            (array-ref
+              (__tl-project-field tc-lazy-global-table-state agg-regwords-cache)
+              0)
             0)
-          (array-set!
-            (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids)
-            0
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                lazy-import-stub-module-ids)
+              0)
             0)
-          (array-set!
-            (struct-get
-              tc-lazy-global-table-state
-              macro-abstract-proof-qualified-keys)
-            0
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                macro-abstract-proof-qualified-keys)
+              0)
             "")
-          (array-set!
-            (struct-get
-              tc-lazy-global-table-state
-              macro-unqualified-import-cache-module-keys)
-            0
+          (set!
+            (array-ref
+              (__tl-project-field
+                tc-lazy-global-table-state
+                macro-unqualified-import-cache-module-keys)
+              0)
             0)
           (let
             [unused-unsafe-lifetime? : bool
@@ -92028,7 +92491,7 @@
 (define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
   (cast
     (unsafe
-      (ptr->int (ptr-cast (array-data (struct-get decls slots)) : (Ptr u8))))
+      (ptr->int (ptr-cast (array-data decls.slots) : (Ptr u8))))
     : i64))
 
 ;; The mapping is program-derived, so the cache must not survive into the next
@@ -92064,11 +92527,12 @@
         (begin
           (while (< i macro-unqualified-import-cache-capacity)
             (begin
-              (array-set!
-                (struct-get
-                  tc-lazy-global-table-state
-                  macro-unqualified-import-cache-module-keys)
-                i
+              (set!
+                (array-ref
+                  (__tl-project-field
+                    tc-lazy-global-table-state
+                    macro-unqualified-import-cache-module-keys)
+                  i)
                 0)
               (set! i (+ i 1))))
           (set! macro-unqualified-import-cache-count 0)
@@ -92101,8 +92565,8 @@
         (let
           [slot : i64
             (array-ref
-              (struct-get
-                (& tc-lazy-global-table-state)
+              (__tl-project-field
+                tc-lazy-global-table-state
                 macro-unqualified-import-cache-module-keys)
               cursor)]
           (if (= slot 0)
@@ -92111,8 +92575,8 @@
               (= slot module-key)
               (=
                 (array-ref
-                  (struct-get
-                    (& tc-lazy-global-table-state)
+                  (__tl-project-field
+                    tc-lazy-global-table-state
                     macro-unqualified-import-cache-name-keys)
                   cursor)
                 name-key))
@@ -92120,8 +92584,8 @@
                 (set!
                   out
                   (array-ref
-                    (struct-get
-                      (& tc-lazy-global-table-state)
+                    (__tl-project-field
+                      tc-lazy-global-table-state
                       macro-unqualified-import-cache-values)
                     cursor))
                 (set! done true))
@@ -92155,29 +92619,32 @@
           (let
             [slot : i64
               (array-ref
-                (struct-get
-                  (& tc-lazy-global-table-state)
+                (__tl-project-field
+                  tc-lazy-global-table-state
                   macro-unqualified-import-cache-module-keys)
                 cursor)]
             (if (= slot 0)
               (begin
-                (array-set!
-                  (struct-get
-                    (& tc-lazy-global-table-state)
-                    macro-unqualified-import-cache-module-keys)
-                  cursor
+                (set!
+                  (array-ref
+                    (__tl-project-field
+                      tc-lazy-global-table-state
+                      macro-unqualified-import-cache-module-keys)
+                    cursor)
                   module-key)
-                (array-set!
-                  (struct-get
-                    (& tc-lazy-global-table-state)
-                    macro-unqualified-import-cache-name-keys)
-                  cursor
+                (set!
+                  (array-ref
+                    (__tl-project-field
+                      tc-lazy-global-table-state
+                      macro-unqualified-import-cache-name-keys)
+                    cursor)
                   name-key)
-                (array-set!
-                  (struct-get
-                    (& tc-lazy-global-table-state)
-                    macro-unqualified-import-cache-values)
-                  cursor
+                (set!
+                  (array-ref
+                    (__tl-project-field
+                      tc-lazy-global-table-state
+                      macro-unqualified-import-cache-values)
+                    cursor)
                   value)
                 (set!
                   macro-unqualified-import-cache-count
@@ -92187,8 +92654,8 @@
                 (= slot module-key)
                 (=
                   (array-ref
-                    (struct-get
-                      (& tc-lazy-global-table-state)
+                    (__tl-project-field
+                      tc-lazy-global-table-state
                       macro-unqualified-import-cache-name-keys)
                     cursor)
                   name-key))
@@ -92212,7 +92679,7 @@
       (begin
         (while (< i macro-flat-import-target-cache-capacity)
           (begin
-            (array-set! macro-flat-import-target-cache-module-keys i 0)
+            (set! (array-ref macro-flat-import-target-cache-module-keys i) 0)
             (set! i (+ i 1))))
         (set! macro-flat-import-target-cache-count 0)
         (set! macro-flat-import-target-cache-generation (ci.intern-generation))
@@ -92281,13 +92748,11 @@
               (array-ref macro-flat-import-target-cache-module-keys cursor)]
             (if (= slot 0)
               (begin
-                (array-set!
-                  macro-flat-import-target-cache-module-keys
-                  cursor
+                (set!
+                  (array-ref macro-flat-import-target-cache-module-keys cursor)
                   module-key)
-                (array-set!
-                  macro-flat-import-target-cache-values
-                  cursor
+                (set!
+                  (array-ref macro-flat-import-target-cache-values cursor)
                   targets)
                 (set!
                   macro-flat-import-target-cache-count
@@ -92314,8 +92779,8 @@
   [targets : MacroFlatImportTargetList]
   [target-id : i64]) : MacroFlatImportTargetList
   (let
-    [slots : (__tl_dyn-array i64) (struct-get targets slots)]
-    [len : i64 (struct-get targets len)]
+    [slots : (__tl_dyn-array i64) targets.slots]
+    [len : i64 targets.len]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -92341,14 +92806,13 @@
   (let
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     [cur-module-id : i64 module-id]
     [cur-targets : MacroFlatImportTargetList targets]
     (begin
       (while (< index count)
         (let
-          [decl : ast.AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          [decl : ast.AstDecl (array-ref decls.slots (+ decl-offset index))]
           (begin
             (match (ast.ast-decl-unwrapped decl)
               [(ast.AstDecl.Module next-module)
@@ -92396,7 +92860,9 @@
             (array-ref macro-flat-import-target-cache-module-keys cursor)]
           (if (= slot module-key)
             (begin
-              (array-set! macro-flat-import-target-cache-values cursor targets)
+              (set!
+                (array-ref macro-flat-import-target-cache-values cursor)
+                targets)
               (set! done true))
             (if (= slot 0)
               (set! done true)
@@ -92420,8 +92886,8 @@
 (define (macro-flat-import-target-cache-build! [decls : ast.AstDeclList]) : unit
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [truncated : bool false]
     [i : i64 0]
@@ -92474,9 +92940,7 @@
       (set!
         macro-flat-import-target-cache-built-decl-count
         (ast.ast-decl-list-len (& decls)))
-      (set!
-        macro-flat-import-target-cache-built-decl-offset
-        (struct-get decls offset))
+      (set! macro-flat-import-target-cache-built-decl-offset decls.offset)
       (set! macro-flat-import-target-cache-complete (not truncated)))))
 
 ;; R3-P1: this cache outlives the declaration whose expansion first populated
@@ -92525,9 +92989,7 @@
           (=
             macro-flat-import-target-cache-built-decl-count
             (ast.ast-decl-list-len (& decls)))
-          (=
-            macro-flat-import-target-cache-built-decl-offset
-            (struct-get decls offset)))
+          (= macro-flat-import-target-cache-built-decl-offset decls.offset))
           (macro-flat-import-target-list-empty)
           (let
             [targets : MacroFlatImportTargetList
@@ -92550,7 +93012,7 @@
       (begin
         (while (< i macro-alias-cache-capacity)
           (begin
-            (array-set! macro-alias-cache-module-keys i 0)
+            (set! (array-ref macro-alias-cache-module-keys i) 0)
             (set! i (+ i 1))))
         (set! macro-alias-cache-count 0)
         (set! macro-alias-cache-generation (ci.intern-generation))
@@ -92616,12 +93078,13 @@
             [slot : i64 (array-ref macro-alias-cache-module-keys cursor)]
             (if (= slot 0)
               (begin
-                (array-set! macro-alias-cache-module-keys cursor module-key)
-                (array-set!
-                  macro-alias-cache-qualifier-keys
-                  cursor
+                (set!
+                  (array-ref macro-alias-cache-module-keys cursor)
+                  module-key)
+                (set!
+                  (array-ref macro-alias-cache-qualifier-keys cursor)
                   qualifier-key)
-                (array-set! macro-alias-cache-values cursor value)
+                (set! (array-ref macro-alias-cache-values cursor) value)
                 (set! macro-alias-cache-count (+ macro-alias-cache-count 1))
                 (set! done true))
               (if (and
@@ -92636,7 +93099,7 @@
                       (or (= value -3) (>= value 0))
                       (or (< existing 0) (= existing qualifier-id))
                       (not (= value existing)))
-                      (array-set! macro-alias-cache-values cursor value)
+                      (set! (array-ref macro-alias-cache-values cursor) value)
                       unit))
                   (set! done true))
                 (begin
@@ -92652,8 +93115,8 @@
   [count : i64]
   [start-module-id : i64]) : i64
   (let
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [cur-module-id : i64 start-module-id]
     [i : i64 start]
     (begin
@@ -92696,8 +93159,8 @@
   [start : i64]
   [start-module-id : i64]) : i64
   (let
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [cur-module-id : i64 start-module-id]
     [i : i64 start]
     (begin
@@ -92753,7 +93216,7 @@
       (set! macro-alias-cache-built true)
       (set! macro-alias-cache-built-segmented false)
       (set! macro-alias-cache-built-decl-count count)
-      (set! macro-alias-cache-built-decl-offset (struct-get decls offset))
+      (set! macro-alias-cache-built-decl-offset decls.offset)
       (set!
         macro-alias-cache-built-decl-slots-addr
         (macro-decl-list-slots-data-addr decls)))))
@@ -92764,10 +93227,10 @@
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
-    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix : ast.AstDeclList data.prefix-rev]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [node-address : i64 (struct-get data head)]
-    [node-index : i64 (struct-get data cursor)]
+    [node-address : i64 data.head]
+    [node-index : i64 data.cursor]
     (begin
       (set! macro-alias-cache-complete true)
       (set!
@@ -92780,7 +93243,7 @@
         (let
           [node : MacroProgramSegmentNodeData
             (macro-program-segment-node-data node-address)]
-          [decls : ast.AstDeclList (struct-get node decls)]
+          [decls : ast.AstDeclList node.decls]
           (begin
             (set!
               cur-module-id
@@ -92789,7 +93252,7 @@
                 node-index
                 (ast.ast-decl-list-len (& decls))
                 cur-module-id))
-            (set! node-address (struct-get node next))
+            (set! node-address node.next)
             (set! node-index 0))))
       (set! macro-alias-cache-built-end-module-id cur-module-id)
       (set! macro-alias-cache-built true)
@@ -92808,7 +93271,7 @@
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     (if (and
-      (= macro-alias-cache-built-decl-offset (struct-get decls offset))
+      (= macro-alias-cache-built-decl-offset decls.offset)
       (> count macro-alias-cache-built-decl-count))
       (if (=
         macro-alias-cache-built-decl-slots-addr
@@ -93205,8 +93668,8 @@
         [(CompilerLoadSomeSurfaceSummary summary)
           (begin
             (cload.compiler-load-surface-summary-refresh-with-pools
-              (struct-get summary source-path)
-              (struct-get summary source-path-id)
+              summary.source-path
+              summary.source-path-id
               (svec.new)
               (ast.AstMaybeModuleName.Some target-module-id)
               "stdlib"
@@ -93318,8 +93781,8 @@
   [targets : MacroFlatImportTargetList]
   [lookup-name-id : i64]) : i64
   (let
-    [slots : (__tl_dyn-array i64) (struct-get targets slots)]
-    [len : i64 (struct-get targets len)]
+    [slots : (__tl_dyn-array i64) targets.slots]
+    [len : i64 targets.len]
     [index : i64 0]
     [target : i64 -1]
     (begin
@@ -93781,11 +94244,11 @@
   (match ty
     [(ast.AstType.Func args ret)
       (ast.ast-ty-func
-        (macro-type-arg-module-qualify-list ctx (box-get args))
+        (macro-type-arg-module-qualify-list ctx (__tl-box-place args))
         (macro-type-arg-module-qualify ctx (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
       (ast.ast-ty-tuple
-        (macro-type-arg-module-qualify-list ctx (box-get elems)))]
+        (macro-type-arg-module-qualify-list ctx (__tl-box-place elems)))]
     [(ast.AstType.Array elem len)
       (ast.ast-ty-array
         (macro-type-arg-module-qualify ctx (ast.ty-node-get elem))
@@ -93822,7 +94285,7 @@
     [(ast.AstType.VarArgs name lifetimes)
       (ast.ast-ty-var-args
         (macro-type-arg-module-qualify-id ctx name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [_ ty]))
 
 (define (macro-type-arg-reflections-from-decls [decls : ast.AstDeclList]) : ctfe_support.CtfeReflectInfoList
@@ -94023,7 +94486,7 @@
                 [(ast.AstProgram.Program decls-box)
                   (match (macro-import-alias-target-cached-id-in-context
                     ctx
-                    (box-get decls-box)
+                    (__tl-box-place decls-box)
                     current-module-id
                     name-id)
                     [(TcMaybeNameId.Some target-id)
@@ -94068,7 +94531,7 @@
 (define (macro-expr-clause-from-items
   [arg : ast.AstExpr]
   [items : ast.AstExprList]) : ResultMacroClause
-  (if (= (struct-get (& items) len) 2)
+  (if (= items.len 2)
     (ResultMacroClause.Ok
       (ast.ast-expr-clause
         (ast.ast-expr-list-get (& items) 0 0)
@@ -94090,7 +94553,7 @@
 (define (macro-expr-clause-list-from-args [args : ast.AstExprList]) : ResultMacroClauseList
   (let
     [out : ast.AstExprClauseList
-      (ast.ast-expr-clause-list-with-capacity (struct-get (& args) len))]
+      (ast.ast-expr-clause-list-with-capacity args.len)]
     (match (macro-expr-clause-list-from-args-into (& args) 0 (&mut out))
       [(ResultMacroCheck.Ok) (ResultMacroClauseList.Ok out)]
       [(ResultMacroCheck.Err diag) (ResultMacroClauseList.Err diag)])))
@@ -94099,7 +94562,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprClauseList)]) : ResultMacroCheck
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
@@ -94135,7 +94598,7 @@
   [name : i64]
   [rest : ast.AstExprList]) : ResultMacroBindingClause
   (let
-    [len : i64 (struct-get (& rest) len)]
+    [len : i64 rest.len]
     (if (<= len 0)
       (macro-expr-binding-clause-shape-error arg)
       (let
@@ -94191,7 +94654,7 @@
 (define (macro-expr-binding-clause-list-from-args [args : ast.AstExprList]) : ResultMacroBindingClauseList
   (let
     [out : ast.AstExprBindingClauseList
-      (ast.ast-expr-binding-clause-list-with-capacity (struct-get (& args) len))]
+      (ast.ast-expr-binding-clause-list-with-capacity args.len)]
     (match (macro-expr-binding-clause-list-from-args-into (& args) 0 (&mut out))
       [(ResultMacroCheck.Ok) (ResultMacroBindingClauseList.Ok out)]
       [(ResultMacroCheck.Err diag) (ResultMacroBindingClauseList.Err diag)])))
@@ -94200,7 +94663,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprBindingClauseList)]) : ResultMacroCheck
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
@@ -94217,8 +94680,7 @@
   [start : i64]) : ResultMacroBindingClauseList
   (let
     [out : ast.AstExprBindingClauseList
-      (ast.ast-expr-binding-clause-list-with-capacity
-        (- (struct-get args len) start))]
+      (ast.ast-expr-binding-clause-list-with-capacity (- args.len start))]
     (match (macro-expr-binding-clause-prefix-from-args-into
       args
       start
@@ -94230,7 +94692,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprBindingClauseList)]) : ResultMacroCheck
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
@@ -94295,29 +94757,35 @@
   [arg : ast.AstExpr]) : ResultMacroCheck
   (if (tc-type-eq resolved-expected (ast.AstType.Expr))
     ResultMacroCheck.Ok
-    (match (tc-expr-with-expected-or-actual ctx env arg resolved-expected)
-      [(ResultTcType.Ok actual)
-        (if (tc-type-compatible? resolved-expected actual)
-          ResultMacroCheck.Ok
-          (ResultMacroCheck.Err
-            (box
-              (macro-diagnostic-with-active-path
-                ctx
-                (tc-expr-diag
-                  arg
-                  (macro-operand-mismatch-message resolved-expected actual))))))]
-      [(ResultTcType.Err message)
-        (ResultMacroCheck.Err
-          (box
-            (macro-diagnostic-with-active-path
-              ctx
-              (tc-expr-diag
-                arg
-                (if (tc-encoded-error? message)
-                  message
-                  (str_cat.str-cat
-                    "typecheck: macro operand typecheck failed: "
-                    message))))))])))
+    (let
+      [journal-mark : i64 (tc-dotted-macro-journal-start!)]
+      [result : ResultMacroCheck
+        (match (tc-expr-with-expected-or-actual ctx env arg resolved-expected)
+          [(ResultTcType.Ok actual)
+            (if (tc-type-compatible? resolved-expected actual)
+              ResultMacroCheck.Ok
+              (ResultMacroCheck.Err
+                (box
+                  (macro-diagnostic-with-active-path
+                    ctx
+                    (tc-expr-diag
+                      arg
+                      (macro-operand-mismatch-message resolved-expected actual))))))]
+          [(ResultTcType.Err message)
+            (ResultMacroCheck.Err
+              (box
+                (macro-diagnostic-with-active-path
+                  ctx
+                  (tc-expr-diag
+                    arg
+                    (if (tc-encoded-error? message)
+                      message
+                      (str_cat.str-cat
+                        "typecheck: macro operand typecheck failed: "
+                        message))))))])]
+      (begin
+        (tc-dotted-macro-journal-restore-to! journal-mark)
+        result))))
 
 (define (macro-operand-bracket-clause? [arg : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan arg)
@@ -94335,7 +94803,7 @@
     (match (macro-type-arg
       ctx
       (match (tc-context-program ctx)
-        [(ast.AstProgram.Program decls-box) (box-get decls-box)])
+        [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)])
       arg)
       [(ResultMacroTypeArg.Ok _) ResultMacroCheck.Ok]
       [(ResultMacroTypeArg.Err diag) (ResultMacroCheck.Err diag)])
@@ -94410,7 +94878,7 @@
   [expected : ast.AstType]
   [args : (& args ast.AstExprList)]
   [index : i64]) : ResultMacroCheck
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     ResultMacroCheck.Ok
     (let
       [head : ast.AstExpr
@@ -94439,7 +94907,7 @@
   [resolved-expected : ast.AstType]
   [args : (& args ast.AstExprList)]
   [index : i64]) : ResultMacroCheck
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     ResultMacroCheck.Ok
     (let
       [head : ast.AstExpr
@@ -94514,12 +94982,12 @@
   [capture-expr-types : bool]
   [clause : ast.AstExprBindingClause]) : ast.AstExprBindingClause
   (let
-    [init-id : i64 (struct-get clause init)]
+    [init-id : i64 clause.init]
     [init : ast.AstExpr (ast.ast-node-get init-id)]
     [raw-init-produced : ast.AstType
       (if capture-expr-types
         (macro-captured-binding-init-produced-type ctx env init)
-        (struct-get clause init-produced))]
+        clause.init-produced)]
     [init-produced : ast.AstType
       (ctfe_support.ctfe-caller-origin-expr-type-with-pools
         (tc-context-pools ctx)
@@ -94531,12 +94999,12 @@
     ;; this initializer and materializes its caller-origin expression marker.
     [_publish-captured : unit (tc-context-install-pools! ctx)]
     (ast.AstExprBindingClause
-      (struct-get clause name)
-      (struct-get clause has-type)
-      (struct-get clause ty)
+      clause.name
+      clause.has-type
+      clause.ty
       init-id
       init-produced
-      (struct-get clause span))))
+      clause.span)))
 
 (define (macro-captured-binding-clause-list
   [ctx : TcContext]
@@ -94545,11 +95013,10 @@
   [clauses : ast.AstExprBindingClauseList]) : ast.AstExprBindingClauseList
   (let
     [out : ast.AstExprBindingClauseList
-      (ast.ast-expr-binding-clause-list-with-capacity
-        (struct-get (& clauses) len))]
+      (ast.ast-expr-binding-clause-list-with-capacity clauses.len)]
     [index : i64 0]
     (begin
-      (while (< index (struct-get (& clauses) len))
+      (while (< index clauses.len)
         (begin
           (ast.ast-expr-binding-clause-list-push
             (&mut out)
@@ -94585,7 +95052,7 @@
   [pools : ast.AstNodePoolContext]
   [args : ast.AstExprList]) : ast.AstExprList
   (let
-    [count : i64 (struct-get (& args) len)]
+    [count : i64 args.len]
     [out : ast.AstExprList (ast.ast-expr-list-with-capacity count)]
     [index : i64 0]
     (begin
@@ -94596,7 +95063,7 @@
           (begin
             (ast.ast-expr-list-push
               (&mut out)
-              (macro-captured-expr-node ctx pools arg-id arg))
+              (macro-captured-expr-node ctx pools arg-id arg true))
             (set! index (+ index 1)))))
       out)))
 
@@ -94617,22 +95084,28 @@
   [pools : ast.AstNodePoolContext]
   [clause : ast.AstExprClause]) : ast.AstExprClause
   (let
-    [first-id : i64 (struct-get clause first)]
-    [second-id : i64 (struct-get clause second)]
+    [first-id : i64 clause.first]
+    [second-id : i64 clause.second]
     (ast.AstExprClause
-      (macro-captured-expr-node ctx pools first-id (ast.ast-node-get first-id))
+      (macro-captured-expr-node
+        ctx
+        pools
+        first-id
+        (ast.ast-node-get first-id)
+        true)
       (macro-captured-expr-node
         ctx
         pools
         second-id
-        (ast.ast-node-get second-id)))))
+        (ast.ast-node-get second-id)
+        true))))
 
 (define (macro-caller-origin-expr-clause-list
   [ctx : TcContext]
   [pools : ast.AstNodePoolContext]
   [clauses : ast.AstExprClauseList]) : ast.AstExprClauseList
   (let
-    [count : i64 (struct-get (& clauses) len)]
+    [count : i64 clauses.len]
     [out : ast.AstExprClauseList (ast.ast-expr-clause-list-with-capacity count)]
     [index : i64 0]
     (begin
@@ -94810,11 +95283,20 @@
 ;; code can inspect without evaluating. Keep its literal node in the active
 ;; CTFE pool instead of passing a transient macro-expansion proxy variable.
 ;; Other expressions retain their original node and hygiene unchanged.
+(define (macro-private-place-bridge-name? [macro-name : String]) : bool
+  (or
+    (string.eq macro-name "stdlib.core_macros/__tl-project-field")
+    (string.eq macro-name "stdlib.core_macros/__tl-project-set-field")
+    (string.eq macro-name "stdlib.core_macros/__tl-project-field-name")
+    (string.eq macro-name "stdlib.core_macros/__tl-project-set-field-name")
+    (string.eq macro-name "stdlib.core_macros/__tl-box-place")))
+
 (define (macro-captured-expr-node
   [ctx : TcContext]
   [pools : ast.AstNodePoolContext]
   [arg-id : i64]
-  [arg-expr : ast.AstExpr]) : i64
+  [arg-expr : ast.AstExpr]
+  [record-caller-origin : bool]) : i64
   (let
     [captured : i64
       (match arg-expr
@@ -94834,18 +95316,20 @@
             (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))]
         [_ arg-id])]
     [path-id : i64 (macro-active-decl-path-id ctx)]
-    (match (tc-expr-maybe-span arg-expr)
-      [(TcMaybeAstSourceSpan.Some span)
-        (ast.ast-expr-spanned-with-pools
-          pools
-          (ast.ast-node-pool-context-expr-push
+    (if record-caller-origin
+      (match (tc-expr-maybe-span arg-expr)
+        [(TcMaybeAstSourceSpan.Some span)
+          (ast.ast-expr-spanned-with-pools
             pools
-            (ast.AstExpr.MacroExpansion
-              captured
-              (macro-expansion-provenance-id -1 path-id)
-              -1))
-          span)]
-      [(TcMaybeAstSourceSpan.No) captured])))
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.MacroExpansion
+                captured
+                (macro-expansion-provenance-id -1 path-id)
+                -1))
+            span)]
+        [(TcMaybeAstSourceSpan.No) captured])
+      captured)))
 
 (define (macro-env-extend-captured-param
   [env : ctfe_support.CtfeEnv]
@@ -94947,7 +95431,8 @@
                       ctx
                       (tc-context-pools ctx)
                       arg-id
-                      arg-expr)
+                      arg-expr
+                      (not (macro-private-place-bridge-name? macro-name)))
                     (macro-captured-expr-produced-type
                       ctx
                       type-env
@@ -94989,7 +95474,7 @@
         ;; snapshot was captured. Fixed syntax values do not carry their own
         ;; pool context, so advance the evaluator's read/write view before CTFE
         ;; can allocate a quoted parent over one of those newly appended nodes.
-        ;; Otherwise a template such as `(struct-get ,state field)` can reuse the
+        ;; Otherwise a dotted-field template over `state` can reuse the
         ;; wrapper slot and create a Spanned <-> StructGet cycle.
         [captured-env : ctfe_support.CtfeEnv
           (begin
@@ -95049,7 +95534,7 @@
   [call-expr : ast.AstExpr]) : ResultMacroEnv
   (cond
     [(>= param-index (ast.ast-macro-param-list-len params))
-      (if (>= arg-index (struct-get args len))
+      (if (>= arg-index args.len)
         (ResultMacroEnv.Ok env)
         (ResultMacroEnv.Err
           (box
@@ -95115,7 +95600,7 @@
                         params
                         args
                         (+ param-index 1)
-                        (+ arg-index (struct-get (& clauses) len))
+                        (+ arg-index clauses.len)
                         (ctfe_support.ctfe-env-extend-id
                           captured-env
                           pname
@@ -95129,7 +95614,7 @@
                     (ctfe_support.ctfe-diagnostic-at-expr
                       call-expr
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
-            (if (>= arg-index (struct-get args len))
+            (if (>= arg-index args.len)
               (ResultMacroEnv.Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
@@ -95188,7 +95673,7 @@
   [capture-expr-types : bool]
   [call-expr : ast.AstExpr]) : ResultMacroCapturedOperands
   (let
-    [operand-count : i64 (struct-get (& params) len)]
+    [operand-count : i64 params.len]
     (macro-capture-params-direct-at
       ctx
       decls
@@ -95224,7 +95709,7 @@
   [call-expr : ast.AstExpr]) : ResultMacroCapturedOperands
   (cond
     [(>= param-index (ast.ast-macro-param-list-len params))
-      (if (>= arg-index (struct-get args len))
+      (if (>= arg-index args.len)
         (ResultMacroCapturedOperands.Ok
           operands
           param-index
@@ -95259,7 +95744,7 @@
                 capture-expr-types)
                 [(ResultMacroCapturedValue.Ok value)
                   (begin
-                    (array-set! operands param-index value)
+                    (set! (array-ref operands param-index) value)
                     (macro-capture-params-direct-at
                       ctx
                       decls
@@ -95270,7 +95755,7 @@
                       params
                       args
                       (+ param-index 1)
-                      (struct-get args len)
+                      args.len
                       env
                       (macro-captured-param-syntax-pools-after-check
                         syntax-pools
@@ -95307,7 +95792,7 @@
                           capture-expr-types
                           clauses)]
                       (begin
-                        (array-set! operands param-index value)
+                        (set! (array-ref operands param-index) value)
                         (macro-capture-params-direct-at
                           ctx
                           decls
@@ -95318,7 +95803,7 @@
                           params
                           args
                           (+ param-index 1)
-                          (+ arg-index (struct-get (& clauses) len))
+                          (+ arg-index clauses.len)
                           env
                           (macro-captured-param-syntax-pools-after-check
                             syntax-pools
@@ -95334,7 +95819,7 @@
                     (ctfe_support.ctfe-diagnostic-at-expr
                       call-expr
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
-            (if (>= arg-index (struct-get args len))
+            (if (>= arg-index args.len)
               (ResultMacroCapturedOperands.Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
@@ -95364,7 +95849,7 @@
                       ;; the definition snapshot can share the old argument
                       ;; ids but cannot address the newly appended wrapper.
                       (tc-context-install-pools! ctx)
-                      (array-set! operands param-index value)
+                      (set! (array-ref operands param-index) value)
                       (macro-capture-params-direct-at
                         ctx
                         decls
@@ -95411,11 +95896,11 @@
               (set! index (+ index 1)))]))
       env)))
 
-;; Route embedded-stdlib macro calls through the TLCI catalog before the
-;; semantic CTFE fallback. The mapped catalog owns its package-agnostic index
-;; and terminal shell state for the mapping lifetime. Explicit stdlib roots
-;; never enter this branch because loader provenance is per compilation
-;; session.
+;; Route trusted embedded-stdlib macro calls through the TLCI catalog before
+;; the semantic CTFE fallback. The mapped catalog owns its package-agnostic
+;; index and terminal shell state for the mapping lifetime. Loader provenance
+;; is per compilation session: embedded source and byte-identical disk source
+;; may enter this branch, while modified or otherwise untrusted roots cannot.
 (define macro-expand-stdlib-tlci-route-active : bool
   false)
 
@@ -95507,13 +95992,13 @@
   0x1cf1)
 
 ;; #5926: production-route sustained stress telemetry. The declarations only
-;; exist in the focused profile compiler, and a second runtime environment
-;; key gates the workload, so normal Windows compilers and every non-stress
-;; profile compile retain the production route-off policy. A fixed-width stderr
-;; record is emitted at pass boundaries, lifecycle/result transitions, dispatch one,
-;; every 256 dispatches, and the historical 13,552-dispatch boundary. The
-;; redirected record survives a later allocator or mapping crash and names the
-;; last completed production macro dispatch without retaining an unbounded log.
+;; exist in the focused profile compiler, and a runtime environment key gates
+;; record emission without changing the production routing policy. A
+;; fixed-width stderr record is emitted at pass boundaries, lifecycle/result
+;; transitions, dispatch one, every 256 dispatches, and the historical
+;; 13,552-dispatch boundary. The redirected record survives a later allocator
+;; or mapping crash and names the last completed production macro dispatch
+;; without retaining an unbounded log.
 (cfg
   (all embedded-stdlib-tlci tlci-native-route-stress)
   (define compiler-tc-tlci-native-stress-active : bool
@@ -95688,8 +96173,8 @@
           (not (= result-kind 1)))
           (compiler-tc-tlci-native-stress-record!
             pools
-            (struct-get resolved catalog-generation)
-            (struct-get resolved entry-index)
+            resolved.catalog-generation
+            resolved.entry-index
             1
             result-kind
             status)
@@ -95738,7 +96223,7 @@
         [count : i64
           (if prepared
             prepared-count
-            (struct-get params len))]
+            params.len)]
         [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)
           prepared-operands]
         [index : i64
@@ -95748,12 +96233,12 @@
         [ok : bool (<= count 8)]
         (begin
           (while (and (not prepared) ok (< index count))
-            (match (array-ref (struct-get params slots) index)
+            (match (array-ref params.slots index)
               [(ast.AstMacroParam.Param pname _ _ _)
                 (match (ctfe_support.ctfe-env-lookup-id env pname)
                   [(ctfe_support.CtfeMaybeValue.Some value)
                     (begin
-                      (array-set! operands index value)
+                      (set! (array-ref operands index) value)
                       (set! index (+ index 1)))]
                   [(ctfe_support.CtfeMaybeValue.None) (set! ok false)])]))
           (if (not ok)
@@ -95795,7 +96280,7 @@
                             message)))]
                     [(tlci_loader_support.ResultTlciMacroDispatch.Ok dispatch)
                       (let
-                        [status : i64 (struct-get dispatch status)]
+                        [status : i64 dispatch.status]
                         (cond
                           [(and
                               (= status 0)
@@ -95958,7 +96443,7 @@
               env
               call-expr
               (array.make-array ctfe_support.CompilerCtfeValue 8)
-              (struct-get params len)
+              params.len
               false)]
           [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
             (begin
@@ -96074,7 +96559,7 @@
     [call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
     (if (or
       (not macro-expand-stdlib-tlci-route-active)
-      (> (struct-get (& params) len) 8)
+      (> params.len 8)
       (not (cload.compiler-load-embedded-stdlib-module-id? fallback-module)))
       MacroDirectStdlibTlciResult.No
       (let
@@ -96542,7 +97027,7 @@
   [depth : i64]
   [items : ast.AstExprList]) : ResultMacroExpr
   (let
-    [len : i64 (struct-get (& items) len)]
+    [len : i64 items.len]
     (if (<= len 1)
       (ResultMacroExpr.Ok (ast.ast-expr-bracket-clause items))
       (match (macro-expand-node
@@ -96611,7 +97096,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprList)]) : ResultMacroCheck
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     ResultMacroCheck.Ok
     (let
       [head-id : i64 (ast.ast-expr-list-get args index 0)]
@@ -96644,8 +97129,7 @@
   [depth : i64]
   [args : ast.AstExprList]) : ResultMacroExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (struct-get (& args) len))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
     (match (macro-expand-binding-prefix-args-into
       ctx
       type-env
@@ -96741,8 +97225,7 @@
   [env : ctfe_support.CtfeEnv]
   [exprs : ast.AstExprList]) : ast.AstExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
     (begin
       (macro-generated-type-param-expr-list-into
         pools
@@ -96758,7 +97241,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprList)]) : unit
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     unit
     (begin
       (ast.ast-expr-list-push
@@ -96853,7 +97336,7 @@
   [pools : ast.AstNodePoolContext]
   [args : (& args ast.AstExprList)]
   [index : i64]) : i64
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     0
     (match (ast.ast-expr-unspan-with-pools
       pools
@@ -96940,7 +97423,7 @@
   [env : ctfe_support.CtfeEnv]) : ast.AstExprList
   (if (>= param-index (ast.ast-macro-param-list-len params))
     (ast.ast-expr-list-tail-from-ref args arg-index)
-    (if (>= arg-index (struct-get args len))
+    (if (>= arg-index args.len)
       (ast.ast-expr-list-new)
       (macro-generated-import-type-args-for-param
         pools
@@ -97167,7 +97650,7 @@
           module-id
           definition-module-id
           env
-          (box-get inner-box)))]
+          (__tl-box-place inner-box)))]
     [(ast.AstDecl.ModuleBody name body-box)
       (ast.ast-decl-module-body-id
         name
@@ -97178,7 +97661,7 @@
           name
           definition-module-id
           env
-          (box-get body-box)))]
+          (__tl-box-place body-box)))]
     [_ decl]))
 
 (define (macro-rewrite-generated-import-decls-with-env
@@ -97458,12 +97941,18 @@
     call-expr)
     [(ResultMacroExpr.Ok expanded)
       (ResultMacroExpr.Ok
-        (ast.ast-expr-macro-expansion
+        (if (macro-private-place-bridge-name? macro-name)
+          ;; These private one-epoch source bridges only materialize parser AST
+          ;; operations. Keeping their expansion transparent avoids treating an
+          ;; implementation spelling as a user-facing diagnostic frame and
+          ;; preserves nested place operands in the caller pool.
           expanded
-          (macro-expansion-provenance-id
-            (macro-active-decl-path-id ctx)
-            (macro-definition-path-id ctx (ci.intern macro-name)))
-          (ci.intern macro-name)))]
+          (ast.ast-expr-macro-expansion
+            expanded
+            (macro-expansion-provenance-id
+              (macro-active-decl-path-id ctx)
+              (macro-definition-path-id ctx (ci.intern macro-name)))
+            (ci.intern macro-name))))]
     [(ResultMacroExpr.Err diag)
       (ResultMacroExpr.Err
         (box
@@ -97472,7 +97961,7 @@
             (macro-active-decl-path ctx)
             call-expr
             macro-name
-            (box-get diag))))]))
+            (__tl-box-place diag))))]))
 
 (define (macro-expand-exprs
   [ctx : TcContext]
@@ -97481,8 +97970,7 @@
   [depth : i64]
   [exprs : ast.AstExprList]) : ResultMacroExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
     (match (macro-expand-exprs-into ctx env decls depth (& exprs) 0 (&mut out))
       [(ResultMacroCheck.Ok) (ResultMacroExprList.Ok out)]
       [(ResultMacroCheck.Err diag) (ResultMacroExprList.Err diag)])))
@@ -97495,7 +97983,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprList)]) : ResultMacroCheck
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultMacroCheck.Ok)
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
@@ -97538,8 +98026,7 @@
   [first-fire-index : i64]
   [arms : ast.AstMatchArmList]) : ResultMacroArms
   (let
-    [out : ast.AstMatchArmList
-      (ast.ast-match-arm-list-with-capacity (struct-get (& arms) len))]
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
     (match (macro-expand-arms-into
       ctx
       env
@@ -97563,7 +98050,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
   [out : (&mut out ast.AstMatchArmList)]) : ResultMacroCheck
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (ResultMacroCheck.Ok)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -97782,8 +98269,7 @@
 
 (define (macro-compat-append-unit [exprs : ast.AstExprList]) : ast.AstExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (+ (struct-get (& exprs) len) 1))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity (+ exprs.len 1))]
     (begin
       (ast.ast-expr-list-append-from (&mut out) (& exprs) 0)
       (ast.ast-expr-list-push (&mut out) (macro-compat-unit-expr))
@@ -97840,7 +98326,7 @@
   [args : ast.AstExprList]
   [is-unless : bool]
   [call-expr : ast.AstExpr]) : ResultMacroCompatCall
-  (if (< (struct-get (& args) len) 2)
+  (if (< args.len 2)
     (ResultMacroCompatCall.Err
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
@@ -98052,7 +98538,7 @@
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (match (macro-expand-bindings ctx env decls depth bindings)
             [(ResultMacroLetBindings.Ok nbindings body-env)
@@ -98097,7 +98583,7 @@
           (ResultMacroExpr.Ok (ast.ast-expr-make-array-id ty-id nlen))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut-box arms)
           (let
             [first-fire-index : i64
@@ -98232,7 +98718,7 @@
             (ResultMacroExpr.Err
               (box (tc-expr-diag (ast.ast-node-get source-name) message)))]))]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (match (macro-expand-node ctx env decls depth start-box)
             [(ResultMacroExpr.Ok nstart)
@@ -98256,7 +98742,7 @@
                 [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (match (macro-expand-node
             ctx
@@ -98378,7 +98864,7 @@
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (match (macro-expand-resource-bindings ctx env decls depth bindings)
             [(ResultMacroResourceBindings.Ok nbindings body-env)
@@ -98600,7 +99086,7 @@
           [_ (ResultMacroDecl.Ok decl)])]
       [(ast.AstDecl.Unsafe inner-box)
         (let
-          [inner : ast.AstDecl (box-get inner-box)]
+          [inner : ast.AstDecl (__tl-box-place inner-box)]
           (match (macro-expand-decl ctx top-env decls inner)
             [(ResultMacroDecl.Ok ninner)
               (ResultMacroDecl.Ok (ast.ast-decl-unsafe ninner))]
@@ -98624,13 +99110,15 @@
 (define (tc-macro-module-env-cache-insert! [module-id : i64] [env : TcTypeEnv]) : unit
   (if (< tc-macro-module-env-cache-len tc-macro-module-env-cache-capacity)
     (begin
-      (array-set!
-        tc-macro-module-env-cache-module-ids
-        tc-macro-module-env-cache-len
+      (set!
+        (array-ref
+          tc-macro-module-env-cache-module-ids
+          tc-macro-module-env-cache-len)
         module-id)
-      (array-set!
-        tc-macro-module-env-cache-values
-        tc-macro-module-env-cache-len
+      (set!
+        (array-ref
+          tc-macro-module-env-cache-values
+          tc-macro-module-env-cache-len)
         env)
       (set! tc-macro-module-env-cache-len (+ tc-macro-module-env-cache-len 1)))
     unit))
@@ -98641,8 +99129,8 @@
   [module : String]
   [module-id : i64]) : ResultTcEnv
   (let
-    [store-handle : i64 (struct-get top-env store)]
-    [head : i64 (struct-get top-env head)]
+    [store-handle : i64 top-env.store]
+    [head : i64 top-env.head]
     (begin
       (if (and
         (= tc-macro-module-env-cache-store store-handle)
@@ -98882,7 +99370,7 @@
                         target-module
                         target-module-id
                         alias
-                        (box-get span))]
+                        (__tl-box-place span))]
                     (ResultMacroDeclExpansion.Ok
                       expanded
                       (macro-paths-for-decls expanded decl-path)))]
@@ -99289,7 +99777,7 @@
                       [target-module : String (ci.intern-str target-module-id)]
                       [body-rest : ast.AstDeclList
                         (macro-flatten-module-body-decls-in-module
-                          (box-get body-box)
+                          (__tl-box-place body-box)
                           target-module-id)]
                       [contextual-body : ast.AstDeclList
                         (macro-generated-context-decls
@@ -99869,7 +100357,7 @@
                   call-id
                   context
                   alias
-                  (box-get span)
+                  (__tl-box-place span)
                   decl-path))]
             [(ast.AstImportKind.MacroDecls call-id context)
               (begin
@@ -99986,14 +100474,14 @@
                 (arena.tl_arena_current))]
             (match copied
               [(ast.AstProgram.Program decls-box)
-                (ResultMacroDeclExpansion.Ok (box-get decls-box) paths)]))])]
+                (ResultMacroDeclExpansion.Ok (__tl-box-place decls-box) paths)]))])]
     [(ResultMacroDeclExpansion.Err diag)
       (let
         [_resume : unit
           (unsafe
             (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))]
         [owned : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-copy (box-get diag))]
+          (cdiag.compiler-diagnostic-copy (__tl-box-place diag))]
         [boxed : (Box cdiag.CompilerDiagnostic) (box owned)]
         [_sync : unit
           (ast.ast-node-pool-context-sync-base-arena!
@@ -100577,7 +101065,7 @@
   [decls : ast.AstDeclList]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (or
       (macro-node-uses-macro? ctx decls (ast.ast-expr-list-get exprs index 0))
@@ -100594,7 +101082,7 @@
   [decls : ast.AstDeclList]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (or
       (match (ast.ast-match-arm-list-get
@@ -100657,13 +101145,13 @@
         (macro-node-uses-macro? ctx decls t)
         (macro-node-uses-macro? ctx decls e))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (or
             (macro-bindings-use-macro? ctx decls bindings)
             (macro-node-uses-macro? ctx decls body))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body)
           (macro-node-uses-macro? ctx decls body)])]
     [(ast.AstExpr.Tuple exprs) (macro-exprs-use-macro? ctx decls exprs)]
@@ -100711,13 +101199,13 @@
     [(ast.AstExpr.Cast i _) (macro-node-uses-macro? ctx decls i)]
     [(ast.AstExpr.Borrow _ _ i) (macro-node-uses-macro? ctx decls i)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut arms)
           (or
             (macro-node-uses-macro? ctx decls scrut)
             (macro-arms-use-macro? ctx decls arms))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ s e b)
           (or
             (macro-node-uses-macro? ctx decls s)
@@ -100814,7 +101302,7 @@
         [(ast.AstImportKind.MacroDecls _ _) true]
         [_ false])]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-uses-macro? ctx decls (box-get inner-box))]
+      (macro-decl-uses-macro? ctx decls (__tl-box-place inner-box))]
     [_ false]))
 
 ;; `macro-decl-uses-macro?` is also a conservative inspection gate: tests take
@@ -100832,7 +101320,7 @@
         [(ast.AstImportKind.MacroDecls _ _) true]
         [_ false])]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-expansion-can-change-program? (box-get inner-box))]
+      (macro-decl-expansion-can-change-program? (__tl-box-place inner-box))]
     [_ false]))
 
 ;; Cheap, ctx-free, allocation-free over-approximation of "could the expander
@@ -100872,7 +101360,7 @@
   [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (or
       (macro-expr-might-fire?
@@ -100922,7 +101410,7 @@
   [expr-bases : i64]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : i64
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     -1
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
@@ -101019,7 +101507,7 @@
           (macro-expr-might-fire? expr-bases then-branch)
           (macro-expr-might-fire? expr-bases else-branch)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr
@@ -101028,7 +101516,7 @@
               (macro-let-binding-list-might-fire? expr-bases bindings)
               (macro-expr-might-fire? expr-bases body)))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body-box)
           (let
             [body : ast.AstExpr
@@ -101168,7 +101656,7 @@
           (ast.ast-expr-segment-bases-get expr-bases place-box)]
         (macro-expr-might-fire? expr-bases place))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr
@@ -101177,7 +101665,7 @@
               (macro-expr-might-fire? expr-bases scrutinee)
               (macro-match-arms-might-fire? expr-bases arms)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
           (let
             [start : ast.AstExpr
@@ -101191,7 +101679,7 @@
               (macro-expr-might-fire? expr-bases end)
               (macro-expr-might-fire? expr-bases body)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (let
             [start : ast.AstExpr
@@ -101208,7 +101696,7 @@
               (macro-expr-might-fire? expr-bases init)
               (macro-expr-might-fire? expr-bases value)))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             _
@@ -101288,7 +101776,7 @@
           (macro-expr-might-fire? expr-bases arena)
           (macro-expr-list-might-fire? expr-bases body)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (or
             (macro-resource-binding-list-might-fire? expr-bases bindings)
@@ -101515,7 +102003,7 @@
 (define (ctfe-exprs-have-type-literal-at?
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (ctfe-reflection-prescan-or
       (ctfe-node-has-type-literal? (ast.ast-expr-list-get exprs index 0))
@@ -101527,7 +102015,7 @@
 (define (ctfe-arms-have-type-literal-at?
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (ctfe-reflection-prescan-or
       (match (ast.ast-match-arm-list-get
@@ -101590,13 +102078,13 @@
           (ctfe-node-has-type-literal? t)
           (ctfe-node-has-type-literal? e)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (ctfe-reflection-prescan-or
             (ctfe-bindings-have-type-literal? bindings)
             (ctfe-node-has-type-literal? body))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body) (ctfe-node-has-type-literal? body)])]
     [(ast.AstExpr.Tuple exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(ast.AstExpr.TupleRef a b)
@@ -101645,13 +102133,13 @@
     [(ast.AstExpr.Cast i _) (ctfe-node-has-type-literal? i)]
     [(ast.AstExpr.Borrow _ _ i) (ctfe-node-has-type-literal? i)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrut arms)
           (ctfe-reflection-prescan-or
             (ctfe-node-has-type-literal? scrut)
             (ctfe-arms-have-type-literal? arms))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ s e b)
           (ctfe-reflection-prescan-or
             (ctfe-node-has-type-literal? s)
@@ -101739,9 +102227,9 @@
     [(ast.AstDecl.DefMacro decl-meta _ _ _ body-box)
       (ctfe-node-has-type-literal? body-box)]
     [(ast.AstDecl.Unsafe inner-box)
-      (ctfe-decl-has-type-literal? (box-get inner-box))]
+      (ctfe-decl-has-type-literal? (__tl-box-place inner-box))]
     [(ast.AstDecl.ModuleBody _ body-box)
-      (ctfe-program-has-type-literal? (box-get body-box))]
+      (ctfe-program-has-type-literal? (__tl-box-place body-box))]
     [_ false]))
 
 (define (ctfe-program-has-type-literal? [decls : ast.AstDeclList]) : bool
@@ -101762,9 +102250,9 @@
     [(ast.AstDecl.DefStruct decl-meta _ _ _ _) true]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-reflection-relevant? (box-get inner-box))]
+      (macro-decl-reflection-relevant? (__tl-box-place inner-box))]
     [(ast.AstDecl.ModuleBody _ body-box)
-      (macro-decls-reflection-relevant? (box-get body-box))]
+      (macro-decls-reflection-relevant? (__tl-box-place body-box))]
     [_ false]))
 
 (define (macro-decls-reflection-relevant? [decls : ast.AstDeclList]) : bool
@@ -101804,9 +102292,9 @@
     [cache : TcTypeEnvCache
       (unsafe
         (ptr-read cache-ptr))]
-    [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-    [values : (__tl_dyn-array ast.AstType) (struct-get cache values)]
-    [sidecar : (__tl_dyn-array i64) (struct-get cache unsafe-flags)]
+    [ids : tc_i64_i64_map.Map cache.ids]
+    [values : (__tl_dyn-array ast.AstType) cache.values]
+    [sidecar : (__tl_dyn-array i64) cache.unsafe-flags]
     [capacity : i64 (array.length values)]
     [count : i64 (array-ref sidecar capacity)]
     [read-index : i64 0]
@@ -101834,7 +102322,7 @@
                       (if (ast.ast-type-eq? before after)
                         unit
                         (begin
-                          (array-set! values value-slot after)
+                          (set! (array-ref values value-slot) after)
                           (cfg
                             compile-profile
                             (set!
@@ -101844,9 +102332,8 @@
                                 1)))))
                       (if (tc-type-needs-resolution? after)
                         (begin
-                          (array-set!
-                            sidecar
-                            (+ capacity 1 write-index)
+                          (set!
+                            (array-ref sidecar (+ capacity 1 write-index))
                             name-id)
                           (set! write-index (+ write-index 1)))
                         unit)))
@@ -101858,7 +102345,7 @@
                   " / "
                   (string.int->string (array.length values)))))
             (set! read-index (+ read-index 1)))))
-      (array-set! sidecar capacity write-index)
+      (set! (array-ref sidecar capacity) write-index)
       (cfg
         compile-profile
         (set!
@@ -101868,8 +102355,8 @@
 
 (define (tc-top-env-reresolve-caches! [ctx : TcContext] [env : TcTypeEnv]) : unit
   (let
-    [store-handle : i64 (struct-get env store)]
-    [head : i64 (struct-get env head)]
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
     [done : bool false]
     (begin
       (cfg
@@ -101900,8 +102387,8 @@
                   (ptr-read (ptr-cast cache-ptr : (Ptr TcTypeEnvCache))))]
               (begin
                 (tc-top-env-reresolve-cache-node! ctx cache-ptr)
-                (if (struct-get cache partial)
-                  (set! head (struct-get cache below))
+                (if cache.partial
+                  (set! head cache.below)
                   (set! done true))))])))))
 
 (define (tc-extend-top-env-for-splice
@@ -102380,9 +102867,9 @@
                                             walk-state
                                             1))]
                                       [next-decls : ast.AstDeclList
-                                        (struct-get flat-view decls)]
+                                        flat-view.decls]
                                       [next-paths : ast.AstDeclPathList
-                                        (struct-get flat-view paths)]
+                                        flat-view.paths]
                                       [_prescan-delta : unit
                                         (if incremental?
                                           (macro-live-prescan-append-decls!
@@ -102588,10 +103075,9 @@
                                     (macro-segmented-program-flatten-fallback
                                       walk-state
                                       2)]
-                                  [next-decls : ast.AstDeclList
-                                    (struct-get flat-view decls)]
+                                  [next-decls : ast.AstDeclList flat-view.decls]
                                   [next-paths : ast.AstDeclPathList
-                                    (struct-get flat-view paths)]
+                                    flat-view.paths]
                                   [extend-ctfe-metadata? : bool
                                     (macro-decls-reflection-relevant?
                                       materialized-decls)]
@@ -102809,7 +103295,7 @@
         [_ false])]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (macro-decl-needs-expansion? expr-bases inner when-id unless-id))]
     [_ false]))
 
@@ -102818,7 +103304,7 @@
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (macro-decl-has-defmacro? inner))]
     [_ false]))
 
@@ -102873,7 +103359,9 @@
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases body-box))]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-might-fire-expression-macro? expr-bases (box-get inner-box))]
+      (macro-decl-might-fire-expression-macro?
+        expr-bases
+        (__tl-box-place inner-box))]
     [_ false]))
 
 (define (macro-program-might-fire-expression-macro?
@@ -102906,7 +103394,7 @@
     [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ target _ _))
       (macro-import-target-has-summary-macro? kind target)]
     [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-has-summary-macro-import? (box-get inner-box))]
+      (macro-decl-has-summary-macro-import? (__tl-box-place inner-box))]
     [_ false]))
 
 (define (macro-program-has-summary-macro-import? [decls : ast.AstDeclList]) : bool
@@ -102976,7 +103464,7 @@
     (let
       [facts : surface_facts.SurfaceTypecheckFacts
         (surface_facts.surface-typecheck-facts-current)]
-      [count : i64 (struct-get facts macro-prefix-decl-count)]
+      [count : i64 facts.macro-prefix-decl-count]
       [decl-count : i64 (ast.ast-decl-list-len (& decls))]
       [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
       (if (and (> count 0) (< count decl-count) (<= count path-count))
@@ -102991,8 +103479,8 @@
             (MacroSurfacePrefixPlan.Hydrated
               (tc-decl-list-drop decls count)
               (tc-decl-path-list-drop paths count)
-              (struct-get module name)
-              (struct-get module name-id)
+              module.name
+              module.name-id
               (macro-materialize-seen-from
                 (& decls)
                 (& paths)
@@ -103076,7 +103564,7 @@
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList (box-get decls-box)]
+          [decls : ast.AstDeclList (__tl-box-place decls-box)]
           [_prescan : unit (macro-live-prescan-ensure! decls)]
           [has-defmacro : bool macro-live-prescan-has-defmacro]
           [expr-type-macro-names : TcNameIdList
@@ -103300,7 +103788,7 @@
                 import-path
                 expected
                 alias
-                (box-get span)
+                (__tl-box-place span)
                 template))]
           [_ (MacroMaybeGeneratedNormalImport.No)]))]
     [(ast.AstGeneratedDeclMeta.No) (MacroMaybeGeneratedNormalImport.No)]))
@@ -103345,9 +103833,7 @@
               unit)
             (match (ast.ast-decl-list-ref-borrowed decls index)
               [(ast.AstDecl.Module _)
-                (match (array-ref
-                  (struct-get decls slots)
-                  (+ (struct-get decls offset) index))
+                (match (array-ref decls.slots (+ decls.offset index))
                   [(ast.AstDecl.Module name)
                     (begin
                       (if (= name cbi.compiler-builtin-id-fix-empty)
@@ -103495,41 +103981,24 @@
     (ast.ast-node-pool-context-install! pools)
     (ci.intern-compat-state-install! intern-state)
     (macro-expand-program-structural-change-reset!)
-    ;; The embedded-source flag is only set when stdlib modules actually load
-    ;; from the embedded payload; a compile with an explicit stdlib root never
-    ;; sets it. Extra roots (the compiler's own src root during self-compiles)
-    ;; therefore must not disable the route -- the catalog identity check
-    ;; still gates every dispatch to embedded-stdlib-defined macros.
-    ;; Windows: a scale-dependent memory corruption in sustained native
-    ;; dispatch is still open (three fixed layers deep: provenance arenas,
-    ;; mapping lifetime, guard-page probes; the residual fault surfaces at
-    ;; unrelated allocations after ~13k dispatches). Until it is pinned,
-    ;; Windows keeps the interpreted route -- identical behavior to main.
-    ;; Native dispatch is opt-in (--cfg tlci-native-route) until its
-    ;; environmental sensitivity is closed out: parity holds everywhere it
-    ;; runs, but sustained dispatch has shown machine-dependent instability
-    ;; (#5460 on Windows; CI-runner-only failures on Linux) that local
-    ;; batteries cannot reproduce. The routing contracts build with the cfg
-    ;; so the machinery stays continuously verified.
+    ;; The route is a property of the compiler's embedded image plus the exact
+    ;; source provenance observed by this load session. Embedded source marks
+    ;; the session directly; byte-identical disk source may mark individual
+    ;; modules through the content-equivalence cache. Extra non-stdlib roots
+    ;; (for example `src` during a self-compile) do not disable the route, while
+    ;; modified/untrusted stdlib source never receives embedded provenance.
+    ;; #5926 exercised the real macro walk beyond the historical failure point
+    ;; and across five reset/release/remap cycles on hosted Linux and Windows,
+    ;; so production routing now uses this same policy on both hosts. The
+    ;; stress-only cfg controls durable telemetry, not route selection.
     (set!
       macro-expand-stdlib-tlci-route-active
       (cfg
-        tlci-native-route
-        (cfg
-          windows
-          (cfg
-            (all embedded-stdlib-tlci tlci-native-route-stress)
-            (if (compiler-tc-tlci-native-stress-requested?)
-              (or
-                (cload.compiler-load-session-state-embedded-stdlib-source-used?
-                  load-state)
-                (cload.compiler-load-embedded-provenance-noted?))
-              false)
-            false)
-          (or
-            (cload.compiler-load-session-state-embedded-stdlib-source-used?
-              load-state)
-            (cload.compiler-load-embedded-provenance-noted?)))
+        embedded-stdlib-tlci
+        (or
+          (cload.compiler-load-session-state-embedded-stdlib-source-used?
+            load-state)
+          (cload.compiler-load-embedded-provenance-noted?))
         false))
     (cfg
       embedded-stdlib-tlci
@@ -103908,7 +104377,7 @@
     [(ast.AstProgram.Program decls-box)
       (match (macro-import-alias-target-cached-id-in-context
         ctx
-        (box-get decls-box)
+        (__tl-box-place decls-box)
         (tc-context-module-id ctx)
         (ci.intern-qualified-module-id cleanup-name))
         [(TcMaybeNameId.Some target-module-id)
@@ -104042,7 +104511,7 @@
   [cleanup : ast.AstStructCleanup]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     ResultTcUnit.Ok
     (match (tc-check-cleanup-struct-field
       ctx
@@ -104309,7 +104778,7 @@
   [cleanup : ast.AstEnumCleanup]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     ResultTcUnit.Ok
     (match (tc-check-cleanup-enum-variant
       ctx
@@ -104388,7 +104857,7 @@
   (match (tc-lookup-persistent-id global-env name)
     [(ResultTcType.Ok (ast.AstType.Func types _))
       (let
-        [registered : ast.AstTypeList (box-get types)]
+        [registered : ast.AstTypeList (__tl-box-place types)]
         (if (=
           (ast.ast-type-list-len (& registered))
           (ast.ast-param-list-len (& params)))
@@ -104539,36 +105008,36 @@
   (let
     [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
     [return-arena : i64 (arena.tl_arena_current)]
-    (if (= (struct-get data fn-arena) 0)
+    (if (= data.fn-arena 0)
       (let
         [scratch : i64 (arena.tl_arena_make_small)]
         (begin
-          (set! (struct-get data fn-arena) scratch)
-          (set! (struct-get data fn-return-arena) return-arena)
+          (set! data.fn-arena scratch)
+          (set! data.fn-return-arena return-arena)
           (tc-scratch-arena-state-data-set! state data)
           (unsafe
             (arena.tl_arena_set return-arena))
           scratch))
       (begin
-        (set! (struct-get data fn-return-arena) return-arena)
+        (set! data.fn-return-arena return-arena)
         (tc-scratch-arena-state-data-set! state data)
-        (struct-get data fn-arena)))))
+        data.fn-arena))))
 
 (define (tc-fn-scratch-arena-release! [state : TcScratchArenaState]) : unit
   (let
     [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
-    [scratch : i64 (struct-get data fn-arena)]
+    [scratch : i64 data.fn-arena]
     (if (= scratch 0)
       unit
       (begin
         (if (= (arena.tl_arena_current) scratch)
           (unsafe
-            (arena.tl_arena_set (struct-get data fn-return-arena)))
+            (arena.tl_arena_set data.fn-return-arena))
           unit)
         (unsafe
           (arena.tl_arena_destroy scratch))
-        (set! (struct-get data fn-arena) 0)
-        (set! (struct-get data fn-return-arena) 0)
+        (set! data.fn-arena 0)
+        (set! data.fn-return-arena 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
 (define (tc-fn-scratch-arena-release-after-overflow!
@@ -104650,47 +105119,47 @@
   (let
     [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
     [return-arena : i64 (arena.tl_arena_current)]
-    (if (= (struct-get data decl-arena) 0)
+    (if (= data.decl-arena 0)
       (let
         [scratch : i64 (arena.tl_arena_make_small)]
         (begin
-          (set! (struct-get data decl-arena) scratch)
-          (set! (struct-get data decl-return-arena) return-arena)
+          (set! data.decl-arena scratch)
+          (set! data.decl-return-arena return-arena)
           (tc-scratch-arena-state-data-set! state data)
           (unsafe
             (arena.tl_arena_set return-arena))
           scratch))
       (begin
-        (set! (struct-get data decl-return-arena) return-arena)
+        (set! data.decl-return-arena return-arena)
         (tc-scratch-arena-state-data-set! state data)
-        (struct-get data decl-arena)))))
+        data.decl-arena))))
 
 (define (tc-decl-scratch-arena-release! [state : TcScratchArenaState]) : unit
   (let
     [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
-    [scratch : i64 (struct-get data decl-arena)]
+    [scratch : i64 data.decl-arena]
     (if (= scratch 0)
       unit
       (begin
         (if (= (arena.tl_arena_current) scratch)
           (unsafe
-            (arena.tl_arena_set (struct-get data decl-return-arena)))
+            (arena.tl_arena_set data.decl-return-arena))
           unit)
         (unsafe
           (arena.tl_arena_destroy scratch))
-        (set! (struct-get data decl-arena) 0)
-        (set! (struct-get data decl-return-arena) 0)
-        (set! (struct-get data decl-depth) 0)
+        (set! data.decl-arena 0)
+        (set! data.decl-return-arena 0)
+        (set! data.decl-depth 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
 (define (tc-decl-scratch-depth [state : TcScratchArenaState]) : i64
-  (struct-get (tc-scratch-arena-state-data state) decl-depth))
+  (__tl-project-field (tc-scratch-arena-state-data state) decl-depth))
 
 (define (tc-decl-scratch-depth-set! [state : TcScratchArenaState] [depth : i64]) : unit
   (let
     [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
     (begin
-      (set! (struct-get data decl-depth) depth)
+      (set! data.decl-depth depth)
       (tc-scratch-arena-state-data-set! state data))))
 
 (define (tc-scratch-arena-state-release! [state : TcScratchArenaState]) : unit
@@ -104806,12 +105275,12 @@
             (not (= decl-b 0))
             (not (= fn-a fn-b))
             (not (= decl-a decl-b))
-            (= (struct-get after-a-reset fn-arena) 0)
-            (= (struct-get after-a-reset decl-arena) 0)
-            (= (struct-get after-a-reset decl-depth) 0)
-            (= (struct-get b-live fn-arena) fn-b)
-            (= (struct-get b-live decl-arena) decl-b)
-            (= (struct-get b-live decl-depth) 1))]
+            (= after-a-reset.fn-arena 0)
+            (= after-a-reset.decl-arena 0)
+            (= after-a-reset.decl-depth 0)
+            (= b-live.fn-arena fn-b)
+            (= b-live.decl-arena decl-b)
+            (= b-live.decl-depth 1))]
         [fn-a-reused : i64 (tc-fn-scratch-arena-get state-a)]
         [decl-a-reused : i64 (tc-decl-scratch-arena-get state-a)]
         (begin
@@ -104824,9 +105293,9 @@
                 (not (= fn-a-reused 0))
                 (not (= decl-a-reused 0))
                 (= (tc-decl-scratch-depth state-a) 3)
-                (= (struct-get b-after-a-reuse fn-arena) fn-b)
-                (= (struct-get b-after-a-reuse decl-arena) decl-b)
-                (= (struct-get b-after-a-reuse decl-depth) 1))]
+                (= b-after-a-reuse.fn-arena fn-b)
+                (= b-after-a-reuse.decl-arena decl-b)
+                (= b-after-a-reuse.decl-depth 1))]
             (begin
               (tc-job-state-release-scratch-arenas! job-a)
               (tc-job-state-reset-file-state! job-a)
@@ -104840,12 +105309,12 @@
                 (and
                   isolated
                   reused
-                  (= (struct-get after-a-reuse-reset fn-arena) 0)
-                  (= (struct-get after-a-reuse-reset decl-arena) 0)
-                  (= (struct-get after-a-reuse-reset decl-depth) 0)
-                  (= (struct-get after-b-reset fn-arena) 0)
-                  (= (struct-get after-b-reset decl-arena) 0)
-                  (= (struct-get after-b-reset decl-depth) 0))))))))))
+                  (= after-a-reuse-reset.fn-arena 0)
+                  (= after-a-reuse-reset.decl-arena 0)
+                  (= after-a-reuse-reset.decl-depth 0)
+                  (= after-b-reset.fn-arena 0)
+                  (= after-b-reset.decl-arena 0)
+                  (= after-b-reset.decl-depth 0))))))))))
 
 (cfg
   test
@@ -104876,8 +105345,8 @@
               ctx
               global-env
               name
-              (struct-get signature params)
-              (struct-get signature ret)
+              signature.params
+              signature.ret
               body-box)]
           [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
       [_ (tc-check-decl-scoped ctx top-env global-env decl)])))
@@ -105184,8 +105653,8 @@
             ctx
             global-env
             name
-            (struct-get signature params)
-            (struct-get signature ret)
+            signature.params
+            signature.ret
             body-box)]
         [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
@@ -105193,7 +105662,7 @@
         [body : ast.AstExpr (ast.ast-node-get body-box)]
         (tc-check-defmacro name ctx top-env params ret body))]
     [(ast.AstDecl.Extern decl-meta _ kind metadata ty)
-      (tc-check-extern-decl ctx kind (box-get metadata) ty)]
+      (tc-check-extern-decl ctx kind (__tl-box-place metadata) ty)]
     [(ast.AstDecl.DefDispatch decl-meta name variants)
       (match (tc-dispatch-decl-type ctx name variants)
         [(ResultTcType.Ok _) ResultTcUnit.Ok]
@@ -105232,7 +105701,7 @@
         fields)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (tc-check-decl-with-global-env ctx top-env global-env inner))]
     [_ ResultTcUnit.Ok]))
 
@@ -105377,7 +105846,9 @@
     [(ast.AstDecl.Test name _ _)
       (str_cat.str-cat "test:" (tc-env-key-name-text name))]
     [(ast.AstDecl.Unsafe inner)
-      (str_cat.str-cat "unsafe:" (tc-prefix-decl-key-inner (box-get inner)))]))
+      (str_cat.str-cat
+        "unsafe:"
+        (tc-prefix-decl-key-inner (__tl-box-place inner)))]))
 
 (define (tc-prefix-decl-key [decl : ast.AstDecl]) : String
   (if (ast.ast-decl-comptime-only? decl)
@@ -105568,11 +106039,7 @@
         (if (< count len)
           count
           len)]
-      (ast.AstDeclList
-        (struct-get decls slots)
-        (struct-get decls offset)
-        take-count
-        false))))
+      (ast.AstDeclList decls.slots decls.offset take-count false))))
 
 (define (tc-decl-path-list-take [paths : ast.AstDeclPathList] [count : i64]) : ast.AstDeclPathList
   (if (<= count 0)
@@ -105584,9 +106051,9 @@
           count
           len)]
       (ast.AstDeclPathList
-        (struct-get paths slots)
-        (struct-get paths owner-ids)
-        (struct-get paths offset)
+        paths.slots
+        paths.owner-ids
+        paths.offset
         take-count
         false))))
 
@@ -105597,11 +106064,7 @@
       [len : i64 (ast.ast-decl-list-len (& decls))]
       (if (>= count len)
         (ast.ast-decl-list-new)
-        (ast.AstDeclList
-          (struct-get decls slots)
-          (+ (struct-get decls offset) count)
-          (- len count)
-          false)))))
+        (ast.AstDeclList decls.slots (+ decls.offset count) (- len count) false)))))
 
 (define (tc-decl-path-list-drop [paths : ast.AstDeclPathList] [count : i64]) : ast.AstDeclPathList
   (if (<= count 0)
@@ -105611,9 +106074,9 @@
       (if (>= count len)
         (ast.ast-decl-path-list-new)
         (ast.AstDeclPathList
-          (struct-get paths slots)
-          (struct-get paths owner-ids)
-          (+ (struct-get paths offset) count)
+          paths.slots
+          paths.owner-ids
+          (+ paths.offset count)
           (- len count)
           false)))))
 
@@ -105744,9 +106207,9 @@
       (tc-decl-list-drop decls count)
       (tc-decl-path-list-drop paths count)
       (CompilerTypecheckSummary
-        (struct-get facts summary-values)
-        (struct-get facts summary-functions)
-        (struct-get facts summary-externs))
+        facts.summary-values
+        facts.summary-functions
+        facts.summary-externs)
       module
       module-id
       (tc-empty-module-local-env-cache))))
@@ -105770,7 +106233,7 @@
         (surface_facts.surface-typecheck-facts-current)]
       (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
         [(TcPrefixCandidate.Some _ count module module-id)
-          (if (= count (struct-get facts prefix-decl-count))
+          (if (= count facts.prefix-decl-count)
             (tc-check-decls-with-surface-prefix-hit
               ctx
               top-env
@@ -105854,7 +106317,7 @@
   (tc-typecheck-diag-with-maybe-origin-and-path
     (parser.compiler-parse-decl-origin-span-key-slot
       (parser.compiler-parse-decl-list-storage-key rest)
-      (- (struct-get rest offset) 1))
+      (- rest.offset 1))
     decl
     path
     message))
@@ -105886,11 +106349,12 @@
       (TcMaybePoisonName.Some (tc-module-name-id-by-id module-id name))]
     [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
       (TcMaybePoisonName.Some (tc-module-name-id-by-id module-id name))]
-    [(ast.AstDecl.Unsafe inner) (tc-decl-poison-name module-id (box-get inner))]
+    [(ast.AstDecl.Unsafe inner)
+      (tc-decl-poison-name module-id (__tl-box-place inner))]
     [_ TcMaybePoisonName.No]))
 
 (define (tc-poison-name-list-bind [env : TcTypeEnv] [names : TcPoisonNameList]) : TcTypeEnv
-  (if (= (struct-get names len) 0)
+  (if (= names.len 0)
     env
     (let
       [index : i64 0]
@@ -105898,14 +106362,11 @@
       (begin
         ;; Slots are appended oldest to newest, matching the former recursive
         ;; bind order and its duplicate-name shadowing behavior.
-        (while (< index (struct-get names len))
+        (while (< index names.len)
           (begin
             (set!
               out
-              (tc-bind-id
-                out
-                (array-ref (struct-get names slots) index)
-                (tc-poison-type)))
+              (tc-bind-id out (array-ref names.slots index) (tc-poison-type)))
             (set! index (+ index 1))))
         out))))
 
@@ -105925,16 +106386,16 @@
     [(TcMaybePoisonName.No) names]
     [(TcMaybePoisonName.Some name)
       (let
-        [len : i64 (struct-get names len)]
-        [slots : (__tl_dyn-array i64) (struct-get names slots)]
+        [len : i64 names.len]
+        [slots : (__tl_dyn-array i64) names.slots]
         [next : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
         [index : i64 0]
         (begin
           (while (< index len)
             (begin
-              (array-set! next index (array-ref slots index))
+              (set! (array-ref next index) (array-ref slots index))
               (set! index (+ index 1))))
-          (array-set! next len name)
+          (set! (array-ref next len) name)
           (TcPoisonNameList next (+ len 1))))]))
 
 (define (tc-check-decls-with-paths-in-module
@@ -105988,8 +106449,8 @@
     [dotted-modules : sym_i64_env.SymI64Env
       (match (tc-context-program ctx)
         [(ast.AstProgram.Program decls-box)
-          (struct-get
-            (csym.compiler-symbols-module-sets (box-get decls-box))
+          (__tl-project-field
+            (csym.compiler-symbols-module-sets (__tl-box-place decls-box))
             dotted-modules)])]
     [cur-decls : ast.AstDeclList decls]
     [cur-paths : ast.AstDeclPathList paths]
@@ -106295,7 +106756,8 @@
                           (match program
                             [(ast.AstProgram.Program decls-box)
                               (let
-                                [decls : ast.AstDeclList (box-get decls-box)]
+                                [decls : ast.AstDeclList
+                                  (__tl-box-place decls-box)]
                                 (begin
                                   (tc-hygiene-reset-active-top-env! top-env)
                                   (tc-context-capture-active-pools! ctx)

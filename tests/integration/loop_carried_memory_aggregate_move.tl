@@ -29,11 +29,9 @@
         (let
           [cur : BigRec (make-rec i)]
           (begin
-            (when
-              (> i 0)
-              (unless (= (struct-get held f0) (- i 1)) (set! bad 1)))
+            (when (> i 0) (unless (= held.f0 (- i 1)) (set! bad 1)))
             (set! held cur)
-            (unless (= (struct-get held f0) i) (set! bad 2))
+            (unless (= held.f0 i) (set! bad 2))
             (set! i (+ i 1)))))
       (if (= bad 0)
         42

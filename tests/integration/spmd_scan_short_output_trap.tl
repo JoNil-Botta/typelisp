@@ -16,5 +16,5 @@
         sum
         ([i : i64 0 8] [prefix : i64 0])
         (array-ref xs-slots i)
-        (array-set! out-slots i prefix))
+        (set! (array-ref out-slots i) prefix))
       42)))

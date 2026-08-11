@@ -19,7 +19,8 @@
     (match (json.object-get doc (& key))
       [(json.JsonFound value)
         (match value
-          [(json.JsonArray items) (= (json.list-count (box-get items)) 5)]
+          [(json.JsonArray items)
+            (= (json.list-count (__tl-box-place items)) 5)]
           [_ false])]
       [(json.JsonMissing) false])))
 
@@ -80,7 +81,7 @@
   (let
     [buf : (__tl_dyn-array u64) (array.make-array u64 1)]
     (begin
-      (array-set! buf 0 bits)
+      (set! (array-ref buf 0) bits)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr f64)))))))
 
@@ -88,7 +89,7 @@
   (let
     [buf : (__tl_dyn-array u32) (array.make-array u32 1)]
     (begin
-      (array-set! buf 0 bits)
+      (set! (array-ref buf 0) bits)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr f32)))))))
 

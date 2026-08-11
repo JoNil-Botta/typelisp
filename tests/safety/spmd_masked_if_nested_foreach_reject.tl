@@ -8,5 +8,5 @@
   (foreach
     ([i : i64 0 n])
     (if (> (array-ref xs i) 0)
-      (foreach ([j : i64 0 n]) (array-set! out j (array-ref xs j)))
-      (array-set! out i 0))))
+      (foreach ([j : i64 0 n]) (set! (array-ref out j) (array-ref xs j)))
+      (set! (array-ref out i) 0))))

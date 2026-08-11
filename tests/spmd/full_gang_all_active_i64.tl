@@ -25,12 +25,12 @@
       (begin
         ;; Parent-only accesses should be ordinary vector operations in full
         ;; gangs and predicated operations in the final partial gang.
-        (array-set! copy i value)
+        (set! (array-ref copy i) value)
         (cond
-          [(< value -1000) (array-set! out i -99)]
-          [(< value 0) (array-set! out i -1)]
-          [(= (bit-and value 1) 0) (array-set! out i 2)]
-          [else (array-set! out i 3)])))))
+          [(< value -1000) (set! (array-ref out i) -99)]
+          [(< value 0) (set! (array-ref out i) -1)]
+          [(= (bit-and value 1) 0) (set! (array-ref out i) 2)]
+          [else (set! (array-ref out i) 3)])))))
 
 (define (run-case [n : i64]) : bool
   (let
@@ -42,9 +42,9 @@
     (begin
       (while (< i capacity)
         (begin
-          (array-set! xs i (- i 5))
-          (array-set! copy i 777)
-          (array-set! out i 888)
+          (set! (array-ref xs i) (- i 5))
+          (set! (array-ref copy i) 777)
+          (set! (array-ref out i) 888)
           (set! i (+ i 1))))
       (fill xs copy out n)
       (set! i 0)

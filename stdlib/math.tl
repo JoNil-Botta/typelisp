@@ -837,8 +837,8 @@
               (* k (stdlib.math.f64-from-bits 0xbd0cf79abc9e3b3a)))]
           [index : i64 (cast (% k-bits (cast 128 : u64)) : i64)]
           [entry : MathExpF64TableEntry (math-exp-f64-table-entry index)]
-          [scale-bits : u64 (+ (struct-get entry scale-bits) (shl k-bits 45))]
-          [tail : f64 (stdlib.math.f64-from-bits (struct-get entry tail-bits))]
+          [scale-bits : u64 (+ entry.scale-bits (shl k-bits 45))]
+          [tail : f64 (stdlib.math.f64-from-bits entry.tail-bits)]
           [r2 : f64 (* r r)]
           [tmp : f64
             (+
@@ -871,7 +871,7 @@
     [r : f64 (- z k)]
     [entry : MathExpF64TableEntry
       (math-exp-f64-table-entry (* (cast (% k-bits (cast 32 : u64)) : i64) 4))]
-    [scale-bits : u64 (+ (struct-get entry scale-bits) (shl k-bits 47))]
+    [scale-bits : u64 (+ entry.scale-bits (shl k-bits 47))]
     [scale : f64 (stdlib.math.f64-from-bits scale-bits)]
     [p : f64
       (+
@@ -1835,10 +1835,10 @@
     [reduced-bits : u64
       (- normalized-bits (bit-and tmp (cast 0xfff0000000000000 : u64)))]
     [entry : MathLogF64TableEntry (math-log-f64-table-entry index)]
-    [invc : f64 (stdlib.math.f64-from-bits (struct-get entry invc-bits))]
-    [logc : f64 (stdlib.math.f64-from-bits (struct-get entry logc-bits))]
-    [chi : f64 (stdlib.math.f64-from-bits (struct-get entry chi-bits))]
-    [clo : f64 (stdlib.math.f64-from-bits (struct-get entry clo-bits))]
+    [invc : f64 (stdlib.math.f64-from-bits entry.invc-bits)]
+    [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
+    [chi : f64 (stdlib.math.f64-from-bits entry.chi-bits)]
+    [clo : f64 (stdlib.math.f64-from-bits entry.clo-bits)]
     [z : f64 (stdlib.math.f64-from-bits reduced-bits)]
     [r : f64 (* (- (- z chi) clo) invc)]
     [kd : f64 (cast k : f64)]
@@ -1907,8 +1907,8 @@
     [reduced-bits : u32
       (- normalized-bits (bit-and tmp (cast 0xff800000 : u32)))]
     [entry : MathLogF32TableEntry (math-log-f32-table-entry index)]
-    [invc : f64 (stdlib.math.f64-from-bits (struct-get entry invc-bits))]
-    [logc : f64 (stdlib.math.f64-from-bits (struct-get entry logc-bits))]
+    [invc : f64 (stdlib.math.f64-from-bits entry.invc-bits)]
+    [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
     [z : f64 (cast (stdlib.math.f32-from-bits reduced-bits) : f64)]
     [r : f64 (- (* z invc) 1.0)]
     [y0 : f64
@@ -2108,9 +2108,8 @@
       (set! i 0)
       (while (<= i m)
         (begin
-          (array-set!
-            f
-            i
+          (set!
+            (array-ref f i)
             (if (< j 0)
               0.0
               (cast (math-trig-two-over-pi-limb j) : f64)))
@@ -2132,7 +2131,7 @@
                     (math-trig-input-limb j x0 x1 x2)
                     (array-ref f (- (+ jx i) j)))))
               (set! j (+ j 1))))
-          (array-set! q i fw)
+          (set! (array-ref q i) fw)
           (set! i (+ i 1))))
       (set! jz jk)
       (while need-recompute
@@ -2146,7 +2145,7 @@
               (set!
                 fw
                 (cast (cast (* 0.000000059604644775390625 z) : i64) : f64))
-              (array-set! iq i (cast (- z (* 16777216.0 fw)) : i64))
+              (set! (array-ref iq i) (cast (- z (* 16777216.0 fw)) : i64))
               (set! z (+ (array-ref q (- j 1)) fw))
               (set! i (+ i 1))
               (set! j (- j 1))))
@@ -2161,9 +2160,8 @@
               (begin
                 (set! i (shr (array-ref iq (- jz 1)) (- 24 q0)))
                 (set! n (+ n i))
-                (array-set!
-                  iq
-                  (- jz 1)
+                (set!
+                  (array-ref iq (- jz 1))
                   (- (array-ref iq (- jz 1)) (shl i (- 24 q0))))
                 (set! ih (shr (array-ref iq (- jz 1)) (- 23 q0))))]
             [(= q0 0) (set! ih (shr (array-ref iq (- jz 1)) 23))]
@@ -2182,19 +2180,17 @@
                     (if (!= j 0)
                       (begin
                         (set! carry 1)
-                        (array-set! iq i (- 0x1000000 j)))
+                        (set! (array-ref iq i) (- 0x1000000 j)))
                       unit)
-                    (array-set! iq i (- 0xffffff j)))
+                    (set! (array-ref iq i) (- 0xffffff j)))
                   (set! i (+ i 1))))
               (if (= q0 1)
-                (array-set!
-                  iq
-                  (- jz 1)
+                (set!
+                  (array-ref iq (- jz 1))
                   (bit-and (array-ref iq (- jz 1)) 0x7fffff))
                 (if (= q0 2)
-                  (array-set!
-                    iq
-                    (- jz 1)
+                  (set!
+                    (array-ref iq (- jz 1))
                     (bit-and (array-ref iq (- jz 1)) 0x3fffff))
                   unit))
               (if (= ih 2)
@@ -2224,9 +2220,8 @@
                   (set! i (+ jz 1))
                   (while (<= i (+ jz k))
                     (begin
-                      (array-set!
-                        f
-                        (+ jx i)
+                      (set!
+                        (array-ref f (+ jx i))
                         (cast (math-trig-two-over-pi-limb (+ jv i)) : f64))
                       (set! fw 0.0)
                       (set! j 0)
@@ -2240,7 +2235,7 @@
                                 (math-trig-input-limb j x0 x1 x2)
                                 (array-ref f (- (+ jx i) j)))))
                           (set! j (+ j 1))))
-                      (array-set! q i fw)
+                      (set! (array-ref q i) fw)
                       (set! i (+ i 1))))
                   (set! jz (+ jz k))
                   (set! need-recompute true))
@@ -2262,17 +2257,17 @@
               (set!
                 fw
                 (cast (cast (* 0.000000059604644775390625 z) : i64) : f64))
-              (array-set! iq jz (cast (- z (* 16777216.0 fw)) : i64))
+              (set! (array-ref iq jz) (cast (- z (* 16777216.0 fw)) : i64))
               (set! jz (+ jz 1))
               (set! q0 (+ q0 24))
-              (array-set! iq jz (cast fw : i64)))
-            (array-set! iq jz (cast z : i64)))))
+              (set! (array-ref iq jz) (cast fw : i64)))
+            (set! (array-ref iq jz) (cast z : i64)))))
       ;; Convert integer limbs back to scaled floating values.
       (set! fw (stdlib.math.f64-scalbn 1.0 q0))
       (set! i jz)
       (while (>= i 0)
         (begin
-          (array-set! q i (* fw (cast (array-ref iq i) : f64)))
+          (set! (array-ref q i) (* fw (cast (array-ref iq i) : f64)))
           (set! fw (* fw 0.000000059604644775390625))
           (set! i (- i 1))))
       ;; Multiply by the split pi/2 table.
@@ -2287,7 +2282,7 @@
                 fw
                 (+ fw (* (math-trig-pi-over-two-piece k) (array-ref q (+ i k)))))
               (set! k (+ k 1))))
-          (array-set! fq (- jz i) fw)
+          (set! (array-ref fq (- jz i)) fw)
           (set! i (- i 1))))
       ;; Compress to one term for binary32 or a compensated two-term result
       ;; for binary64.
@@ -2482,9 +2477,9 @@
               (bit-and bits (cast 0x8000000000000000 : u64))
               (cast 0 : u64))
               (MathTrigReduction
-                (- 0 (struct-get large quadrant))
-                (- 0.0 (struct-get large hi))
-                (- 0.0 (struct-get large lo)))
+                (- 0 large.quadrant)
+                (- 0.0 large.hi)
+                (- 0.0 large.lo))
               large)))))))
 
 ;; Binary32 reduction keeps all arithmetic in binary64, then returns the
@@ -2568,10 +2563,7 @@
               1
               0)]
           (if sign
-            (MathTrigReduction
-              (- 0 (struct-get large quadrant))
-              (- 0.0 (struct-get large hi))
-              0.0)
+            (MathTrigReduction (- 0 large.quadrant) (- 0.0 large.hi) 0.0)
             large))))))
 
 ;; Polynomial kernels on the reduced interval [-pi/4, pi/4].
@@ -2830,30 +2822,14 @@
         (- value value)
         (let
           [reduced : MathTrigReduction (math-trig-rem-pio2-f64 value)]
-          [quadrant : i64 (bit-and (struct-get reduced quadrant) 3)]
+          [quadrant : i64 (bit-and reduced.quadrant 3)]
           (cond
             [(= quadrant 0)
-              (math-trig-kernel-sin-f64
-                (struct-get reduced hi)
-                (struct-get reduced lo)
-                true)]
-            [(= quadrant 1)
-              (math-trig-kernel-cos-f64
-                (struct-get reduced hi)
-                (struct-get reduced lo))]
+              (math-trig-kernel-sin-f64 reduced.hi reduced.lo true)]
+            [(= quadrant 1) (math-trig-kernel-cos-f64 reduced.hi reduced.lo)]
             [(= quadrant 2)
-              (-
-                0.0
-                (math-trig-kernel-sin-f64
-                  (struct-get reduced hi)
-                  (struct-get reduced lo)
-                  true))]
-            [else
-              (-
-                0.0
-                (math-trig-kernel-cos-f64
-                  (struct-get reduced hi)
-                  (struct-get reduced lo)))]))))))
+              (- 0.0 (math-trig-kernel-sin-f64 reduced.hi reduced.lo true))]
+            [else (- 0.0 (math-trig-kernel-cos-f64 reduced.hi reduced.lo))]))))))
 
 ;: Return cos(value) for every finite binary64 input.
 ;:
@@ -2871,30 +2847,14 @@
         (- value value)
         (let
           [reduced : MathTrigReduction (math-trig-rem-pio2-f64 value)]
-          [quadrant : i64 (bit-and (struct-get reduced quadrant) 3)]
+          [quadrant : i64 (bit-and reduced.quadrant 3)]
           (cond
-            [(= quadrant 0)
-              (math-trig-kernel-cos-f64
-                (struct-get reduced hi)
-                (struct-get reduced lo))]
+            [(= quadrant 0) (math-trig-kernel-cos-f64 reduced.hi reduced.lo)]
             [(= quadrant 1)
-              (-
-                0.0
-                (math-trig-kernel-sin-f64
-                  (struct-get reduced hi)
-                  (struct-get reduced lo)
-                  true))]
+              (- 0.0 (math-trig-kernel-sin-f64 reduced.hi reduced.lo true))]
             [(= quadrant 2)
-              (-
-                0.0
-                (math-trig-kernel-cos-f64
-                  (struct-get reduced hi)
-                  (struct-get reduced lo)))]
-            [else
-              (math-trig-kernel-sin-f64
-                (struct-get reduced hi)
-                (struct-get reduced lo)
-                true)]))))))
+              (- 0.0 (math-trig-kernel-cos-f64 reduced.hi reduced.lo))]
+            [else (math-trig-kernel-sin-f64 reduced.hi reduced.lo true)]))))))
 
 ;: Return tan(value) for every finite binary64 input.
 ;:
@@ -2913,9 +2873,9 @@
         (let
           [reduced : MathTrigReduction (math-trig-rem-pio2-f64 value)]
           (math-trig-kernel-tan-f64
-            (struct-get reduced hi)
-            (struct-get reduced lo)
-            (!= (bit-and (struct-get reduced quadrant) 1) 0)))))))
+            reduced.hi
+            reduced.lo
+            (!= (bit-and reduced.quadrant 1) 0)))))))
 
 ;: Return sin(value) for every finite binary32 input.
 ;:
@@ -2932,16 +2892,12 @@
         (- value value)
         (let
           [reduced : MathTrigReduction (math-trig-rem-pio2-f32 value)]
-          [quadrant : i64 (bit-and (struct-get reduced quadrant) 3)]
+          [quadrant : i64 (bit-and reduced.quadrant 3)]
           (cond
-            [(= quadrant 0) (math-trig-kernel-sin-f32 (struct-get reduced hi))]
-            [(= quadrant 1) (math-trig-kernel-cos-f32 (struct-get reduced hi))]
-            [(= quadrant 2)
-              (math-trig-kernel-sin-f32 (- 0.0 (struct-get reduced hi)))]
-            [else
-              (-
-                (cast 0.0 : f32)
-                (math-trig-kernel-cos-f32 (struct-get reduced hi)))]))))))
+            [(= quadrant 0) (math-trig-kernel-sin-f32 reduced.hi)]
+            [(= quadrant 1) (math-trig-kernel-cos-f32 reduced.hi)]
+            [(= quadrant 2) (math-trig-kernel-sin-f32 (- 0.0 reduced.hi))]
+            [else (- (cast 0.0 : f32) (math-trig-kernel-cos-f32 reduced.hi))]))))))
 
 ;: Return cos(value) for every finite binary32 input.
 ;:
@@ -2958,16 +2914,13 @@
         (- value value)
         (let
           [reduced : MathTrigReduction (math-trig-rem-pio2-f32 value)]
-          [quadrant : i64 (bit-and (struct-get reduced quadrant) 3)]
+          [quadrant : i64 (bit-and reduced.quadrant 3)]
           (cond
-            [(= quadrant 0) (math-trig-kernel-cos-f32 (struct-get reduced hi))]
-            [(= quadrant 1)
-              (math-trig-kernel-sin-f32 (- 0.0 (struct-get reduced hi)))]
+            [(= quadrant 0) (math-trig-kernel-cos-f32 reduced.hi)]
+            [(= quadrant 1) (math-trig-kernel-sin-f32 (- 0.0 reduced.hi))]
             [(= quadrant 2)
-              (-
-                (cast 0.0 : f32)
-                (math-trig-kernel-cos-f32 (struct-get reduced hi)))]
-            [else (math-trig-kernel-sin-f32 (struct-get reduced hi))]))))))
+              (- (cast 0.0 : f32) (math-trig-kernel-cos-f32 reduced.hi))]
+            [else (math-trig-kernel-sin-f32 reduced.hi)]))))))
 
 ;: Return tan(value) for every finite binary32 input.
 ;:
@@ -2985,8 +2938,8 @@
         (let
           [reduced : MathTrigReduction (math-trig-rem-pio2-f32 value)]
           (math-trig-kernel-tan-f32
-            (struct-get reduced hi)
-            (!= (bit-and (struct-get reduced quadrant) 1) 0)))))))
+            reduced.hi
+            (!= (bit-and reduced.quadrant 1) 0)))))))
 
 ;: Return the absolute value of an `i64`.
 ;:
@@ -3152,14 +3105,14 @@
     [negative-zero32 : f32 (stdlib.math.f32-from-bits (cast 0x80000000 : u32))]
     (begin
       (if (and
-        (= (bit-and (struct-get medium quadrant) 3) 2)
-        (<= (stdlib.math.f64-abs (struct-get medium hi)) 0.785398164)
-        (<= (stdlib.math.f64-abs (struct-get medium lo)) 0.000000000000001)
-        (<= (stdlib.math.f64-abs (struct-get large64 hi)) 0.785398164)
-        (stdlib.math.f64-finite? (struct-get large64 hi))
-        (stdlib.math.f64-finite? (struct-get large64 lo))
-        (<= (stdlib.math.f64-abs (struct-get large32 hi)) 0.785398164)
-        (stdlib.math.f64-finite? (struct-get large32 hi)))
+        (= (bit-and medium.quadrant 3) 2)
+        (<= (stdlib.math.f64-abs medium.hi) 0.785398164)
+        (<= (stdlib.math.f64-abs medium.lo) 0.000000000000001)
+        (<= (stdlib.math.f64-abs large64.hi) 0.785398164)
+        (stdlib.math.f64-finite? large64.hi)
+        (stdlib.math.f64-finite? large64.lo)
+        (<= (stdlib.math.f64-abs large32.hi) 0.785398164)
+        (stdlib.math.f64-finite? large32.hi))
         unit
         (fail))
       (if (=

@@ -85,7 +85,9 @@
                 [parsed-module-id : i64
                   (match program
                     [(ast.AstProgram.Program decls-box)
-                      (match (ast.ast-decl-list-ref (box-get decls-box) 1)
+                      (match (ast.ast-decl-list-ref
+                        (__tl-box-place decls-box)
+                        1)
                         [(ast.AstDecl.Import
                             _
                             (ast.AstImportSpec.Spec

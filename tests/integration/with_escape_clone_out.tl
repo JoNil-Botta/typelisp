@@ -60,15 +60,15 @@
     (string.eq (array-ref items 1) (piece seed 2))))
 
 (define (cell-ok? [cell : (Box String)] [seed : i64] [slot : i64]) : bool
-  (string.eq (box-get cell) (piece seed slot)))
+  (string.eq (__tl-box-place cell) (piece seed slot)))
 
 (define (bundle-ok? [bundle : EscapeBundle] [seed : i64]) : bool
   (and
-    (string.eq (struct-get bundle name) (piece seed 0))
-    (items-ok? (struct-get bundle items) seed)
-    (string.eq (array-ref (struct-get bundle fixed) 0) (piece seed 4))
-    (string.eq (array-ref (struct-get bundle fixed) 1) (piece seed 5))
-    (string.eq (box-get (struct-get bundle cell)) (piece seed 6))))
+    (string.eq bundle.name (piece seed 0))
+    (items-ok? bundle.items seed)
+    (string.eq (array-ref bundle.fixed 0) (piece seed 4))
+    (string.eq (array-ref bundle.fixed 1) (piece seed 5))
+    (string.eq (__tl-box-place bundle.cell) (piece seed 6))))
 
 (define (outcome-ok? [outcome : EscapeOutcome] [seed : i64]) : bool
   (match outcome

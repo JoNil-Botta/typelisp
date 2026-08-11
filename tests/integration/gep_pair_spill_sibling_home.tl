@@ -18,18 +18,17 @@
     (begin
       (while (< i nl)
         (begin
-          (array-set! buf i (cast (string.string-ref name i) : u8))
+          (set! (array-ref buf i) (cast (string.string-ref name i) : u8))
           (set! i (+ i 1))))
-      (array-set! buf nl (cast 61 : u8))
+      (set! (array-ref buf nl) (cast 61 : u8))
       (set! i 0)
       (while (< i vl)
         (begin
-          (array-set!
-            buf
-            (+ (+ nl 1) i)
+          (set!
+            (array-ref buf (+ (+ nl 1) i))
             (cast (string.string-ref value i) : u8))
           (set! i (+ i 1))))
-      (array-set! buf (+ (+ nl 1) vl) (cast 0 : u8))
+      (set! (array-ref buf (+ (+ nl 1) vl)) (cast 0 : u8))
       buf)))
 
 (define (main) : i64

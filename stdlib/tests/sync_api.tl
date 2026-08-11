@@ -55,7 +55,7 @@
           2)))))
 
 (define (sync-api-pair-sum [value : sync.ChannelI64Pair]) : i64
-  (+ (struct-get value left) (struct-get value right)))
+  (+ value.left value.right))
 
 (define (sync-api-run-pair-channel [channel : sync.ChannelI64PairChannel]) : i64
   (let

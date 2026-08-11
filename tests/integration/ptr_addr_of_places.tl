@@ -16,11 +16,11 @@
     [item : Wide (Wide 10 20 5)]
     [field : (MutPtr i64)
       (unsafe
-        (ptr-addr-of (struct-get item y)))]
+        (ptr-addr-of item.y))]
     (begin
       (unsafe
         (ptr-write! field 31))
-      (+ (struct-get item x) (+ (struct-get item y) (struct-get item z))))))
+      (+ item.x (+ item.y item.z)))))
 
 (define (fixed-array-write-score [i : i64]) : i64
   (let
@@ -38,17 +38,15 @@
     [bag : Bag (Bag (array 4 5 6) (Pair 7 8))]
     [field : (MutPtr i64)
       (unsafe
-        (ptr-addr-of (struct-get (struct-get bag pair) y)))]
+        (ptr-addr-of bag.pair.y))]
     [elem : (MutPtr i64)
       (unsafe
-        (ptr-addr-of (array-ref (struct-get bag slots) i)))]
+        (ptr-addr-of (array-ref bag.slots i)))]
     (begin
       (unsafe
         (ptr-write! field 9)
         (ptr-write! elem 70))
-      (+
-        (struct-get (struct-get bag pair) y)
-        (array-ref (struct-get bag slots) i)))))
+      (+ bag.pair.y (array-ref bag.slots i)))))
 
 (define (main) : i64
   (-

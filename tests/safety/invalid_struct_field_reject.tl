@@ -4,4 +4,4 @@
   (y i64))
 
 (define (main [p : Point]) : i64
-  (struct-get p z))
+  p.z)

@@ -12,7 +12,7 @@
     [payload : ThreadText (ThreadText "not-transferable")]
     (match (thread_i64.spawn
       (lambda () : i64
-        (string-length (struct-get payload text))))
+        (string-length payload.text)))
       [(thread_i64.I64SpawnErr _) 1]
       [(thread_i64.I64SpawnOk thread)
         (match (thread_i64.join thread)

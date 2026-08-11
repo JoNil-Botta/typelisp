@@ -25,7 +25,9 @@
     [out-slots (i64v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set! out-slots i (+ (array-ref a-slots i) (array-ref b-slots i))))))
+      (set!
+        (array-ref out-slots i)
+        (+ (array-ref a-slots i) (array-ref b-slots i))))))
 
 (define (fill-slice-foreach
   [a : (& a (Slice i64))]
@@ -34,7 +36,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
 (define (reduce-slice-sum [values : (& values (Slice i64))] [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref values i)))
@@ -52,7 +54,7 @@
         sum
         ([j : i64 0 n] [prefix : i64 0])
         (array-ref values j)
-        (array-set! out j prefix))
+        (set! (array-ref out j) prefix))
       (while (and ok (< i n))
         (begin
           (set! expected (+ expected (array-ref values i)))

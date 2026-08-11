@@ -29,7 +29,7 @@
     [h : i64 (+ g 0)]
     [i : i64 (+ h 0)]
     [j : i64 (+ i 0)]
-    (set! (struct-get write y) j)))
+    (set! write.y j)))
 
 (define (borrowed-disjoint-store-loop
   [read : (& read BorrowedPair)]
@@ -41,12 +41,12 @@
     (begin
       (while (< i iterations)
         (let
-          [current : i64 (struct-get read x)]
+          [current : i64 read.x]
           (begin
             (borrowed-disjoint-store-touch write i)
-            (set! (struct-get write y) (struct-get read x))
-            (set! (struct-get write x) (+ current i))
-            (set! acc (+ acc (struct-get read x)))
+            (set! write.y read.x)
+            (set! write.x (+ current i))
+            (set! acc (+ acc read.x))
             (set! i (+ i 1)))))
       acc)))
 

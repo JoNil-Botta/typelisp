@@ -530,9 +530,8 @@
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            slots
-            i
+          (set!
+            (array-ref slots i)
             (unsafe
               (ptr-read (ptr-offset src i))))
           (set! i (+ i 1))))

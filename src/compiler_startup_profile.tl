@@ -16,7 +16,7 @@
   (array.make-array i64 compiler-startup-profile-marker-count))
 
 (define (compiler-startup-profile-mark! [index : i64]) : unit
-  (array-set! compiler-startup-profile-ticks index (profile.now-ticks)))
+  (set! (array-ref compiler-startup-profile-ticks index) (profile.now-ticks)))
 
 (define (compiler-startup-profile-mark-main-entry!) : unit
   (compiler-startup-profile-mark! 0))

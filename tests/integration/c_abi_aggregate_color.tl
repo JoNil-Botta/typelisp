@@ -14,10 +14,8 @@
     [weighted : i64 (color-use c)]
     [sum : i64
       (+
-        (cast (struct-get c r) : i64)
-        (+
-          (cast (struct-get c g) : i64)
-          (+ (cast (struct-get c b) : i64) (cast (struct-get c a) : i64))))]
+        (cast c.r : i64)
+        (+ (cast c.g : i64) (+ (cast c.b : i64) (cast c.a : i64))))]
     (if (= weighted 104)
       (if (= sum 36)
         42

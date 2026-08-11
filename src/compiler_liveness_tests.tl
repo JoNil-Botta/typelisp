@@ -324,8 +324,8 @@
     ;; new use `191`.
     [_ids-fill : unit
       (begin
-        (array-set! ids 0 130)
-        (array-set! ids 1 191))]
+        (set! (array-ref ids 0) 130)
+        (set! (array-ref ids 1) 191))]
     [set-count : i64
       (live.compiler-live-scratch-step!
         set-words
@@ -348,8 +348,8 @@
         (live.compiler-live-set-builder-insert! id-def-words 9))]
     [_step2-ids : unit
       (begin
-        (array-set! ids 0 9)
-        (array-set! ids 1 70))]
+        (set! (array-ref ids 0) 9)
+        (set! (array-ref ids 1) 70))]
     [_set-step : unit
       (live.compiler-live-block-use-def-step!
         set-use-words
@@ -405,12 +405,12 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (make-array ir.CompilerIrInstr 6)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
-      (array-set! slots 2 third)
-      (array-set! slots 3 fourth)
-      (array-set! slots 4 fifth)
-      (array-set! slots 5 sixth)
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
+      (set! (array-ref slots 2) third)
+      (set! (array-ref slots 3) fourth)
+      (set! (array-ref slots 4) fifth)
+      (set! (array-ref slots 5) sixth)
       (ir.CompilerIrInstrSeq slots 6))))
 
 (define (compiler-live-instr-seq7
@@ -425,13 +425,13 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (make-array ir.CompilerIrInstr 7)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
-      (array-set! slots 2 third)
-      (array-set! slots 3 fourth)
-      (array-set! slots 4 fifth)
-      (array-set! slots 5 sixth)
-      (array-set! slots 6 seventh)
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
+      (set! (array-ref slots 2) third)
+      (set! (array-ref slots 3) fourth)
+      (set! (array-ref slots 4) fifth)
+      (set! (array-ref slots 5) sixth)
+      (set! (array-ref slots 6) seventh)
       (ir.CompilerIrInstrSeq slots 7))))
 
 (define (compiler-live-instr-seq8
@@ -447,14 +447,14 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (make-array ir.CompilerIrInstr 8)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
-      (array-set! slots 2 third)
-      (array-set! slots 3 fourth)
-      (array-set! slots 4 fifth)
-      (array-set! slots 5 sixth)
-      (array-set! slots 6 seventh)
-      (array-set! slots 7 eighth)
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
+      (set! (array-ref slots 2) third)
+      (set! (array-ref slots 3) fourth)
+      (set! (array-ref slots 4) fifth)
+      (set! (array-ref slots 5) sixth)
+      (set! (array-ref slots 6) seventh)
+      (set! (array-ref slots 7) eighth)
       (ir.CompilerIrInstrSeq slots 8))))
 
 (define (compiler-live-straight-function) : ir.CompilerIrFunction
@@ -605,11 +605,9 @@
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))]
     (and
       (live.compiler-live-set-eq?
-        (struct-get use-def uses)
+        use-def.uses
         (compiler-live-set7 10 11 12 13 14 15 16))
-      (live.compiler-live-set-eq?
-        (struct-get use-def defs)
-        (compiler-live-set5 0 1 2 3 4)))))
+      (live.compiler-live-set-eq? use-def.defs (compiler-live-set5 0 1 2 3 4)))))
 
 (define (compiler-live-memory-use-def-ok?) : bool
   (let
@@ -637,12 +635,8 @@
             (compiler-live-i64-ty)
             (ast.AstType.I32))))]
     (and
-      (live.compiler-live-set-eq?
-        (struct-get use-def uses)
-        (live.compiler-live-set2 10 11))
-      (live.compiler-live-set-eq?
-        (struct-get use-def defs)
-        (compiler-live-set5 0 1 2 3 4)))))
+      (live.compiler-live-set-eq? use-def.uses (live.compiler-live-set2 10 11))
+      (live.compiler-live-set-eq? use-def.defs (compiler-live-set5 0 1 2 3 4)))))
 
 (define (compiler-live-vector-mask-use-def-ok?) : bool
   (let
@@ -688,11 +682,9 @@
             4)))]
     (and
       (live.compiler-live-set-eq?
-        (struct-get use-def uses)
+        use-def.uses
         (compiler-live-set5 10 11 12 13 14))
-      (live.compiler-live-set-eq?
-        (struct-get use-def defs)
-        (compiler-live-set6 0 1 2 3 4 5)))))
+      (live.compiler-live-set-eq? use-def.defs (compiler-live-set6 0 1 2 3 4 5)))))
 
 (define (compiler-live-straight-ok?) : bool
   (let
@@ -859,12 +851,8 @@
     [use-def : live.CompilerLiveUseDef
       (live.compiler-live-block-use-def instrs)]
     (and
-      (live.compiler-live-set-eq?
-        (struct-get use-def uses)
-        (live.compiler-live-set1 9))
-      (live.compiler-live-set-eq?
-        (struct-get use-def defs)
-        (live.compiler-live-set-empty))
+      (live.compiler-live-set-eq? use-def.uses (live.compiler-live-set1 9))
+      (live.compiler-live-set-eq? use-def.defs (live.compiler-live-set-empty))
       (= (live.compiler-live-label-set-count successors) 3)
       (live.compiler-live-label-set-contains?
         successors

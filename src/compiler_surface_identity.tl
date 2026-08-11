@@ -138,10 +138,10 @@
 
 (define (surface-identity-key-valid? [key : SurfaceIdentityKey]) : bool
   (and
-    (> (binary.surface-binary-string-length (struct-get key package-name)) 0)
-    (> (binary.surface-binary-string-length (struct-get key source-hash)) 0)
-    (> (binary.surface-binary-string-length (struct-get key compiler-build)) 0)
-    (surface-identity-module-set-canonical? (struct-get key modules))))
+    (> (binary.surface-binary-string-length key.package-name) 0)
+    (> (binary.surface-binary-string-length key.source-hash) 0)
+    (> (binary.surface-binary-string-length key.compiler-build) 0)
+    (surface-identity-module-set-canonical? key.modules)))
 
 (define (surface-identity-string-array-eq?
   [left : (__tl_dyn-array String)]
@@ -162,21 +162,11 @@
   [left : SurfaceIdentityKey]
   [right : SurfaceIdentityKey]) : bool
   (and
-    (surface-identity-string-eq?
-      (struct-get left package-name)
-      (struct-get right package-name))
-    (surface-identity-string-array-eq?
-      (struct-get left modules)
-      (struct-get right modules))
-    (surface-identity-string-eq?
-      (struct-get left source-hash)
-      (struct-get right source-hash))
-    (surface-identity-string-eq?
-      (struct-get left compiler-build)
-      (struct-get right compiler-build))
-    (surface-identity-string-eq?
-      (struct-get left configuration)
-      (struct-get right configuration))))
+    (surface-identity-string-eq? left.package-name right.package-name)
+    (surface-identity-string-array-eq? left.modules right.modules)
+    (surface-identity-string-eq? left.source-hash right.source-hash)
+    (surface-identity-string-eq? left.compiler-build right.compiler-build)
+    (surface-identity-string-eq? left.configuration right.configuration)))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
@@ -279,11 +269,11 @@
   [record : SurfaceGeneratedIdentity]
   [prior-count : i64]) : bool
   (let
-    [qualified : bool (struct-get record qualified)]
-    [dotted : bool (struct-get record dotted)]
-    [ref0 : i64 (struct-get record ref0)]
-    [ref1 : i64 (struct-get record ref1)]
-    [ref2 : i64 (struct-get record ref2)]
+    [qualified : bool record.qualified]
+    [dotted : bool record.dotted]
+    [ref0 : i64 record.ref0]
+    [ref1 : i64 record.ref1]
+    [ref2 : i64 record.ref2]
     (and
       (not (and qualified dotted))
       (if (or qualified dotted)
@@ -299,11 +289,10 @@
 
 (define (surface-identity-payload-valid? [payload : SurfaceIdentityPayload]) : bool
   (let
-    [source-count : i64 (array-length (struct-get payload source-names))]
-    [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
-      (struct-get payload generated)]
+    [source-count : i64 (array-length payload.source-names)]
+    [generated : (__tl_dyn-array SurfaceGeneratedIdentity) payload.generated]
     [index : i64 0]
-    [ok : bool (surface-identity-key-valid? (struct-get payload key))]
+    [ok : bool (surface-identity-key-valid? payload.key)]
     (begin
       (while (and ok (< index (array-length generated)))
         (if (surface-identity-generated-record-valid?
@@ -319,39 +308,37 @@
     [ok : (__tl_dyn-array bool) (make-array bool 1)]
     [message : (__tl_dyn-array String) (make-array String 1)]
     (begin
-      (array-set! offset 0 0)
-      (array-set! ok 0 true)
-      (array-set! message 0 "")
+      (set! (array-ref offset 0) 0)
+      (set! (array-ref ok 0) true)
+      (set! (array-ref message 0) "")
       (SurfaceIdentityReader bytes offset ok message))))
 
 (define (surface-identity-reader-fail!
   [reader : SurfaceIdentityReader]
   [message : String]) : unit
-  (if (array-ref (struct-get reader ok) 0)
+  (if (array-ref reader.ok 0)
     (begin
-      (array-set! (struct-get reader ok) 0 false)
-      (array-set! (struct-get reader message) 0 message))
+      (set! (array-ref reader.ok 0) false)
+      (set! (array-ref reader.message 0) message))
     unit))
 
 (define (surface-identity-reader-u64! [reader : SurfaceIdentityReader]) : i64
   (let
-    [offset : i64 (array-ref (struct-get reader offset) 0)]
-    [bytes : (__tl_dyn-array u8) (struct-get reader bytes)]
-    (if (or
-      (not (array-ref (struct-get reader ok) 0))
-      (> offset (- (array-length bytes) 8)))
+    [offset : i64 (array-ref reader.offset 0)]
+    [bytes : (__tl_dyn-array u8) reader.bytes]
+    (if (or (not (array-ref reader.ok 0)) (> offset (- (array-length bytes) 8)))
       (begin
         (surface-identity-reader-fail! reader "surface identity: truncated u64")
         -1)
       (begin
-        (array-set! (struct-get reader offset) 0 (+ offset 8))
+        (set! (array-ref reader.offset 0) (+ offset 8))
         (binary.surface-binary-read-u64 bytes offset)))))
 
 (define (surface-identity-reader-string! [reader : SurfaceIdentityReader]) : String
   (let
     [len : i64 (surface-identity-reader-u64! reader)]
-    [offset : i64 (array-ref (struct-get reader offset) 0)]
-    [bytes : (__tl_dyn-array u8) (struct-get reader bytes)]
+    [offset : i64 (array-ref reader.offset 0)]
+    [bytes : (__tl_dyn-array u8) reader.bytes]
     (if (or
       (< len 0)
       (> offset (array-length bytes))
@@ -364,7 +351,7 @@
       (let
         [value : String (binary.surface-binary-bytes->string bytes offset len)]
         (begin
-          (array-set! (struct-get reader offset) 0 (+ offset len))
+          (set! (array-ref reader.offset 0) (+ offset len))
           value)))))
 
 (define (surface-identity-safe-count? [count : i64]) : bool
@@ -398,29 +385,21 @@
           (make-array SurfaceGeneratedIdentity generated-count)]
         [index : i64 0]
         (begin
-          (while (and
-            (array-ref (struct-get reader ok) 0)
-            (< index module-count))
+          (while (and (array-ref reader.ok 0) (< index module-count))
             (begin
-              (array-set!
-                modules
-                index
+              (set!
+                (array-ref modules index)
                 (surface-identity-reader-string! reader))
               (set! index (+ index 1))))
           (set! index 0)
-          (while (and
-            (array-ref (struct-get reader ok) 0)
-            (< index source-count))
+          (while (and (array-ref reader.ok 0) (< index source-count))
             (begin
-              (array-set!
-                source-names
-                index
+              (set!
+                (array-ref source-names index)
                 (surface-identity-reader-string! reader))
               (set! index (+ index 1))))
           (set! index 0)
-          (while (and
-            (array-ref (struct-get reader ok) 0)
-            (< index generated-count))
+          (while (and (array-ref reader.ok 0) (< index generated-count))
             (let
               [flags : i64 (surface-identity-reader-u64! reader)]
               [ref0 : i64 (surface-identity-reader-u64! reader)]
@@ -433,9 +412,8 @@
                     reader
                     "surface identity: invalid generated identity flags")
                   unit)
-                (array-set!
-                  generated
-                  index
+                (set!
+                  (array-ref generated index)
                   (SurfaceGeneratedIdentity
                     name
                     (not
@@ -459,13 +437,9 @@
             [payload : SurfaceIdentityPayload
               (SurfaceIdentityPayload key source-names generated)]
             (cond
-              [(not (array-ref (struct-get reader ok) 0))
-                (ResultSurfaceIdentityPayload.Err
-                  (array-ref (struct-get reader message) 0))]
-              [(not
-                  (=
-                    (array-ref (struct-get reader offset) 0)
-                    (array-length bytes)))
+              [(not (array-ref reader.ok 0))
+                (ResultSurfaceIdentityPayload.Err (array-ref reader.message 0))]
+              [(not (= (array-ref reader.offset 0) (array-length bytes)))
                 (ResultSurfaceIdentityPayload.Err
                   "surface identity: trailing payload bytes")]
               [(not (surface-identity-payload-valid? payload))
@@ -477,13 +451,13 @@
   [record : SurfaceGeneratedIdentity]
   [remap : (__tl_dyn-array i64)]) : i64
   (let
-    [name : String (struct-get record name)]
-    [canonical : bool (struct-get record canonical)]
-    [qualified : bool (struct-get record qualified)]
-    [dotted : bool (struct-get record dotted)]
-    [ref0 : i64 (struct-get record ref0)]
-    [ref1 : i64 (struct-get record ref1)]
-    [ref2 : i64 (struct-get record ref2)]
+    [name : String record.name]
+    [canonical : bool record.canonical]
+    [qualified : bool record.qualified]
+    [dotted : bool record.dotted]
+    [ref0 : i64 record.ref0]
+    [ref1 : i64 record.ref1]
+    [ref2 : i64 record.ref2]
     (cond
       [qualified
         (if canonical
@@ -514,15 +488,14 @@
   [payload : SurfaceIdentityPayload]
   [expected-key : SurfaceIdentityKey]) : ResultSurfaceIdentityHydration
   (let
-    [key : SurfaceIdentityKey (struct-get payload key)]
+    [key : SurfaceIdentityKey payload.key]
     (if (not (surface-identity-key-eq? key expected-key))
       (ResultSurfaceIdentityHydration.KeyMismatch
         "surface identity: package key mismatch")
       (let
-        [source-names : (__tl_dyn-array String)
-          (struct-get payload source-names)]
+        [source-names : (__tl_dyn-array String) payload.source-names]
         [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
-          (struct-get payload generated)]
+          payload.generated]
         [source-count : i64 (array-length source-names)]
         [remap : (__tl_dyn-array i64)
           (make-array i64 (+ source-count (array-length generated)))]
@@ -530,17 +503,15 @@
         (begin
           (while (< index source-count)
             (begin
-              (array-set!
-                remap
-                index
+              (set!
+                (array-ref remap index)
                 (ci.intern (array-ref source-names index)))
               (set! index (+ index 1))))
           (set! index 0)
           (while (< index (array-length generated))
             (begin
-              (array-set!
-                remap
-                (+ source-count index)
+              (set!
+                (array-ref remap (+ source-count index))
                 (surface-identity-hydrate-generated!
                   (array-ref generated index)
                   remap))
@@ -636,14 +607,13 @@
       (begin
         (while (< index source-count)
           (begin
-            (array-set! source-names index (ci.intern-str index))
+            (set! (array-ref source-names index) (ci.intern-str index))
             (set! index (+ index 1))))
         (set! index 0)
         (while (< index generated-count)
           (begin
-            (array-set!
-              generated
-              index
+            (set!
+              (array-ref generated index)
               (surface-identity-generated-record
                 (ci.intern-generated-id-at-allocation-index index)
                 source-count))
@@ -657,11 +627,10 @@
       (ResultSurfaceIdentityBytes.Err
         "surface identity: invalid package key or identity graph")
       (let
-        [key : SurfaceIdentityKey (struct-get payload key)]
-        [source-names : (__tl_dyn-array String)
-          (struct-get payload source-names)]
+        [key : SurfaceIdentityKey payload.key]
+        [source-names : (__tl_dyn-array String) payload.source-names]
         [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
-          (struct-get payload generated)]
+          payload.generated]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]
@@ -672,28 +641,20 @@
             surface-identity-schema-version)
           (binary.surface-binary-push-u64!
             (&mut out)
-            (array-length (struct-get key modules)))
+            (array-length key.modules))
           (binary.surface-binary-push-u64!
             (&mut out)
             (array-length source-names))
           (binary.surface-binary-push-u64! (&mut out) (array-length generated))
-          (surface-identity-push-string!
-            (&mut out)
-            (struct-get key package-name))
-          (surface-identity-push-string!
-            (&mut out)
-            (struct-get key source-hash))
-          (surface-identity-push-string!
-            (&mut out)
-            (struct-get key compiler-build))
-          (surface-identity-push-string!
-            (&mut out)
-            (struct-get key configuration))
-          (while (< index (array-length (struct-get key modules)))
+          (surface-identity-push-string! (&mut out) key.package-name)
+          (surface-identity-push-string! (&mut out) key.source-hash)
+          (surface-identity-push-string! (&mut out) key.compiler-build)
+          (surface-identity-push-string! (&mut out) key.configuration)
+          (while (< index (array-length key.modules))
             (begin
               (surface-identity-push-string!
                 (&mut out)
-                (array-ref (struct-get key modules) index))
+                (array-ref key.modules index))
               (set! index (+ index 1))))
           (set! index 0)
           (while (< index (array-length source-names))
@@ -708,30 +669,22 @@
               [record : SurfaceGeneratedIdentity (array-ref generated index)]
               [flags : i64
                 (+
-                  (if (struct-get record canonical)
+                  (if record.canonical
                     surface-identity-generated-canonical
                     0)
                   (+
-                    (if (struct-get record qualified)
+                    (if record.qualified
                       surface-identity-generated-qualified
                       0)
-                    (if (struct-get record dotted)
+                    (if record.dotted
                       surface-identity-generated-dotted
                       0)))]
               (begin
                 (binary.surface-binary-push-u64! (&mut out) flags)
-                (binary.surface-binary-push-u64!
-                  (&mut out)
-                  (struct-get record ref0))
-                (binary.surface-binary-push-u64!
-                  (&mut out)
-                  (struct-get record ref1))
-                (binary.surface-binary-push-u64!
-                  (&mut out)
-                  (struct-get record ref2))
-                (surface-identity-push-string!
-                  (&mut out)
-                  (struct-get record name))
+                (binary.surface-binary-push-u64! (&mut out) record.ref0)
+                (binary.surface-binary-push-u64! (&mut out) record.ref1)
+                (binary.surface-binary-push-u64! (&mut out) record.ref2)
+                (surface-identity-push-string! (&mut out) record.name)
                 (set! index (+ index 1)))))
           (ResultSurfaceIdentityBytes.Ok
             (byte_buf_core.byte-buf-builder-finish-array (& out))))))))
@@ -742,8 +695,8 @@
     (let
       [modules : (__tl_dyn-array String) (make-array String 2)]
       (begin
-        (array-set! modules 0 "pkg/a.tl")
-        (array-set! modules 1 "pkg/b.tl")
+        (set! (array-ref modules 0) "pkg/a.tl")
+        (set! (array-ref modules 1) "pkg/b.tl")
         (SurfaceIdentityKey "pkg" modules "source-hash" "compiler-build" "host")))))
 
 (cfg
@@ -753,7 +706,7 @@
     [source-count : i64]
     [generated-count : i64]) : bool
     (let
-      [remap : (__tl_dyn-array i64) (struct-get hydration remap)]
+      [remap : (__tl_dyn-array i64) hydration.remap]
       (and
         (= (array-length remap) (+ source-count generated-count))
         (= generated-count 4)
@@ -789,9 +742,8 @@
       [_canonical : i64 (ci.intern-generated-canonical-name "canonical")]
       [key : SurfaceIdentityKey (surface-identity-test-key)]
       [payload : SurfaceIdentityPayload (surface-identity-capture key)]
-      [source-count : i64 (array-length (struct-get payload source-names))]
-      [identity-count : i64
-        (+ source-count (array-length (struct-get payload generated)))]
+      [source-count : i64 (array-length payload.source-names)]
+      [identity-count : i64 (+ source-count (array-length payload.generated))]
       [session-stride : i64 (ci.intern-capacity)]
       [pair-id : i64
         (+ session-stride (+ (* module-id session-stride) base-id))]
@@ -823,8 +775,7 @@
                     [(ResultSurfaceIdentityHydration.KeyMismatch _) false]
                     [(ResultSurfaceIdentityHydration.Ok hydration)
                       (let
-                        [remap : (__tl_dyn-array i64)
-                          (struct-get hydration remap)]
+                        [remap : (__tl_dyn-array i64) hydration.remap]
                         [mapped-module : i64 (array-ref remap 1)]
                         [mapped-base : i64 (array-ref remap 2)]
                         [mapped-alpha : i64 (array-ref remap 0)]
@@ -833,7 +784,7 @@
                           (surface-identity-remap-test-ok?
                             hydration
                             source-count
-                            (array-length (struct-get payload generated)))
+                            (array-length payload.generated))
                           (=
                             (surface-identity-resolve-portable-id
                               portable-pair
@@ -859,9 +810,7 @@
                           (match (surface-identity-decode copy)
                             [(ResultSurfaceIdentityPayload.Err _) false]
                             [(ResultSurfaceIdentityPayload.Ok decoded)
-                              (surface-identity-key-eq?
-                                (struct-get decoded key)
-                                key)])))]))))])))))
+                              (surface-identity-key-eq? decoded.key key)])))]))))])))))
 
 (cfg
   compiler-surface-selftest

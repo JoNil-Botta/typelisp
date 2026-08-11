@@ -44,7 +44,7 @@
   [items : (&mut items FsStringVector)]
   [value : String])
   (:export-symbol "_tl_fs_stdlib_fs_fs_string_vector_push_bang") : unit
-  (svec.push (&mut (struct-get items items)) value))
+  (svec.push (&mut items.items) value))
 
 ;: Result type for directory-listing APIs.
 (defenum ResultIoStringVector
@@ -54,7 +54,7 @@
 ;: Return the number of strings in a filesystem string vector.
 (define (string-vector-len [items : (& items FsStringVector)])
   (:export-symbol "_tl_fs_stdlib_fs_fs_string_vector_len") : i64
-  (svec.len (& (struct-get items items))))
+  (svec.len (& items.items)))
 
 ;: Return the string at `index`, or `fallback` when out of bounds.
 (define (string-vector-get
@@ -62,14 +62,14 @@
   [index : i64]
   [fallback : String])
   (:export-symbol "_tl_fs_stdlib_fs_fs_string_vector_get") : String
-  (svec.get (& (struct-get items items)) index fallback))
+  (svec.get (& items.items) index fallback))
 
 ;: Return true when a filesystem string vector contains `needle`.
 (define (string-vector-contains?
   [items : (& items FsStringVector)]
   [needle : String])
   (:export-symbol "_tl_fs_stdlib_fs_fs_string_vector_contains_question") : bool
-  (svec.contains? (& (struct-get items items)) needle))
+  (svec.contains? (& items.items) needle))
 
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (define (linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
@@ -400,14 +400,14 @@
             (if (= (cast byte : i64) 0)
               (set! done true)
               (begin
-                (array-push! (struct-get out slots) byte)
+                (array-push! out.slots byte)
                 (set! i (+ i 1))))))
-        (array-push! (struct-get out slots) (cast '\n' : u8))))))
+        (array-push! out.slots (cast '\n' : u8))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (read-dir-bytes-string [out : (&mut out byte_buf_core.ByteBufBuilder)]) : String
   (begin
-    (set! (struct-get out len) (array-length (struct-get out slots)))
+    (set! out.len (array-length out.slots))
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
@@ -829,21 +829,21 @@
 
 ;: Return the host status code or sentinel for a filesystem node kind.
 (define (file-kind-status [path : String]) : i64
-  (struct-get (file-metadata-probe path) kind))
+  (__tl-project-field (file-metadata-probe path) kind))
 
 ;: Return the host status code or kind without following symbolic links.
 ;:
 ;: Symbolic links and Windows reparse points are reported as "other".
 (define (file-kind-status-no-follow [path : String]) : i64
-  (struct-get (file-metadata-probe-with-links path true) kind))
+  (__tl-project-field (file-metadata-probe-with-links path true) kind))
 
 ;: Return the host status code for retrieving a regular-file size.
 (define (file-size-status [path : String]) : i64
-  (struct-get (file-metadata-probe path) status))
+  (__tl-project-field (file-metadata-probe path) status))
 
 ;: Return the host-reported byte size for a regular file.
 (define (file-size [path : String]) : i64
-  (struct-get (file-metadata-probe path) size))
+  (__tl-project-field (file-metadata-probe path) size))
 
 ;: Linux `ERANGE` status returned when the current-dir buffer is too small.
 (define fs-status-range : i64
@@ -1443,11 +1443,11 @@
 
 ;: Return the node kind stored in `metadata`.
 (define (metadata-kind [metadata : FsMetadata]) : FsFileKind
-  (struct-get metadata kind))
+  metadata.kind)
 
 ;: Return the regular-file byte size stored in `metadata`.
 (define (metadata-size [metadata : FsMetadata]) : i64
-  (struct-get metadata size))
+  metadata.size)
 
 ;: Probe minimal metadata for `path`.
 ;:

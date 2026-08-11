@@ -10,7 +10,7 @@
         [msg : sync.ChannelI64Pair (sync.ChannelI64Pair 20 22)]
         [sent : sync.ChannelI64PairSendResult
           (sync.channel-i64-pair-send channel msg)]
-        [after : i64 (struct-get msg left)]
+        [after : i64 msg.left]
         (match sent
           [(sync.ChannelI64PairSendOk) after]
           [(sync.ChannelI64PairSendErr _) 2]))]))

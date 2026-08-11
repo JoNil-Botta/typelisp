@@ -144,31 +144,31 @@
     [(FormatToken.End) ""]))
 
 (define (format-token-at [stream : FormatTokenStream] [idx : i64]) : FormatToken
-  (array-ref (struct-get stream tokens) idx))
+  (array-ref stream.tokens idx))
 
 (define (format-token-start [stream : FormatTokenStream] [idx : i64]) : i64
-  (array-ref (struct-get stream starts) idx))
+  (array-ref stream.starts idx))
 
 (define (format-token-count [stream : FormatTokenStream]) : i64
-  (struct-get stream count))
+  stream.count)
 
 (define (fmt-position-line [pos : FormatPosition]) : i64
-  (struct-get pos line))
+  pos.line)
 
 (define (fmt-position-col [pos : FormatPosition]) : i64
-  (struct-get pos col))
+  pos.col)
 
 (define (format-source-error-message [err : FormatSourceError]) : String
-  (struct-get err message))
+  err.message)
 
 (define (format-source-error-span [err : FormatSourceError]) : FormatSourceSpan
-  (struct-get err span))
+  err.span)
 
 (define (format-source-span-start-line [span : FormatSourceSpan]) : i64
-  (struct-get span start-line))
+  span.start-line)
 
 (define (format-source-span-start-col [span : FormatSourceSpan]) : i64
-  (struct-get span start-col))
+  span.start-col)
 
 (define (format-source-span-eq?
   [span : FormatSourceSpan]
@@ -177,10 +177,10 @@
   [end-line : i64]
   [end-col : i64]) : bool
   (and
-    (= (struct-get span start-line) start-line)
-    (= (struct-get span start-col) start-col)
-    (= (struct-get span end-line) end-line)
-    (= (struct-get span end-col) end-col)))
+    (= span.start-line start-line)
+    (= span.start-col start-col)
+    (= span.end-line end-line)
+    (= span.end-col end-col)))
 
 (define (fmt-source-position-at [src : String] [target : i64]) : FormatPosition
   (let
@@ -215,9 +215,7 @@
 (define (format-token-span [stream : FormatTokenStream] [idx : i64]) : FormatSourceSpan
   (let
     [pos : FormatPosition
-      (fmt-source-position-at
-        (struct-get stream source)
-        (format-token-start stream idx))]
+      (fmt-source-position-at stream.source (format-token-start stream idx))]
     (FormatSourceSpan
       (fmt-position-line pos)
       (fmt-position-col pos)
@@ -229,7 +227,7 @@
     [i : i64 0]
     [hits : i64 0]
     (begin
-      (while (< i (struct-get stream count))
+      (while (< i stream.count)
         (begin
           (if (= (format-token-tag (format-token-at stream i)) wanted)
             (set! hits (+ hits 1))
@@ -314,7 +312,7 @@
                       8
                       0))))]
             (begin
-              (array-set! fmt-char-class-table i mask)
+              (set! (array-ref fmt-char-class-table i) mask)
               (set! i (+ i 1)))))
         (set! fmt-char-class-ready true)))))
 
@@ -633,8 +631,8 @@
   [start : i64]
   [tok : FormatToken]) : unit
   (begin
-    (array-set! tokens count tok)
-    (array-set! starts count start)))
+    (set! (array-ref tokens count) tok)
+    (set! (array-ref starts count) start)))
 
 ;; Copy `count` token slots into a freshly sized array. The lexer sizes its
 ;; token buffers to an estimate of the token count and grows them by doubling
@@ -651,7 +649,7 @@
     (begin
       (while (< j count)
         (begin
-          (array-set! bigger j (array-ref old j))
+          (set! (array-ref bigger j) (array-ref old j))
           (set! j (+ j 1))))
       bigger)))
 
@@ -665,7 +663,7 @@
     (begin
       (while (< j count)
         (begin
-          (array-set! bigger j (array-ref old j))
+          (set! (array-ref bigger j) (array-ref old j))
           (set! j (+ j 1))))
       bigger)))
 

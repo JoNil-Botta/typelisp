@@ -84,16 +84,14 @@
 
 ;: Return the number of borrowed argv entries in `args`.
 (define (args-count [args : (ProcessBorrowedStringList text)]) : i64
-  (struct-get args len))
+  args.len)
 
 ;: Return the borrowed argv entry at a valid `index`. Callers must validate
 ;: indexes against `args-count`; no owned string is created.
 (define (args-ref [args : (ProcessBorrowedStringList text)] [index : i64]) : (&
     text
     str)
-  (borrowed-string-from-word
-    (struct-get args anchor)
-    (array-ref (struct-get args slots) index)))
+  (borrowed-string-from-word args.anchor (array-ref args.slots index)))
 
 ;: Prepend a borrowed argument string to an argv list without copying bytes.
 (define (args-cons
@@ -104,11 +102,11 @@
     [i : i64 0]
     (begin
       (array-push! slots (borrowed-string-word value))
-      (while (< i (struct-get rest len))
+      (while (< i rest.len)
         (begin
-          (array-push! slots (array-ref (struct-get rest slots) i))
+          (array-push! slots (array-ref rest.slots i))
           (set! i (+ i 1))))
-      (ProcessBorrowedStringList slots value (+ 1 (struct-get rest len))))))
+      (ProcessBorrowedStringList slots value (+ 1 rest.len)))))
 
 ;: Return a one-element borrowed argument list.
 (define (args-single [value : (& text str)]) : (ProcessBorrowedStringList text)
@@ -121,22 +119,19 @@
   (let
     [slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
     [i : i64 0]
-    [n-left : i64 (struct-get left len)]
-    [n-right : i64 (struct-get right len)]
+    [n-left : i64 left.len]
+    [n-right : i64 right.len]
     (begin
       (while (< i n-left)
         (begin
-          (array-push! slots (array-ref (struct-get left slots) i))
+          (array-push! slots (array-ref left.slots i))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i n-right)
         (begin
-          (array-push! slots (array-ref (struct-get right slots) i))
+          (array-push! slots (array-ref right.slots i))
           (set! i (+ i 1))))
-      (ProcessBorrowedStringList
-        slots
-        (struct-get left anchor)
-        (+ n-left n-right)))))
+      (ProcessBorrowedStringList slots left.anchor (+ n-left n-right)))))
 
 ;: Return an empty borrowed environment override list tied to `text`.
 (define (env-empty-like [_text : (& text str)]) : (ProcessBorrowedEnvList text)
@@ -147,7 +142,7 @@
 
 ;: Return the number of borrowed env overrides in `env`.
 (define (env-count [env : (ProcessBorrowedEnvList text)]) : i64
-  (struct-get env len))
+  env.len)
 
 ;: Return a borrowed environment entry at a valid `index`.
 (define (env-entry-ref [env : (ProcessBorrowedEnvList text)] [index : i64]) : (ProcessBorrowedEnvEntry
@@ -158,17 +153,13 @@
 (define (env-name-ref [env : (ProcessBorrowedEnvList text)] [index : i64]) : (&
     text
     str)
-  (borrowed-string-from-word
-    (struct-get env anchor)
-    (array-ref (struct-get env name-slots) index)))
+  (borrowed-string-from-word env.anchor (array-ref env.name-slots index)))
 
 ;: Return a borrowed environment value at a valid `index`.
 (define (env-value-ref [env : (ProcessBorrowedEnvList text)] [index : i64]) : (&
     text
     str)
-  (borrowed-string-from-word
-    (struct-get env anchor)
-    (array-ref (struct-get env value-slots) index)))
+  (borrowed-string-from-word env.anchor (array-ref env.value-slots index)))
 
 ;: Prepend borrowed environment override strings without copying bytes.
 (define (env-cons
@@ -182,16 +173,12 @@
     (begin
       (array-push! name-slots (borrowed-string-word name))
       (array-push! value-slots (borrowed-string-word value))
-      (while (< i (struct-get rest len))
+      (while (< i rest.len)
         (begin
-          (array-push! name-slots (array-ref (struct-get rest name-slots) i))
-          (array-push! value-slots (array-ref (struct-get rest value-slots) i))
+          (array-push! name-slots (array-ref rest.name-slots i))
+          (array-push! value-slots (array-ref rest.value-slots i))
           (set! i (+ i 1))))
-      (ProcessBorrowedEnvList
-        name-slots
-        value-slots
-        name
-        (+ 1 (struct-get rest len))))))
+      (ProcessBorrowedEnvList name-slots value-slots name (+ 1 rest.len)))))
 
 ;: Return a one-element borrowed environment override list.
 (define (env-single [name : (& text str)] [value : (& text str)]) : (ProcessBorrowedEnvList
@@ -207,24 +194,24 @@
     [name-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
     [value-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
     [i : i64 0]
-    [n-left : i64 (struct-get left len)]
-    [n-right : i64 (struct-get right len)]
+    [n-left : i64 left.len]
+    [n-right : i64 right.len]
     (begin
       (while (< i n-left)
         (begin
-          (array-push! name-slots (array-ref (struct-get left name-slots) i))
-          (array-push! value-slots (array-ref (struct-get left value-slots) i))
+          (array-push! name-slots (array-ref left.name-slots i))
+          (array-push! value-slots (array-ref left.value-slots i))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i n-right)
         (begin
-          (array-push! name-slots (array-ref (struct-get right name-slots) i))
-          (array-push! value-slots (array-ref (struct-get right value-slots) i))
+          (array-push! name-slots (array-ref right.name-slots i))
+          (array-push! value-slots (array-ref right.value-slots i))
           (set! i (+ i 1))))
       (ProcessBorrowedEnvList
         name-slots
         value-slots
-        (struct-get left anchor)
+        left.anchor
         (+ n-left n-right)))))
 
 ;: Return a borrowed stdin/cwd value that stores no string but keeps the target
@@ -257,31 +244,31 @@
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (&
     executable
     str)
-  (struct-get command executable))
+  command.executable)
 
 ;: Return the borrowed argv list from `command`.
 (define (command-argv
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedStringList
     argv)
-  (struct-get command argv))
+  command.argv)
 
 ;: Return the borrowed cwd setting from `command`.
 (define (command-cwd
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedMaybeString
     cwd)
-  (struct-get command cwd))
+  command.cwd)
 
 ;: Return the borrowed env override list from `command`.
 (define (command-env
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedEnvList
     env)
-  (struct-get command env))
+  command.env)
 
 ;: Return the borrowed stdin setting from `command`.
 (define (command-stdin
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedMaybeString
     stdin)
-  (struct-get command stdin))
+  command.stdin)
 
 (import stdlib.process)
 (import stdlib.string)
@@ -300,7 +287,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (string-owned (args-ref args i)))
+          (set! (array-ref slots i) (string-owned (args-ref args i)))
           (set! i (+ i 1))))
       (process.ProcessStringList slots n))))
 
@@ -314,8 +301,8 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! names i (string-owned (env-name-ref env i)))
-          (array-set! values i (string-owned (env-value-ref env i)))
+          (set! (array-ref names i) (string-owned (env-name-ref env i)))
+          (set! (array-ref values i) (string-owned (env-value-ref env i)))
           (set! i (+ i 1))))
       (process.ProcessEnvList names values n))))
 

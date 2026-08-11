@@ -14,7 +14,7 @@
     [l : Label (Label 38 "abcd")]
     [f : (-> i64)
       (lambda () : i64
-        (+ (struct-get l id) (string.string-length (struct-get l name))))]
+        (+ l.id (string.string-length l.name)))]
     (= (f) 42)))
 
 (defstruct Bag
@@ -24,12 +24,12 @@
   (let
     [a : (__tl_dyn-array i64) (array.make-array i64 1)]
     (begin
-      (array-set! a 0 42)
+      (set! (array-ref a 0) 42)
       (let
         [b : Bag (Bag a)]
         [f : (-> i64)
           (lambda () : i64
-            (array-ref (struct-get b items) 0))]
+            (array-ref b.items 0))]
         (= (f) 42)))))
 
 (defenum Wrapped
@@ -43,8 +43,7 @@
     [f : (-> i64)
       (lambda () : i64
         (match w
-          [(WrappedLabel l)
-            (+ (struct-get l id) (string.string-length (struct-get l name)))]
+          [(WrappedLabel l) (+ l.id (string.string-length l.name))]
           [(WrappedText s) (string.string-length s)]
           [(WrappedNumber n) n]))]
     (= (f) 42)))
@@ -55,8 +54,7 @@
     [f : (-> i64)
       (lambda () : i64
         (match w
-          [(WrappedLabel l)
-            (+ (struct-get l id) (string.string-length (struct-get l name)))]
+          [(WrappedLabel l) (+ l.id (string.string-length l.name))]
           [(WrappedText s) (string.string-length s)]
           [(WrappedNumber n) n]))]
     (= (f) 42)))

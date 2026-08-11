@@ -232,9 +232,9 @@
         (CompilerEmbeddedStdlibTlciSurface.Unavailable message)]
       [(tlci.ResultTlciImage.Ok image)
         (CompilerEmbeddedStdlibTlciSurface.Ok
-          (struct-get image compiler-build-hash)
+          image.compiler-build-hash
           (payload.embedded-stdlib-tlci-source-hash-shared-view)
-          (struct-get image rodata))])))
+          image.rodata)])))
 
 (define (compiler-embedded-stdlib-tlci-host-table) : tlci.TlciHostCallbackTable
   (compiler-comptime-host-table))
@@ -248,10 +248,9 @@
       [else
         (if (= (compiler-embedded-stdlib-tlci-length) 0)
           (begin
-            (array-set! compiler-embedded-stdlib-tlci-session-state 0 -1)
-            (array-set!
-              compiler-embedded-stdlib-tlci-session-error
-              0
+            (set! (array-ref compiler-embedded-stdlib-tlci-session-state 0) -1)
+            (set!
+              (array-ref compiler-embedded-stdlib-tlci-session-error 0)
               "embedded stdlib tlci is unavailable in the seed/test build")
             false)
           ;; The owner is the session's own arena, not the arena that happens
@@ -264,24 +263,26 @@
             (compiler-comptime-host-table))
             [(loader.ResultTlciLoadedImage.Err message)
               (begin
-                (array-set! compiler-embedded-stdlib-tlci-session-state 0 -1)
-                (array-set!
-                  compiler-embedded-stdlib-tlci-session-error
-                  0
+                (set!
+                  (array-ref compiler-embedded-stdlib-tlci-session-state 0)
+                  -1)
+                (set!
+                  (array-ref compiler-embedded-stdlib-tlci-session-error 0)
                   (compiler-embedded-stdlib-tlci-session-own-text message))
                 false)]
             [(loader.ResultTlciLoadedImage.Ok loaded)
               (begin
-                (array-set!
-                  compiler-embedded-stdlib-tlci-session-image
-                  0
+                (set!
+                  (array-ref compiler-embedded-stdlib-tlci-session-image 0)
                   loaded)
+                (set!
+                  (array-ref compiler-embedded-stdlib-tlci-session-state 0)
+                  1)
                 (cfg
                   tlci-native-route-stress
                   (set!
                     compiler-embedded-stdlib-tlci-stress-image-generations
                     (+ compiler-embedded-stdlib-tlci-stress-image-generations 1)))
-                (array-set! compiler-embedded-stdlib-tlci-session-state 0 1)
                 true)]))])))
 
 (define (compiler-embedded-stdlib-tlci-catalog-lookup [name : String]) : CompilerEmbeddedStdlibTlciLookup
@@ -333,8 +334,8 @@
   (let
     [state : i64 (array-ref compiler-embedded-stdlib-tlci-session-state 0)]
     (begin
-      (array-set! compiler-embedded-stdlib-tlci-session-state 0 0)
-      (array-set! compiler-embedded-stdlib-tlci-session-error 0 "")
+      (set! (array-ref compiler-embedded-stdlib-tlci-session-state 0) 0)
+      (set! (array-ref compiler-embedded-stdlib-tlci-session-error 0) "")
       (if (= state 1)
         (begin
           (match (loader.tlci-loader-release
@@ -368,7 +369,7 @@
         (CompilerEmbeddedStdlibTlciValidation.Err message)]
       [(loader.ResultTlciLoadedImage.Ok loaded)
         (let
-          [count : i64 (struct-get loaded macro-entry-count)]
+          [count : i64 loaded.macro-entry-count]
           [has-array-length : bool
             (match (loader.tlci-loader-find-macro-entry
               (& loaded)
@@ -473,7 +474,7 @@
   (if (>= index compiler-comptime-host-locals-cap)
     unit
     (begin
-      (array-set! compiler-comptime-host-locals-live index false)
+      (set! (array-ref compiler-comptime-host-locals-live index) false)
       (compiler-comptime-host-locals-clear-from! (+ index 1)))))
 
 ;; Open the compiler-owned state addressed by the opaque session cookie passed
@@ -492,15 +493,14 @@
       (set!
         compiler-embedded-stdlib-tlci-stress-session-generations
         (+ compiler-embedded-stdlib-tlci-stress-session-generations 1)))
-    (array-set! compiler-comptime-host-pools 0 pools)
-    (array-set! compiler-comptime-host-reflections 0 reflections)
+    (set! (array-ref compiler-comptime-host-pools 0) pools)
+    (set! (array-ref compiler-comptime-host-reflections 0) reflections)
     (let
       [index : i64 0]
       (while (and (< index operand-count) (< index 8))
         (begin
-          (array-set!
-            compiler-comptime-host-operands
-            index
+          (set!
+            (array-ref compiler-comptime-host-operands index)
             (array-ref operands index))
           (set! index (+ index 1)))))
     (set! compiler-comptime-host-operand-count operand-count)
@@ -511,7 +511,7 @@
     (set! compiler-comptime-host-stack-len 0)
     (set! compiler-comptime-host-result-ready false)
     (compiler-comptime-host-locals-clear!)
-    (array-set! compiler-comptime-host-diagnostic 0 "")
+    (set! (array-ref compiler-comptime-host-diagnostic 0) "")
     (set! compiler-comptime-host-session-cookie cookie)))
 
 (define (compiler-comptime-host-session-close!) : unit
@@ -547,9 +547,10 @@
     (array-length compiler-comptime-host-stack))
     tlci.tlci-host-callback-status-bad-request
     (begin
-      (array-set!
-        compiler-comptime-host-stack
-        compiler-comptime-host-stack-len
+      (set!
+        (array-ref
+          compiler-comptime-host-stack
+          compiler-comptime-host-stack-len)
         value)
       (set!
         compiler-comptime-host-stack-len
@@ -950,7 +951,7 @@
 
 ;; Pop one expression from the value stack and push the single-operand node
 ;; the parser produces for the shape named by `kind` (0 return, 1 box, 2
-;; box-get), matching the interpreted quote's reconstruction. Returns the
+;; box-get, 7 box-take), matching the interpreted quote's reconstruction. Returns the
 ;; callback status. Refs #5605.
 (define (compiler-comptime-host-unary-node-step! [kind : i64]) : i64
   (if (< compiler-comptime-host-stack-len 1)
@@ -987,7 +988,9 @@
                     (ast.ast-expr-ptr-to-int-with-pools pools inner-node)]
                   [(= kind 5)
                     (ast.ast-expr-string-data-with-pools pools inner-node)]
-                  [else (ast.ast-expr-array-data-with-pools pools inner-node)])
+                  [(= kind 6)
+                    (ast.ast-expr-array-data-with-pools pools inner-node)]
+                  [else (ast.ast-expr-box-take-with-pools pools inner-node)])
                 (ast.AstType.Expr)))))))))
 
 ;; The compiler-owned callback invoke installed into the tlci host callback
@@ -1234,7 +1237,7 @@
                   infos
                   ty)
                   [(ast.AstType.Tuple elems)
-                    (ctfe_support.ctfe-type-list-count (box-get elems))]
+                    (ctfe_support.ctfe-type-list-count (__tl-box-place elems))]
                   [_ -3])])]
           (if (< count 0)
             -3
@@ -1326,7 +1329,7 @@
                 ty)
                 [(ast.AstType.Tuple elems)
                   (match (ctfe_support.ctfe-type-list-ref-with-pools
-                    (box-get elems)
+                    (__tl-box-place elems)
                     pools
                     infos
                     first-index)
@@ -1367,9 +1370,8 @@
                 (ci.intern-composite-pair-id module-id name-id))))
           (ctfe_support.ctfe-untyped-expr-type))))
     (begin
-      (array-set!
-        compiler-comptime-host-diagnostic
-        0
+      (set!
+        (array-ref compiler-comptime-host-diagnostic 0)
         (ctfe_support.ctfe-module-hook-missing-message module name))
       tlci.tlci-host-callback-status-diagnostic)))
 
@@ -1420,9 +1422,8 @@
         [result : i64
           (begin
             (if (and (> arg-a 0) (>= arg-b 0))
-              (array-set!
-                compiler-comptime-host-diagnostic
-                0
+              (set!
+                (array-ref compiler-comptime-host-diagnostic 0)
                 (unsafe
                   (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b)))
               unit)
@@ -1670,9 +1671,8 @@
     [(ctfe_support.CtfeMaybeModuleValueType.None)
       (if type-query
         (begin
-          (array-set!
-            compiler-comptime-host-diagnostic
-            0
+          (set!
+            (array-ref compiler-comptime-host-diagnostic 0)
             (ctfe_support.ctfe-module-value-missing-message module name))
           tlci.tlci-host-callback-status-diagnostic)
         (begin
@@ -1881,8 +1881,7 @@
                   [(ctfe_support.CompilerCtfeValue.ExprList rest)
                     (let
                       [next : ast.AstExprList
-                        (ast.ast-expr-list-with-capacity
-                          (+ (struct-get (& rest) len) 1))]
+                        (ast.ast-expr-list-with-capacity (+ rest.len 1))]
                       (begin
                         (ast.ast-expr-list-push (&mut next) head-node)
                         (ast.ast-expr-list-append-from (&mut next) (& rest) 0)
@@ -2396,9 +2395,8 @@
                       ty)]
                   (if (ctfe_support.ctfe-untyped-expr-type? actual-ty)
                     (begin
-                      (array-set!
-                        compiler-comptime-host-diagnostic
-                        0
+                      (set!
+                        (array-ref compiler-comptime-host-diagnostic 0)
                         "expr-type requires a typechecked Expr")
                       tlci.tlci-host-callback-status-diagnostic)
                     (begin
@@ -3076,7 +3074,7 @@
                   (ctfe_support.ctfe-untyped-expr-type))]
               [else
                 (let
-                  [produced : ast.AstType (struct-get clause init-produced)]
+                  [produced : ast.AstType clause.init-produced]
                   [pools : ast.AstNodePoolContext
                     (array-ref
                       (compiler-comptime-host-global-shared-view
@@ -3415,14 +3413,13 @@
             (< compiler-comptime-host-stack-len 1))
             tlci.tlci-host-callback-status-bad-request
             (begin
-              (array-set!
-                compiler-comptime-host-locals
-                arg-a
+              (set!
+                (array-ref compiler-comptime-host-locals arg-a)
                 (array-ref
                   (compiler-comptime-host-global-shared-view
                     compiler-comptime-host-stack)
                   (- compiler-comptime-host-stack-len 1)))
-              (array-set! compiler-comptime-host-locals-live arg-a true)
+              (set! (array-ref compiler-comptime-host-locals-live arg-a) true)
               (set!
                 compiler-comptime-host-stack-len
                 (- compiler-comptime-host-stack-len 1))
@@ -3712,9 +3709,8 @@
                                   info)))))]
                       [(ctfe_support.CtfeMaybeReflectInfo.None)
                         (begin
-                          (array-set!
-                            compiler-comptime-host-diagnostic
-                            0
+                          (set!
+                            (array-ref compiler-comptime-host-diagnostic 0)
                             (if (= arg-a 1)
                               "type-nominal-module requires struct or enum type"
                               "type-nominal-name requires struct or enum type"))
@@ -4084,10 +4080,9 @@
               (ast.AstPattern.Var name-id (ast.AstMaybeType.Some ty)))))]
       [(ctfe_support.ResultCtfeQuoteType.Err diag)
         (begin
-          (array-set!
-            compiler-comptime-host-diagnostic
-            0
-            (struct-get (box-get diag) message))
+          (set!
+            (array-ref compiler-comptime-host-diagnostic 0)
+            (__tl-project-field (__tl-box-place diag) message))
           tlci.tlci-host-callback-status-diagnostic)])))
 
 (define (compiler-comptime-host-callback-pattern-binding-typed
@@ -4706,7 +4701,7 @@
               (- compiler-comptime-host-stack-len 1))
               [(ctfe_support.CompilerCtfeValue.String text _)
                 (begin
-                  (array-set! compiler-comptime-host-diagnostic 0 text)
+                  (set! (array-ref compiler-comptime-host-diagnostic 0) text)
                   (set!
                     compiler-comptime-host-stack-len
                     (- compiler-comptime-host-stack-len 1))
@@ -5106,7 +5101,7 @@
           result)))))
 
 ;; expr-struct-set: pop the value then the target expression and push the
-;; `(set! (struct-get target field) value)` node for the field name in
+;; internal StructSet node for the field name in
 ;; `a`/`b`, matching the interpreted quote's non-unquoted set! target path.
 (define (compiler-comptime-host-callback-expr-struct-set
   [session : i64]
@@ -5174,7 +5169,7 @@
 
 ;; expr-return / expr-box / expr-box-get: pop one expression and push the
 ;; node the parser produces, matching the interpreted quote's unary
-;; reconstruction of `(return e)`, `(box e)`, and `(box-get e)`.
+;; reconstruction of Return, Box, and BoxGet AST nodes.
 (define (compiler-comptime-host-callback-expr-return
   [session : i64]
   [_arg-a : i64]
@@ -5235,6 +5230,28 @@
       compiler-comptime-host-session-status
       (let
         [result : i64 (compiler-comptime-host-unary-node-step! 2)]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-expr-box-take
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64 (compiler-comptime-host-unary-node-step! 7)]
         (begin
           (when
             (not (= result tlci.tlci-host-callback-status-ok))
@@ -5877,7 +5894,7 @@
               (set!
                 compiler-comptime-host-stack-len
                 (- compiler-comptime-host-stack-len 1))
-              (ctfe_support.ctfe-type-list-count (box-get params)))]
+              (ctfe_support.ctfe-type-list-count (__tl-box-place params)))]
           [_ -3])))))
 
 (define (compiler-comptime-host-callback-function-return-type
@@ -6036,16 +6053,14 @@
                                 cleanup-name-id)))]
                         [(ctfe_support.CtfeReflectCleanup.No)
                           (begin
-                            (array-set!
-                              compiler-comptime-host-diagnostic
-                              0
+                            (set!
+                              (array-ref compiler-comptime-host-diagnostic 0)
                               "type-cleanup-function requires cleanup-owning type")
                             tlci.tlci-host-callback-status-diagnostic)]))]
                   [(ctfe_support.CtfeMaybeReflectInfo.None)
                     (begin
-                      (array-set!
-                        compiler-comptime-host-diagnostic
-                        0
+                      (set!
+                        (array-ref compiler-comptime-host-diagnostic 0)
                         "type-cleanup-function requires cleanup-owning type")
                       tlci.tlci-host-callback-status-diagnostic)])]
               [_ tlci.tlci-host-callback-status-bad-request]))]
@@ -7830,9 +7845,8 @@
             (< compiler-comptime-host-stack-len 1))
             tlci.tlci-host-callback-status-bad-request
             (begin
-              (array-set!
-                compiler-comptime-host-result
-                0
+              (set!
+                (array-ref compiler-comptime-host-result 0)
                 (array-ref
                   (compiler-comptime-host-global-shared-view
                     compiler-comptime-host-stack)
@@ -7884,14 +7898,13 @@
   [name : String]
   [callback : (-> i64 i64 i64 i64 i64)]) : unit
   (let
-    [index : i64 (struct-get registry len)]
+    [index : i64 registry.len]
     (begin
-      (array-set! (struct-get registry names) index name)
-      (array-set!
-        (struct-get registry callbacks)
-        index
+      (set! (array-ref registry.names index) name)
+      (set!
+        (array-ref registry.callbacks index)
         (compiler-comptime-host-function-address callback))
-      (set! (struct-get registry len) (+ index 1)))))
+      (set! registry.len (+ index 1)))))
 
 ;; Static name-to-address registry used by the built-in image linker. Registry
 ;; validation rejects empty/duplicate names and null callbacks before mapping.
@@ -8343,6 +8356,11 @@
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-box-take)
+        compiler-comptime-host-callback-expr-box-take)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-ptr-read)
         compiler-comptime-host-callback-expr-ptr-read)
       (compiler-comptime-host-registry-add!
@@ -8664,6 +8682,6 @@
         0
         0
         8192
-        (struct-get registry names)
-        (struct-get registry callbacks)
-        (struct-get registry len)))))
+        registry.names
+        registry.callbacks
+        registry.len))))

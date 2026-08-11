@@ -60,8 +60,9 @@ contract](../stdlib/README.md#public-mutator-names) for examples and migration
 rules.
 
 `typelisp lint` includes staged migration rules such as
-`--deprecated-string-concat`, `--redundant-function-name`, and
-`--prefer-dotted-field`; `--name-case` enforces those naming conventions.
+`--deprecated-string-concat` and `--redundant-function-name`;
+`--prefer-dotted-field` is a deprecated no-op because dotted projection is now
+the only public field syntax. `--name-case` enforces those naming conventions.
 Legacy string-path imports are rejected by the parser rather than reported by
 an opt-in lint rule. Findings use rich source diagnostics by default,
 including the rule ID accepted by `;; lint-allow: <rule-id>` and a suggested

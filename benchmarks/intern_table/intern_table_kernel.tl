@@ -71,13 +71,13 @@
   [items : (&mut items i64vec.Vec)]
   [index : i64]
   [value : i64]) : unit
-  (array-set! (i64vec.slots-mut items) index value))
+  (set! (array-ref (i64vec.slots-mut items) index) value))
 
 (define (it-u8-ref [items : (& items u8vec.Vec)] [index : i64]) : u8
   (array-ref (u8vec.slots items) index))
 
 (define (it-u8-set! [items : (&mut items u8vec.Vec)] [index : i64] [value : u8]) : unit
-  (array-set! (u8vec.slots-mut items) index value))
+  (set! (array-ref (u8vec.slots-mut items) index) value))
 
 (define (it-string-to-u8-vec [source : String]) : u8vec.Vec
   (let
@@ -91,9 +91,8 @@
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            slots
-            i
+          (set!
+            (array-ref slots i)
             (unsafe
               (ptr-read (ptr-offset src i))))
           (set! i (+ i 1))))
@@ -210,8 +209,8 @@
       (while (and (< probes capacity) (not placed))
         (if (= (array-ref id-slots slot) 0)
           (begin
-            (array-set! id-slots slot (+ id 1))
-            (array-set! hash-slots slot hash)
+            (set! (array-ref id-slots slot) (+ id 1))
+            (set! (array-ref hash-slots slot) hash)
             (set! placed true))
           (begin
             (set! slot (it-bucket (+ slot 1) capacity))
@@ -388,8 +387,8 @@
           (when
             (= (cast (array-ref text-slots i) : i64) 10)
             (begin
-              (array-set! start-slots lines start)
-              (array-set! length-slots lines (- i start))
+              (set! (array-ref start-slots lines) start)
+              (set! (array-ref length-slots lines) (- i start))
               (set! lines (+ lines 1))
               (set! start (+ i 1))))
           (set! i (+ i 1))))

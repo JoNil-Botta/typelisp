@@ -7,8 +7,8 @@
   (foreach
     ([i : i64 0 n])
     (begin
-      (array-set! left i (+ i 1))
-      (array-set! right i (+ i 5)))))
+      (set! (array-ref left i) (+ i 1))
+      (set! (array-ref right i) (+ i 5)))))
 
 (define (main) : i64
   (let

@@ -154,7 +154,7 @@
 (define (compiler-object-elf-render-padding-to!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [offset : i64]) : unit
-  (compiler-object-elf-push-zeroes! out (- offset (struct-get out len))))
+  (compiler-object-elf-push-zeroes! out (- offset out.len)))
 
 (define (compiler-object-elf-data-record-end-offset
   [record : cobj.CompilerObjectDataRecord]
@@ -292,9 +292,7 @@
 (define (compiler-object-elf-section-virtual-size
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : i64
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
         [(cobj.CompilerObjectSectionKind.Text)
@@ -481,7 +479,7 @@
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
   (let
-    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+    [symbols : cobj.CompilerObjectSymbolList image.symbols]
     [local : i64 (compiler-object-elf-local-symbol-index-from symbols name 1)]
     (if (>= local 0)
       local
@@ -554,9 +552,7 @@
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]
   [label : String]) : i64
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
         [(cobj.CompilerObjectSectionKind.Text)
@@ -669,7 +665,7 @@
 (define (compiler-object-elf-text-targets-known?
   [image : cobj.CompilerObjectImage]) : bool
   (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
+    image.sections
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-instr-targets-known? image instrs)]))
@@ -677,7 +673,7 @@
 (define (compiler-object-elf-text-instr-relocation-count
   [image : cobj.CompilerObjectImage]) : i64
   (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
+    image.sections
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-instrs-relocation-count instrs)]))
@@ -686,19 +682,16 @@
   [image : cobj.CompilerObjectImage]) : bool
   (=
     (compiler-object-elf-relocation-count
-      (struct-get image relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Text))
     (compiler-object-elf-text-instr-relocation-count image)))
 
 (define (compiler-object-elf-image-supported?
   [image : cobj.CompilerObjectImage]) : bool
   (and
-    (compiler-object-elf-sections-supported? (struct-get image sections))
-    (compiler-object-elf-relocation-list-supported?
-      (struct-get image relocations))
-    (compiler-object-elf-relocation-sites-known?
-      image
-      (struct-get image relocations))
+    (compiler-object-elf-sections-supported? image.sections)
+    (compiler-object-elf-relocation-list-supported? image.relocations)
+    (compiler-object-elf-relocation-sites-known? image image.relocations)
     (compiler-object-elf-text-targets-known? image)
     (compiler-object-elf-text-relocation-count-matches? image)))
 
@@ -726,8 +719,7 @@
   (match kind
     [(cobj.CompilerObjectSectionKind.Text)
       (compiler-object-elf-text-instr-relocation-count image)]
-    [_
-      (compiler-object-elf-relocation-count (struct-get image relocations) kind)]))
+    [_ (compiler-object-elf-relocation-count image.relocations kind)]))
 
 (define (compiler-object-elf-relocation-section-size
   [image : cobj.CompilerObjectImage]
@@ -740,7 +732,7 @@
   [image : cobj.CompilerObjectImage]) : i64
   (*
     compiler-object-elf-symbol-size
-    (+ 1 (cobj.compiler-object-symbol-list-count (struct-get image symbols)))))
+    (+ 1 (cobj.compiler-object-symbol-list-count image.symbols))))
 
 (define (compiler-object-elf-string-table-size-from
   [symbols : cobj.CompilerObjectSymbolList]
@@ -868,7 +860,7 @@
 (define (compiler-object-elf-shstrtab-offset [image : cobj.CompilerObjectImage]) : i64
   (+
     (compiler-object-elf-strtab-offset image)
-    (compiler-object-elf-string-table-size (struct-get image symbols))))
+    (compiler-object-elf-string-table-size image.symbols)))
 
 (define (compiler-object-elf-section-header-offset
   [image : cobj.CompilerObjectImage]) : i64
@@ -1180,9 +1172,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : unit
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
         [(cobj.CompilerObjectSectionKind.Text)
@@ -1424,7 +1414,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : cobj.CompilerObjectImage]) : unit
   (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
+    image.sections
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-render-text-instr-relocations! out image instrs 0)]))
@@ -1466,7 +1456,7 @@
         (compiler-object-elf-render-relocations-for-section!
           out
           image
-          (struct-get image relocations)
+          image.relocations
           kind)])))
 
 (define (compiler-object-elf-symbol-string-offset-from
@@ -1497,10 +1487,7 @@
 (define (compiler-object-elf-symbol-string-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
-  (compiler-object-elf-symbol-string-offset-from
-    (struct-get image symbols)
-    name
-    1))
+  (compiler-object-elf-symbol-string-offset-from image.symbols name 1))
 
 (define (compiler-object-elf-symbol-binding
   [binding : cobj.CompilerObjectSymbolBinding]) : i64
@@ -1604,12 +1591,12 @@
     (compiler-object-elf-render-symbols-by-locality!
       out
       image
-      (struct-get image symbols)
+      image.symbols
       true)
     (compiler-object-elf-render-symbols-by-locality!
       out
       image
-      (struct-get image symbols)
+      image.symbols
       false)))
 
 (define (compiler-object-elf-render-string-table-symbols!
@@ -1637,9 +1624,7 @@
       out
       (compiler-object-elf-strtab-offset image))
     (compiler-object-elf-push-u8! out 0)
-    (compiler-object-elf-render-string-table-symbols!
-      out
-      (struct-get image symbols))
+    (compiler-object-elf-render-string-table-symbols! out image.symbols)
     (compiler-object-elf-render-padding-to!
       out
       (compiler-object-elf-shstrtab-offset image))
@@ -1804,7 +1789,7 @@
       (compiler-object-elf-symtab-offset image)
       (compiler-object-elf-symbol-table-size image)
       compiler-object-elf-section-strtab-index
-      (+ 1 (compiler-object-elf-local-symbol-count (struct-get image symbols)))
+      (+ 1 (compiler-object-elf-local-symbol-count image.symbols))
       8
       compiler-object-elf-symbol-size)
     (compiler-object-elf-push-section-header!
@@ -1815,7 +1800,7 @@
       0
       0
       (compiler-object-elf-strtab-offset image)
-      (compiler-object-elf-string-table-size (struct-get image symbols))
+      (compiler-object-elf-string-table-size image.symbols)
       0
       0
       1

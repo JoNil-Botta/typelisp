@@ -19,8 +19,7 @@
         [out-slots (i64v.slots-mut (&mut out))]
         (foreach
           ([i : i64 0 n])
-          (array-set!
-            out-slots
-            i
+          (set!
+            (array-ref out-slots i)
             (spmd-shuffle (cast 77 : i64) (array-ref selector-slots i)))))
       0)))

@@ -5,7 +5,7 @@
 (define (canonical-import-alias-first-read
   [choice : shared.CanonicalImportChoice]) : i64
   (match choice
-    [(shared.CanonicalImportChoice.Chosen item) (struct-get item value)]
+    [(shared.CanonicalImportChoice.Chosen item) item.value]
     [(shared.CanonicalImportChoice.Missing) 0]))
 
 (define (main) : i64
@@ -15,6 +15,4 @@
     [flat-value : canonical_import_shared.CanonicalImportValue
       (canonical_import_shared.CanonicalImportValue
         canonical_import_shared.canonical-import-marker)]
-    (+
-      (canonical-import-alias-first-read qualified-choice)
-      (struct-get flat-value value))))
+    (+ (canonical-import-alias-first-read qualified-choice) flat-value.value)))

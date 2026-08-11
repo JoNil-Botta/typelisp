@@ -15,5 +15,7 @@
       (array-push! a (P 30 5))
       (array-push! a (P 100 7))
       (+
-        (struct-get (array-ref a 0) x)
-        (+ (struct-get (array-ref a 0) y) (struct-get (array-ref a 1) y))))))
+        (__tl-project-field (array-ref a 0) x)
+        (+
+          (__tl-project-field (array-ref a 0) y)
+          (__tl-project-field (array-ref a 1) y))))))

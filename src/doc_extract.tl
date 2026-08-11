@@ -596,7 +596,7 @@
 
 ;: helper doc
 (define (box-string-value [value : Box_String]) : String
-  (struct-get value value))")
+  value.value)")
 
 (define (doc-item-ok?
   [item : DocItem]

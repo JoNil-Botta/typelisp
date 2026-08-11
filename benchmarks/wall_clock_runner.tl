@@ -66,7 +66,7 @@
   [error-buffer : (__tl_dyn-array i64)]
   [status : i64]) : never
   (begin
-    (array-set! error-buffer 0 (positive-errno status))
+    (set! (array-ref error-buffer 0) (positive-errno status))
     (unsafe
       (syscall 1 exec-write (array-i64-addr error-buffer) 8))
     (unsafe

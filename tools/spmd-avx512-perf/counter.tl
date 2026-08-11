@@ -77,19 +77,19 @@
     [attr : (__tl_dyn-array u64) (array.make-array u64 16)]
     (begin
       ;; perf_event_attr starts with u32 type followed by u32 size.
-      (array-set! attr 0 (shl (cast perf-attr-size : u64) 32))
+      (set! (array-ref attr 0) (shl (cast perf-attr-size : u64) 32))
       ;; PERF_TYPE_HARDWARE / PERF_COUNT_HW_INSTRUCTIONS.
-      (array-set! attr 1 (cast 1 : u64))
+      (set! (array-ref attr 1) (cast 1 : u64))
       ;; PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING.
-      (array-set! attr 4 (cast 3 : u64))
-      (array-set! attr 5 perf-attr-flags)
+      (set! (array-ref attr 4) (cast 3 : u64))
+      (set! (array-ref attr 5) perf-attr-flags)
       attr)))
 
 (define (affinity-mask [cpu : i64]) : (__tl_dyn-array u64)
   (let
     [mask : (__tl_dyn-array u64) (array.make-array u64 16)]
     (begin
-      (array-set! mask (/ cpu 64) (shl (cast 1 : u64) (% cpu 64)))
+      (set! (array-ref mask (/ cpu 64)) (shl (cast 1 : u64) (% cpu 64)))
       mask)))
 
 (define (close-fd [fd : i64]) : unit
@@ -258,7 +258,7 @@
                     (io.print-error (perf-open-error event-fd))
                     2)
                   (begin
-                    (array-set! scratch 0 (cast 1 : u8))
+                    (set! (array-ref scratch 0) (cast 1 : u8))
                     (let
                       [released : i64
                         (unsafe

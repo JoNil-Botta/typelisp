@@ -548,7 +548,7 @@
 (define (exp-check-f64-table-tail [index : i64]) : bool
   (let
     [entry : math.MathExpF64TableEntry (math.math-exp-f64-table-entry index)]
-    (= (struct-get entry tail-bits) (array-ref exp-f64-table-tail-bits index))))
+    (= entry.tail-bits (array-ref exp-f64-table-tail-bits index))))
 
 (define (exp-check-f64 [index : i64]) : bool
   (exp-u64-within-one-ulp?

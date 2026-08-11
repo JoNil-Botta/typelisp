@@ -11,7 +11,7 @@
 
 (define (thread-transfer-choice-score [choice : ThreadTransferChoice]) : i64
   (match choice
-    [(ThreadTransferSome pair) (struct-get pair left)]
+    [(ThreadTransferSome pair) pair.left]
     [(ThreadTransferNone) 0]))
 
 (define (thread-transfer-aggregate-score) : i64
@@ -24,9 +24,9 @@
     (match (thread_i64.spawn
       (lambda () : i64
         (+
-          (struct-get pair left)
+          pair.left
           (+
-            (struct-get pair right)
+            pair.right
             (+
               (array-ref items 0)
               (+

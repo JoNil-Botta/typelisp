@@ -14,10 +14,10 @@
 (import (vector.vector Segment) as svec)
 
 (define (pair-score [p : Pair]) : i64
-  (+ (* (struct-get p left) 10) (struct-get p right)))
+  (+ (* p.left 10) p.right))
 
 (define (pair-swap [p : Pair]) : Pair
-  (Pair (struct-get p right) (struct-get p left)))
+  (Pair p.right p.left))
 
 (define (vector-macro-pair-fill [n : i64]) : pvec.Vec
   (let

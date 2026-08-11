@@ -27,17 +27,16 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (- (% i 17) 8) : i32))
-          (array-set! counts i (count32 i))
+          (set! (array-ref xs i) (cast (- (% i 17) 8) : i32))
+          (set! (array-ref counts i) (count32 i))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : i32 (array-ref xs j)]
           [count : i32 (array-ref counts j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (< x 0)
               (shr x count)
               (if (= (bit-and x 2) 0)
@@ -72,17 +71,16 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ (* i 17) 3) : u32))
-          (array-set! counts i (cast (count32 i) : u32))
+          (set! (array-ref xs i) (cast (+ (* i 17) 3) : u32))
+          (set! (array-ref counts i) (cast (count32 i) : u32))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : u32 (array-ref xs j)]
           [count : u32 (array-ref counts j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (shr x count)
               (shl x count)))))
@@ -113,17 +111,16 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (- i 7))
-          (array-set! counts i (count64 i))
+          (set! (array-ref xs i) (- i 7))
+          (set! (array-ref counts i) (count64 i))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : i64 (array-ref xs j)]
           [count : i64 (array-ref counts j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (< x 0)
               (shr x count)
               (shl x count)))))
@@ -154,17 +151,16 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ (* i 31) 5) : u64))
-          (array-set! counts i (cast (count64 i) : u64))
+          (set! (array-ref xs i) (cast (+ (* i 31) 5) : u64))
+          (set! (array-ref counts i) (cast (count64 i) : u64))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : u64 (array-ref xs j)]
           [count : u64 (array-ref counts j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (shr x count)
               (shl x count)))))

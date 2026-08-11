@@ -6,5 +6,5 @@
   (let
     [a : (Array i64 1) (array 0)]
     (begin
-      (array-set! a 1 42)
+      (set! (array-ref a 1) 42)
       0)))

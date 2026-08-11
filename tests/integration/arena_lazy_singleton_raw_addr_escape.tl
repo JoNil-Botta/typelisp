@@ -74,7 +74,7 @@
             (arena.tl_arena_set owner-arena))
           unit)]
       [storage : (__tl_dyn-array i64) (array.make-array i64 8)]
-      [_fill : unit (array-set! storage 0 session-magic)]
+      [_fill : unit (set! (array-ref storage 0) session-magic)]
       [addr : i64 (raw-addr-of storage)]
       [_restore : unit
         (if session-storage-has-owner
@@ -82,8 +82,8 @@
             (arena.tl_arena_set prev))
           unit)]
       (begin
-        (array-set! session-addr-cell 0 addr)
-        (array-set! session-open-flag 0 1)))))
+        (set! (array-ref session-addr-cell 0) addr)
+        (set! (array-ref session-open-flag 0) 1)))))
 
 ; The dispatch-path read: it only ever sees the integer.
 (define (session-dispatch) : i64
@@ -109,7 +109,7 @@
       (while (< step batch-size)
         (begin
           ; Ordinary per-declaration garbage in the generation.
-          (array-set! (array.make-array i64 16) 0 step)
+          (set! (array-ref (array.make-array i64 16) 0) step)
           (if (>= index open-batch)
             (begin
               (session-open! owner-arena)

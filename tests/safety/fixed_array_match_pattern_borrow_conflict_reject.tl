@@ -4,5 +4,5 @@
     (match (& items)
       [(array first _)
         (begin
-          (array-set! items 0 41)
+          (set! (array-ref items 0) 41)
           (+ (deref first) 1))])))

@@ -49,7 +49,7 @@
     [i : i64 0]
     (while (< i 32)
       (begin
-        (array-set! offsets i (gathers-offset i))
+        (set! (array-ref offsets i) (gathers-offset i))
         (set! i (+ i 1))))))
 
 (define (gathers-value [index : i64]) : f32
@@ -60,7 +60,7 @@
     [i : i64 0]
     (while (< i length)
       (begin
-        (array-set! values i (gathers-value i))
+        (set! (array-ref values i) (gathers-value i))
         (set! i (+ i 1))))))
 
 (define (gathers-detect-width) : i64
@@ -73,11 +73,11 @@
     (begin
       (while (< i 32)
         (begin
-          (array-set! markers i (cast (+ i 1) : f32))
+          (set! (array-ref markers i) (cast (+ i 1) : f32))
           (set! i (+ i 1))))
       (foreach
         ([i : i64 0 32])
-        (array-set! lanes i (array-ref markers (program-index))))
+        (set! (array-ref lanes i) (array-ref markers (program-index))))
       (set! first-bits (io.float-f32-bits (array-ref lanes 0)))
       (while (and
         (< width 32)

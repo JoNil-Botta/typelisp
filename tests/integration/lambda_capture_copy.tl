@@ -15,7 +15,7 @@
       (lambda () : i64
         (if (ptr-null? raw)
           (if (ptr-null? raw-mut)
-            (+ x (+ (struct-get pair left) (fn-value)))
+            (+ x (+ pair.left (fn-value)))
             0)
           0))]
     [copy : (-> i64) f]

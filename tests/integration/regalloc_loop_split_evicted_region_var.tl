@@ -71,7 +71,7 @@
 (define (buf-reserve! [buf : (&mut buf Buf)] [total : i64]) : unit
   (begin
     (set! buf-reserve-calls (+ buf-reserve-calls 1))
-    (if (> total (struct-get buf cap))
+    (if (> total buf.cap)
       (io.panic "buf overflow")
       unit)))
 
@@ -89,11 +89,11 @@
     [nd : i64 (string.string-length d)]
     [ne : i64 (string.string-length e)]
     [total : i64 (+ na (+ nb (+ nc (+ nd ne))))]
-    [off : i64 (struct-get buf len)]
+    [off : i64 buf.len]
     (begin
       (buf-reserve! buf (+ off total))
       (let
-        [dst : (MutPtr u8) (struct-get buf data)]
+        [dst : (MutPtr u8) buf.data]
         [ob : i64 (+ off na)]
         [oc : i64 (+ ob nb)]
         [od : i64 (+ oc nc)]
@@ -104,7 +104,7 @@
           (copy-part! dst oc c nc)
           (copy-part! dst od d nd)
           (copy-part! dst oe e ne)))
-      (set! (struct-get buf len) (+ off total)))))
+      (set! buf.len (+ off total)))))
 
 (define (byte-at [p : (MutPtr u8)] [i : i64]) : i64
   (cast
@@ -191,7 +191,7 @@
               (+
                 (string.string-length c)
                 (+ (string.string-length d) (string.string-length e)))))))
-      (if (= (struct-get buf len) total)
+      (if (= buf.len total)
         unit
         (set! bad (+ bad 1000)))
       (set! i 0)

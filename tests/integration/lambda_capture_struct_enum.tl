@@ -13,13 +13,13 @@
     [p : Point (Point 40 2)]
     [f : (-> i64)
       (lambda () : i64
-        (+ (struct-get p x) (struct-get p y)))]
+        (+ p.x p.y))]
     (= (f) 42)))
 
 ; Struct captured by a closure that OUTLIVES the frame that built it.
 (define (make-x-reader [p : Point]) : (-> i64)
   (lambda () : i64
-    (struct-get p x)))
+    p.x))
 
 (define (case-struct-returned) : bool
   (= ((make-x-reader (Point 42 7))) 42))

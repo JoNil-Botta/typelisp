@@ -6,7 +6,7 @@
   (y i64))
 
 (define (copy-pair [p : (& p Pair)]) : Pair
-  (Pair (struct-get p x) (struct-get p y)))
+  (Pair p.x p.y))
 
 (define (swap-sum [n : i64]) : i64
   (let
@@ -22,7 +22,7 @@
               (set! a (copy-pair (& b)))
               (set! b tmp)))
           (set! i (+ i 1))))
-      (+ (struct-get a y) (struct-get b y)))))
+      (+ a.y b.y))))
 
 (define (main) : i64
   (swap-sum 5))

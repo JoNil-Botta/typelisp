@@ -87,9 +87,8 @@
       (begin
         (while (< i n)
           (begin
-            (array-set!
-              buf
-              i
+            (set!
+              (array-ref buf i)
               (unsafe
                 (ptr-read (ptr-offset ptr i))))
             (set! i (+ i 1))))
@@ -285,9 +284,9 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! bytes i (cast (string-ref text i) : u8))
+          (set! (array-ref bytes i) (cast (string-ref text i) : u8))
           (set! i (+ i 1))))
-      (array-set! bytes n (cast 0 : u8))
+      (set! (array-ref bytes n) (cast 0 : u8))
       bytes)))
 
 ;: Return a read-only byte pointer to an array's backing storage.
@@ -338,18 +337,17 @@
     (begin
       (while (< i name-len)
         (begin
-          (array-set! bytes i (cast (string-ref name i) : u8))
+          (set! (array-ref bytes i) (cast (string-ref name i) : u8))
           (set! i (+ i 1))))
-      (array-set! bytes name-len (cast '=' : u8))
+      (set! (array-ref bytes name-len) (cast '=' : u8))
       (set! i 0)
       (while (< i value-len)
         (begin
-          (array-set!
-            bytes
-            (+ (+ name-len 1) i)
+          (set!
+            (array-ref bytes (+ (+ name-len 1) i))
             (cast (string-ref value i) : u8))
           (set! i (+ i 1))))
-      (array-set! bytes (+ (+ name-len 1) value-len) (cast 0 : u8))
+      (set! (array-ref bytes (+ (+ name-len 1) value-len)) (cast 0 : u8))
       (unsafe
         (cast (ptr->int (array-u8-ptr bytes)) : i64)))))
 
@@ -390,9 +388,8 @@
                 (unsafe
                   (match-entry name entry false)))
                 (begin
-                  (array-set!
-                    slots
-                    write-index
+                  (set!
+                    (array-ref slots write-index)
                     (unsafe
                       (ptr->int entry)))
                   (set! write-index (+ write-index 1)))
@@ -400,13 +397,12 @@
               (set! read-index (+ read-index 1))))))
       (if present
         (begin
-          (array-set!
-            slots
-            write-index
+          (set!
+            (array-ref slots write-index)
             (cast (linux-entry-addr name value) : u64))
           (set! write-index (+ write-index 1)))
         unit)
-      (array-set! slots write-index (cast 0 : u64))
+      (set! (array-ref slots write-index) (cast 0 : u64))
       (set!
         env-linux-current-environ-addr
         (unsafe
@@ -527,25 +523,25 @@
 
 ;: Return the number of entries in `items`.
 (define (string-list-count [items : EnvStringList]) : i64
-  (struct-get items len))
+  items.len)
 
 ;: Return the entry at `index`, or the empty string when `index` is out of range.
 (define (string-list-ref [items : EnvStringList] [index : i64]) : String
-  (if (and (>= index 0) (< index (struct-get items len)))
-    (array-ref (struct-get items slots) index)
+  (if (and (>= index 0) (< index items.len))
+    (array-ref items.slots index)
     ""))
 
 ;: Prepend an owned string to an environment string list.
 (define (string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
   (let
-    [n : i64 (struct-get rest len)]
+    [n : i64 rest.len]
     [slots : (__tl_dyn-array String) (array.make-array String (+ n 1))]
     [i : i64 0]
     (begin
-      (array-set! slots 0 value)
+      (set! (array-ref slots 0) value)
       (while (< i n)
         (begin
-          (array-set! slots (+ i 1) (array-ref (struct-get rest slots) i))
+          (set! (array-ref slots (+ i 1)) (array-ref rest.slots i))
           (set! i (+ i 1))))
       (EnvStringList slots (+ n 1)))))
 
@@ -558,7 +554,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (svec.get (& items) i ""))
+          (set! (array-ref slots i) (svec.get (& items) i ""))
           (set! i (+ i 1))))
       (EnvStringList slots n))))
 
@@ -567,11 +563,11 @@
   [items : EnvStringList]
   [out : (&mut out svec.Vec)]) : unit
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [i : i64 0]
     (while (< i n)
       (begin
-        (svec.push out (array-ref (struct-get items slots) i))
+        (svec.push out (array-ref items.slots i))
         (set! i (+ i 1))))))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.

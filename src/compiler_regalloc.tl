@@ -245,7 +245,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (if (compiler-reg-instr-seq-has-phi? instrs 0)
             true
-            (compiler-reg-blocks-have-phi? (box-get rest)))])]
+            (compiler-reg-blocks-have-phi? (__tl-box-place rest)))])]
     [(ir.CompilerIrBlockList.Array seq) (compiler-reg-block-seq-has-phi? seq 0)]))
 
 (define (compiler-reg-liveness-handle-make
@@ -302,7 +302,7 @@
 
 (define (compiler-reg-liveness-handle-edge-precise
   [handle : CompilerRegLivenessHandle]) : live.CompilerFunctionLiveness
-  (match (struct-get handle edge-precise)
+  (match handle.edge-precise
     [(CompilerRegMaybeLiveness.Some liveness) liveness]
     [(CompilerRegMaybeLiveness.No)
       ;; Callers requesting this accessor are scalar coalescer paths and must
@@ -606,18 +606,18 @@
   (CompilerRegIdSeq (array.make-array i64 capacity) 0))
 
 (defmacro (compiler-reg-id-seq-count [items : CompilerRegIdSeq]) : i64
-  `(struct-get ,items len))
+  `(__tl-project-field-name ,items "len"))
 
 (defmacro (compiler-reg-id-seq-empty? [items : CompilerRegIdSeq]) : bool
-  `(= (struct-get ,items len) 0))
+  `(= (__tl-project-field-name ,items "len") 0))
 
 (defmacro (compiler-reg-id-seq-ref [items : CompilerRegIdSeq] [index : i64]) : i64
-  `(array-ref (struct-get ,items slots) ,index))
+  `(array-ref (__tl-project-field-name ,items "slots") ,index))
 
 (define (compiler-reg-id-seq-push [items : CompilerRegIdSeq] [item : i64]) : CompilerRegIdSeq
   (let
-    [slots : (__tl_dyn-array i64) (struct-get items slots)]
-    [len : i64 (struct-get items len)]
+    [slots : (__tl_dyn-array i64) items.slots]
+    [len : i64 items.len]
     (begin
       (if (< len (array-length slots))
         unit
@@ -632,10 +632,10 @@
           (begin
             (while (< index len)
               (begin
-                (array-set! bigger index (array-ref slots index))
+                (set! (array-ref bigger index) (array-ref slots index))
                 (set! index (+ index 1))))
             (set! slots bigger))))
-      (array-set! slots len item)
+      (set! (array-ref slots len) item)
       (CompilerRegIdSeq slots (+ len 1)))))
 
 ;; Persistent prepend for cold one/few-element constraint extension. Retained
@@ -663,17 +663,17 @@
   (CompilerRegLabelSeq (array.make-array i64 capacity) 0))
 
 (defmacro (compiler-reg-label-seq-count [items : CompilerRegLabelSeq]) : i64
-  `(struct-get ,items len))
+  `(__tl-project-field-name ,items "len"))
 
 (defmacro (compiler-reg-label-seq-ref
   [items : CompilerRegLabelSeq]
   [index : i64]) : i64
-  `(array-ref (struct-get ,items slots) ,index))
+  `(array-ref (__tl-project-field-name ,items "slots") ,index))
 
 (define (compiler-reg-label-seq-push [items : CompilerRegLabelSeq] [item : i64]) : CompilerRegLabelSeq
   (let
-    [slots : (__tl_dyn-array i64) (struct-get items slots)]
-    [len : i64 (struct-get items len)]
+    [slots : (__tl_dyn-array i64) items.slots]
+    [len : i64 items.len]
     (begin
       (if (< len (array-length slots))
         unit
@@ -688,10 +688,10 @@
           (begin
             (while (< index len)
               (begin
-                (array-set! bigger index (array-ref slots index))
+                (set! (array-ref bigger index) (array-ref slots index))
                 (set! index (+ index 1))))
             (set! slots bigger))))
-      (array-set! slots len item)
+      (set! (array-ref slots len) item)
       (CompilerRegLabelSeq slots (+ len 1)))))
 
 (define (compiler-reg-label-seq-prepend
@@ -735,10 +735,7 @@
   ;; Cold fixture/overlay builder. Preserve the old persistent-prepend
   ;; ownership contract by copying before overriding `head.var`; production
   ;; allocator mutations use compiler-reg-assignment-table-insert directly.
-  (compiler-reg-assignment-insert
-    rest
-    (struct-get head var)
-    (struct-get head location)))
+  (compiler-reg-assignment-insert rest head.var head.location))
 
 ;; Capacity for a seq that must hold `len + 1` elements; the caller copies the
 ;; live prefix into a fresh array of this size when the current one is full.
@@ -754,20 +751,20 @@
   (CompilerRegIntervalSeq (array.make-array CompilerRegInterval capacity) 0))
 
 (defmacro (compiler-reg-interval-seq-count [items : CompilerRegIntervalSeq]) : i64
-  `(struct-get ,items len))
+  `(__tl-project-field-name ,items "len"))
 
 (defmacro (compiler-reg-interval-seq-empty? [items : CompilerRegIntervalSeq]) : bool
-  `(= (struct-get ,items len) 0))
+  `(= (__tl-project-field-name ,items "len") 0))
 
 (defmacro (compiler-reg-interval-seq-ref
   [items : CompilerRegIntervalSeq]
   [index : i64]) : CompilerRegInterval
-  `(array-ref (struct-get ,items slots) ,index))
+  `(array-ref (__tl-project-field-name ,items "slots") ,index))
 
 (define (compiler-reg-interval-seq-grow [items : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegInterval) (struct-get items slots)]
-    [len : i64 (struct-get items len)]
+    [slots : (__tl_dyn-array CompilerRegInterval) items.slots]
+    [len : i64 items.len]
     ;; Most per-variable segment sequences contain one interval.  Start at one
     ;; slot so their dense backing arrays do not zero three unused interval
     ;; records; subsequent growth remains geometric.
@@ -781,7 +778,7 @@
     (begin
       (while (< index len)
         (begin
-          (array-set! bigger index (array-ref slots index))
+          (set! (array-ref bigger index) (array-ref slots index))
           (set! index (+ index 1))))
       (CompilerRegIntervalSeq bigger len))))
 
@@ -789,8 +786,8 @@
   [head : CompilerRegInterval]
   [rest : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
   (let
-    [len : i64 (struct-get rest len)]
-    [old-slots : (__tl_dyn-array CompilerRegInterval) (struct-get rest slots)]
+    [len : i64 rest.len]
+    [old-slots : (__tl_dyn-array CompilerRegInterval) rest.slots]
     [capacity : i64
       (if (> (array-length old-slots) len)
         (array-length old-slots)
@@ -804,10 +801,10 @@
       ;; Prepend is intentionally persistent: some cold fixture/worklist
       ;; builders retain `rest`, so shifting its shared backing array would
       ;; mutate that still-live view.
-      (array-set! slots 0 head)
+      (set! (array-ref slots 0) head)
       (while (< index len)
         (begin
-          (array-set! slots (+ index 1) (array-ref old-slots index))
+          (set! (array-ref slots (+ index 1)) (array-ref old-slots index))
           (set! index (+ index 1))))
       (CompilerRegIntervalSeq slots (+ len 1)))))
 
@@ -816,13 +813,13 @@
   [item : CompilerRegInterval]) : CompilerRegIntervalSeq
   (let
     [ready : CompilerRegIntervalSeq
-      (if (>= (struct-get items len) (array-length (struct-get items slots)))
+      (if (>= items.len (array-length items.slots))
         (compiler-reg-interval-seq-grow items)
         items)]
-    [slots : (__tl_dyn-array CompilerRegInterval) (struct-get ready slots)]
-    [len : i64 (struct-get ready len)]
+    [slots : (__tl_dyn-array CompilerRegInterval) ready.slots]
+    [len : i64 ready.len]
     (begin
-      (array-set! slots len item)
+      (set! (array-ref slots len) item)
       (CompilerRegIntervalSeq slots (+ len 1)))))
 
 (define (compiler-reg-interval-seq-append-all
@@ -849,8 +846,8 @@
   [copies : CompilerRegEdgeCopySeq]
   [item : CompilerRegEdgeCopy]) : CompilerRegEdgeCopySeq
   (let
-    [slots : (__tl_dyn-array CompilerRegEdgeCopy) (struct-get copies slots)]
-    [len : i64 (struct-get copies len)]
+    [slots : (__tl_dyn-array CompilerRegEdgeCopy) copies.slots]
+    [len : i64 copies.len]
     (begin
       (if (< len (array-length slots))
         unit
@@ -863,10 +860,10 @@
           (begin
             (while (< i len)
               (begin
-                (array-set! bigger i (array-ref slots i))
+                (set! (array-ref bigger i) (array-ref slots i))
                 (set! i (+ i 1))))
             (set! slots bigger))))
-      (array-set! slots len item)
+      (set! (array-ref slots len) item)
       (CompilerRegEdgeCopySeq slots (+ len 1)))))
 
 (define (compiler-reg-active-seq-empty) : CompilerRegActiveSeq
@@ -879,8 +876,8 @@
   [moves : CompilerRegMoveSeq]
   [item : CompilerRegMove]) : CompilerRegMoveSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [len : i64 (struct-get moves len)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [len : i64 moves.len]
     (begin
       (if (< len (array-length slots))
         unit
@@ -893,18 +890,18 @@
           (begin
             (while (< i len)
               (begin
-                (array-set! bigger i (array-ref slots i))
+                (set! (array-ref bigger i) (array-ref slots i))
                 (set! i (+ i 1))))
             (set! slots bigger))))
-      (array-set! slots len item)
+      (set! (array-ref slots len) item)
       (CompilerRegMoveSeq slots (+ len 1)))))
 
 (define (compiler-reg-call-region-seq-push
   [regions : CompilerRegCallRegionSeq]
   [item : CompilerRegCallRegion]) : CompilerRegCallRegionSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegCallRegion) (struct-get regions slots)]
-    [len : i64 (struct-get regions len)]
+    [slots : (__tl_dyn-array CompilerRegCallRegion) regions.slots]
+    [len : i64 regions.len]
     (begin
       (if (< len (array-length slots))
         unit
@@ -917,10 +914,10 @@
           (begin
             (while (< i len)
               (begin
-                (array-set! bigger i (array-ref slots i))
+                (set! (array-ref bigger i) (array-ref slots i))
                 (set! i (+ i 1))))
             (set! slots bigger))))
-      (array-set! slots len item)
+      (set! (array-ref slots len) item)
       (CompilerRegCallRegionSeq slots (+ len 1)))))
 
 (define (compiler-reg-call-region-stat-seq-empty) : CompilerRegCallRegionStatSeq
@@ -932,8 +929,8 @@
   [rows : CompilerRegCallRegionStatSeq]
   [item : CompilerRegCallRegionStat]) : CompilerRegCallRegionStatSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegCallRegionStat) (struct-get rows slots)]
-    [len : i64 (struct-get rows len)]
+    [slots : (__tl_dyn-array CompilerRegCallRegionStat) rows.slots]
+    [len : i64 rows.len]
     (begin
       (if (< len (array-length slots))
         unit
@@ -946,10 +943,10 @@
           (begin
             (while (< i len)
               (begin
-                (array-set! bigger i (array-ref slots i))
+                (set! (array-ref bigger i) (array-ref slots i))
                 (set! i (+ i 1))))
             (set! slots bigger))))
-      (array-set! slots len item)
+      (set! (array-ref slots len) item)
       (CompilerRegCallRegionStatSeq slots (+ len 1)))))
 
 (define (compiler-reg-max [a : i64] [b : i64]) : i64
@@ -1499,8 +1496,8 @@
   [types : CompilerRegVarTypes]
   [var : i64]) : CompilerRegMaybeType
   (let
-    [present : (__tl_dyn-array i64) (struct-get types present)]
-    [items : (__tl_dyn-array ast.AstType) (struct-get types items)]
+    [present : (__tl_dyn-array i64) types.present]
+    [items : (__tl_dyn-array ast.AstType) types.items]
     (if (or (< var 0) (>= var (array-length present)))
       CompilerRegMaybeType.No
       (if (= (array-ref present var) 0)
@@ -1519,13 +1516,13 @@
   (if (< var 0)
     types
     (let
-      [old-present : (__tl_dyn-array i64) (struct-get types present)]
-      [old-items : (__tl_dyn-array ast.AstType) (struct-get types items)]
+      [old-present : (__tl_dyn-array i64) types.present]
+      [old-items : (__tl_dyn-array ast.AstType) types.items]
       [old-len : i64 (array-length old-present)]
       (if (< var old-len)
         (begin
-          (array-set! old-present var 1)
-          (array-set! old-items var ty)
+          (set! (array-ref old-present var) 1)
+          (set! (array-ref old-items var) ty)
           types)
         (let
           [grown : i64
@@ -1543,11 +1540,11 @@
           (begin
             (while (< index old-len)
               (begin
-                (array-set! present index (array-ref old-present index))
-                (array-set! items index (array-ref old-items index))
+                (set! (array-ref present index) (array-ref old-present index))
+                (set! (array-ref items index) (array-ref old-items index))
                 (set! index (+ index 1))))
-            (array-set! present var 1)
-            (array-set! items var ty)
+            (set! (array-ref present var) 1)
+            (set! (array-ref items var) ty)
             (CompilerRegVarTypes present items)))))))
 
 (define (compiler-reg-addr-of-result-type) : ast.AstType
@@ -1561,8 +1558,8 @@
   (if (or (< var 0) (>= var (array-length present)))
     unit
     (begin
-      (array-set! present var 1)
-      (array-set! types var ty))))
+      (set! (array-ref present var) 1)
+      (set! (array-ref types var) ty))))
 
 (define (compiler-reg-param-types-array!
   [params : ir.CompilerIrParamList]
@@ -1580,7 +1577,10 @@
         [(ir.CompilerIrParam.Param _ ty id)
           (begin
             (compiler-reg-var-type-array-set! present types id ty)
-            (compiler-reg-param-types-array! (box-get rest) present types))])]))
+            (compiler-reg-param-types-array!
+              (__tl-box-place rest)
+              present
+              types))])]))
 
 (define (compiler-reg-instr-def-type-array!
   [instr : ir.CompilerIrInstr]
@@ -1623,7 +1623,7 @@
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [result (struct-get (box-get payload-box) result)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (match result
           [(ir.CompilerIrSpmdCallResult.Unit) unit]
           [(ir.CompilerIrSpmdCallResult.Value dst _ ty)
@@ -1641,8 +1641,8 @@
   [present : (__tl_dyn-array i64)]
   [types : (__tl_dyn-array ast.AstType)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1665,7 +1665,10 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-instr-seq-types-array! instrs present types)
-            (compiler-reg-block-list-types-array! (box-get rest) present types))])]
+            (compiler-reg-block-list-types-array!
+              (__tl-box-place rest)
+              present
+              types))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -1694,16 +1697,16 @@
   [src : i64]
   [dst : i64]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [index : i64 (- (struct-get moves len) 1)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [index : i64 (- moves.len 1)]
     [found : bool false]
     (begin
       (while (and (>= index 0) (not found))
         (begin
           (let
             [item : CompilerRegMove (array-ref slots index)]
-            [found-src : i64 (struct-get item src)]
-            [found-dst : i64 (struct-get item dst)]
+            [found-src : i64 item.src]
+            [found-dst : i64 item.dst]
             (if (and (= found-src src) (= found-dst dst))
               (set! found true)
               unit))
@@ -1715,16 +1718,16 @@
   [src : i64]
   [dst : i64]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [index : i64 (- (struct-get moves len) 1)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [index : i64 (- moves.len 1)]
     [found : bool false]
     (begin
       (while (and (>= index 0) (not found))
         (begin
           (let
             [item : CompilerRegMove (array-ref slots index)]
-            [found-src : i64 (struct-get item src)]
-            [found-dst : i64 (struct-get item dst)]
+            [found-src : i64 item.src]
+            [found-dst : i64 item.dst]
             (if (or
               (and (= found-src src) (= found-dst dst))
               (and (= found-src dst) (= found-dst src)))
@@ -1734,7 +1737,7 @@
       found)))
 
 (define (compiler-reg-move-list-empty? [moves : CompilerRegMoveSeq]) : bool
-  (= (struct-get moves len) 0))
+  (= moves.len 0))
 
 (define (compiler-reg-move-parallel-resource [var : i64]) : i64
   (+ var 1))
@@ -1744,16 +1747,16 @@
 
 (define (compiler-reg-move-parallel-edge [move : CompilerRegMove]) : pmove.CompilerParallelMoveEdge
   (pmove.ParallelMoveEdge
-    (compiler-reg-move-parallel-id (struct-get move src) (struct-get move dst))
-    (compiler-reg-move-parallel-resource (struct-get move dst))
+    (compiler-reg-move-parallel-id move.src move.dst)
+    (compiler-reg-move-parallel-resource move.dst)
     0
-    (compiler-reg-move-parallel-resource (struct-get move src))
+    (compiler-reg-move-parallel-resource move.src)
     0))
 
 (define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveSeq]) : pmove.CompilerParallelMoveEdgeSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [count : i64 (struct-get moves len)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [count : i64 moves.len]
     [index : i64 (- count 1)]
     [edges : pmove.CompilerParallelMoveEdgeSeq
       (pmove.compiler-parallel-move-edge-seq-with-capacity count)]
@@ -1804,21 +1807,20 @@
   [src : i64]
   [dst : i64]) : CompilerRegMoveSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [index : i64 (- (struct-get moves len) 1)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [index : i64 (- moves.len 1)]
     (begin
       (while (>= index 0)
         (let
           [item : CompilerRegMove (array-ref slots index)]
-          [found-src : i64 (struct-get item src)]
-          [found-dst : i64 (struct-get item dst)]
+          [found-src : i64 item.src]
+          [found-dst : i64 item.dst]
           (if (or
             (and (= found-src src) (= found-dst dst))
             (and (= found-src dst) (= found-dst src)))
             (begin
-              (array-set!
-                slots
-                index
+              (set!
+                (array-ref slots index)
                 (CompilerRegMove found-src found-dst true))
               (set! index (- 0 1)))
             (set! index (- index 1)))))
@@ -1856,7 +1858,11 @@
     [(ir.CompilerIrPhiInputList.Cons value _ rest)
       (let
         [tail : CompilerRegMoveSeq
-          (compiler-reg-phi-input-moves dst (box-get rest) moves strict-pairs)]
+          (compiler-reg-phi-input-moves
+            dst
+            (__tl-box-place rest)
+            moves
+            strict-pairs)]
         (match value
           [(ir.CompilerIrValue.Var src)
             (compiler-reg-move-list-add tail src dst strict-pairs strict-pairs)]
@@ -1881,8 +1887,8 @@
   [moves : CompilerRegMoveSeq]
   [strict-pairs : bool]) : CompilerRegMoveSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [index : i64 (- instrs.len 1)]
     [out : CompilerRegMoveSeq moves]
     (begin
       (while (>= index 0)
@@ -1903,7 +1909,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-block-list-moves
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-reg-instr-seq-moves instrs moves strict-pairs)
             strict-pairs)])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -1993,8 +1999,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [index : i64 (- instrs.len 1)]
     [out : CompilerRegMoveSeq moves]
     (begin
       (while (>= index 0)
@@ -2012,7 +2018,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-cast-moves-blocks
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-reg-cast-moves-seq instrs moves))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -2039,21 +2045,21 @@
   [moves : CompilerRegMoveSeq]
   [anchors : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [count : i64 (struct-get moves len)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [count : i64 moves.len]
     [index : i64 0]
     (while (< index count)
       (begin
         (let
           [item : CompilerRegMove (array-ref slots index)]
-          [src : i64 (struct-get item src)]
-          [dst : i64 (struct-get item dst)]
+          [src : i64 item.src]
+          [dst : i64 item.dst]
           (begin
             (if (and (>= src 0) (< src (array-length anchors)))
-              (array-set! anchors src 1)
+              (set! (array-ref anchors src) 1)
               unit)
             (if (and (>= dst 0) (< dst (array-length anchors)))
-              (array-set! anchors dst 1)
+              (set! (array-ref anchors dst) 1)
               unit)))
         (set! index (+ index 1))))))
 
@@ -2066,19 +2072,19 @@
       (if (compiler-reg-binop-destructive-tie? op)
         (begin
           (if (and (>= dst 0) (< dst (array-length defs)))
-            (array-set! defs dst 1)
+            (set! (array-ref defs dst) 1)
             unit)
           (match lhs
             [(ir.CompilerIrValue.Var var)
               (if (and (>= var 0) (< var (array-length uses)))
-                (array-set! uses var 1)
+                (set! (array-ref uses var) 1)
                 unit)]
             [_ unit])
           (if (compiler-reg-binop-destructive-commutative? op)
             (match rhs
               [(ir.CompilerIrValue.Var var)
                 (if (and (>= var 0) (< var (array-length uses)))
-                  (array-set! uses var 1)
+                  (set! (array-ref uses var) 1)
                   unit)]
               [_ unit])
             unit))
@@ -2090,8 +2096,8 @@
   [defs : (__tl_dyn-array i64)]
   [uses : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
       (begin
@@ -2112,7 +2118,7 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-destructive-shape-seq! instrs defs uses)])
-        (compiler-reg-destructive-shape-blocks! (box-get rest) defs uses))]
+        (compiler-reg-destructive-shape-blocks! (__tl-box-place rest) defs uses))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -2249,8 +2255,8 @@
   [uses : (__tl_dyn-array i64)]
   [eligible : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [index : i64 (- instrs.len 1)]
     [out : CompilerRegMoveSeq moves]
     (begin
       (while (>= index 0)
@@ -2280,7 +2286,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-destructive-tie-moves-blocks
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-reg-destructive-tie-moves-seq
               instrs
               moves
@@ -2373,8 +2379,8 @@
   [moves : CompilerRegMoveSeq]
   [storage-vars : live.CompilerLiveI64Set]) : CompilerRegMoveSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [count : i64 (struct-get moves len)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [count : i64 moves.len]
     [index : i64 0]
     [out : CompilerRegMoveSeq (compiler-reg-move-seq-empty)]
     (begin
@@ -2382,8 +2388,8 @@
         (begin
           (let
             [item : CompilerRegMove (array-ref slots index)]
-            [src : i64 (struct-get item src)]
-            [dst : i64 (struct-get item dst)]
+            [src : i64 item.src]
+            [dst : i64 item.dst]
             (if (or
               (live.compiler-live-set-contains? storage-vars src)
               (live.compiler-live-set-contains? storage-vars dst))
@@ -2404,7 +2410,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! items index value)
+          (set! (array-ref items index) value)
           (set! index (+ index 1))))
       unit)))
 
@@ -2414,12 +2420,12 @@
   (match instr
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [false-value (struct-get (box-get payload-box) on-false)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [false-value (__tl-project-field (__tl-box-place payload-box) on-false)]
         (match false-value
           [(ir.CompilerIrValue.Var false-var)
             (if (and (>= dst 0) (< dst (array-length preferences)))
-              (array-set! preferences dst false-var)
+              (set! (array-ref preferences dst) false-var)
               unit)]
           [_ unit]))]
     [_ unit]))
@@ -2428,8 +2434,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [preferences : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -2451,7 +2457,7 @@
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-select-false-preference-seq! instrs preferences)])
         (compiler-reg-select-false-preference-blocks!
-          (box-get rest)
+          (__tl-box-place rest)
           preferences))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -2485,7 +2491,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! items index value)
+          (set! (array-ref items index) value)
           (set! index (+ index 1))))
       unit)))
 
@@ -2509,31 +2515,30 @@
   [assignments : (& assignments CompilerRegAssignmentTable)]
   [capacity : i64]) : CompilerRegAssignmentTable
   (let
-    [old-present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [old-items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [old-present : (__tl_dyn-array i64) assignments.present]
+    [old-items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [size : i64
       (if (> capacity (array-length old-present))
         capacity
         (array-length old-present))]
     [out : CompilerRegAssignmentTable (compiler-reg-assignment-table-make size)]
-    [present : (__tl_dyn-array i64) (struct-get out present)]
-    [items : (__tl_dyn-array CompilerRegLocation) (struct-get out items)]
+    [present : (__tl_dyn-array i64) out.present]
+    [items : (__tl_dyn-array CompilerRegLocation) out.items]
     [index : i64 0]
     (begin
       (while (< index (array-length old-present))
         (begin
-          (array-set! present index (array-ref old-present index))
+          (set! (array-ref present index) (array-ref old-present index))
           (if (= (array-ref old-present index) 0)
             unit
-            (array-set! items index (clone (array-ref old-items index))))
+            (set! (array-ref items index) (clone (array-ref old-items index))))
           (set! index (+ index 1))))
       out)))
 
 (define (compiler-reg-assignment-table-with-min-capacity
   [assignments : CompilerRegAssignmentTable]
   [vars : i64]) : CompilerRegAssignmentTable
-  (if (<= vars (array-length (struct-get assignments present)))
+  (if (<= vars (array-length assignments.present))
     assignments
     (compiler-reg-assignment-table-copy-with-capacity assignments vars)))
 
@@ -2542,23 +2547,22 @@
   [var : i64]
   [location : CompilerRegLocation]) : CompilerRegAssignmentTable
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     (begin
       (if (or (< var 0) (>= var (array-length present)))
         unit
         (begin
-          (array-set! present var 1)
-          (array-set! items var location)))
+          (set! (array-ref present var) 1)
+          (set! (array-ref items var) location)))
       assignments)))
 
 (define (compiler-reg-assignment-table-overlay!
   [dst : CompilerRegAssignmentTable]
   [src : CompilerRegAssignmentTable]) : unit
   (let
-    [present : (__tl_dyn-array i64) (struct-get src present)]
-    [items : (__tl_dyn-array CompilerRegLocation) (struct-get src items)]
+    [present : (__tl_dyn-array i64) src.present]
+    [items : (__tl_dyn-array CompilerRegLocation) src.items]
     [index : i64 0]
     (begin
       (while (< index (array-length present))
@@ -2583,20 +2587,19 @@
   [assignments : CompilerRegAssignmentTable]
   [var : i64]) : CompilerRegAssignmentTable
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [present : (__tl_dyn-array i64) assignments.present]
     (begin
       (if (or (< var 0) (>= var (array-length present)))
         unit
-        (array-set! present var 0))
+        (set! (array-ref present var) 0))
       assignments)))
 
 (define (compiler-reg-assignment-table-lookup
   [assignments : (& assignments CompilerRegAssignmentTable)]
   [var : i64]) : CompilerRegMaybeLocation
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     (if (or (< var 0) (>= var (array-length present)))
       CompilerRegMaybeLocation.No
       (if (= (array-ref present var) 0)
@@ -2607,9 +2610,8 @@
   [assignments : CompilerRegAssignmentTable]
   [index : i64]) : bool
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     (cond
       [(>= index (array-length present)) false]
       [(= (array-ref present index) 0)
@@ -2637,15 +2639,15 @@
         (let
           [interval : CompilerRegInterval
             (compiler-reg-interval-seq-ref intervals index)]
-          [var : i64 (struct-get interval var)]
+          [var : i64 interval.var]
           (if (or
             (< var 0)
             (>= var (array-length starts))
             (>= (array-ref starts var) 0))
             unit
             (begin
-              (array-set! starts var (struct-get interval start))
-              (array-set! ends var (struct-get interval end)))))
+              (set! (array-ref starts var) interval.start)
+              (set! (array-ref ends var) interval.end))))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-interval-index-build
@@ -2666,8 +2668,8 @@
   [index : CompilerRegIntervalIndex]
   [var : i64]) : CompilerRegMaybeInterval
   (let
-    [starts : (__tl_dyn-array i64) (struct-get index starts)]
-    [ends : (__tl_dyn-array i64) (struct-get index ends)]
+    [starts : (__tl_dyn-array i64) index.starts]
+    [ends : (__tl_dyn-array i64) index.ends]
     (if (or (< var 0) (>= var (array-length starts)))
       CompilerRegMaybeInterval.No
       (if (< (array-ref starts var) 0)
@@ -2690,14 +2692,14 @@
         (begin
           (if (< start 0)
             (begin
-              (array-set! starts var point)
-              (array-set! ends var point))
+              (set! (array-ref starts var) point)
+              (set! (array-ref ends var) point))
             (begin
               (if (< point start)
-                (array-set! starts var point)
+                (set! (array-ref starts var) point)
                 unit)
               (if (> point end)
-                (array-set! ends var point)
+                (set! (array-ref ends var) point)
                 unit)))
           unit)))))
 
@@ -2828,14 +2830,13 @@
             [slots : (__tl_dyn-array CompilerRegInterval)
               (array.make-array CompilerRegInterval 1)]
             (begin
-              (array-set! slots 0 interval)
-              (array-set! segments var (CompilerRegIntervalSeq slots 1))))
-          (array-set!
-            segments
-            var
+              (set! (array-ref slots 0) interval)
+              (set! (array-ref segments var) (CompilerRegIntervalSeq slots 1))))
+          (set!
+            (array-ref segments var)
             (compiler-reg-interval-seq-append existing interval)))
-        (array-set! starts var -1)
-        (array-set! ends var -1)
+        (set! (array-ref starts var) -1)
+        (set! (array-ref ends var) -1)
         unit))))
 
 (define (compiler-reg-segment-note-point!
@@ -2848,18 +2849,18 @@
     unit
     (if (< (array-ref starts var) 0)
       (begin
-        (array-set! starts var point)
-        (array-set! ends var point))
+        (set! (array-ref starts var) point)
+        (set! (array-ref ends var) point))
       (let
         [end : i64 (array-ref ends var)]
         (if (<= point (+ end 1))
           (if (> point end)
-            (array-set! ends var point)
+            (set! (array-ref ends var) point)
             unit)
           (begin
             (compiler-reg-segment-flush-var! segments starts ends var)
-            (array-set! starts var point)
-            (array-set! ends var point)))))))
+            (set! (array-ref starts var) point)
+            (set! (array-ref ends var) point)))))))
 
 ;; Segment build for one instruction point: a def/use pass at `point` followed
 ;; by a live-after pass bridging `point`/`point + 1`. This replaces the four
@@ -3366,10 +3367,9 @@
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [after-items : (__tl_dyn-array live.CompilerLiveI64Set)
-      (struct-get live-afters items)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [after-items : (__tl_dyn-array live.CompilerLiveI64Set) live-afters.items]
     [index : i64 0]
     [out-point : i64 point]
     (begin
@@ -3413,7 +3413,7 @@
             [live-afters : live.CompilerLiveInstrSetVec
               (compiler-reg-live-intervals-find-afters liveness label)]
             (compiler-reg-live-intervals-blocks-with-live
-              (box-get rest)
+              (__tl-box-place rest)
               liveness
               (compiler-reg-live-intervals-instr-seq
                 instrs
@@ -3453,8 +3453,8 @@
   [index : i64]
   [acc : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
   (let
-    [old-slots : (__tl_dyn-array CompilerRegInterval) (struct-get acc slots)]
-    [old-len : i64 (struct-get acc len)]
+    [old-slots : (__tl_dyn-array CompilerRegInterval) acc.slots]
+    [old-len : i64 acc.len]
     [additional-capacity : i64
       (if (< index 0)
         0
@@ -3467,16 +3467,15 @@
     (begin
       (while (< copy-index old-len)
         (begin
-          (array-set! slots copy-index (array-ref old-slots copy-index))
+          (set! (array-ref slots copy-index) (array-ref old-slots copy-index))
           (set! copy-index (+ copy-index 1))))
       (while (<= var index)
         (begin
           (if (< (array-ref starts var) 0)
             unit
             (begin
-              (array-set!
-                slots
-                out-len
+              (set!
+                (array-ref slots out-len)
                 (CompilerRegInterval
                   var
                   (array-ref starts var)
@@ -3518,10 +3517,9 @@
   [segment-starts : (__tl_dyn-array i64)]
   [segment-ends : (__tl_dyn-array i64)]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [after-items : (__tl_dyn-array live.CompilerLiveI64Set)
-      (struct-get live-afters items)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [after-items : (__tl_dyn-array live.CompilerLiveI64Set) live-afters.items]
     [index : i64 0]
     [out-point : i64 point]
     (begin
@@ -3564,7 +3562,7 @@
             [live-afters : live.CompilerLiveInstrSetVec
               (compiler-reg-live-intervals-find-afters liveness label)]
             (compiler-reg-live-interval-selection-blocks
-              (box-get rest)
+              (__tl-box-place rest)
               liveness
               (compiler-reg-live-interval-selection-instr-seq
                 instrs
@@ -3700,9 +3698,8 @@
           (if (= (array-ref mask v) 1)
             (let
               [w : i64 (live.compiler-live-set-word-index v)]
-              (array-set!
-                words
-                w
+              (set!
+                (array-ref words w)
                 (bit-or (array-ref words w) (live.compiler-live-set-bit-mask v))))
             unit)
           (set! v (+ v 1))))
@@ -4011,10 +4008,9 @@
   [mask-words : (__tl_dyn-array i64)]
   [mask-limit : i64]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [after-items : (__tl_dyn-array live.CompilerLiveI64Set)
-      (struct-get live-afters items)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [after-items : (__tl_dyn-array live.CompilerLiveI64Set) live-afters.items]
     [index : i64 0]
     [out-point : i64 point]
     (begin
@@ -4059,7 +4055,7 @@
             [live-afters : live.CompilerLiveInstrSetVec
               (compiler-reg-live-intervals-find-afters liveness label)]
             (compiler-reg-live-interval-selection-ep-blocks
-              (box-get rest)
+              (__tl-box-place rest)
               liveness
               (compiler-reg-live-interval-selection-ep-instr-seq
                 instrs
@@ -4184,7 +4180,7 @@
         (match value
           [(ir.CompilerIrValue.Var v) (compiler-reg-mark-phi-def! mask v)]
           [_ unit])
-        (compiler-reg-phi-touched-add-inputs! (box-get rest) mask))]))
+        (compiler-reg-phi-touched-add-inputs! (__tl-box-place rest) mask))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Live-out-input phi exclusion (soundness guard on the EP coalescer).
@@ -4213,7 +4209,7 @@
   [liveness : live.CompilerFunctionLiveness]
   [label : i64]) : live.CompilerLiveI64Set
   (match (live.compiler-live-function-find-block liveness label)
-    [(live.CompilerLiveMaybeBlock.Some lb) (struct-get lb live-out)]
+    [(live.CompilerLiveMaybeBlock.Some lb) lb.live-out]
     [(live.CompilerLiveMaybeBlock.No) (live.compiler-live-set-empty)]))
 
 (define (compiler-reg-phi-inputs-any-live-out?
@@ -4231,14 +4227,14 @@
           (live.compiler-live-set-contains? live-out v)]
         [_ false])
         true
-        (compiler-reg-phi-inputs-any-live-out? (box-get rest) live-out))]))
+        (compiler-reg-phi-inputs-any-live-out? (__tl-box-place rest) live-out))]))
 
 (define (compiler-reg-instr-seq-defines-var?
   [instrs : ir.CompilerIrInstrSeq]
   [var : i64]) : bool
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -4256,8 +4252,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [var : i64]) : bool
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -4301,7 +4297,7 @@
               true)]
           [_ true])
         (compiler-reg-phi-live-out-inputs-self-loop-safe?
-          (box-get rest)
+          (__tl-box-place rest)
           live-out
           instrs
           block-label))]))
@@ -4313,8 +4309,8 @@
   [block-label : i64]
   [mask : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -4361,7 +4357,7 @@
               label
               mask)
             (compiler-reg-phi-touched-safe-blocks!
-              (box-get rest)
+              (__tl-box-place rest)
               liveness
               allow-exit-live-self-loop
               mask))])]
@@ -4413,10 +4409,9 @@
   [ep-segs : (__tl_dyn-array CompilerRegIntervalSeq)]
   [mask : (__tl_dyn-array i64)]) : CompilerRegIntervalIndex
   (let
-    [cons-starts : (__tl_dyn-array i64) (struct-get cons-index starts)]
-    [cons-ends : (__tl_dyn-array i64) (struct-get cons-index ends)]
-    [cons-segs : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get cons-index segments)]
+    [cons-starts : (__tl_dyn-array i64) cons-index.starts]
+    [cons-ends : (__tl_dyn-array i64) cons-index.ends]
+    [cons-segs : (__tl_dyn-array CompilerRegIntervalSeq) cons-index.segments]
     [n : i64 (array-length cons-starts)]
     [hybrid-segs : (__tl_dyn-array CompilerRegIntervalSeq)
       (array.make-array CompilerRegIntervalSeq n)]
@@ -4424,9 +4419,8 @@
     (begin
       (while (< v n)
         (begin
-          (array-set!
-            hybrid-segs
-            v
+          (set!
+            (array-ref hybrid-segs v)
             (if (if (< v (array-length mask))
               (= (array-ref mask v) 1)
               false)
@@ -4462,7 +4456,7 @@
   [var : i64]) : unit
   (let
     [w : i64 (+ base (/ var 63))]
-    (array-set! row w (bit-or (array-ref row w) (shl 1 (% var 63))))))
+    (set! (array-ref row w) (bit-or (array-ref row w) (shl 1 (% var 63))))))
 
 (define (compiler-reg-chunk->row!
   [row : (__tl_dyn-array i64)]
@@ -4499,7 +4493,7 @@
   (compiler-reg-set-words->row! set row base 0))
 
 (define (compiler-reg-live-block-succs [block : live.CompilerLiveBlock]) : live.CompilerLiveLabelSet
-  (struct-get block successors))
+  block.successors)
 
 (define (compiler-reg-bits-build-rows-from-array!
   [blocks : (__tl_dyn-array live.CompilerLiveBlock)]
@@ -4513,18 +4507,9 @@
     (let
       [block : live.CompilerLiveBlock (array-ref blocks index)]
       (begin
-        (compiler-reg-set->row!
-          (struct-get block uses)
-          use-rows
-          (* index words))
-        (compiler-reg-set->row!
-          (struct-get block defs)
-          def-rows
-          (* index words))
-        (reg_label_i64_map.insert-ref!
-          (&mut idmap)
-          (struct-get block label)
-          index)
+        (compiler-reg-set->row! block.uses use-rows (* index words))
+        (compiler-reg-set->row! block.defs def-rows (* index words))
+        (reg_label_i64_map.insert-ref! (&mut idmap) block.label index)
         (compiler-reg-bits-build-rows-from-array!
           blocks
           idmap
@@ -4542,7 +4527,7 @@
     (begin
       (while (< w words)
         (begin
-          (array-set! row (+ base w) 0)
+          (set! (array-ref row (+ base w)) 0)
           (set! w (+ w 1))))
       unit)))
 
@@ -4557,9 +4542,8 @@
     (begin
       (while (< w words)
         (begin
-          (array-set!
-            dst
-            (+ dbase w)
+          (set!
+            (array-ref dst (+ dbase w))
             (bit-or (array-ref dst (+ dbase w)) (array-ref src (+ sbase w))))
           (set! w (+ w 1))))
       unit)))
@@ -4618,7 +4602,7 @@
             (if (= next (array-ref live-in idx))
               unit
               (begin
-                (array-set! live-in idx next)
+                (set! (array-ref live-in idx) next)
                 (set! changed true)))
             (set! w (+ w 1)))))
       changed)))
@@ -4742,8 +4726,8 @@
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [out-point : i64 point]
     (begin
@@ -4793,7 +4777,7 @@
                   ends
                   end-point)
                 (compiler-reg-bits-intervals-walk
-                  (box-get rest)
+                  (__tl-box-place rest)
                   live-in
                   live-out
                   words
@@ -4905,8 +4889,8 @@
   [set : live.CompilerLiveI64Set]
   [handles-ok? : bool]) : live.CompilerLiveI64Set
   (let
-    [present : (__tl_dyn-array i64) (struct-get types present)]
-    [items : (__tl_dyn-array ast.AstType) (struct-get types items)]
+    [present : (__tl_dyn-array i64) types.present]
+    [items : (__tl_dyn-array ast.AstType) types.items]
     [index : i64 0]
     [out : live.CompilerLiveI64Set set]
     (begin
@@ -4935,7 +4919,7 @@
       (match param
         [(ir.CompilerIrParam.Param _ _ var)
           (compiler-reg-ineligible-params
-            (box-get rest)
+            (__tl-box-place rest)
             (live.compiler-live-set-insert set var))])]))
 
 (define (compiler-reg-integer-param-type?
@@ -5067,8 +5051,8 @@
   [clobber-points : live.CompilerLiveI64Set]
   [var : i64]) : bool
   (let
-    [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-    [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+    [starts : (__tl_dyn-array i64) interval-index.starts]
+    [ends : (__tl_dyn-array i64) interval-index.ends]
     (if (and (>= var 0) (< var (array-length starts)))
       (if (< (array-ref starts var) 0)
         false
@@ -5088,7 +5072,7 @@
             0)
           (if (compiler-reg-interval-index-var-has-segments? interval-index var)
             (compiler-reg-segments-span-clobber?
-              (array-ref (struct-get interval-index segments) var)
+              (array-ref interval-index.segments var)
               clobber-points
               (array-ref starts var)
               true)
@@ -5268,7 +5252,7 @@
                   (compiler-reg-param-assign-walk
                     type-segment-bases
                     target-abi
-                    (box-get rest)
+                    (__tl-box-place rest)
                     interval-index
                     (compiler-reg-assignment-table-insert
                       assignments
@@ -5290,7 +5274,7 @@
                   (compiler-reg-param-assign-walk
                     type-segment-bases
                     target-abi
-                    (box-get rest)
+                    (__tl-box-place rest)
                     interval-index
                     assignments
                     ineligible
@@ -5314,7 +5298,7 @@
                   (compiler-reg-param-assign-walk
                     type-segment-bases
                     target-abi
-                    (box-get rest)
+                    (__tl-box-place rest)
                     interval-index
                     assignments
                     ineligible
@@ -5330,7 +5314,7 @@
                   (compiler-reg-param-assign-walk
                     type-segment-bases
                     target-abi
-                    (box-get rest)
+                    (__tl-box-place rest)
                     interval-index
                     assignments
                     (live.compiler-live-set-insert ineligible var-id)
@@ -5465,8 +5449,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [out : live.CompilerLiveI64Set set]
     (begin
@@ -5485,7 +5469,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-ineligible-memory
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-reg-ineligible-instr-seq instrs set))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -5508,8 +5492,8 @@
   [start-index : i64]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [instr-index : i64 start-index]
     [out : live.CompilerLiveI64Set set]
@@ -5558,7 +5542,7 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (compiler-reg-call-live-blocks
-            (box-get rest)
+            (__tl-box-place rest)
             liveness
             (compiler-reg-call-live-instr-seq instrs liveness label 0 set))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -5586,8 +5570,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [out : live.CompilerLiveI64Set set]
     (begin
@@ -5602,8 +5586,8 @@
                   (live.compiler-live-call-args-vars args))]
               [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (let
-                  [base (struct-get (box-get payload-box) base)]
-                  [args (struct-get (box-get payload-box) args)]
+                  [base (__tl-project-field (__tl-box-place payload-box) base)]
+                  [args (__tl-project-field (__tl-box-place payload-box) args)]
                   (live.compiler-live-set-union
                     out
                     (live.compiler-live-value-vars-into
@@ -5611,9 +5595,10 @@
                       base)))]
               [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (let
-                  [base (struct-get (box-get payload-box) base)]
-                  [func (struct-get (box-get payload-box) callee)]
-                  [args (struct-get (box-get payload-box) args)]
+                  [base (__tl-project-field (__tl-box-place payload-box) base)]
+                  [func
+                    (__tl-project-field (__tl-box-place payload-box) callee)]
+                  [args (__tl-project-field (__tl-box-place payload-box) args)]
                   (live.compiler-live-set-union
                     out
                     (live.compiler-live-value-vars-into
@@ -5623,8 +5608,11 @@
                       func)))]
               [(ir.CompilerIrInstr.SpmdCall payload-box)
                 (let
-                  [active-mask (struct-get (box-get payload-box) active-mask)]
-                  [args (struct-get (box-get payload-box) args)]
+                  [active-mask
+                    (__tl-project-field
+                      (__tl-box-place payload-box)
+                      active-mask)]
+                  [args (__tl-project-field (__tl-box-place payload-box) args)]
                   (live.compiler-live-set-union
                     out
                     (live.compiler-live-value-vars-into
@@ -5653,7 +5641,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-call-arg-vars-blocks
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-reg-call-arg-vars-instr-seq instrs set))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -5973,8 +5961,8 @@
   [types : CompilerRegVarTypes]
   [target-abi : cabi.CompilerRegTargetAbi]) : live.CompilerLiveI64Set
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [out : live.CompilerLiveI64Set set]
     (begin
@@ -6003,8 +5991,8 @@
                   target-abi)]
               [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (let
-                  [base (struct-get (box-get payload-box) base)]
-                  [args (struct-get (box-get payload-box) args)]
+                  [base (__tl-project-field (__tl-box-place payload-box) base)]
+                  [args (__tl-project-field (__tl-box-place payload-box) args)]
                   (compiler-reg-call-arg-vars-unless-gp-parallel
                     type-segment-bases
                     (live.compiler-live-value-vars-into out base)
@@ -6014,9 +6002,10 @@
                     target-abi))]
               [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (let
-                  [base (struct-get (box-get payload-box) base)]
-                  [func (struct-get (box-get payload-box) callee)]
-                  [args (struct-get (box-get payload-box) args)]
+                  [base (__tl-project-field (__tl-box-place payload-box) base)]
+                  [func
+                    (__tl-project-field (__tl-box-place payload-box) callee)]
+                  [args (__tl-project-field (__tl-box-place payload-box) args)]
                   (compiler-reg-call-arg-vars-unless-gp-parallel
                     type-segment-bases
                     (live.compiler-live-value-vars-into
@@ -6099,7 +6088,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-call-arg-vars-blocks-scalar
             type-segment-bases
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-reg-call-arg-vars-instr-seq-scalar
               type-segment-bases
               instrs
@@ -6199,8 +6188,8 @@
         ;; also reclassify synthetic/scalar IR fixtures as SIMD values.
         [private-param-vars : live.CompilerLiveI64Set
           (live.compiler-live-set-union
-            (struct-get private-param-defs uses)
-            (struct-get private-param-defs defs))]
+            private-param-defs.uses
+            private-param-defs.defs)]
         [base-ineligible : live.CompilerLiveI64Set
           (live.compiler-live-set-minus
             (compiler-reg-ineligible-memory
@@ -6216,7 +6205,7 @@
             private-param-vars)]
         (compiler-reg-mark-spanning-in-set
           intervals
-          (struct-get vector-mask-defs defs)
+          vector-mask-defs.defs
           call-points
           base-ineligible))]))
 
@@ -6224,22 +6213,19 @@
   [left : CompilerRegInterval]
   [right : CompilerRegInterval]) : bool
   (let
-    [left-start : i64 (struct-get left start)]
-    [right-start : i64 (struct-get right start)]
-    [left-end : i64 (struct-get left end)]
-    [right-end : i64 (struct-get right end)]
+    [left-start : i64 left.start]
+    [right-start : i64 right.start]
+    [left-end : i64 left.end]
+    [right-end : i64 right.end]
     (cond
       [(< left-start right-start) true]
       [(> left-start right-start) false]
       [(< left-end right-end) true]
       [(> left-end right-end) false]
-      [else (< (struct-get left var) (struct-get right var))])))
+      [else (< left.var right.var)])))
 
 (define (compiler-reg-candidate-interval-copy [item : CompilerRegInterval]) : CompilerRegInterval
-  (CompilerRegInterval
-    (struct-get item var)
-    (struct-get item start)
-    (struct-get item end)))
+  (CompilerRegInterval item.var item.start item.end))
 
 (define (compiler-reg-candidate-sift-down
   [items : (__tl_dyn-array CompilerRegInterval)]
@@ -6279,8 +6265,8 @@
             [largest-item : CompilerRegInterval
               (compiler-reg-candidate-interval-copy (array-ref items largest))]
             (begin
-              (array-set! items node largest-item)
-              (array-set! items largest node-item)
+              (set! (array-ref items node) largest-item)
+              (set! (array-ref items largest) node-item)
               (set! node largest))))))))
 
 (define (compiler-reg-candidate-heapsort!
@@ -6302,8 +6288,8 @@
           [last-item : CompilerRegInterval
             (compiler-reg-candidate-interval-copy (array-ref items last))]
           (begin
-            (array-set! items 0 last-item)
-            (array-set! items last root-item)
+            (set! (array-ref items 0) last-item)
+            (set! (array-ref items last) root-item)
             (compiler-reg-candidate-sift-down items 0 last)
             (set! last (- last 1))))))))
 
@@ -6316,9 +6302,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            items
-            index
+          (set!
+            (array-ref items index)
             (compiler-reg-interval-seq-ref candidates index))
           (set! index (+ index 1))))
       (compiler-reg-candidate-heapsort! items count)
@@ -6341,7 +6326,7 @@
             (compiler-reg-interval-seq-ref intervals index)]
           (begin
             (let
-              [var : i64 (struct-get interval var)]
+              [var : i64 interval.var]
               (if (live.compiler-live-set-contains? ineligible var)
                 unit
                 (match (compiler-reg-var-types-lookup types var)
@@ -6365,19 +6350,19 @@
       (live.compiler-live-set-insert set dst)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (live.compiler-live-set-insert set dst))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (match elem-ty
           [(ast.AstType.Bool) set]
           [_ (live.compiler-live-set-insert set dst)]))]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [lanes (struct-get (box-get payload-box) lanes)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
         (if (= lanes 0)
           set
           (live.compiler-live-set-insert set dst)))]
@@ -6385,23 +6370,23 @@
       (live.compiler-live-set-insert set dst)]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (match elem-ty
           [(ast.AstType.Bool) set]
           [_ (live.compiler-live-set-insert set dst)]))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (live.compiler-live-set-insert set dst))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (live.compiler-live-set-insert set dst))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [backend (struct-get (box-get payload-box) backend)]
-        [result (struct-get (box-get payload-box) result)]
+        [backend (__tl-project-field (__tl-box-place payload-box) backend)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (match backend
           [(ir.CompilerIrSpmdBackend.Avx512)
             (match result
@@ -6428,7 +6413,7 @@
   (match instr
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (live.compiler-live-set-insert set dst))]
     [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _)
       (live.compiler-live-set-insert set dst)]
@@ -6436,15 +6421,15 @@
       (live.compiler-live-set-insert set dst)]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (match elem-ty
           [(ast.AstType.Bool) (live.compiler-live-set-insert set dst)]
           [_ set]))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (match elem-ty
           [(ast.AstType.Bool) (live.compiler-live-set-insert set dst)]
           [_ set]))]
@@ -6452,8 +6437,8 @@
       (live.compiler-live-set-insert set dst)]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [backend (struct-get (box-get payload-box) backend)]
-        [result (struct-get (box-get payload-box) result)]
+        [backend (__tl-project-field (__tl-box-place payload-box) backend)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (match backend
           [(ir.CompilerIrSpmdBackend.Avx512)
             (match result
@@ -6489,7 +6474,7 @@
       (match param
         [(ir.CompilerIrParam.Param name _ var)
           (compiler-reg-spmd-private-param-defs
-            (box-get rest)
+            (__tl-box-place rest)
             (if (compiler-reg-spmd-varying-param? name)
               (live.compiler-live-set-insert vector-set var)
               vector-set)
@@ -6502,8 +6487,8 @@
   [vector-set : live.CompilerLiveI64Set]
   [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [out-vector : live.CompilerLiveI64Set vector-set]
     [out-mask : live.CompilerLiveI64Set mask-set]
@@ -6535,9 +6520,9 @@
                 vector-set
                 mask-set)]
             (compiler-reg-vector-mask-defs-blocks
-              (box-get rest)
-              (struct-get defs uses)
-              (struct-get defs defs)))])]
+              (__tl-box-place rest)
+              defs.uses
+              defs.defs))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -6556,8 +6541,8 @@
                         out-vector
                         out-mask)]
                     (begin
-                      (set! out-vector (struct-get defs uses))
-                      (set! out-mask (struct-get defs defs))))])
+                      (set! out-vector defs.uses)
+                      (set! out-mask defs.defs)))])
               (set! i (+ i 1))))
           (live.CompilerLiveUseDef out-vector out-mask)))]))
 
@@ -6570,10 +6555,7 @@
             params
             (live.compiler-live-set-empty)
             (live.compiler-live-set-empty))]
-        (compiler-reg-vector-mask-defs-blocks
-          blocks
-          (struct-get defs uses)
-          (struct-get defs defs)))]))
+        (compiler-reg-vector-mask-defs-blocks blocks defs.uses defs.defs))]))
 
 (define (compiler-reg-special-candidates
   [intervals : CompilerRegIntervalSeq]
@@ -6591,7 +6573,7 @@
             (compiler-reg-interval-seq-ref intervals index)]
           (begin
             (let
-              [var : i64 (struct-get interval var)]
+              [var : i64 interval.var]
               (if (and
                 (live.compiler-live-set-contains? vars var)
                 (not (live.compiler-live-set-contains? blocked var)))
@@ -6613,20 +6595,22 @@
       (begin
         (compiler-reg-assignment-table-unassign
           assignments
-          (struct-get (compiler-reg-interval-seq-ref candidates index) var))
+          (__tl-project-field
+            (compiler-reg-interval-seq-ref candidates index)
+            var))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-active-before?
   [left : CompilerRegActive]
   [right : CompilerRegActive]) : bool
   (let
-    [left-end : i64 (struct-get left end)]
-    [right-end : i64 (struct-get right end)]
+    [left-end : i64 left.end]
+    [right-end : i64 right.end]
     (if (< left-end right-end)
       true
       (if (> left-end right-end)
         false
-        (< (struct-get left var) (struct-get right var))))))
+        (< left.var right.var)))))
 
 ;; Place `item` after every element it does not strictly precede -- the position
 ;; the former cons walk chose -- shifting the suffix up one slot.
@@ -6634,8 +6618,8 @@
   [active : CompilerRegActiveSeq]
   [item : CompilerRegActive]) : CompilerRegActiveSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegActive) (struct-get active slots)]
-    [len : i64 (struct-get active len)]
+    [slots : (__tl_dyn-array CompilerRegActive) active.slots]
+    [len : i64 active.len]
     [at : i64 0]
     (begin
       (while (and
@@ -6653,16 +6637,16 @@
           (begin
             (while (< i len)
               (begin
-                (array-set! bigger i (array-ref slots i))
+                (set! (array-ref bigger i) (array-ref slots i))
                 (set! i (+ i 1))))
             (set! slots bigger))))
       (let
         [j : i64 len]
         (while (> j at)
           (begin
-            (array-set! slots j (array-ref slots (- j 1)))
+            (set! (array-ref slots j) (array-ref slots (- j 1)))
             (set! j (- j 1)))))
-      (array-set! slots at item)
+      (set! (array-ref slots at) item)
       (CompilerRegActiveSeq slots (+ len 1)))))
 
 ;; Drop everything that ended at or before `start`. Survivors are re-inserted
@@ -6671,15 +6655,15 @@
   [active : CompilerRegActiveSeq]
   [start : i64]) : CompilerRegActiveSeq
   (let
-    [slots : (__tl_dyn-array CompilerRegActive) (struct-get active slots)]
-    [index : i64 (- (struct-get active len) 1)]
+    [slots : (__tl_dyn-array CompilerRegActive) active.slots]
+    [index : i64 (- active.len 1)]
     [out : CompilerRegActiveSeq (compiler-reg-active-seq-empty)]
     (begin
       (while (>= index 0)
         (begin
           (let
             [item : CompilerRegActive (array-ref slots index)]
-            (if (<= (struct-get item end) start)
+            (if (<= item.end start)
               unit
               (set! out (compiler-reg-active-insert out item))))
           (set! index (- index 1))))
@@ -6704,8 +6688,8 @@
   ;; lint-allow: unused-variable
   [hole-aware-vars : live.CompilerLiveI64Set]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerRegActive) (struct-get active slots)]
-    [count : i64 (struct-get active len)]
+    [slots : (__tl_dyn-array CompilerRegActive) active.slots]
+    [count : i64 active.len]
     [at : i64 0]
     [conflict : bool false]
     (begin
@@ -6714,11 +6698,8 @@
           (let
             [item : CompilerRegActive (array-ref slots at)]
             (if (and
-              (compiler-reg-registers-overlap? reg (struct-get item reg))
-              (compiler-reg-vars-interfere-segmented-index?
-                index
-                var
-                (struct-get item var)))
+              (compiler-reg-registers-overlap? reg item.reg)
+              (compiler-reg-vars-interfere-segmented-index? index var item.var))
               (set! conflict true)
               unit))
           (set! at (+ at 1))))
@@ -6759,7 +6740,7 @@
   (if (< var 0)
     (compiler-reg-assignment-table-copy-with-capacity
       assignments
-      (array-length (struct-get assignments present)))
+      (array-length assignments.present))
     (compiler-reg-assignment-table-insert
       (compiler-reg-assignment-table-copy-with-capacity assignments (+ var 1))
       var
@@ -6877,9 +6858,8 @@
   [assignments : CompilerRegAssignmentTable]
   [reg : i64]) : bool
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -6897,9 +6877,8 @@
   [assignments : CompilerRegAssignmentTable]
   [reg : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [index : i64 0]
     [count : i64 0]
     (begin
@@ -7004,7 +6983,7 @@
         (let
           [interval : CompilerRegInterval
             (compiler-reg-interval-seq-ref intervals index)]
-          [id : i64 (struct-get interval var)]
+          [id : i64 interval.var]
           (cond
             [(= id var)
               (begin
@@ -7018,10 +6997,10 @@
   [left : CompilerRegInterval]
   [right : CompilerRegInterval]) : bool
   (let
-    [left-start : i64 (struct-get left start)]
-    [left-end : i64 (struct-get left end)]
-    [right-start : i64 (struct-get right start)]
-    [right-end : i64 (struct-get right end)]
+    [left-start : i64 left.start]
+    [left-end : i64 left.end]
+    [right-start : i64 right.start]
+    [right-end : i64 right.end]
     ;; Half-open boundary touch (X.end == Y.start): X's last read happens
     ;; before Y's same-point def writes, so the pair may share a register
     ;; -- EXCEPT when the touch point is 0 (M-A RC1). A value live at
@@ -7040,8 +7019,8 @@
   [segments : CompilerRegIntervalSeq]
   [interval : CompilerRegInterval]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerRegInterval) (struct-get segments slots)]
-    [count : i64 (struct-get segments len)]
+    [slots : (__tl_dyn-array CompilerRegInterval) segments.slots]
+    [count : i64 segments.len]
     [index : i64 0]
     [overlap : bool false]
     [done : bool false]
@@ -7049,10 +7028,10 @@
       (while (and (< index count) (not done))
         (let
           [head : CompilerRegInterval (array-ref slots index)]
-          [head-start : i64 (struct-get head start)]
-          [head-end : i64 (struct-get head end)]
-          [interval-start : i64 (struct-get interval start)]
-          [interval-end : i64 (struct-get interval end)]
+          [head-start : i64 head.start]
+          [head-end : i64 head.end]
+          [interval-start : i64 interval.start]
+          [interval-end : i64 interval.end]
           (cond
             [(and (<= head-end interval-start) (not (= interval-start 0)))
               (set! index (+ index 1))]
@@ -7068,11 +7047,10 @@
   [left : CompilerRegIntervalSeq]
   [right : CompilerRegIntervalSeq]) : bool
   (let
-    [left-slots : (__tl_dyn-array CompilerRegInterval) (struct-get left slots)]
-    [right-slots : (__tl_dyn-array CompilerRegInterval)
-      (struct-get right slots)]
-    [left-count : i64 (struct-get left len)]
-    [right-count : i64 (struct-get right len)]
+    [left-slots : (__tl_dyn-array CompilerRegInterval) left.slots]
+    [right-slots : (__tl_dyn-array CompilerRegInterval) right.slots]
+    [left-count : i64 left.len]
+    [right-count : i64 right.len]
     [left-index : i64 0]
     [right-index : i64 0]
     [overlap : bool false]
@@ -7088,10 +7066,10 @@
             (array-ref left-slots left-index)]
           [right-interval : CompilerRegInterval
             (array-ref right-slots right-index)]
-          [left-start : i64 (struct-get left-interval start)]
-          [left-end : i64 (struct-get left-interval end)]
-          [right-start : i64 (struct-get right-interval start)]
-          [right-end : i64 (struct-get right-interval end)]
+          [left-start : i64 left-interval.start]
+          [left-end : i64 left-interval.end]
+          [right-start : i64 right-interval.start]
+          [right-end : i64 right-interval.end]
           (cond
             [(and (<= left-end right-start) (not (= right-start 0)))
               (set! left-index (+ left-index 1))]
@@ -7107,9 +7085,7 @@
   [end : i64]) : bool
   (match (compiler-reg-interval-lookup intervals var)
     [(CompilerRegMaybeInterval.Some interval)
-      (and
-        (= (struct-get interval start) start)
-        (= (struct-get interval end) end))]
+      (and (= interval.start start) (= interval.end end))]
     [(CompilerRegMaybeInterval.No) false]))
 
 (define (compiler-reg-vars-interfere-index?
@@ -7146,8 +7122,7 @@
   (if (= left right)
     true
     (let
-      [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-        (struct-get intervals segments)]
+      [segments : (__tl_dyn-array CompilerRegIntervalSeq) intervals.segments]
       [left-segments : CompilerRegIntervalSeq
         (if (or (< left 0) (>= left (array-length segments)))
           (compiler-reg-interval-seq-empty)
@@ -7237,9 +7212,8 @@
   [location : CompilerRegLocation]
   [index : i64]) : bool
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     (cond
       [(>= index (array-length present)) false]
       [(= (array-ref present index) 0)
@@ -7293,9 +7267,8 @@
   [location : CompilerRegLocation]
   [index : i64]) : bool
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     (cond
       [(>= index (array-length present)) false]
       [(= (array-ref present index) 0)
@@ -7372,15 +7345,15 @@
 
 (define (compiler-reg-count-def! [counts : (__tl_dyn-array i64)] [var : i64]) : unit
   (if (and (>= var 0) (< var (array-length counts)))
-    (array-set! counts var (+ (array-ref counts var) 1))
+    (set! (array-ref counts var) (+ (array-ref counts var) 1))
     unit))
 
 (define (compiler-reg-count-seq-defs!
   [instrs : ir.CompilerIrInstrSeq]
   [counts : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -7401,7 +7374,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-count-seq-defs! instrs counts)
-            (compiler-reg-count-block-defs! (box-get rest) counts))])]
+            (compiler-reg-count-block-defs! (__tl-box-place rest) counts))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -7417,15 +7390,15 @@
   [phi-defs : (__tl_dyn-array i64)]
   [var : i64]) : unit
   (if (and (>= var 0) (< var (array-length phi-defs)))
-    (array-set! phi-defs var 1)
+    (set! (array-ref phi-defs var) 1)
     unit))
 
 (define (compiler-reg-mark-phi-defs-seq!
   [instrs : ir.CompilerIrInstrSeq]
   [phi-defs : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -7447,7 +7420,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-reg-mark-phi-defs-seq! instrs phi-defs)
-            (compiler-reg-mark-phi-defs-blocks! (box-get rest) phi-defs))])]
+            (compiler-reg-mark-phi-defs-blocks! (__tl-box-place rest) phi-defs))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -7473,7 +7446,7 @@
         [(ir.CompilerIrParam.Param _ _ id)
           (begin
             (compiler-reg-count-def! counts id)
-            (compiler-reg-param-count-defs! (box-get rest) counts))])]))
+            (compiler-reg-param-count-defs! (__tl-box-place rest) counts))])]))
 
 (define (compiler-reg-function-def-counts [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
@@ -7497,7 +7470,7 @@
         (let
           [r : i64 (compiler-reg-sv-find parents p)]
           (begin
-            (array-set! parents x r)
+            (set! (array-ref parents x) r)
             r))))))
 
 (define (compiler-reg-sv-union!
@@ -7510,8 +7483,8 @@
     (if (or (< ra 0) (< rb 0) (= ra rb))
       unit
       (if (< ra rb)
-        (array-set! parents rb ra)
-        (array-set! parents ra rb)))))
+        (set! (array-ref parents rb) ra)
+        (set! (array-ref parents ra) rb)))))
 
 (define (compiler-reg-sv-single-def?
   [counts : (__tl_dyn-array i64)]
@@ -7563,8 +7536,8 @@
   [eligible : (__tl_dyn-array i64)]
   [parents : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -7592,7 +7565,7 @@
           (begin
             (compiler-reg-sv-seq! instrs counts phi-defs eligible parents)
             (compiler-reg-sv-blocks!
-              (box-get rest)
+              (__tl-box-place rest)
               counts
               phi-defs
               eligible
@@ -7622,7 +7595,7 @@
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
           (while (< index vars)
             (begin
-              (array-set! parents index index)
+              (set! (array-ref parents index) index)
               (set! index (+ index 1))))
           (compiler-reg-sv-blocks! blocks counts phi-defs eligible parents)
           parents))]))
@@ -7637,8 +7610,8 @@
   [interval-index : CompilerRegIntervalIndex]
   [clobber-points : live.CompilerLiveI64Set]) : (__tl_dyn-array i64)
   (let
-    [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-    [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+    [starts : (__tl_dyn-array i64) interval-index.starts]
+    [ends : (__tl_dyn-array i64) interval-index.ends]
     [eligible : (__tl_dyn-array i64)
       (array.make-array i64 (array-length starts))]
     [var : i64 0]
@@ -7652,7 +7625,7 @@
                 clobber-points
                 (array-ref starts var)
                 (array-ref ends var))))
-            (array-set! eligible var 1)
+            (set! (array-ref eligible var) 1)
             unit)
           (set! var (+ var 1))))
       eligible)))
@@ -7669,7 +7642,7 @@
       (while (< var (array-length eligible))
         (begin
           (if (live.compiler-live-set-contains? storage-vars var)
-            (array-set! eligible var 0)
+            (set! (array-ref eligible var) 0)
             unit)
           (set! var (+ var 1))))
       eligible)))
@@ -7736,8 +7709,8 @@
   [cursor : (__tl_dyn-array i64)]
   [pts : (__tl_dyn-array i64)]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [p : i64 point]
     (begin
@@ -7750,9 +7723,9 @@
                 [slot : i64 (array-ref cursor v)]
                 (begin
                   (if (and (>= slot 0) (< slot (array-length pts)))
-                    (array-set! pts slot p)
+                    (set! (array-ref pts slot) p)
                     unit)
-                  (array-set! cursor v (+ slot 1))))
+                  (set! (array-ref cursor v) (+ slot 1))))
               unit))
           (set! p (+ p 2))
           (set! index (+ index 1))))
@@ -7769,7 +7742,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-sv-def-points-fill-blocks
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-reg-sv-def-points-fill-seq instrs point cursor pts)
             cursor
             pts)])]
@@ -7805,9 +7778,7 @@
           (let
             [interval : CompilerRegInterval
               (compiler-reg-interval-seq-ref segs index)]
-            (if (and
-              (<= (struct-get interval start) p)
-              (<= p (struct-get interval end)))
+            (if (and (<= interval.start p) (<= p interval.end))
               (set! found true)
               (set! index (+ index 1))))
           unit))
@@ -7822,10 +7793,9 @@
   [v : i64]
   [p : i64]) : bool
   (let
-    [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get ctx segments)]
-    [starts : (__tl_dyn-array i64) (struct-get ctx starts)]
-    [ends : (__tl_dyn-array i64) (struct-get ctx ends)]
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq) ctx.segments]
+    [starts : (__tl_dyn-array i64) ctx.starts]
+    [ends : (__tl_dyn-array i64) ctx.ends]
     [segs : CompilerRegIntervalSeq
       (if (and (>= v 0) (< v (array-length segments)))
         (array-ref segments v)
@@ -7845,8 +7815,8 @@
   [m : i64]
   [v : i64]) : bool
   (let
-    [def-off : (__tl_dyn-array i64) (struct-get ctx def-off)]
-    [def-pts : (__tl_dyn-array i64) (struct-get ctx def-pts)]
+    [def-off : (__tl_dyn-array i64) ctx.def-off]
+    [def-pts : (__tl_dyn-array i64) ctx.def-pts]
     (if (or (< m 0) (>= (+ m 1) (array-length def-off)))
       true
       (let
@@ -7876,9 +7846,9 @@
   [m : i64]
   [root : i64]) : bool
   (let
-    [parents : (__tl_dyn-array i64) (struct-get ctx parents)]
-    [counts : (__tl_dyn-array i64) (struct-get ctx counts)]
-    [phi-defs : (__tl_dyn-array i64) (struct-get ctx phi-defs)]
+    [parents : (__tl_dyn-array i64) ctx.parents]
+    [counts : (__tl_dyn-array i64) ctx.counts]
+    [phi-defs : (__tl_dyn-array i64) ctx.phi-defs]
     [n : i64 (array-length parents)]
     [v : i64 0]
     [hit : bool false]
@@ -7903,8 +7873,8 @@
   [a : i64]
   [b : i64]) : unit
   (let
-    [parents : (__tl_dyn-array i64) (struct-get ctx parents)]
-    [class-multi : (__tl_dyn-array i64) (struct-get ctx class-multi)]
+    [parents : (__tl_dyn-array i64) ctx.parents]
+    [class-multi : (__tl_dyn-array i64) ctx.class-multi]
     [ra : i64 (compiler-reg-sv-find parents a)]
     [rb : i64 (compiler-reg-sv-find parents b)]
     (if (or (< ra 0) (< rb 0) (= ra rb))
@@ -7939,7 +7909,7 @@
                 (let
                   [r : i64 (compiler-reg-sv-find parents a)]
                   (if (and (>= r 0) (< r (array-length class-multi)))
-                    (array-set! class-multi r m)
+                    (set! (array-ref class-multi r) m)
                     unit))))))))))
 
 (define (compiler-reg-sv-int-ok? [int-ok : (__tl_dyn-array i64)] [v : i64]) : bool
@@ -7953,10 +7923,10 @@
   [svar : i64]
   [dst : i64]) : unit
   (let
-    [counts : (__tl_dyn-array i64) (struct-get ctx counts)]
-    [phi-defs : (__tl_dyn-array i64) (struct-get ctx phi-defs)]
-    [eligible : (__tl_dyn-array i64) (struct-get ctx eligible)]
-    [int-ok : (__tl_dyn-array i64) (struct-get ctx int-ok)]
+    [counts : (__tl_dyn-array i64) ctx.counts]
+    [phi-defs : (__tl_dyn-array i64) ctx.phi-defs]
+    [eligible : (__tl_dyn-array i64) ctx.eligible]
+    [int-ok : (__tl_dyn-array i64) ctx.int-ok]
     (if (and
       (compiler-reg-sv-single-def-non-phi? counts phi-defs dst)
       (compiler-reg-sv-eligible? eligible dst)
@@ -7992,8 +7962,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [ctx : CompilerRegSvMultiCtx]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -8012,7 +7982,7 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-sv-multi-seq! instrs ctx)])
-        (compiler-reg-sv-multi-blocks! (box-get rest) ctx))]
+        (compiler-reg-sv-multi-blocks! (__tl-box-place rest) ctx))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -8044,12 +8014,11 @@
         (begin
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
           (compiler-reg-count-block-defs! blocks bucket)
-          (array-set! def-off 0 0)
+          (set! (array-ref def-off 0) 0)
           (while (< index vars)
             (begin
-              (array-set!
-                def-off
-                (+ index 1)
+              (set!
+                (array-ref def-off (+ index 1))
                 (+ (array-ref def-off index) (array-ref bucket index)))
               (set! index (+ index 1))))
           (set! index 0)
@@ -8065,20 +8034,18 @@
             (begin
               (while (< index vars)
                 (begin
-                  (array-set! parents index index)
-                  (array-set! cursor index (array-ref def-off index))
-                  (array-set!
-                    class-multi
-                    index
+                  (set! (array-ref parents index) index)
+                  (set! (array-ref cursor index) (array-ref def-off index))
+                  (set!
+                    (array-ref class-multi index)
                     (if (compiler-reg-sv-single-def-non-phi?
                       counts
                       phi-defs
                       index)
                       (- 0 1)
                       index))
-                  (array-set!
-                    int-ok
-                    index
+                  (set!
+                    (array-ref int-ok index)
                     (match (compiler-reg-var-types-lookup type-info index)
                       [(CompilerRegMaybeType.Some ty)
                         (if (and
@@ -8106,9 +8073,9 @@
                       class-multi
                       def-off
                       def-pts
-                      (struct-get interval-index starts)
-                      (struct-get interval-index ends)
-                      (struct-get interval-index segments)
+                      interval-index.starts
+                      interval-index.ends
+                      interval-index.segments
                       int-ok))
                   parents))))))]))
 
@@ -8130,8 +8097,8 @@
   (if (>= index (array-length parents))
     unit
     (begin
-      (array-set! parents index index)
-      (array-set! sizes index 1)
+      (set! (array-ref parents index) index)
+      (set! (array-ref sizes index) 1)
       (compiler-reg-coalesce-map-init! parents sizes (+ index 1)))))
 
 (define (compiler-reg-coalesce-map-root-from-parents
@@ -8285,7 +8252,7 @@
     unit
     (begin
       (if (= (array-ref parents index) loser)
-        (array-set! parents index winner)
+        (set! (array-ref parents index) winner)
         unit)
       (compiler-reg-coalesce-map-merge-root-parents-into!
         parents
@@ -8313,15 +8280,13 @@
   (if (>= index (array-length root-start))
     unit
     (begin
-      (array-set!
-        root-start
-        index
+      (set!
+        (array-ref root-start index)
         (if (< index (array-length src-start))
           (array-ref src-start index)
           (- 0 1)))
-      (array-set!
-        root-end
-        index
+      (set!
+        (array-ref root-end index)
         (if (< index (array-length src-end))
           (array-ref src-end index)
           (- 0 1)))
@@ -8354,11 +8319,10 @@
   [winner : i64]
   [loser : i64]) : unit
   (begin
-    (array-set!
-      sizes
-      winner
+    (set!
+      (array-ref sizes winner)
       (+ (array-ref sizes winner) (array-ref sizes loser)))
-    (array-set! sizes loser 0)
+    (set! (array-ref sizes loser) 0)
     (let
       [loser-start : i64 (array-ref root-start loser)]
       [loser-end : i64 (array-ref root-end loser)]
@@ -8366,14 +8330,14 @@
       [winner-end : i64 (array-ref root-end winner)]
       (begin
         (if (< winner-start 0)
-          (array-set! root-start winner loser-start)
+          (set! (array-ref root-start winner) loser-start)
           (if (if (< loser-start 0)
             false
             (< loser-start winner-start))
-            (array-set! root-start winner loser-start)
+            (set! (array-ref root-start winner) loser-start)
             unit))
         (if (> loser-end winner-end)
-          (array-set! root-end winner loser-end)
+          (set! (array-ref root-end winner) loser-end)
           unit)))
     (compiler-reg-coalesce-map-merge-root-parents-into! parents winner loser 0)))
 
@@ -8456,8 +8420,8 @@
   [changed : bool]
   [sv-parents : (__tl_dyn-array i64)]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [index : i64 (- (struct-get moves len) 1)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [index : i64 (- moves.len 1)]
     [out : bool changed]
     (begin
       (while (>= index 0)
@@ -8473,9 +8437,9 @@
                 intervals
                 types
                 group-vars
-                (struct-get item src)
-                (struct-get item dst)
-                (struct-get item strict)
+                item.src
+                item.dst
+                item.strict
                 sv-parents)]
             (set! out (or out did-merge)))
           (set! index (- index 1))))
@@ -8528,8 +8492,8 @@
         (compiler-reg-coalesce-init-coarse!
           root-start
           root-end
-          (struct-get intervals starts)
-          (struct-get intervals ends)
+          intervals.starts
+          intervals.ends
           0)
         (compiler-reg-coalesce-map-fixpoint!
           parents
@@ -8551,7 +8515,7 @@
   [root : i64]
   [index : i64]) : CompilerRegMaybeLocation
   (let
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     (cond
       [(>= index (array-length parents)) CompilerRegMaybeLocation.No]
       [(or (= index var) (not (= (array-ref parents index) root)))
@@ -8594,7 +8558,7 @@
   [intervals : CompilerRegIntervalIndex]
   [var : i64]) : CompilerRegMaybeLocation
   (let
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     [root : i64 (compiler-reg-coalesce-map-root-from-parents parents var)]
     (if (< root 0)
       CompilerRegMaybeLocation.No
@@ -8609,7 +8573,7 @@
 (define (compiler-reg-assignment-count
   [assignments : CompilerRegAssignmentTable]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [present : (__tl_dyn-array i64) assignments.present]
     [index : i64 0]
     [count : i64 0]
     (begin
@@ -8623,9 +8587,8 @@
 
 (define (compiler-reg-spill-count [assignments : CompilerRegAssignmentTable]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [index : i64 0]
     [count : i64 0]
     (begin
@@ -8667,10 +8630,10 @@
       unit
       (begin
         (if (< (array-ref hints root-src) 0)
-          (array-set! hints root-src root-dst)
+          (set! (array-ref hints root-src) root-dst)
           unit)
         (if (< (array-ref hints root-dst) 0)
-          (array-set! hints root-dst root-src)
+          (set! (array-ref hints root-dst) root-src)
           unit)
         unit))))
 
@@ -8679,17 +8642,13 @@
   [parents : (__tl_dyn-array i64)]
   [moves : CompilerRegMoveSeq]) : unit
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-    [index : i64 (- (struct-get moves len) 1)]
+    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+    [index : i64 (- moves.len 1)]
     (while (>= index 0)
       (begin
         (let
           [item : CompilerRegMove (array-ref slots index)]
-          (compiler-reg-copy-hints-add-move!
-            hints
-            parents
-            (struct-get item src)
-            (struct-get item dst)))
+          (compiler-reg-copy-hints-add-move! hints parents item.src item.dst))
         (set! index (- index 1))))))
 
 ;; Two-address binop dst<->operand coalesce hints (LLVM TwoAddressInstructionPass).
@@ -8744,8 +8703,8 @@
   [hints : (__tl_dyn-array i64)]
   [parents : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -8769,7 +8728,7 @@
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-copy-hints-from-binops-seq! instrs hints parents)])
         (compiler-reg-copy-hints-from-binops-blocks!
-          (box-get rest)
+          (__tl-box-place rest)
           hints
           parents))]
     [(ir.CompilerIrBlockList.Array seq)
@@ -8801,7 +8760,7 @@
   [func : ir.CompilerIrFunction]) : (__tl_dyn-array i64)
   (let
     [hints : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     (begin
       (compiler-reg-fill-i64-array hints -1)
       (compiler-reg-copy-hints-from-moves! hints parents moves)
@@ -8820,7 +8779,7 @@
     (CompilerRegMaybeId.No)
     (let
       [preferred : i64 (array-ref preferences var)]
-      [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+      [ends : (__tl_dyn-array i64) interval-index.ends]
       (if (or
         (< preferred 0)
         (>= preferred (array-length ends))
@@ -8867,9 +8826,8 @@
   [index : i64]
   [active : CompilerRegActiveSeq]) : CompilerRegActiveSeq
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     (if (>= index (array-length present))
       active
       (let
@@ -8885,7 +8843,7 @@
                     [(CompilerRegMaybeInterval.Some interval)
                       (compiler-reg-active-insert
                         active
-                        (CompilerRegActive index (struct-get interval end) reg))]
+                        (CompilerRegActive index interval.end reg))]
                     [(CompilerRegMaybeInterval.No) active])
                   active)]
               [_ active]))]
@@ -8940,9 +8898,9 @@
     (let
       [interval : CompilerRegInterval
         (compiler-reg-interval-seq-ref candidates index)]
-      [var : i64 (struct-get interval var)]
-      [start : i64 (struct-get interval start)]
-      [end : i64 (struct-get interval end)]
+      [var : i64 interval.var]
+      [start : i64 interval.start]
+      [end : i64 interval.end]
       [expired : CompilerRegActiveSeq (compiler-reg-expire-active active start)]
       [preferred : CompilerRegMaybeId
         (compiler-reg-fixed-preferred-register
@@ -9031,8 +8989,8 @@
   [point : i64]
   [set : live.CompilerLiveI64Set]) : CompilerRegCallScan
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [p : i64 point]
     [out : live.CompilerLiveI64Set set]
@@ -9074,7 +9032,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-call-points-seq instrs point set)
             [(CompilerRegCallScan.Scan p2 s2)
-              (compiler-reg-call-points-blocks (box-get rest) p2 s2)])])]
+              (compiler-reg-call-points-blocks (__tl-box-place rest) p2 s2)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -9427,8 +9385,8 @@
   [set : live.CompilerLiveI64Set]
   [kind : i64]) : CompilerRegCallScan
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [p : i64 point]
     [out : live.CompilerLiveI64Set set]
@@ -9465,7 +9423,7 @@
             [(CompilerRegCallScan.Scan p2 s2)
               (compiler-reg-clobber-kind-points-blocks
                 type-segment-bases
-                (box-get rest)
+                (__tl-box-place rest)
                 p2
                 s2
                 kind)])])]
@@ -9693,17 +9651,14 @@
           (let
             [segment : CompilerRegInterval
               (compiler-reg-interval-seq-ref segments index)]
-            [segment-start : i64 (struct-get segment start)]
+            [segment-start : i64 segment.start]
             ;; compiler-reg-call-set-in-range? accepts `start < c < end`; passing
             ;; `s - 1` turns that into the inclusive-start `s <= c < e`.
             [low : i64
               (if (and (= segment-start hull-start) (not inclusive-hull-start?))
                 segment-start
                 (- segment-start 1))]
-            (if (compiler-reg-call-set-in-range?
-              clobber-points
-              low
-              (struct-get segment end))
+            (if (compiler-reg-call-set-in-range? clobber-points low segment.end)
               (set! hit true)
               unit))
           (set! index (+ index 1))))
@@ -9714,8 +9669,8 @@
   [point : i64]
   [set : live.CompilerLiveI64Set]) : CompilerRegCallScan
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [p : i64 point]
     [out : live.CompilerLiveI64Set set]
@@ -9745,7 +9700,10 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-direct-call-points-seq instrs point set)
             [(CompilerRegCallScan.Scan p2 s2)
-              (compiler-reg-direct-call-points-blocks (box-get rest) p2 s2)])])]
+              (compiler-reg-direct-call-points-blocks
+                (__tl-box-place rest)
+                p2
+                s2)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -9807,7 +9765,10 @@
         [(ir.CompilerIrBlock.Block label _)
           (begin
             (reg_label_i64_map.insert-ref! (&mut ids) label index)
-            (compiler-reg-loop-depth-block-ids (box-get rest) ids (+ index 1)))])]
+            (compiler-reg-loop-depth-block-ids
+              (__tl-box-place rest)
+              ids
+              (+ index 1)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (compiler-reg-loop-depth-block-ids-seq seq ids index)]))
 
@@ -9836,7 +9797,7 @@
     [(reg_label_i64_map.LookupFound target-id)
       (if (and (>= target-id 0) (<= target-id source-id))
         (if (> source-id (array-ref loop-ends target-id))
-          (array-set! loop-ends target-id source-id)
+          (set! (array-ref loop-ends target-id) source-id)
           unit)
         unit)]
     [(reg_label_i64_map.LookupMissing) unit]))
@@ -9876,7 +9837,7 @@
           index
           (live.compiler-live-block-successors block))
         (compiler-reg-loop-depth-record-blocks!
-          (box-get rest)
+          (__tl-box-place rest)
           ids
           loop-ends
           (+ index 1)))]
@@ -9909,7 +9870,7 @@
     unit
     (begin
       (if (< (array-ref depths index) (compiler-reg-loop-depth-max))
-        (array-set! depths index (+ (array-ref depths index) 1))
+        (set! (array-ref depths index) (+ (array-ref depths index) 1))
         unit)
       (compiler-reg-loop-depth-bump-range! depths (+ index 1) end))))
 
@@ -9950,7 +9911,7 @@
   [var : i64]
   [weight : i64]) : unit
   (if (and (>= var 0) (< var (array-length counts)))
-    (array-set! counts var (+ (array-ref counts var) weight))
+    (set! (array-ref counts var) (+ (array-ref counts var) weight))
     unit))
 
 (define (compiler-reg-ref-counts-add-ids-weighted!
@@ -10053,8 +10014,8 @@
   [counts : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
       (begin
@@ -10066,8 +10027,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [weight : i64]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
       (begin
@@ -10087,7 +10048,7 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-ref-counts-seq! counts instrs)])
-        (compiler-reg-ref-counts-blocks! counts (box-get rest)))]
+        (compiler-reg-ref-counts-blocks! counts (__tl-box-place rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -10129,7 +10090,7 @@
       [var : i64 (+ var-base (compiler-reg-low-bit-index32 bits))]
       (begin
         (if (and (>= var 0) (< var (array-length marks)))
-          (array-set! marks var true)
+          (set! (array-ref marks var) true)
           unit)
         (compiler-reg-ref-mark-word! marks (bit-and bits (- bits 1)) var-base)))))
 
@@ -10177,21 +10138,21 @@
               [var : i64 (array-ref ids index)]
               (begin
                 (if (and (>= var 0) (< var (array-length marks)))
-                  (array-set! marks var true)
+                  (set! (array-ref marks var) true)
                   unit)
                 (set! index (+ index 1)))))
           (let
             [def-var : i64 (live.compiler-live-instr-def-var instr)]
             (if (and (>= def-var 0) (< def-var (array-length marks)))
-              (array-set! marks def-var true)
+              (set! (array-ref marks def-var) true)
               unit)))))))
 
 (define (compiler-reg-ref-mark-seq!
   [marks : (__tl_dyn-array bool)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
       (begin
@@ -10208,7 +10169,7 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-ref-mark-seq! marks instrs)])
-        (compiler-reg-ref-marks-blocks! marks (box-get rest)))]
+        (compiler-reg-ref-marks-blocks! marks (__tl-box-place rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -10237,7 +10198,7 @@
               (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
         (compiler-reg-ref-counts-blocks-weighted!
           counts
-          (box-get rest)
+          (__tl-box-place rest)
           depths
           (+ block-index 1)))]
     [(ir.CompilerIrBlockList.Array seq)
@@ -10317,7 +10278,7 @@
     [i : i64 0]
     (while (< i vars)
       (begin
-        (array-set! vals i (ir.CompilerIrValue.Unit))
+        (set! (array-ref vals i) (ir.CompilerIrValue.Unit))
         (set! i (+ i 1))))))
 
 ;; Record var -> rematerialisable value for every var whose SOLE definition is a
@@ -10328,8 +10289,8 @@
   [flags : (__tl_dyn-array i64)]
   [vals : (__tl_dyn-array ir.CompilerIrValue)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
       (begin
@@ -10347,8 +10308,8 @@
                 false)
               false)
               (begin
-                (array-set! flags dst 1)
-                (array-set! vals dst value)
+                (set! (array-ref flags dst) 1)
+                (set! (array-ref vals dst) value)
                 unit)
               unit)]
           ;; Taking a var's address needs its real storage; poison it so it is
@@ -10358,7 +10319,7 @@
               (< src (array-length flags))
               false)
               (begin
-                (array-set! flags src 2)
+                (set! (array-ref flags src) 2)
                 unit)
               unit)]
           [_ unit])
@@ -10377,7 +10338,7 @@
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-collect-remat-seq! instrs def-counts flags vals)])
         (compiler-reg-collect-remat-blocks!
-          (box-get rest)
+          (__tl-box-place rest)
           def-counts
           flags
           vals))]
@@ -10416,7 +10377,7 @@
   [vars : i64]) : CompilerRegAssignmentTable
   (let
     [def-counts : (__tl_dyn-array i64) (compiler-reg-function-def-counts func)]
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     [merged-roots : live.CompilerLiveI64Set
       (compiler-reg-coalesce-merged-root-set coalesce)]
     [flags : (__tl_dyn-array i64) (array.make-array i64 vars)]
@@ -10482,7 +10443,7 @@
   [def-status : (__tl_dyn-array i64)]
   [coalesce : CompilerRegCoalesceMap]) : unit
   (let
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     [merged-roots : live.CompilerLiveI64Set
       (compiler-reg-coalesce-merged-root-set coalesce)]
     [var : i64 0]
@@ -10498,9 +10459,8 @@
             (= (/ status 2) 1)
             (not
               (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
-            (array-set!
-              weights
-              var
+            (set!
+              (array-ref weights var)
               (compiler-reg-remat-discount-weight (array-ref weights var)))
             unit))
         (set! var (+ var 1))))))
@@ -10514,8 +10474,8 @@
 (define (compiler-reg-remat-instrs-mutates-memory?
   [instrs : ir.CompilerIrInstrSeq]) : bool
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -10536,7 +10496,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (or
             (compiler-reg-remat-instrs-mutates-memory? instrs)
-            (compiler-reg-remat-blocks-mutates-memory? (box-get rest)))])]
+            (compiler-reg-remat-blocks-mutates-memory? (__tl-box-place rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -10568,21 +10528,21 @@
         (compiler-reg-remat-mov-value? value allow-invariant-loads)
         (>= dst 0)
         (< dst (array-length def-status)))
-        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        (set! (array-ref def-status dst) (bit-or (array-ref def-status dst) 1))
         unit)]
     [(ir.CompilerIrInstr.Gep dst base offset _)
       (if (and
         (compiler-reg-remat-gep? base offset)
         (>= dst 0)
         (< dst (array-length def-status)))
-        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        (set! (array-ref def-status dst) (bit-or (array-ref def-status dst) 1))
         unit)]
     [(ir.CompilerIrInstr.Load dst src _)
       (if (and
         (compiler-reg-remat-load? src allow-invariant-loads)
         (>= dst 0)
         (< dst (array-length def-status)))
-        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        (set! (array-ref def-status dst) (bit-or (array-ref def-status dst) 1))
         unit)]
     [_ unit]))
 
@@ -10621,8 +10581,8 @@
   [weight : i64]
   [allow-invariant-loads : bool]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -10658,7 +10618,7 @@
         (compiler-reg-ref-counts-blocks-weighted-remat!
           counts
           def-status
-          (box-get rest)
+          (__tl-box-place rest)
           depths
           (+ block-index 1)
           allow-invariant-loads))]
@@ -10729,15 +10689,14 @@
   [index : CompilerRegIntervalIndex]
   [var : i64]) : bool
   (let
-    [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get index segments)]
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq) index.segments]
     (and
       (>= var 0)
       (< var (array-length segments))
       (not (compiler-reg-interval-seq-empty? (array-ref segments var))))))
 
 (define (compiler-reg-edge-copy-list-count [copies : CompilerRegEdgeCopySeq]) : i64
-  (struct-get copies len))
+  copies.len)
 
 (define (compiler-reg-region-label-map-from
   [labels : CompilerRegLabelSeq]
@@ -10784,7 +10743,7 @@
 
 (define (compiler-reg-edge-copy-live-block-label
   [block : live.CompilerLiveBlock]) : i64
-  (struct-get block label))
+  block.label)
 
 (define (compiler-reg-edge-copy-increment-pred!
   [liveness : live.CompilerFunctionLiveness]
@@ -10793,7 +10752,7 @@
   (let
     [index : i64 (live.compiler-live-function-block-index liveness label)]
     (if (>= index 0)
-      (array-set! pred-counts index (+ (array-ref pred-counts index) 1))
+      (set! (array-ref pred-counts index) (+ (array-ref pred-counts index) 1))
       unit)))
 
 (define (compiler-reg-edge-copy-count-preds-succs!
@@ -11187,20 +11146,20 @@
   [insert-at : i64]
   [copy-instr : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (array.make-array ir.CompilerIrInstr (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index insert-at)
         (begin
-          (array-set! out index (array-ref slots index))
+          (set! (array-ref out index) (array-ref slots index))
           (set! index (+ index 1))))
-      (array-set! out insert-at copy-instr)
+      (set! (array-ref out insert-at) copy-instr)
       (while (< index count)
         (begin
-          (array-set! out (+ index 1) (array-ref slots index))
+          (set! (array-ref out (+ index 1)) (array-ref slots index))
           (set! index (+ index 1))))
       (ir.CompilerIrInstrSeq out (+ count 1)))))
 
@@ -11235,8 +11194,10 @@
             (CompilerRegEdgeCopyRewrite.Rewrite
               (ir.compiler-ir-block-cons
                 (compiler-reg-edge-copy-insert-in-block block copy)
-                (box-get rest)))
-            (match (compiler-reg-edge-copy-insert-one (box-get rest) copy)
+                (__tl-box-place rest)))
+            (match (compiler-reg-edge-copy-insert-one
+              (__tl-box-place rest)
+              copy)
               [(CompilerRegEdgeCopyRewrite.Rewrite tail)
                 (CompilerRegEdgeCopyRewrite.Rewrite
                   (ir.compiler-ir-block-cons block tail))]
@@ -11255,9 +11216,8 @@
             (let
               [block : ir.CompilerIrBlock (ir.compiler-ir-block-seq-ref seq i)]
               (begin
-                (array-set!
-                  slots
-                  i
+                (set!
+                  (array-ref slots i)
                   (match block
                     [(ir.CompilerIrBlock.Block label _)
                       (if (and (not found) (= label target))
@@ -11279,8 +11239,8 @@
   [blocks : ir.CompilerIrBlockList]
   [copies : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyRewrite
   (let
-    [slots : (__tl_dyn-array CompilerRegEdgeCopy) (struct-get copies slots)]
-    [count : i64 (struct-get copies len)]
+    [slots : (__tl_dyn-array CompilerRegEdgeCopy) copies.slots]
+    [count : i64 copies.len]
     [index : i64 0]
     [current : ir.CompilerIrBlockList blocks]
     [refusal : String ""]
@@ -11316,8 +11276,8 @@
   [copies : CompilerRegEdgeCopySeq]
   [want-into : bool]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerRegEdgeCopy) (struct-get copies slots)]
-    [count : i64 (struct-get copies len)]
+    [slots : (__tl_dyn-array CompilerRegEdgeCopy) copies.slots]
+    [count : i64 copies.len]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -11409,7 +11369,7 @@
     (while (< v n)
       (begin
         (if (and (< v (array-length parents)) (= (array-ref parents v) root))
-          (array-set! remap v new-var)
+          (set! (array-ref remap v) new-var)
           unit)
         (set! v (+ v 1))))))
 
@@ -11467,7 +11427,7 @@
               (= (array-ref parents src) root))]
           [_ false])
         (compiler-reg-loop-split-phi-inputs-all-in-group?
-          (box-get rest)
+          (__tl-box-place rest)
           parents
           root))]))
 
@@ -11630,8 +11590,7 @@
   [var : i64]
   [region-intervals : CompilerRegIntervalSeq]) : bool
   (let
-    [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get intervals segments)]
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq) intervals.segments]
     [var-segments : CompilerRegIntervalSeq
       (if (or (< var 0) (>= var (array-length segments)))
         (compiler-reg-interval-seq-empty)
@@ -11650,9 +11609,8 @@
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [assigned-var : i64 0]
     [conflict : bool false]
     (begin
@@ -11711,9 +11669,8 @@
   [location : CompilerRegLocation]
   [acc : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [assigned-var : i64 0]
     [out : i64 acc]
     (begin
@@ -11845,7 +11802,7 @@
             (ir.compiler-ir-block-cons
               rewritten-block
               (compiler-reg-loop-split-region-remap-blocks
-                (box-get rest)
+                (__tl-box-place rest)
                 region
                 remap)))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -11859,9 +11816,8 @@
             (let
               [block : ir.CompilerIrBlock (ir.compiler-ir-block-seq-ref seq i)]
               (begin
-                (array-set!
-                  slots
-                  i
+                (set!
+                  (array-ref slots i)
                   (match block
                     [(ir.CompilerIrBlock.Block label instrs)
                       (if (compiler-reg-region-label? region label)
@@ -11883,8 +11839,8 @@
 (define (compiler-reg-loop-split-seq-has-call-or-syscall?
   [instrs : ir.CompilerIrInstrSeq]) : bool
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -11913,8 +11869,8 @@
   [start : i64]
   [end : i64]) : bool
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [p : i64 point]
     [found : bool false]
@@ -11953,7 +11909,7 @@
               [(<= next-point start)
                 (compiler-reg-loop-split-region-crosses-kind-blocks?
                   type-segment-bases
-                  (box-get rest)
+                  (__tl-box-place rest)
                   next-point
                   kind
                   start
@@ -11969,7 +11925,7 @@
               [else
                 (compiler-reg-loop-split-region-crosses-kind-blocks?
                   type-segment-bases
-                  (box-get rest)
+                  (__tl-box-place rest)
                   next-point
                   kind
                   start
@@ -12252,17 +12208,17 @@
   [instrs : ir.CompilerIrInstrSeq]
   [new-last : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (array.make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index (- count 1))
         (begin
-          (array-set! out index (array-ref slots index))
+          (set! (array-ref out index) (array-ref slots index))
           (set! index (+ index 1))))
-      (array-set! out (- count 1) new-last)
+      (set! (array-ref out (- count 1)) new-last)
       (ir.CompilerIrInstrSeq out count))))
 
 ;; Redirect the conditional-branch terminator of `block` (at `index`) for any
@@ -12328,7 +12284,7 @@
           ph-label
           label)
         (compiler-reg-preheader-relabel-phi-inputs
-          (box-get rest)
+          (__tl-box-place rest)
           pred-label
           ph-label))]))
 
@@ -12352,17 +12308,16 @@
   [pred-label : i64]
   [ph-label : i64]) : ir.CompilerIrInstrSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (array.make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            out
-            index
+          (set!
+            (array-ref out index)
             (compiler-reg-preheader-relabel-instr
               (array-ref slots index)
               pred-label
@@ -12398,7 +12353,7 @@
             orig
             ids
             header-pred
-            (box-get rest)
+            (__tl-box-place rest)
             (+ index 1))]
         [redirected : ir.CompilerIrBlock
           (compiler-reg-preheader-redirect-block ids header-pred block index)]
@@ -12491,7 +12446,7 @@
     (if (<= count 1)
       blocks
       (let
-        [orig : (__tl_dyn-array ir.CompilerIrBlock) (struct-get seq slots)]
+        [orig : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
         [ids : reg_label_i64_map.Map
           (compiler-reg-loop-depth-block-ids-seq
             seq
@@ -12515,7 +12470,7 @@
                     header-label)]
                 (if (>= pred 0)
                   (begin
-                    (array-set! header-pred h pred)
+                    (set! (array-ref header-pred h) pred)
                     (compiler-reg-preheader-rewrite
                       orig
                       ids
@@ -12889,7 +12844,7 @@
                     type-segment-bases
                     target-abi
                     func
-                    (box-get rest)
+                    (__tl-box-place rest)
                     liveness
                     live-blocks
                     depths
@@ -12921,7 +12876,7 @@
                 type-segment-bases
                 target-abi
                 func
-                (box-get rest)
+                (__tl-box-place rest)
                 liveness
                 live-blocks
                 depths
@@ -13096,7 +13051,7 @@
           (CompilerRegAssignment vars (CompilerRegLocation.Register reg))
           (compiler-reg-assignment-table-empty)))]
     (begin
-      (array-set! remap stack-var vars)
+      (set! (array-ref remap stack-var) vars)
       ;; Home the whole coalesced group (move-related members of `stack-var`), not
       ;; just the root, so a redefined carried value's every alias inside the region
       ;; resolves to the homed register. For a singleton root this re-sets exactly
@@ -13161,7 +13116,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! points i acc)
+          (set! (array-ref points i) acc)
           (set!
             acc
             (+
@@ -13170,7 +13125,7 @@
                 [(ir.CompilerIrBlock.Block _ instrs)
                   (* 2 (ir.compiler-ir-instr-seq-count instrs))])))
           (set! i (+ i 1))))
-      (array-set! points n acc)
+      (set! (array-ref points n) acc)
       points)))
 
 (define (compiler-reg-loop-phi-mb-region-labels
@@ -13299,10 +13254,10 @@
             (begin
               (when
                 (< from (array-ref ranges (* 2 to)))
-                (array-set! ranges (* 2 to) from))
+                (set! (array-ref ranges (* 2 to)) from))
               (when
                 (> from (array-ref ranges (+ (* 2 to) 1)))
-                (array-set! ranges (+ (* 2 to) 1) from)))
+                (set! (array-ref ranges (+ (* 2 to) 1)) from)))
             unit))
         (compiler-reg-loop-phi-mb-record-pred-range!
           liveness
@@ -13321,8 +13276,8 @@
     (begin
       (while (< b n)
         (begin
-          (array-set! ranges (* 2 b) n)
-          (array-set! ranges (+ (* 2 b) 1) (- 0 1))
+          (set! (array-ref ranges (* 2 b)) n)
+          (set! (array-ref ranges (+ (* 2 b) 1)) (- 0 1))
           (set! b (+ b 1))))
       (set! b 0)
       (while (< b n)
@@ -13829,7 +13784,7 @@
   (let
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
-    [block-array : (__tl_dyn-array ir.CompilerIrBlock) (struct-get seq slots)]
+    [block-array : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
     [count : i64 (array-length block-array)]
     (if (<= count 1)
       (CompilerRegLoopSplitCandidate.NoCandidate)
@@ -13903,8 +13858,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [var : i64]) : CompilerRegLeafCsrFuseFacts
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [uses : i64 0]
     [free-branches : i64 0]
@@ -13937,10 +13892,10 @@
             [facts : CompilerRegLeafCsrFuseFacts
               (compiler-reg-leaf-csr-fuse-facts-seq instrs var)]
             (compiler-reg-leaf-csr-fuse-facts-blocks
-              (box-get rest)
+              (__tl-box-place rest)
               var
-              (+ uses (struct-get facts uses))
-              (+ free-branches (struct-get facts free-branches))))])]
+              (+ uses facts.uses)
+              (+ free-branches facts.free-branches)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (compiler-reg-leaf-csr-fuse-facts-block-seq seq var uses free-branches)]))
 
@@ -13963,10 +13918,8 @@
                 [facts : CompilerRegLeafCsrFuseFacts
                   (compiler-reg-leaf-csr-fuse-facts-seq instrs var)]
                 (begin
-                  (set! total-uses (+ total-uses (struct-get facts uses)))
-                  (set!
-                    total-free
-                    (+ total-free (struct-get facts free-branches)))))])
+                  (set! total-uses (+ total-uses facts.uses))
+                  (set! total-free (+ total-free facts.free-branches))))])
           (set! index (+ index 1))))
       (CompilerRegLeafCsrFuseFacts total-uses total-free))))
 
@@ -13978,9 +13931,7 @@
       (let
         [facts : CompilerRegLeafCsrFuseFacts
           (compiler-reg-leaf-csr-fuse-facts-blocks blocks var 0 0)]
-        (and
-          (> (struct-get facts uses) 0)
-          (= (struct-get facts uses) (struct-get facts free-branches))))]))
+        (and (> facts.uses 0) (= facts.uses facts.free-branches)))]))
 
 (define (compiler-reg-leaf-csr-location-conflicts-region?
   [func : ir.CompilerIrFunction]
@@ -13990,9 +13941,8 @@
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [assigned-var : i64 0]
     [conflict : bool false]
     (begin
@@ -14131,8 +14081,8 @@
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerRegInterval) (struct-get segments slots)]
-    [count : i64 (struct-get segments len)]
+    [slots : (__tl_dyn-array CompilerRegInterval) segments.slots]
+    [count : i64 segments.len]
     [index : i64 0]
     [conflict : bool false]
     (begin
@@ -14140,8 +14090,8 @@
         (begin
           (let
             [interval : CompilerRegInterval (array-ref slots index)]
-            [start : i64 (struct-get interval start)]
-            [end : i64 (struct-get interval end)]
+            [start : i64 interval.start]
+            [end : i64 interval.end]
             [before? : bool
               (and
                 (< start region-start)
@@ -14184,8 +14134,7 @@
   [var : i64]
   [location : CompilerRegLocation]) : bool
   (let
-    [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get intervals segments)]
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq) intervals.segments]
     [var-segments : CompilerRegIntervalSeq
       (if (and (>= var 0) (< var (array-length segments)))
         (array-ref segments var)
@@ -14618,8 +14567,8 @@
   [from-var : i64]
   [to-var : i64]) : CompilerRegEdgeCopySeq
   (let
-    [source : (__tl_dyn-array CompilerRegEdgeCopy) (struct-get copies slots)]
-    [count : i64 (struct-get copies len)]
+    [source : (__tl_dyn-array CompilerRegEdgeCopy) copies.slots]
+    [count : i64 copies.len]
     [out : (__tl_dyn-array CompilerRegEdgeCopy)
       (array.make-array
         CompilerRegEdgeCopy
@@ -14630,9 +14579,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            out
-            index
+          (set!
+            (array-ref out index)
             (compiler-reg-leaf-csr-remap-edge-copy
               (array-ref source index)
               from-var
@@ -14670,17 +14618,16 @@
   [src-var : i64]
   [dst-var : i64]) : ir.CompilerIrInstrSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (array.make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            out
-            index
+          (set!
+            (array-ref out index)
             (compiler-reg-leaf-csr-boundary-instr
               (array-ref slots index)
               src-var
@@ -14702,7 +14649,7 @@
               label
               (compiler-reg-leaf-csr-boundary-instr-seq instrs src-var dst-var))
             (compiler-reg-leaf-csr-boundary-blocks
-              (box-get rest)
+              (__tl-box-place rest)
               src-var
               dst-var))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -14716,9 +14663,8 @@
             (begin
               (match (ir.compiler-ir-block-seq-ref seq index)
                 [(ir.CompilerIrBlock.Block label instrs)
-                  (array-set!
-                    slots
-                    index
+                  (set!
+                    (array-ref slots index)
                     (ir.CompilerIrBlock.Block
                       label
                       (compiler-reg-leaf-csr-boundary-instr-seq
@@ -14761,8 +14707,8 @@
               (compiler-reg-assignment-table-empty))
             (compiler-reg-assignment-table-empty))))]
     (begin
-      (array-set! outer-remap stack-var outer-var)
-      (array-set! region-remap outer-var inner-var)
+      (set! (array-ref outer-remap stack-var) outer-var)
+      (set! (array-ref region-remap outer-var) inner-var)
       (match (compiler-reg-edge-copy-apply
         (compiler-reg-loop-split-region-remap-blocks
           (compiler-reg-remap-blocks outer-remap blocks)
@@ -14818,8 +14764,7 @@
             (compiler-reg-function-group-vars type-segment-bases func type-info)]
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
-          [block-array : (__tl_dyn-array ir.CompilerIrBlock)
-            (struct-get seq slots)]
+          [block-array : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
           [param-vars : live.CompilerLiveI64Set
             (match func
               [(ir.CompilerIrFunction.Function _ params _ _ _)
@@ -14848,7 +14793,7 @@
                     group-vars
                     vars
                     (array.make-array i64 0))]
-                [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+                [parents : (__tl_dyn-array i64) coalesce.parents]
                 [merged-roots : live.CompilerLiveI64Set
                   (compiler-reg-coalesce-merged-root-set coalesce)]
                 (match liveness
@@ -14972,8 +14917,7 @@
       (compiler-reg-loop-split-noop blocks vars)
       (ir.compiler-ir-label-none))
     (let
-      [liveness : live.CompilerFunctionLiveness
-        (struct-get liveness-handle baseline)]
+      [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
       [selection : CompilerRegIntervalSelection
         (compiler-reg-live-interval-selection func liveness)]
       [assignments : CompilerRegAssignmentTable
@@ -14991,7 +14935,7 @@
                 group-vars
                 vars
                 (array.make-array i64 0))]
-            [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+            [parents : (__tl_dyn-array i64) coalesce.parents]
             [merged-roots : live.CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
             (match liveness
@@ -15427,7 +15371,7 @@
                   (compiler-reg-loop-split-refused-select-blocks
                     type-segment-bases
                     func
-                    (box-get rest)
+                    (__tl-box-place rest)
                     liveness
                     live-blocks
                     depths
@@ -15444,7 +15388,7 @@
               (compiler-reg-loop-split-refused-select-blocks
                 type-segment-bases
                 func
-                (box-get rest)
+                (__tl-box-place rest)
                 liveness
                 live-blocks
                 depths
@@ -15978,7 +15922,7 @@
               (< (compiler-reg-call-region-pool-index-of base r) 0)
               (compiler-reg-call-region-reg-in-plan? present items n r))
               (begin
-                (array-set! keep keep-n r)
+                (set! (array-ref keep keep-n) r)
                 (set! keep-n (+ keep-n 1)))
               unit)
             (set! i (+ i 1)))))
@@ -15989,12 +15933,12 @@
         (begin
           (while (< j base-count)
             (begin
-              (array-set! out j (array-ref base j))
+              (set! (array-ref out j) (array-ref base j))
               (set! j (+ j 1))))
           (set! j 0)
           (while (< j keep-n)
             (begin
-              (array-set! out (+ base-count j) (array-ref keep j))
+              (set! (array-ref out (+ base-count j)) (array-ref keep j))
               (set! j (+ j 1))))
           out)))))
 
@@ -16187,9 +16131,8 @@
             (begin
               (while (< i count)
                 (begin
-                  (array-set!
-                    out
-                    i
+                  (set!
+                    (array-ref out i)
                     (if (= i (- count 1))
                       replacement
                       (ir.compiler-ir-instr-seq-ref instrs i)))
@@ -16354,7 +16297,7 @@
                     (if (compiler-reg-early-exit-return-block?
                       param-vars
                       (ir.compiler-ir-block-seq-ref seq scan))
-                      (array-set! fruitful scan 1)
+                      (set! (array-ref fruitful scan) 1)
                       unit)
                     (set! scan (+ scan 1))))
                 (while changed
@@ -16393,7 +16336,7 @@
                                         (>= false-index 0)
                                         (= (array-ref fruitful false-index) 1)))
                                       (begin
-                                        (array-set! fruitful scan 1)
+                                        (set! (array-ref fruitful scan) 1)
                                         (set! changed true))
                                       unit))]
                                 [_ unit])])
@@ -16401,8 +16344,8 @@
                         (set! scan (+ scan 1))))))
                 (if (and valid (= (array-ref fruitful 0) 1))
                   (begin
-                    (array-set! states 0 1)
-                    (array-set! queue 0 0)
+                    (set! (array-ref states 0) 1)
+                    (set! (array-ref queue 0) 0)
                     (set! tail 1))
                   (set! valid false))
                 ;; Discover the maximal safe region. Non-safe successors form the
@@ -16448,10 +16391,11 @@
                                             (array-ref states target-index)
                                             0)
                                             (begin
-                                              (array-set! states target-index 1)
-                                              (array-set!
-                                                queue
-                                                tail
+                                              (set!
+                                                (array-ref states target-index)
+                                                1)
+                                              (set!
+                                                (array-ref queue tail)
                                                 target-index)
                                               (set! tail (+ tail 1)))
                                             unit)]
@@ -16464,7 +16408,9 @@
                                             (array-ref states target-index)
                                             0)
                                             (begin
-                                              (array-set! states target-index 2)
+                                              (set!
+                                                (array-ref states target-index)
+                                                2)
                                               (set!
                                                 return-count
                                                 (+ return-count 1)))
@@ -16472,7 +16418,9 @@
                                         [(< frontier-index 0)
                                           (begin
                                             (set! frontier-index target-index)
-                                            (array-set! states target-index 3))]
+                                            (set!
+                                              (array-ref states target-index)
+                                              3))]
                                         [(not (= frontier-index target-index))
                                           (set! valid false)]
                                         [else unit])
@@ -16523,9 +16471,8 @@
                               (begin
                                 (if (= (array-ref states i) 1)
                                   (begin
-                                    (array-set!
-                                      out
-                                      out-index
+                                    (set!
+                                      (array-ref out out-index)
                                       (compiler-reg-early-exit-rewrite-block
                                         seq
                                         states
@@ -16544,9 +16491,8 @@
                                   (match (ir.compiler-ir-block-seq-ref seq i)
                                     [(ir.CompilerIrBlock.Block _ instrs)
                                       (begin
-                                        (array-set!
-                                          out
-                                          out-index
+                                        (set!
+                                          (array-ref out out-index)
                                           (ir.CompilerIrBlock.Block
                                             (compiler-reg-early-exit-bare-label-at
                                               bare-prefix
@@ -16556,17 +16502,15 @@
                                         (set! out-index (+ out-index 1)))])
                                   unit)
                                 (set! i (+ i 1))))
-                            (array-set!
-                              save-instrs
-                              0
+                            (set!
+                              (array-ref save-instrs 0)
                               (ir.CompilerIrInstr.Jump
                                 (compiler-reg-cold-call-block-label
                                   (ir.compiler-ir-block-seq-ref
                                     seq
                                     frontier-index))))
-                            (array-set!
-                              out
-                              out-index
+                            (set!
+                              (array-ref out out-index)
                               (ir.CompilerIrBlock.Block
                                 saving-label
                                 (ir.CompilerIrInstrSeq save-instrs 1)))
@@ -16584,9 +16528,8 @@
                                   (not (= (array-ref states i) 1))
                                   (not (= (array-ref states i) 2)))
                                   (begin
-                                    (array-set!
-                                      out
-                                      out-index
+                                    (set!
+                                      (array-ref out out-index)
                                       (compiler-reg-early-exit-rewrite-block
                                         seq
                                         states
@@ -16613,9 +16556,8 @@
                                     bare-prefix)
                                     [(ir.CompilerIrBlock.Block label instrs)
                                       (begin
-                                        (array-set!
-                                          out
-                                          out-index
+                                        (set!
+                                          (array-ref out out-index)
                                           (ir.CompilerIrBlock.Block
                                             (compiler-reg-early-exit-framed-label
                                               label)
@@ -16631,9 +16573,8 @@
                               (begin
                                 (if (= (array-ref states i) 2)
                                   (begin
-                                    (array-set!
-                                      out
-                                      out-index
+                                    (set!
+                                      (array-ref out out-index)
                                       (compiler-reg-early-exit-rewrite-block
                                         seq
                                         states
@@ -16813,7 +16754,7 @@
     (array-ref seen block))
     false
     (begin
-      (array-set! seen block true)
+      (set! (array-ref seen block) true)
       (or
         (> (array-ref depths block) 0)
         (compiler-reg-cold-call-reaches-loop-labels?
@@ -16889,7 +16830,7 @@
                   ty)
                   (begin
                     (if (< count (array-length selected))
-                      (array-set! selected count v)
+                      (set! (array-ref selected count) v)
                       unit)
                     (set! count (+ count 1)))
                   ;; XMM-family values retain their real call masks; values
@@ -16929,9 +16870,8 @@
           (begin
             (match (compiler-reg-var-types-lookup type-info v)
               [(CompilerRegMaybeType.Some ty)
-                (array-set!
-                  out
-                  w
+                (set!
+                  (array-ref out w)
                   (ir.CompilerIrInstr.Mov
                     (+ temp-start i)
                     (ir.CompilerIrValue.Var v)
@@ -16939,7 +16879,7 @@
               [(CompilerRegMaybeType.No) unit])
             (set! w (+ w 1))
             (set! i (+ i 1)))))
-      (array-set! out w (ir.compiler-ir-instr-seq-ref instrs 0))
+      (set! (array-ref out w) (ir.compiler-ir-instr-seq-ref instrs 0))
       (set! w (+ w 1))
       (set! i 0)
       (while (< i selected-count)
@@ -16948,9 +16888,8 @@
           (begin
             (match (compiler-reg-var-types-lookup type-info v)
               [(CompilerRegMaybeType.Some ty)
-                (array-set!
-                  out
-                  w
+                (set!
+                  (array-ref out w)
                   (ir.CompilerIrInstr.Mov
                     v
                     (ir.CompilerIrValue.Var (+ temp-start i))
@@ -16961,7 +16900,7 @@
       (set! i 1)
       (while (< i old-count)
         (begin
-          (array-set! out w (ir.compiler-ir-instr-seq-ref instrs i))
+          (set! (array-ref out w) (ir.compiler-ir-instr-seq-ref instrs i))
           (set! w (+ w 1))
           (set! i (+ i 1))))
       (ir.CompilerIrInstrSeq out out-count))))
@@ -17022,9 +16961,8 @@
                     (begin
                       (while (< b count)
                         (begin
-                          (array-set!
-                            out
-                            b
+                          (set!
+                            (array-ref out b)
                             (if (= b call-block)
                               (match (ir.compiler-ir-block-seq-ref seq b)
                                 [(ir.CompilerIrBlock.Block label instrs)
@@ -17073,9 +17011,8 @@
   [cur-depth : (__tl_dyn-array i64)]) : unit
   (begin
     (if (and (>= (array-ref cur-lo root) 0) (>= (array-ref cur-uses root) 2))
-      (array-set!
-        buckets
-        root
+      (set!
+        (array-ref buckets root)
         (compiler-reg-call-region-stat-seq-push
           (array-ref buckets root)
           (CompilerRegCallRegionStat
@@ -17088,7 +17025,7 @@
             (array-ref cur-depth root)
             (compiler-reg-call-region-kind-block))))
       unit)
-    (array-set! cur-lo root (- 0 1))))
+    (set! (array-ref cur-lo root) (- 0 1))))
 
 ;; Attribute one instr's refs (its uses OR defs var set) to the candidates'
 ;; open regions. PER-VAR, deliberately NOT class-merged: storage coloring
@@ -17185,23 +17122,22 @@
             cur-defs
             cur-firstdef
             cur-depth)
-          (array-set! cur-region v rid)
-          (array-set! cur-lo v p)
-          (array-set! cur-hi v p)
-          (array-set! cur-uses v 0)
-          (array-set! cur-defs v 0)
-          (array-set!
-            cur-firstdef
-            v
+          (set! (array-ref cur-region v) rid)
+          (set! (array-ref cur-lo v) p)
+          (set! (array-ref cur-hi v) p)
+          (set! (array-ref cur-uses v) 0)
+          (set! (array-ref cur-defs v) 0)
+          (set!
+            (array-ref cur-firstdef v)
             (if is-def
               1
               0))
-          (array-set! cur-depth v depth))
+          (set! (array-ref cur-depth v) depth))
         unit)
-      (array-set! cur-hi v p)
+      (set! (array-ref cur-hi v) p)
       (if is-def
-        (array-set! cur-defs v (+ (array-ref cur-defs v) 1))
-        (array-set! cur-uses v (+ (array-ref cur-uses v) 1))))
+        (set! (array-ref cur-defs v) (+ (array-ref cur-defs v) 1))
+        (set! (array-ref cur-uses v) (+ (array-ref cur-uses v) 1))))
     unit))
 
 (define (compiler-reg-call-region-note-ids!
@@ -17257,8 +17193,8 @@
   (let
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
-    [bslots : (__tl_dyn-array ir.CompilerIrBlock) (struct-get seq slots)]
-    [nblocks : i64 (struct-get seq len)]
+    [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+    [nblocks : i64 seq.len]
     [cur-region : (__tl_dyn-array i64)
       (array.make-array
         i64
@@ -17313,8 +17249,7 @@
           (match (array-ref bslots b)
             [(ir.CompilerIrBlock.Block _ instrs)
               (let
-                [islots : (__tl_dyn-array ir.CompilerIrInstr)
-                  (struct-get instrs slots)]
+                [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
                 [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
                 [depth : i64
                   (if (< b (array-length depths))
@@ -17479,10 +17414,10 @@
               (begin
                 (when
                   (< from (array-ref ranges (* 2 to)))
-                  (array-set! ranges (* 2 to) from))
+                  (set! (array-ref ranges (* 2 to)) from))
                 (when
                   (> from (array-ref ranges (+ (* 2 to) 1)))
-                  (array-set! ranges (+ (* 2 to) 1) from)))
+                  (set! (array-ref ranges (+ (* 2 to) 1)) from)))
               unit)]
           [(reg_label_i64_map.LookupMissing) unit])
         (compiler-reg-call-region-record-pred-range!
@@ -17508,8 +17443,8 @@
     (begin
       (while (< b nblocks)
         (begin
-          (array-set! ranges (* 2 b) nblocks)
-          (array-set! ranges (+ (* 2 b) 1) (- 0 1))
+          (set! (array-ref ranges (* 2 b)) nblocks)
+          (set! (array-ref ranges (+ (* 2 b) 1)) (- 0 1))
           (set! b (+ b 1))))
       (set! b 0)
       (while (< b nblocks)
@@ -17562,13 +17497,13 @@
     (begin
       (if (not (= (array-ref stamp v) sid))
         (begin
-          (array-set! stamp v sid)
-          (array-set! uses v 0)
-          (array-set! defs v 0))
+          (set! (array-ref stamp v) sid)
+          (set! (array-ref uses v) 0)
+          (set! (array-ref defs v) 0))
         unit)
       (if is-def
-        (array-set! defs v (+ (array-ref defs v) 1))
-        (array-set! uses v (+ (array-ref uses v) 1))))
+        (set! (array-ref defs v) (+ (array-ref defs v) 1))
+        (set! (array-ref uses v) (+ (array-ref uses v) 1))))
     unit))
 
 (define (compiler-reg-call-region-loop-note-set!
@@ -17702,8 +17637,7 @@
         (match (array-ref bslots b)
           [(ir.CompilerIrBlock.Block _ instrs)
             (let
-              [islots : (__tl_dyn-array ir.CompilerIrInstr)
-                (struct-get instrs slots)]
+              [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
               [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
               [i : i64 0]
               (begin
@@ -17771,9 +17705,8 @@
             (= (array-ref stamp v) sid)
             (>= (array-ref uses v) 1)
             (= (array-ref defs v) 0))
-            (array-set!
-              buckets
-              v
+            (set!
+              (array-ref buckets v)
               (compiler-reg-call-region-stat-seq-push
                 (array-ref buckets v)
                 (CompilerRegCallRegionStat
@@ -17800,8 +17733,8 @@
   (let
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
-    [bslots : (__tl_dyn-array ir.CompilerIrBlock) (struct-get seq slots)]
-    [nblocks : i64 (struct-get seq len)]
+    [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+    [nblocks : i64 seq.len]
     [an : i64
       (if (< n 1)
         1
@@ -17983,8 +17916,8 @@
   [tried-hi : (__tl_dyn-array i64)]
   [k : i64]) : CompilerRegCallRegionMaybeStat
   (let
-    [slots : (__tl_dyn-array CompilerRegCallRegionStat) (struct-get rows slots)]
-    [index : i64 (- (struct-get rows len) 1)]
+    [slots : (__tl_dyn-array CompilerRegCallRegionStat) rows.slots]
+    [index : i64 (- rows.len 1)]
     [top-score : i64 (- 0 1)]
     [top : CompilerRegCallRegionMaybeStat (CompilerRegCallRegionNoStat)]
     (begin
@@ -18018,8 +17951,8 @@
   [best-score : i64]
   [best : CompilerRegCallRegionMaybeStat]) : CompilerRegCallRegionMaybeStat
   (let
-    [slots : (__tl_dyn-array CompilerRegCallRegionStat) (struct-get rows slots)]
-    [index : i64 (- (struct-get rows len) 1)]
+    [slots : (__tl_dyn-array CompilerRegCallRegionStat) rows.slots]
+    [index : i64 (- rows.len 1)]
     [top-score : i64 best-score]
     [top : CompilerRegCallRegionMaybeStat best]
     (begin
@@ -18064,9 +17997,7 @@
         (let
           [interval : CompilerRegInterval
             (compiler-reg-interval-seq-ref segs index)]
-          (if (and
-            (<= (struct-get interval start) (+ hi 1))
-            (>= (struct-get interval end) lo))
+          (if (and (<= interval.start (+ hi 1)) (>= interval.end lo))
             (set! found true)
             (set! index (+ index 1)))))
       found)))
@@ -18077,10 +18008,9 @@
   [lo : i64]
   [hi : i64]) : bool
   (let
-    [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get interval-index segments)]
-    [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-    [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq) interval-index.segments]
+    [starts : (__tl_dyn-array i64) interval-index.starts]
+    [ends : (__tl_dyn-array i64) interval-index.ends]
     (if (and (>= v 0) (< v (array-length starts)))
       (let
         [segs : CompilerRegIntervalSeq
@@ -18182,9 +18112,9 @@
     (let
       [interval : CompilerRegInterval
         (compiler-reg-interval-seq-ref candidates index)]
-      [var : i64 (struct-get interval var)]
-      [start : i64 (struct-get interval start)]
-      [end : i64 (struct-get interval end)]
+      [var : i64 interval.var]
+      [start : i64 interval.start]
+      [end : i64 interval.end]
       ;; lint-allow: single-begin
       (begin
         (if (and
@@ -18201,13 +18131,12 @@
                 [_ false])]
             [(CompilerRegMaybeLocation.No) false]))
           (begin
-            (array-set!
-              cand
-              var
+            (set!
+              (array-ref cand var)
               (if (compiler-reg-call-set-in-range? kind0 start end)
                 (compiler-reg-call-region-cand-full)
                 (compiler-reg-call-region-cand-loop)))
-            (array-set! order count var)
+            (set! (array-ref order count) var)
             (compiler-reg-call-region-mark-candidates
               candidates
               (+ index 1)
@@ -18249,8 +18178,8 @@
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]) : CompilerRegCallSaveAssignState
   (let
-    [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-    [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+    [starts : (__tl_dyn-array i64) interval-index.starts]
+    [ends : (__tl_dyn-array i64) interval-index.ends]
     [n : i64 (array-length starts)]
     [an : i64
       (if (< n 1)
@@ -18259,7 +18188,7 @@
     [kind0 : live.CompilerLiveI64Set
       (compiler-reg-clobber-kind-points type-segment-bases func 0)]
     [remat-cands : (__tl_dyn-array i64)
-      (struct-get (compiler-reg-remat-table-build func) candidates)]
+      (__tl-project-field (compiler-reg-remat-table-build func) candidates)]
     [root-has-remat : (__tl_dyn-array i64) (array.make-array i64 an)]
     [cand : (__tl_dyn-array i64) (array.make-array i64 an)]
     [order : (__tl_dyn-array i64) (array.make-array i64 an)]
@@ -18271,7 +18200,7 @@
             (let
               [rr : i64 (compiler-reg-call-region-root parents n v)]
               (if (and (>= rr 0) (< rr n))
-                (array-set! root-has-remat rr 1)
+                (set! (array-ref root-has-remat rr) 1)
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -18318,13 +18247,12 @@
                   (begin
                     ;; a member inherits its root's GRADE, so a loop-only class
                     ;; stays out of the block walk exactly as its root does
-                    (array-set!
-                      cand
-                      v
+                    (set!
+                      (array-ref cand v)
                       (array-ref
                         cand
                         (compiler-reg-call-region-root parents n v)))
-                    (array-set! order cand-count v)
+                    (set! (array-ref order cand-count) v)
                     (set! cand-count (+ cand-count 1)))
                   unit)
                 (set! v (+ v 1)))))
@@ -18334,9 +18262,8 @@
               (begin
                 (let
                   [rr : i64 (compiler-reg-call-region-root parents n v)]
-                  (array-set!
-                    vend
-                    v
+                  (set!
+                    (array-ref vend v)
                     (if (and
                       (>= rr 0)
                       (< rr (array-length ends))
@@ -18355,10 +18282,9 @@
                     (compiler-reg-function-loop-depths blocks)]
                   [buckets : (__tl_dyn-array CompilerRegCallRegionStatSeq)
                     (array.make-array CompilerRegCallRegionStatSeq an)]
-                  [present : (__tl_dyn-array i64)
-                    (struct-get assignments present)]
+                  [present : (__tl_dyn-array i64) assignments.present]
                   [items : (__tl_dyn-array CompilerRegLocation)
-                    (struct-get assignments items)]
+                    assignments.items]
                   [base-pool : (__tl_dyn-array i64)
                     (compiler-reg-call-region-pool target-abi)]
                   [base-pool-count : i64 (array-length base-pool)]
@@ -18399,9 +18325,8 @@
                       [bi : i64 0]
                       (while (< bi an)
                         (begin
-                          (array-set!
-                            buckets
-                            bi
+                          (set!
+                            (array-ref buckets bi)
                             (compiler-reg-call-region-stat-seq-empty))
                           (set! bi (+ bi 1)))))
                     (compiler-reg-call-region-collect!
@@ -18436,8 +18361,8 @@
                                     r)]
                                 (if (>= pi 0)
                                   (begin
-                                    (array-set! occ-var occ-n idx)
-                                    (array-set! occ-reg occ-n pi)
+                                    (set! (array-ref occ-var occ-n) idx)
+                                    (set! (array-ref occ-reg occ-n) pi)
                                     (set! occ-n (+ occ-n 1)))
                                   unit))]
                             [(CompilerRegLocation.RegisterPair r0 r1)
@@ -18449,8 +18374,8 @@
                                       r0)]
                                   (if (>= pi 0)
                                     (begin
-                                      (array-set! occ-var occ-n idx)
-                                      (array-set! occ-reg occ-n pi)
+                                      (set! (array-ref occ-var occ-n) idx)
+                                      (set! (array-ref occ-reg occ-n) pi)
                                       (set! occ-n (+ occ-n 1)))
                                     unit))
                                 (let
@@ -18460,8 +18385,8 @@
                                       r1)]
                                   (if (>= pi 0)
                                     (begin
-                                      (array-set! occ-var occ-n idx)
-                                      (array-set! occ-reg occ-n pi)
+                                      (set! (array-ref occ-var occ-n) idx)
+                                      (set! (array-ref occ-reg occ-n) pi)
                                       (set! occ-n (+ occ-n 1)))
                                     unit)))]
                             [_ unit])
@@ -18509,21 +18434,19 @@
                                       _
                                       kind)
                                     (begin
-                                      (array-set! picked-lo k lo)
-                                      (array-set! picked-hi k hi)
+                                      (set! (array-ref picked-lo k) lo)
+                                      (set! (array-ref picked-hi k) hi)
                                       (when
                                         (=
                                           kind
                                           (compiler-reg-call-region-kind-loop))
                                         (set! wants-loop-pool true))
-                                      (array-set!
-                                        picked-entry
-                                        k
+                                      (set!
+                                        (array-ref picked-entry k)
                                         (compiler-reg-call-region-stat-entry
                                           stat))
-                                      (array-set!
-                                        picked-exit
-                                        k
+                                      (set!
+                                        (array-ref picked-exit k)
                                         (compiler-reg-call-region-stat-exit
                                           stat
                                           vend))
@@ -18631,21 +18554,23 @@
                                                       (begin
                                                         (set! acc-lo lo)
                                                         (set! acc-hi hi)))
-                                                    (array-set!
-                                                      picked-lo
-                                                      tries
+                                                    (set!
+                                                      (array-ref
+                                                        picked-lo
+                                                        tries)
                                                       lo)
-                                                    (array-set!
-                                                      picked-hi
-                                                      tries
+                                                    (set!
+                                                      (array-ref
+                                                        picked-hi
+                                                        tries)
                                                       hi)
                                                     (set! tries (+ tries 1))))])]))
                                       (if (>= chosen 0)
                                         (begin
-                                          (array-set! picked-lo 0 acc-lo)
-                                          (array-set! picked-hi 0 acc-hi)
-                                          (array-set! picked-entry 0 1)
-                                          (array-set! picked-exit 0 0)
+                                          (set! (array-ref picked-lo 0) acc-lo)
+                                          (set! (array-ref picked-hi 0) acc-hi)
+                                          (set! (array-ref picked-entry 0) 1)
+                                          (set! (array-ref picked-exit 0) 0)
                                           (set! k 1))
                                         unit))))
                                 (if (>= chosen 0)
@@ -18657,9 +18582,8 @@
                                         (live.compiler-live-set-insert
                                           shadows
                                           root))
-                                      (array-set!
-                                        shadow-regs
-                                        root
+                                      (set!
+                                        (array-ref shadow-regs root)
                                         (array-ref pool chosen))
                                       (while (< j k)
                                         (begin
@@ -18679,14 +18603,13 @@
                                       ;; segments of their own, and the root's
                                       ;; merged segments conservatively cover
                                       ;; every sibling.
-                                      (array-set!
-                                        occ-var
-                                        occ-n
+                                      (set!
+                                        (array-ref occ-var occ-n)
                                         (compiler-reg-call-region-root
                                           parents
                                           n
                                           root))
-                                      (array-set! occ-reg occ-n chosen)
+                                      (set! (array-ref occ-reg occ-n) chosen)
                                       (set! occ-n (+ occ-n 1))
                                       (set! budget (- budget k))))
                                   unit)))
@@ -18762,12 +18685,12 @@
     [calls : i64]
     [outcome : i64]) : unit
     (let
-      [counts : (__tl_dyn-array i64) (struct-get census counts)]
+      [counts : (__tl_dyn-array i64) census.counts]
       [index : i64
         (compiler-reg-call-span-census-index
           (compiler-reg-call-span-bucket calls)
           outcome)]
-      (array-set! counts index (+ (array-ref counts index) 1)))))
+      (set! (array-ref counts index) (+ (array-ref counts index) 1)))))
 
 (cfg
   (any regalloc-census test)
@@ -18776,7 +18699,7 @@
     [bucket : i64]
     [outcome : i64]) : i64
     (array-ref
-      (struct-get census counts)
+      census.counts
       (compiler-reg-call-span-census-index bucket outcome))))
 
 (cfg
@@ -18815,12 +18738,12 @@
               census
               (compiler-reg-call-set-count-in-range
                 call-points
-                (struct-get interval start)
-                (struct-get interval end))
+                interval.start
+                interval.end)
               (compiler-reg-call-span-assignment-outcome
                 assignments
                 split-vars
-                (struct-get interval var))))
+                interval.var)))
           (set! index (+ index 1)))))))
 
 ;; Caller-saved integer homes must clear this measured gate before they can be
@@ -18859,15 +18782,14 @@
     [dst : (&mut dst CompilerRegCallSpanCensus)]
     [src : CompilerRegCallSpanCensus]) : unit
     (let
-      [dst-counts : (__tl_dyn-array i64) (struct-get dst counts)]
-      [src-counts : (__tl_dyn-array i64) (struct-get src counts)]
+      [dst-counts : (__tl_dyn-array i64) dst.counts]
+      [src-counts : (__tl_dyn-array i64) src.counts]
       [index : i64 0]
       (begin
         (while (< index (array-length dst-counts))
           (begin
-            (array-set!
-              dst-counts
-              index
+            (set!
+              (array-ref dst-counts index)
               (+ (array-ref dst-counts index) (array-ref src-counts index)))
             (set! index (+ index 1))))
         unit))))
@@ -18985,9 +18907,8 @@
   (define (compiler-reg-assignment-census-record!
     [assignments : (& assignments CompilerRegAssignmentTable)]) : unit
     (let
-      [present : (__tl_dyn-array i64) (struct-get assignments present)]
-      [items : (__tl_dyn-array CompilerRegLocation)
-        (struct-get assignments items)]
+      [present : (__tl_dyn-array i64) assignments.present]
+      [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
       [capacity : i64 (array-length present)]
       [index : i64 0]
       [assigned : i64 0]
@@ -19089,9 +19010,8 @@
       true
       (>= slot (array-length compiler-reg-move-census-counts)))
       unit
-      (array-set!
-        compiler-reg-move-census-counts
-        slot
+      (set!
+        (array-ref compiler-reg-move-census-counts slot)
         (+ (array-ref compiler-reg-move-census-counts slot) 1)))))
 
 (cfg
@@ -19120,14 +19040,14 @@
     [group-vars : live.CompilerLiveI64Set]
     [sv-parents : (__tl_dyn-array i64)]) : unit
     (let
-      [slots : (__tl_dyn-array CompilerRegMove) (struct-get moves slots)]
-      [index : i64 (- (struct-get moves len) 1)]
+      [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
+      [index : i64 (- moves.len 1)]
       (while (>= index 0)
         (begin
           (let
             [item : CompilerRegMove (array-ref slots index)]
-            [src : i64 (struct-get item src)]
-            [dst : i64 (struct-get item dst)]
+            [src : i64 item.src]
+            [dst : i64 item.dst]
             (begin
               (compiler-reg-move-census-bump! 0)
               (let
@@ -19237,12 +19157,12 @@
           (let
             [interval : CompilerRegInterval
               (compiler-reg-interval-seq-ref intervals index)]
-            [var : i64 (struct-get interval var)]
+            [var : i64 interval.var]
             (if (if (live.compiler-live-set-contains? member-set var)
               (compiler-reg-call-set-in-range?
                 call-points
-                (struct-get interval start)
-                (struct-get interval end))
+                interval.start
+                interval.end)
               false)
               (set! out (live.compiler-live-set-insert out var))
               unit))
@@ -19291,7 +19211,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-vars-blocks
             (compiler-reg-group-vars-instr-seq set instrs)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -19324,8 +19244,8 @@
         [(ir.CompilerIrValue.Var v)
           (if (live.compiler-live-set-contains? set v)
             true
-            (compiler-reg-phi-inputs-any-in-set? set (box-get rest)))]
-        [_ (compiler-reg-phi-inputs-any-in-set? set (box-get rest))])]))
+            (compiler-reg-phi-inputs-any-in-set? set (__tl-box-place rest)))]
+        [_ (compiler-reg-phi-inputs-any-in-set? set (__tl-box-place rest))])]))
 
 (define (compiler-reg-phi-inputs-insert-all
   [set : live.CompilerLiveI64Set]
@@ -19342,7 +19262,7 @@
           (match value
             [(ir.CompilerIrValue.Var v) (live.compiler-live-set-insert set v)]
             [_ set])]
-        (compiler-reg-phi-inputs-insert-all next (box-get rest)))]))
+        (compiler-reg-phi-inputs-insert-all next (__tl-box-place rest)))]))
 
 (define (compiler-reg-group-vars-propagate-instr
   [set : live.CompilerLiveI64Set]
@@ -19399,7 +19319,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-vars-propagate-blocks
             (compiler-reg-group-vars-propagate-seq set instrs 0)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -19691,8 +19611,8 @@
   [types : CompilerRegVarTypes]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
-    [present : (__tl_dyn-array i64) (struct-get types present)]
-    [items : (__tl_dyn-array ast.AstType) (struct-get types items)]
+    [present : (__tl_dyn-array i64) types.present]
+    [items : (__tl_dyn-array ast.AstType) types.items]
     [count : i64 (array-length present)]
     [index : i64 0]
     [out : live.CompilerLiveI64Set set]
@@ -19761,8 +19681,8 @@
             (compiler-reg-interval-seq-ref segments index)]
           (begin
             (let
-              [head-start : i64 (struct-get head start)]
-              [head-end : i64 (struct-get head end)]
+              [head-start : i64 head.start]
+              [head-end : i64 head.end]
               (cond
                 [(< head-end merged-start)
                   (set! out (compiler-reg-interval-seq-append out head))]
@@ -19811,8 +19731,8 @@
               (compiler-reg-interval-seq-insert-merged
                 out
                 root
-                (struct-get interval start)
-                (struct-get interval end))))
+                interval.start
+                interval.end)))
           (set! index (+ index 1))))
       out)))
 
@@ -19820,11 +19740,11 @@
   [coalesce : CompilerRegCoalesceMap]
   [interval-index : CompilerRegIntervalIndex]) : CompilerRegIntervalIndex
   (let
-    [orig-starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-    [orig-ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+    [orig-starts : (__tl_dyn-array i64) interval-index.starts]
+    [orig-ends : (__tl_dyn-array i64) interval-index.ends]
     [orig-segs : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get interval-index segments)]
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+      interval-index.segments]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     [n : i64 (array-length orig-starts)]
     [root-starts : (__tl_dyn-array i64) (array.make-array i64 n)]
     [root-ends : (__tl_dyn-array i64) (array.make-array i64 n)]
@@ -19838,7 +19758,7 @@
       ;; every root explicitly before accumulating its sorted segment union.
       (while (< v n)
         (begin
-          (array-set! root-segs v (compiler-reg-interval-seq-empty))
+          (set! (array-ref root-segs v) (compiler-reg-interval-seq-empty))
           (set! v (+ v 1))))
       (set! v 0)
       (while (< v n)
@@ -19857,19 +19777,18 @@
                 (if (or
                   (< (array-ref root-starts rr) 0)
                   (< (array-ref orig-starts v) (array-ref root-starts rr)))
-                  (array-set! root-starts rr (array-ref orig-starts v))
+                  (set! (array-ref root-starts rr) (array-ref orig-starts v))
                   unit)
                 (if (> (array-ref orig-ends v) (array-ref root-ends rr))
-                  (array-set! root-ends rr (array-ref orig-ends v))
+                  (set! (array-ref root-ends rr) (array-ref orig-ends v))
                   unit)
                 ;; The root carries the UNION of its
                 ;; members' segments. Normal coalescing only merges
                 ;; non-interfering members, but same-value coalescing deliberately
                 ;; admits overlapping members, so keep the root segment list
                 ;; sorted and non-overlapping while preserving genuine holes.
-                (array-set!
-                  root-segs
-                  rr
+                (set!
+                  (array-ref root-segs rr)
                   (compiler-reg-union-segments
                     (if (< v (array-length orig-segs))
                       (array-ref orig-segs v)
@@ -19904,7 +19823,7 @@
 (define (compiler-reg-coalesce-merged-root-set
   [coalesce : CompilerRegCoalesceMap]) : live.CompilerLiveI64Set
   (compiler-reg-coalesce-merged-root-set-from
-    (struct-get coalesce parents)
+    coalesce.parents
     0
     (live.compiler-live-set-empty)))
 
@@ -19933,7 +19852,7 @@
   [coalesce : CompilerRegCoalesceMap]
   [source : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     (if (= (array-length parents) 0)
       source
       (compiler-reg-coalesce-root-set-from-vars-from
@@ -19954,7 +19873,7 @@
   [orig-starts : (__tl_dyn-array i64)]
   [vars : i64]) : CompilerRegAssignmentTable
   (let
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     [out : CompilerRegAssignmentTable (compiler-reg-assignment-table-make vars)]
     [v : i64 0]
     (begin
@@ -20016,7 +19935,7 @@
   [ref-counts : (__tl_dyn-array i64)]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     [out : (__tl_dyn-array i64) (array.make-array i64 vars)]
     [v : i64 0]
     (begin
@@ -20034,7 +19953,7 @@
                   v)]
               [w : i64 (array-ref ref-counts v)]
               (if (> w (array-ref out rr))
-                (array-set! out rr w)
+                (set! (array-ref out rr) w)
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -20082,7 +20001,7 @@
               (>= key 0)
               (< key (array-length out))
               (< (array-ref out key) 0))
-              (array-set! out key i)
+              (set! (array-ref out key) i)
               unit)
             (set! i (+ i 1)))))
       out)))
@@ -20092,7 +20011,7 @@
   [reg : i64]) : i64
   (let
     [key : i64 (cabi.compiler-abi-register-ownership-id reg)]
-    [index : (__tl_dyn-array i64) (struct-get occupancy pool-index)]
+    [index : (__tl_dyn-array i64) occupancy.pool-index]
     (if (and (>= key 0) (< key (array-length index)))
       (array-ref index key)
       -1)))
@@ -20101,7 +20020,7 @@
   [occupancy : CompilerRegGreedyOccupancy]
   [reg-index : i64]
   [word-index : i64]) : i64
-  (+ (* reg-index (struct-get occupancy word-count)) word-index))
+  (+ (* reg-index occupancy.word-count) word-index))
 
 ;; ---------------------------------------------------------------------------
 ;; Per-register live-interval union (LLVM RAGreedy LiveIntervalUnion).
@@ -20190,12 +20109,11 @@
   [reg-index : i64]
   [segs : CompilerRegIntervalSeq]) : bool
   (let
-    [union : CompilerRegLiveUnion
-      (array-ref (struct-get occupancy live-union) reg-index)]
-    [entries : (__tl_dyn-array i64) (struct-get union slots)]
-    [count : i64 (struct-get union count)]
-    [slots : (__tl_dyn-array CompilerRegInterval) (struct-get segs slots)]
-    [len : i64 (struct-get segs len)]
+    [union : CompilerRegLiveUnion (array-ref occupancy.live-union reg-index)]
+    [entries : (__tl_dyn-array i64) union.slots]
+    [count : i64 union.count]
+    [slots : (__tl_dyn-array CompilerRegInterval) segs.slots]
+    [len : i64 segs.len]
     [index : i64 0]
     [hit : bool false]
     (begin
@@ -20206,8 +20124,8 @@
             (if (compiler-reg-live-union-segment-hits?
               entries
               count
-              (compiler-reg-live-union-effective-start (struct-get seg start))
-              (struct-get seg end))
+              (compiler-reg-live-union-effective-start seg.start)
+              seg.end)
               (set! hit true)
               unit)
             (set! index (+ index 1)))))
@@ -20218,7 +20136,7 @@
   [var : i64]) : CompilerRegIntervalSeq
   (let
     [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get occupancy live-union-segments)]
+      occupancy.live-union-segments]
     (if (or (< var 0) (>= var (array-length segments)))
       (compiler-reg-interval-seq-empty)
       (array-ref segments var))))
@@ -20229,7 +20147,7 @@
   [union : CompilerRegLiveUnion]
   [need : i64]) : (__tl_dyn-array i64)
   (let
-    [entries : (__tl_dyn-array i64) (struct-get union slots)]
+    [entries : (__tl_dyn-array i64) union.slots]
     [words : i64 (compiler-reg-live-union-entry-words)]
     [capacity : i64 (/ (array-length entries) words)]
     (if (<= need capacity)
@@ -20244,12 +20162,12 @@
             need
             doubled)]
         [bigger : (__tl_dyn-array i64) (array.make-array i64 (* grown words))]
-        [copy : i64 (* (struct-get union count) words)]
+        [copy : i64 (* union.count words)]
         [index : i64 0]
         (begin
           (while (< index copy)
             (begin
-              (array-set! bigger index (array-ref entries index))
+              (set! (array-ref bigger index) (array-ref entries index))
               (set! index (+ index 1))))
           bigger)))))
 
@@ -20276,7 +20194,7 @@
           (if (> end running)
             (set! running end)
             unit)
-          (array-set! entries (+ base 2) running)
+          (set! (array-ref entries (+ base 2)) running)
           (set! index (+ index 1)))))))
 
 ;; Insert one segment into `reg-index`'s union, keeping it sorted by effective
@@ -20288,10 +20206,9 @@
   [es-start : i64]
   [end : i64]) : unit
   (let
-    [store : (__tl_dyn-array CompilerRegLiveUnion)
-      (struct-get occupancy live-union)]
+    [store : (__tl_dyn-array CompilerRegLiveUnion) occupancy.live-union]
     [union : CompilerRegLiveUnion (array-ref store reg-index)]
-    [count : i64 (struct-get union count)]
+    [count : i64 union.count]
     [entries : (__tl_dyn-array i64)
       (compiler-reg-live-union-reserve union (+ count 1))]
     [words : i64 (compiler-reg-live-union-entry-words)]
@@ -20301,11 +20218,13 @@
     (begin
       (while (>= cursor floor)
         (begin
-          (array-set! entries (+ cursor words) (array-ref entries cursor))
+          (set! (array-ref entries (+ cursor words)) (array-ref entries cursor))
           (set! cursor (- cursor 1))))
-      (array-set! entries floor es-start)
-      (array-set! entries (+ floor 1) end)
-      (array-set! store reg-index (CompilerRegLiveUnion entries (+ count 1)))
+      (set! (array-ref entries floor) es-start)
+      (set! (array-ref entries (+ floor 1)) end)
+      (set!
+        (array-ref store reg-index)
+        (CompilerRegLiveUnion entries (+ count 1)))
       (compiler-reg-live-union-refresh-max! entries (+ count 1) at))))
 
 ;; Add `var` to `reg-index`'s union. A var without segment data cannot be
@@ -20317,13 +20236,13 @@
   (let
     [segs : CompilerRegIntervalSeq
       (compiler-reg-live-union-var-segments occupancy var)]
-    [slots : (__tl_dyn-array CompilerRegInterval) (struct-get segs slots)]
-    [len : i64 (struct-get segs len)]
+    [slots : (__tl_dyn-array CompilerRegInterval) segs.slots]
+    [len : i64 segs.len]
     [index : i64 0]
     (if (= len 0)
       (let
-        [coarse : (__tl_dyn-array i64) (struct-get occupancy live-union-coarse)]
-        (array-set! coarse reg-index (+ (array-ref coarse reg-index) 1)))
+        [coarse : (__tl_dyn-array i64) occupancy.live-union-coarse]
+        (set! (array-ref coarse reg-index) (+ (array-ref coarse reg-index) 1)))
       (while (< index len)
         (let
           [seg : CompilerRegInterval (array-ref slots index)]
@@ -20331,8 +20250,8 @@
             (compiler-reg-live-union-insert-segment!
               occupancy
               reg-index
-              (compiler-reg-live-union-effective-start (struct-get seg start))
-              (struct-get seg end))
+              (compiler-reg-live-union-effective-start seg.start)
+              seg.end)
             (set! index (+ index 1))))))))
 
 ;; Drop `var` from `reg-index`'s union. Both the union and `var`'s segments are
@@ -20348,18 +20267,17 @@
   (let
     [segs : CompilerRegIntervalSeq
       (compiler-reg-live-union-var-segments occupancy var)]
-    [len : i64 (struct-get segs len)]
+    [len : i64 segs.len]
     (if (= len 0)
       (let
-        [coarse : (__tl_dyn-array i64) (struct-get occupancy live-union-coarse)]
-        (array-set! coarse reg-index (- (array-ref coarse reg-index) 1)))
+        [coarse : (__tl_dyn-array i64) occupancy.live-union-coarse]
+        (set! (array-ref coarse reg-index) (- (array-ref coarse reg-index) 1)))
       (let
-        [slots : (__tl_dyn-array CompilerRegInterval) (struct-get segs slots)]
-        [store : (__tl_dyn-array CompilerRegLiveUnion)
-          (struct-get occupancy live-union)]
+        [slots : (__tl_dyn-array CompilerRegInterval) segs.slots]
+        [store : (__tl_dyn-array CompilerRegLiveUnion) occupancy.live-union]
         [union : CompilerRegLiveUnion (array-ref store reg-index)]
-        [count : i64 (struct-get union count)]
-        [entries : (__tl_dyn-array i64) (struct-get union slots)]
+        [count : i64 union.count]
+        [entries : (__tl_dyn-array i64) union.slots]
         [words : i64 (compiler-reg-live-union-entry-words)]
         [read : i64 0]
         [write : i64 0]
@@ -20377,9 +20295,8 @@
                     (and
                       (=
                         (array-ref entries from)
-                        (compiler-reg-live-union-effective-start
-                          (struct-get seg start)))
-                      (= (array-ref entries (+ from 1)) (struct-get seg end))))
+                        (compiler-reg-live-union-effective-start seg.start))
+                      (= (array-ref entries (+ from 1)) seg.end)))
                   false)]
               (begin
                 (if matched
@@ -20392,14 +20309,15 @@
                     (if (= from to)
                       unit
                       (begin
-                        (array-set! entries to (array-ref entries from))
-                        (array-set!
-                          entries
-                          (+ to 1)
+                        (set! (array-ref entries to) (array-ref entries from))
+                        (set!
+                          (array-ref entries (+ to 1))
                           (array-ref entries (+ from 1)))))
                     (set! write (+ write 1))))
                 (set! read (+ read 1)))))
-          (array-set! store reg-index (CompilerRegLiveUnion entries write))
+          (set!
+            (array-ref store reg-index)
+            (CompilerRegLiveUnion entries write))
           (compiler-reg-live-union-refresh-max! entries write first-drop))))))
 
 (define (compiler-reg-greedy-occupancy-set-bit!
@@ -20408,8 +20326,8 @@
   [var : i64]
   [present : bool]) : unit
   (let
-    [primary : (__tl_dyn-array i64) (struct-get occupancy primary)]
-    [word-count : i64 (struct-get occupancy word-count)]
+    [primary : (__tl_dyn-array i64) occupancy.primary]
+    [word-count : i64 occupancy.word-count]
     (if (or (< reg-index 0) (< var 0) (>= var (array-length primary)))
       unit
       (let
@@ -20417,7 +20335,7 @@
         (if (>= word-index word-count)
           unit
           (let
-            [words : (__tl_dyn-array i64) (struct-get occupancy words)]
+            [words : (__tl_dyn-array i64) occupancy.words]
             [flat-index : i64
               (compiler-reg-greedy-occupancy-word-index
                 occupancy
@@ -20437,9 +20355,8 @@
                 (if was-set
                   (compiler-reg-live-union-remove! occupancy reg-index var)
                   unit))
-              (array-set!
-                words
-                flat-index
+              (set!
+                (array-ref words flat-index)
                 (if present
                   (bit-or old mask)
                   (bit-and old (bit-xor mask -1)))))))))))
@@ -20448,8 +20365,8 @@
   [occupancy : CompilerRegGreedyOccupancy]
   [var : i64]) : unit
   (let
-    [primary : (__tl_dyn-array i64) (struct-get occupancy primary)]
-    [secondary : (__tl_dyn-array i64) (struct-get occupancy secondary)]
+    [primary : (__tl_dyn-array i64) occupancy.primary]
+    [secondary : (__tl_dyn-array i64) occupancy.secondary]
     (if (or (< var 0) (>= var (array-length primary)))
       unit
       (let
@@ -20460,8 +20377,8 @@
           (if (and (>= second 0) (not (= first second)))
             (compiler-reg-greedy-occupancy-set-bit! occupancy second var false)
             unit)
-          (array-set! primary var -1)
-          (array-set! secondary var -1))))))
+          (set! (array-ref primary var) -1)
+          (set! (array-ref secondary var) -1))))))
 
 (define (compiler-reg-greedy-occupancy-assign!
   [occupancy : CompilerRegGreedyOccupancy]
@@ -20469,14 +20386,14 @@
   [first : i64]
   [second : i64]) : unit
   (let
-    [primary : (__tl_dyn-array i64) (struct-get occupancy primary)]
-    [secondary : (__tl_dyn-array i64) (struct-get occupancy secondary)]
+    [primary : (__tl_dyn-array i64) occupancy.primary]
+    [secondary : (__tl_dyn-array i64) occupancy.secondary]
     (if (or (< var 0) (>= var (array-length primary)))
       unit
       (begin
         (compiler-reg-greedy-occupancy-clear! occupancy var)
-        (array-set! primary var first)
-        (array-set! secondary var second)
+        (set! (array-ref primary var) first)
+        (set! (array-ref secondary var) second)
         (compiler-reg-greedy-occupancy-set-bit! occupancy first var true)
         (if (and (>= second 0) (not (= first second)))
           (compiler-reg-greedy-occupancy-set-bit! occupancy second var true)
@@ -20511,9 +20428,8 @@
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]) : CompilerRegGreedyOccupancy
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [n : i64 (array-length present)]
     [word-count : i64
       (/
@@ -20561,7 +20477,7 @@
         pool-index
         live-union
         live-union-coarse
-        (struct-get interval-index segments))]
+        interval-index.segments)]
     [var : i64 0]
     (begin
       (compiler-reg-fill-i64-array words 0)
@@ -20621,7 +20537,7 @@
       (< index (compiler-reg-id-seq-count regs))
       (< (+ i index) (array-length out)))
       (begin
-        (array-set! out (+ i index) (compiler-reg-id-seq-ref regs index))
+        (set! (array-ref out (+ i index)) (compiler-reg-id-seq-ref regs index))
         (set! index (+ index 1))))))
 
 ;; Max ref-count among vars holding `reg` that interfere with `var`; -1 if none.
@@ -20633,10 +20549,10 @@
   [reg-index : i64]
   [word-index : i64]
   [acc : i64]) : i64
-  (if (>= word-index (struct-get occupancy word-count))
+  (if (>= word-index occupancy.word-count)
     acc
     (let
-      [words : (__tl_dyn-array i64) (struct-get occupancy words)]
+      [words : (__tl_dyn-array i64) occupancy.words]
       [bits : i64
         (array-ref
           words
@@ -20701,20 +20617,20 @@
   [var : i64]
   [reg-index : i64]) : bool
   (let
-    [primary : (__tl_dyn-array i64) (struct-get occupancy primary)]
-    [coarse : (__tl_dyn-array i64) (struct-get occupancy live-union-coarse)]
+    [primary : (__tl_dyn-array i64) occupancy.primary]
+    [coarse : (__tl_dyn-array i64) occupancy.live-union-coarse]
     [segs : CompilerRegIntervalSeq
       (if (and (>= reg-index 0) (< reg-index (array-length coarse)))
         (compiler-reg-live-union-var-segments occupancy var)
         (compiler-reg-interval-seq-empty))]
     (if (and
-      (not (= (struct-get segs len) 0))
+      (not (= segs.len 0))
       (= (array-ref coarse reg-index) 0)
       (or
         (>= var (array-length primary))
         (and
           (not (= (array-ref primary var) reg-index))
-          (not (= (array-ref (struct-get occupancy secondary) var) reg-index)))))
+          (not (= (array-ref occupancy.secondary var) reg-index)))))
       (not (compiler-reg-live-union-interferes? occupancy reg-index segs))
       (=
         (compiler-reg-greedy-interferer-max
@@ -20856,10 +20772,10 @@
   [reg-index : i64]
   [word-index : i64]
   [acc : i64]) : i64
-  (if (>= word-index (struct-get occupancy word-count))
+  (if (>= word-index occupancy.word-count)
     acc
     (let
-      [words : (__tl_dyn-array i64) (struct-get occupancy words)]
+      [words : (__tl_dyn-array i64) occupancy.words]
       [bits : i64
         (array-ref
           words
@@ -20973,10 +20889,10 @@
   [var : i64]
   [reg-index : i64]
   [word-index : i64]) : unit
-  (if (>= word-index (struct-get occupancy word-count))
+  (if (>= word-index occupancy.word-count)
     unit
     (let
-      [words : (__tl_dyn-array i64) (struct-get occupancy words)]
+      [words : (__tl_dyn-array i64) occupancy.words]
       [bits : i64
         (array-ref
           words
@@ -21004,13 +20920,12 @@
                     other)
                   (if (< other (array-length pending))
                     (begin
-                      (array-set! pending other 1)
+                      (set! (array-ref pending other) 1)
                       (compiler-reg-greedy-heap-push! heap ref-counts other))
                     unit)
                   (if (< other (array-length evict-count))
-                    (array-set!
-                      evict-count
-                      other
+                    (set!
+                      (array-ref evict-count other)
                       (+ (array-ref evict-count other) 1))
                     unit))
                 unit)
@@ -21308,10 +21223,12 @@
         (begin
           (let
             [var : i64
-              (struct-get (compiler-reg-interval-seq-ref candidates index) var)]
+              (__tl-project-field
+                (compiler-reg-interval-seq-ref candidates index)
+                var)]
             (begin
               (if (< at (array-length out))
-                (array-set! out at var)
+                (set! (array-ref out at) var)
                 unit)
               (set! at (+ at 1))))
           (set! index (+ index 1))))
@@ -21369,10 +21286,10 @@
         (begin
           (if from-right
             (begin
-              (array-set! dst k (array-ref src j))
+              (set! (array-ref dst k) (array-ref src j))
               (set! j (+ j 1)))
             (begin
-              (array-set! dst k (array-ref src i))
+              (set! (array-ref dst k) (array-ref src i))
               (set! i (+ i 1))))
           (set! k (+ k 1)))))))
 
@@ -21406,7 +21323,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         (set! i (+ i 1))))))
 
 ;; Order the first `count` entries of `arr` by
@@ -21481,7 +21398,7 @@
               (if (< v (array-length raw))
                 (array-ref raw v)
                 0)]
-            (array-set! out v (+ (* d (+ max-raw 1)) r)))
+            (set! (array-ref out v) (+ (* d (+ max-raw 1)) r)))
           (set! v (+ v 1))))
       out)))
 
@@ -21521,8 +21438,8 @@
   (let
     [t : i64 (array-ref arr a)]
     (begin
-      (array-set! arr a (array-ref arr b))
-      (array-set! arr b t))))
+      (set! (array-ref arr a) (array-ref arr b))
+      (set! (array-ref arr b) t))))
 
 (define (compiler-reg-greedy-heap-sift-up!
   [arr : (&mut arr (__tl_dyn-array i64))]
@@ -21581,7 +21498,7 @@
   (if (>= index (array-length old))
     unit
     (begin
-      (array-set! next index (array-ref old index))
+      (set! (array-ref next index) (array-ref old index))
       (compiler-reg-greedy-heap-copy-from! next old (+ index 1)))))
 
 (define (compiler-reg-greedy-heap-grown-array
@@ -21597,45 +21514,39 @@
   [heap : (&mut heap CompilerRegGreedyHeap)]) : unit
   (let
     [next : (__tl_dyn-array i64)
-      (compiler-reg-greedy-heap-grown-array (& (struct-get heap arr)))]
-    (set! (struct-get heap arr) next)))
+      (compiler-reg-greedy-heap-grown-array (& heap.arr))]
+    (set! heap.arr next)))
 
 (define (compiler-reg-greedy-heap-push!
   [heap : (&mut heap CompilerRegGreedyHeap)]
   [ref-counts : (__tl_dyn-array i64)]
   [v : i64]) : unit
   (begin
-    (if (>= (struct-get heap len) (array-length (struct-get heap arr)))
+    (if (>= heap.len (array-length heap.arr))
       (compiler-reg-greedy-heap-grow! heap)
       unit)
     (let
-      [index : i64 (struct-get heap len)]
+      [index : i64 heap.len]
       (begin
-        (array-set! (struct-get heap arr) index v)
-        (set! (struct-get heap len) (+ index 1))
-        (compiler-reg-greedy-heap-sift-up!
-          (&mut (struct-get heap arr))
-          ref-counts
-          index)))))
+        (set! (array-ref heap.arr index) v)
+        (set! heap.len (+ index 1))
+        (compiler-reg-greedy-heap-sift-up! (&mut heap.arr) ref-counts index)))))
 
 (define (compiler-reg-greedy-heap-pop!
   [heap : (&mut heap CompilerRegGreedyHeap)]
   [ref-counts : (__tl_dyn-array i64)]
   [pending : (__tl_dyn-array i64)]) : i64
-  (if (<= (struct-get heap len) 0)
+  (if (<= heap.len 0)
     (- 0 1)
     (let
-      [top : i64 (array-ref (struct-get heap arr) 0)]
-      [last-index : i64 (- (struct-get heap len) 1)]
+      [top : i64 (array-ref heap.arr 0)]
+      [last-index : i64 (- heap.len 1)]
       (begin
-        (array-set!
-          (struct-get heap arr)
-          0
-          (array-ref (struct-get heap arr) last-index))
-        (set! (struct-get heap len) last-index)
+        (set! (array-ref heap.arr 0) (array-ref heap.arr last-index))
+        (set! heap.len last-index)
         (if (> last-index 0)
           (compiler-reg-greedy-heap-sift-down!
-            (&mut (struct-get heap arr))
+            (&mut heap.arr)
             ref-counts
             last-index
             0)
@@ -21672,7 +21583,7 @@
               (>= v scratch-base)
               (< v scratch-base))))
           (begin
-            (array-set! pending v 1)
+            (set! (array-ref pending v) 1)
             (compiler-reg-greedy-heap-push! heap ref-counts v))
           unit))
       (compiler-reg-greedy-worklist-seed!
@@ -21723,7 +21634,7 @@
       unit
       (begin
         (if (and (>= v 0) (< v (array-length pending)))
-          (array-set! pending v 0)
+          (set! (array-ref pending v) 0)
           unit)
         (let
           [stg : i64
@@ -21751,7 +21662,7 @@
               evict-count
               heap)]
           (if (and (>= v 0) (< v (array-length stages)))
-            (array-set! stages v stg)
+            (set! (array-ref stages v) stg)
             unit))
         (compiler-reg-greedy-worklist-run!
           pending
@@ -21844,7 +21755,9 @@
           (while (< v cap)
             (begin
               (compiler-reg-greedy-occupancy-clear! occupancy v)
-              (array-set! evict-count v (compiler-reg-greedy-evict-cascade-cap))
+              (set!
+                (array-ref evict-count v)
+                (compiler-reg-greedy-evict-cascade-cap))
               (set! v (+ v 1)))))
         unit)
       ;; Establish the unchanged real-value coloring first. Scratch then joins
@@ -22064,8 +21977,8 @@
   [clobber-points : live.CompilerLiveI64Set]
   [var : i64]) : bool
   (let
-    [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-    [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+    [starts : (__tl_dyn-array i64) interval-index.starts]
+    [ends : (__tl_dyn-array i64) interval-index.ends]
     (if (and (>= var 0) (< var (array-length starts)))
       (and
         (compiler-reg-call-set-in-range?
@@ -22074,7 +21987,7 @@
           (array-ref ends var))
         (if (compiler-reg-interval-index-var-has-segments? interval-index var)
           (compiler-reg-segments-span-clobber?
-            (array-ref (struct-get interval-index segments) var)
+            (array-ref interval-index.segments var)
             clobber-points
             (array-ref starts var)
             false)
@@ -22093,16 +22006,15 @@
   [clobber-points : live.CompilerLiveI64Set]) : (__tl_dyn-array
     CompilerRegIdSeq)
   (let
-    [vars : i64 (array-length (struct-get interval-index starts))]
+    [vars : i64 (array-length interval-index.starts)]
     [out : (__tl_dyn-array CompilerRegIdSeq)
       (array.make-array CompilerRegIdSeq vars)]
     [i : i64 0]
     (begin
       (while (< i vars)
         (begin
-          (array-set!
-            out
-            i
+          (set!
+            (array-ref out i)
             (if (compiler-reg-greedy-var-spans-clobber?
               interval-index
               clobber-points
@@ -22179,7 +22091,7 @@
               false)
               (if (< (array-ref prefs root) 0)
                 (begin
-                  (array-set! prefs root idx)
+                  (set! (array-ref prefs root) idx)
                   unit)
                 unit)
               unit))))]
@@ -22267,11 +22179,11 @@
       (compiler-reg-arg-pref-args! target-abi pool args prefs parents)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-reg-arg-pref-args! target-abi pool args prefs parents))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-reg-arg-pref-args! target-abi pool args prefs parents))]
     [(ir.CompilerIrInstr.TailCall _ args _)
       (compiler-reg-arg-pref-args! target-abi pool args prefs parents)]
@@ -22317,7 +22229,7 @@
         false)
         (if (< (array-ref prefs root) 0)
           (begin
-            (array-set! prefs root rax-idx)
+            (set! (array-ref prefs root) rax-idx)
             unit)
           unit)
         unit))))
@@ -22350,8 +22262,8 @@
   [prefs : (__tl_dyn-array i64)]
   [parents : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -22376,7 +22288,11 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-result-pref-seq! instrs rax-idx prefs parents)])
-        (compiler-reg-result-pref-blocks! (box-get rest) rax-idx prefs parents))]
+        (compiler-reg-result-pref-blocks!
+          (__tl-box-place rest)
+          rax-idx
+          prefs
+          parents))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -22395,8 +22311,8 @@
   [prefs : (__tl_dyn-array i64)]
   [parents : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -22426,7 +22342,7 @@
         (compiler-reg-arg-pref-blocks!
           target-abi
           pool
-          (box-get rest)
+          (__tl-box-place rest)
           prefs
           parents))]
     [(ir.CompilerIrBlockList.Array seq)
@@ -22455,7 +22371,7 @@
   [n : i64]) : (__tl_dyn-array i64)
   (let
     [prefs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     [pool : CompilerRegIdSeq
       (compiler-reg-greedy-integer-pool-for-abi target-abi)]
     (begin
@@ -22514,7 +22430,7 @@
               false)
             (< (array-ref prefs root) 0))
             (begin
-              (array-set! prefs root idx)
+              (set! (array-ref prefs root) idx)
               unit)
             unit))
         unit)]
@@ -22633,7 +22549,7 @@
         parents)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-reg-float-arg-pref-args-at!
           target-abi
           pool
@@ -22644,7 +22560,7 @@
           parents))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-reg-float-arg-pref-args-at!
           target-abi
           pool
@@ -22699,8 +22615,8 @@
   [prefs : (__tl_dyn-array i64)]
   [parents : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [i : i64 0]
     (while (< i count)
       (begin
@@ -22736,7 +22652,7 @@
         (compiler-reg-float-arg-pref-blocks!
           target-abi
           pool
-          (box-get rest)
+          (__tl-box-place rest)
           types
           prefs
           parents))]
@@ -22765,7 +22681,7 @@
   [n : i64]) : (__tl_dyn-array i64)
   (let
     [prefs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+    [parents : (__tl_dyn-array i64) coalesce.parents]
     [pool : CompilerRegIdSeq (compiler-reg-xmm-registers-for-abi target-abi)]
     (begin
       (compiler-reg-fill-i64-array prefs -1)
@@ -22922,7 +22838,7 @@
         assignments)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-reg-float-arg-demote-args!
           target-abi
           args
@@ -22932,7 +22848,7 @@
           assignments))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-reg-float-arg-demote-args!
           target-abi
           args
@@ -22981,8 +22897,8 @@
   [parents : (__tl_dyn-array i64)]
   [assignments : CompilerRegAssignmentTable]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [i : i64 0]
     (while (< i count)
       (begin
@@ -23014,7 +22930,7 @@
               assignments)])
         (compiler-reg-float-arg-demote-blocks!
           target-abi
-          (box-get rest)
+          (__tl-box-place rest)
           types
           parents
           assignments))]
@@ -23046,7 +22962,7 @@
         target-abi
         blocks
         types
-        (struct-get coalesce parents)
+        coalesce.parents
         assignments)]))
 
 (define (compiler-reg-greedy-state-with-scratch-exclusions
@@ -23067,7 +22983,7 @@
   [unspillable-from : i64]
   [scratch-excluded : (__tl_dyn-array CompilerRegIdSeq)]) : CompilerRegAssignState
   (let
-    [n : i64 (array-length (struct-get assignments present))]
+    [n : i64 (array-length assignments.present)]
     [rcount : i64 (compiler-reg-id-seq-count regs)]
     [reg-arr : (__tl_dyn-array i64)
       (array.make-array
@@ -23078,17 +22994,17 @@
     [order : (__tl_dyn-array i64)
       (array.make-array
         i64
-        (if (< (array-length (struct-get assignments present)) 1)
+        (if (< (array-length assignments.present) 1)
           1
-          (array-length (struct-get assignments present))))]
+          (array-length assignments.present)))]
     ;; RS_* stage per root (RS_New until selectOrSplit runs); the post-pass region
     ;; split rescues the RS_Split entries.
     [stages : (__tl_dyn-array i64)
       (array.make-array
         i64
-        (if (< (array-length (struct-get assignments present)) 1)
+        (if (< (array-length assignments.present) 1)
           1
-          (array-length (struct-get assignments present))))]
+          (array-length assignments.present)))]
     (begin
       (compiler-reg-greedy-id-seq-to-array regs reg-arr 0)
       (let
@@ -23280,7 +23196,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-pair-caller-unsafe-blocks
             (compiler-reg-group-pair-caller-unsafe-instr-seq set instrs)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -23351,7 +23267,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-pair-excluded-blocks
             (compiler-reg-group-pair-excluded-instr-seq set instrs group-vars)
-            (box-get rest)
+            (__tl-box-place rest)
             group-vars)])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -23413,8 +23329,8 @@
   [lo : i64]
   [hi : i64]) : bool
   (let
-    [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-    [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+    [starts : (__tl_dyn-array i64) interval-index.starts]
+    [ends : (__tl_dyn-array i64) interval-index.ends]
     [i : i64 0]
     [hit : bool false]
     (begin
@@ -23455,8 +23371,8 @@
   [regions : CompilerRegCallRegionSeq]
   [reg : i64]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerRegCallRegion) (struct-get regions slots)]
-    [index : i64 (- (struct-get regions len) 1)]
+    [slots : (__tl_dyn-array CompilerRegCallRegion) regions.slots]
+    [index : i64 (- regions.len 1)]
     [conflict : bool false]
     (begin
       (while (and (>= index 0) (not conflict))
@@ -23613,7 +23529,7 @@
             count
             idx)
             (begin
-              (array-set! out at idx)
+              (set! (array-ref out at) idx)
               (set! at (+ at 1)))
             unit)
           (set! idx (+ idx 1))))
@@ -23692,7 +23608,7 @@
           (let
             [next : i64 (array-ref parents cur)]
             (begin
-              (array-set! parents cur root)
+              (set! (array-ref parents cur) root)
               (set! cur next)))))
       root)))
 
@@ -23741,17 +23657,17 @@
               (let
                 [rd : i64 (compiler-reg-group-pair-find parents dst)]
                 [rs : i64 (compiler-reg-group-pair-find parents src-var)]
-                (array-set! parents rd rs))
+                (set! (array-ref parents rd) rs))
               unit)
             (if (or
               (live.compiler-live-set-contains? group-vars dst)
               (live.compiler-live-set-contains? group-vars src-var))
               (begin
                 (if (and (>= dst 0) (< dst (array-length poisoned)))
-                  (array-set! poisoned dst true)
+                  (set! (array-ref poisoned dst) true)
                   unit)
                 (if (and (>= src-var 0) (< src-var (array-length poisoned)))
-                  (array-set! poisoned src-var true)
+                  (set! (array-ref poisoned src-var) true)
                   unit))
               unit))]
         [_ unit])]
@@ -23803,7 +23719,7 @@
               parents
               poisoned)
             (compiler-reg-group-pair-mov-edges-blocks
-              (box-get rest)
+              (__tl-box-place rest)
               group-vars
               excluded
               starts
@@ -23876,8 +23792,8 @@
     (match func
       [(ir.CompilerIrFunction.Function _ params _ _ blocks)
         (let
-          [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-          [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+          [starts : (__tl_dyn-array i64) interval-index.starts]
+          [ends : (__tl_dyn-array i64) interval-index.ends]
           [vars : i64 (array-length starts)]
           [excluded : live.CompilerLiveI64Set
             (compiler-reg-group-pair-excluded-blocks
@@ -23901,8 +23817,8 @@
           (begin
             (while (< v vars)
               (begin
-                (array-set! parents v v)
-                (array-set! poisoned v false)
+                (set! (array-ref parents v) v)
+                (set! (array-ref poisoned v) false)
                 (set! v (+ v 1))))
             (compiler-reg-group-pair-mov-edges-blocks
               blocks
@@ -23993,7 +23909,7 @@
                 poisoned
                 assignments)
                 (begin
-                  (array-set! members count w)
+                  (set! (array-ref members count) w)
                   (set! count (+ count 1)))
                 (set! ok false))
               (let
@@ -24202,7 +24118,7 @@
                   [_ unit])]
               [(CompilerRegMaybeLocation.No) unit])])
         (compiler-reg-param-pins-demote-walk!
-          (box-get rest)
+          (__tl-box-place rest)
           assignments
           parents
           eff-index
@@ -24225,7 +24141,7 @@
       (compiler-reg-param-pins-demote-walk!
         params
         assignments
-        (struct-get coalesce parents)
+        coalesce.parents
         eff-index
         call-points
         div-points
@@ -24440,7 +24356,7 @@
                 interval-index
                 (match (compiler-reg-live-interval-selection
                   func
-                  (struct-get liveness-handle baseline))
+                  liveness-handle.baseline)
                   [(CompilerRegIntervalSelection.Selection _ cons-idx)
                     (begin
                       (match func
@@ -24464,7 +24380,7 @@
           coalesce-index
           type-info
           group-vars
-          (array-length (struct-get coalesce-index starts))
+          (array-length coalesce-index.starts)
           sv-parents)
         (CompilerRegCoalesceMap (array.make-array i64 0)))]
     ;; Collapse coalesce classes to one root candidate each, and run
@@ -24513,11 +24429,11 @@
         assignment-table
         allow-caller-saved-zero-call)]
     [allocation-index : CompilerRegIntervalIndex
-      (struct-get early-scratch-model interval-index)]
-    [early-scratch-base : i64 (struct-get early-scratch-model scratch-base)]
-    [early-scratch-count : i64 (struct-get early-scratch-model scratch-count)]
+      early-scratch-model.interval-index]
+    [early-scratch-base : i64 early-scratch-model.scratch-base]
+    [early-scratch-count : i64 early-scratch-model.scratch-count]
     [early-scratch-weights : (__tl_dyn-array i64)
-      (struct-get early-scratch-model scratch-weights)]
+      early-scratch-model.scratch-weights]
     ;; move census (cfg regalloc-census only; no-op otherwise): categorise the
     ;; harvested moves against the final coalesce result + per-var and per-root
     ;; segments.
@@ -24527,7 +24443,7 @@
         (if allow-caller-saved-zero-call
           (compiler-reg-move-census-record!
             moves
-            (struct-get coalesce parents)
+            coalesce.parents
             interval-index
             eff-index
             type-info
@@ -24538,18 +24454,18 @@
     [eff-intervals : CompilerRegIntervalSeq
       (if allow-caller-saved-zero-call
         (compiler-reg-interval-arrays-to-seq
-          (struct-get eff-index starts)
-          (struct-get eff-index ends)
-          (- (array-length (struct-get eff-index starts)) 1)
+          eff-index.starts
+          eff-index.ends
+          (- (array-length eff-index.starts) 1)
           (compiler-reg-interval-seq-empty))
         intervals)]
     [allocation-intervals : CompilerRegIntervalSeq
       (if (= early-scratch-count 0)
         eff-intervals
         (compiler-reg-interval-arrays-to-seq
-          (struct-get allocation-index starts)
-          (struct-get allocation-index ends)
-          (- (array-length (struct-get allocation-index starts)) 1)
+          allocation-index.starts
+          allocation-index.ends
+          (- (array-length allocation-index.starts) 1)
           (compiler-reg-interval-seq-empty)))]
     ;; copy-hint biasing: per-root preferred move-neighbour for the integer passes.
     [copy-hints
@@ -24563,7 +24479,7 @@
       (compiler-reg-function-copy-hints
         moves
         coalesce
-        (array-length (struct-get interval-index starts))
+        (array-length interval-index.starts)
         func)]
     ;; arg-var -> ABI-arg-register physical preference: each outgoing call-argument
     ;; var biased toward the target register it will be marshalled into, so the
@@ -24576,14 +24492,14 @@
         target-abi
         func
         coalesce
-        (array-length (struct-get interval-index starts)))]
+        (array-length interval-index.starts))]
     [float-arg-prefs : (__tl_dyn-array i64)
       (compiler-reg-function-float-arg-prefs
         target-abi
         func
         type-info
         coalesce
-        (array-length (struct-get interval-index starts)))]
+        (array-length interval-index.starts))]
     ;; The effective scalar allocation pass sees only coalesced
     ;; roots, so original-var exclusions must block the root. Otherwise a root
     ;; may get a register even though one merged member is a call argument or
@@ -24642,20 +24558,20 @@
         (compiler-reg-function-spill-weights-combined
           func
           coalesce
-          (array-length (struct-get interval-index starts)))
+          (array-length interval-index.starts))
         (array.make-array i64 0))]
     [base-eviction-raw-counts : (__tl_dyn-array i64)
       (if (and allow-caller-saved-zero-call (> early-scratch-count 0))
         (compiler-reg-merge-ref-counts
           coalesce
           (compiler-reg-function-spill-weights func)
-          (array-length (struct-get interval-index starts)))
+          (array-length interval-index.starts))
         (array.make-array i64 0))]
     [eviction-ref-counts : (__tl_dyn-array i64)
       (compiler-reg-early-scratch-extend-weights
         base-eviction-ref-counts
         base-eviction-raw-counts
-        (array-length (struct-get allocation-index starts))
+        (array-length allocation-index.starts)
         early-scratch-base
         early-scratch-count
         early-scratch-weights)]
@@ -24741,9 +24657,9 @@
           base-integer-assignments
           true))]
     [allocation-table : CompilerRegAssignmentTable
-      (struct-get colored-early-scratch-model assignments)]
+      colored-early-scratch-model.assignments]
     [early-scratch-excluded : (__tl_dyn-array CompilerRegIdSeq)
-      (struct-get colored-early-scratch-model scratch-excluded)]
+      colored-early-scratch-model.scratch-excluded]
     [scratch-input-assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-with-scratch
         base-integer-assignments
@@ -24805,7 +24721,7 @@
           eff-index
           type-info
           group-vars
-          (struct-get coalesce parents))
+          coalesce.parents)
         (CompilerRegCallSaveAssignState.State
           integer-assignments
           (compiler-reg-call-split-empty)))]
@@ -24854,8 +24770,8 @@
           coalesce
           scalar-assignments)
         unit)]
-    [vector-vars : live.CompilerLiveI64Set (struct-get vector-mask-defs uses)]
-    [mask-vars : live.CompilerLiveI64Set (struct-get vector-mask-defs defs)]
+    [vector-vars : live.CompilerLiveI64Set vector-mask-defs.uses]
+    [mask-vars : live.CompilerLiveI64Set vector-mask-defs.defs]
     ;; Scalar-only functions (no vector or mask IR values) have no special
     ;; candidates at all: the select-false preference walk, both special-candidate
     ;; interval filters, the vector greedy, and the mask fixed-candidate pass all
@@ -24881,7 +24797,7 @@
         (array.make-array i64 0)
         (compiler-reg-function-select-false-preferences
           func
-          (array-length (struct-get interval-index starts))))]
+          (array-length interval-index.starts)))]
     [vector-candidates : CompilerRegIntervalSeq
       (if vector-mask-empty?
         (compiler-reg-interval-seq-empty)
@@ -24961,12 +24877,12 @@
             assignments
             coalesce
             storage-identity-vars
-            (struct-get interval-index starts)
-            (array-length (struct-get interval-index starts)))
+            interval-index.starts
+            (array-length interval-index.starts))
           func
           coalesce
           call-save-shadows
-          (array-length (struct-get interval-index starts)))
+          (array-length interval-index.starts))
         assignments)]
     ;; GAP2b: register-pair homing for group values. Runs LAST, when every
     ;; scalar home is final, so pair selection/eviction is judged against the
@@ -25006,8 +24922,7 @@
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func false)]
-    [liveness : live.CompilerFunctionLiveness
-      (struct-get liveness-handle baseline)]
+    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals func liveness)]
@@ -25050,8 +24965,7 @@
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func false)]
-    [liveness : live.CompilerFunctionLiveness
-      (struct-get liveness-handle baseline)]
+    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals func liveness)]
@@ -25113,17 +25027,17 @@
           (let
             [interval : CompilerRegInterval
               (compiler-reg-interval-seq-ref segs index)]
-            [start : i64 (struct-get interval start)]
+            [start : i64 interval.start]
             (set!
               out
               (compiler-reg-interval-seq-append
                 out
                 (CompilerRegInterval
-                  (struct-get interval var)
+                  interval.var
                   (if (= start min-start)
                     0
                     start)
-                  (struct-get interval end)))))
+                  interval.end))))
           (set! index (+ index 1))))
       out)))
 
@@ -25138,7 +25052,9 @@
         (begin
           (let
             [start : i64
-              (struct-get (compiler-reg-interval-seq-ref segs index) start)]
+              (__tl-project-field
+                (compiler-reg-interval-seq-ref segs index)
+                start)]
             (if (or (< out 0) (< start out))
               (set! out start)
               unit))
@@ -25158,16 +25074,16 @@
       (match param
         [(ir.CompilerIrParam.Param _ _ var)
           (let
-            [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
+            [starts : (__tl_dyn-array i64) interval-index.starts]
             [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-              (struct-get interval-index segments)]
+              interval-index.segments]
             (begin
               (if (and
                 (>= var 0)
                 (< var (array-length starts))
                 (> (array-ref starts var) 0))
                 (begin
-                  (array-set! starts var 0)
+                  (set! (array-ref starts var) 0)
                   (if (< var (array-length segments))
                     (let
                       [segs : CompilerRegIntervalSeq (array-ref segments var)]
@@ -25175,9 +25091,8 @@
                         (compiler-reg-param-segments-min-start segs (- 0 1))]
                       (if (> min-start 0)
                         (begin
-                          (array-set!
-                            segments
-                            var
+                          (set!
+                            (array-ref segments var)
                             (compiler-reg-param-segments-extend-entry
                               segs
                               min-start))
@@ -25186,7 +25101,7 @@
                     unit))
                 unit)
               (compiler-reg-param-intervals-extend-entry!
-                (box-get rest)
+                (__tl-box-place rest)
                 interval-index)))])]))
 
 (define (compiler-reg-live-set-insert-range
@@ -25271,8 +25186,8 @@
                   interval-index)])]
           [intervals : CompilerRegIntervalSeq
             (compiler-reg-interval-arrays-to-seq
-              (struct-get interval-index starts)
-              (struct-get interval-index ends)
+              interval-index.starts
+              interval-index.ends
               (- vars 1)
               (compiler-reg-interval-seq-empty))]
           [cold-split? : bool (>= forced-spill-from 0)]
@@ -25421,8 +25336,8 @@
   [types : CompilerRegVarTypes]
   [flags : (__tl_dyn-array bool)]) : unit
   (let
-    [present : (__tl_dyn-array i64) (struct-get types present)]
-    [items : (__tl_dyn-array ast.AstType) (struct-get types items)]
+    [present : (__tl_dyn-array i64) types.present]
+    [items : (__tl_dyn-array ast.AstType) types.items]
     [index : i64 0]
     [limit : i64
       (if (< (array-length present) (array-length flags))
@@ -25432,9 +25347,8 @@
       (begin
         (if (= (array-ref present index) 0)
           unit
-          (array-set!
-            flags
-            index
+          (set!
+            (array-ref flags index)
             (or
               (compiler-reg-scalar-type? (array-ref items index))
               (compiler-reg-handle-type? (array-ref items index)))))
@@ -25452,9 +25366,11 @@
       (begin
         (let
           [var : i64
-            (struct-get (compiler-reg-interval-seq-ref intervals index) var)]
+            (__tl-project-field
+              (compiler-reg-interval-seq-ref intervals index)
+              var)]
           (if (and (>= var 0) (< var (array-length references)))
-            (array-set! references var true)
+            (set! (array-ref references var) true)
             unit))
         (set! index (+ index 1))))))
 
@@ -25465,8 +25381,8 @@
   [types : CompilerRegVarTypes]
   [tys : (__tl_dyn-array ast.AstType)]) : unit
   (let
-    [present : (__tl_dyn-array i64) (struct-get types present)]
-    [items : (__tl_dyn-array ast.AstType) (struct-get types items)]
+    [present : (__tl_dyn-array i64) types.present]
+    [items : (__tl_dyn-array ast.AstType) types.items]
     [index : i64 0]
     [limit : i64
       (if (< (array-length present) (array-length tys))
@@ -25476,7 +25392,7 @@
       (begin
         (if (= (array-ref present index) 0)
           unit
-          (array-set! tys index (array-ref items index)))
+          (set! (array-ref tys index) (array-ref items index)))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-vector-elem-size [ty : ast.AstType]) : i64
@@ -25514,7 +25430,7 @@
       [next : i64 (compiler-reg-vector-stack-words-for-shape lanes elem-ty)]
       [old : i64 (array-ref words var)]
       (if (> next old)
-        (array-set! words var next)
+        (set! (array-ref words var) next)
         unit))))
 
 (define (compiler-reg-vector-stack-words-set-mask!
@@ -25529,7 +25445,7 @@
       [old : i64 (array-ref words var)]
       (if (> old 3)
         unit
-        (array-set! words var 4)))))
+        (set! (array-ref words var) 4)))))
 
 (define (compiler-reg-spmd-avx2-special-param? [name : String]) : bool
   (or
@@ -25553,7 +25469,7 @@
             (if (compiler-reg-spmd-avx2-special-param? name)
               (compiler-reg-vector-stack-words-set-mask! words var)
               unit)])
-        (compiler-reg-vector-stack-words-params! (box-get rest) words))]))
+        (compiler-reg-vector-stack-words-params! (__tl-box-place rest) words))]))
 
 (define (compiler-reg-spmd-avx2-special-param-references!
   [params : ir.CompilerIrParamList]
@@ -25575,10 +25491,10 @@
               (compiler-reg-spmd-avx2-special-param? name)
               (>= var 0)
               (< var (array-length references)))
-              (array-set! references var true)
+              (set! (array-ref references var) true)
               unit)])
         (compiler-reg-spmd-avx2-special-param-references!
-          (box-get rest)
+          (__tl-box-place rest)
           references))]))
 
 (define (compiler-reg-vector-stack-words-instr!
@@ -25591,21 +25507,21 @@
       (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-reg-vector-stack-words-set! words dst lanes elem-ty))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-reg-vector-stack-words-set! words dst lanes elem-ty))]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (if (= lanes 0)
           unit
           (match elem-ty
@@ -25614,7 +25530,7 @@
             [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])))]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (compiler-reg-vector-stack-words-set-mask! words dst))]
     [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _)
       (compiler-reg-vector-stack-words-set-mask! words dst)]
@@ -25626,30 +25542,30 @@
       (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (match elem-ty
           [(ast.AstType.Bool)
             (compiler-reg-vector-stack-words-set-mask! words dst)]
           [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-reg-vector-stack-words-set! words dst lanes elem-ty))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-reg-vector-stack-words-set! words dst lanes elem-ty))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [backend (struct-get (box-get payload-box) backend)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [result (struct-get (box-get payload-box) result)]
+        [backend (__tl-project-field (__tl-box-place payload-box) backend)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (match backend
           [(ir.CompilerIrSpmdBackend.Avx512)
             (match result
@@ -25684,8 +25600,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [words : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
       (begin
@@ -25702,7 +25618,7 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-vector-stack-words-seq! instrs words)])
-        (compiler-reg-vector-stack-words-blocks! (box-get rest) words))]
+        (compiler-reg-vector-stack-words-blocks! (__tl-box-place rest) words))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
@@ -25766,17 +25682,12 @@
   [a : CompilerRegInterval]
   [b : CompilerRegInterval]) : bool
   (let
-    [a-start : i64 (struct-get a start)]
-    [b-start : i64 (struct-get b start)]
-    (or
-      (< a-start b-start)
-      (and (= a-start b-start) (< (struct-get a var) (struct-get b var))))))
+    [a-start : i64 a.start]
+    [b-start : i64 b.start]
+    (or (< a-start b-start) (and (= a-start b-start) (< a.var b.var)))))
 
 (define (compiler-reg-color-interval-copy [item : CompilerRegInterval]) : CompilerRegInterval
-  (CompilerRegInterval
-    (struct-get item var)
-    (struct-get item start)
-    (struct-get item end)))
+  (CompilerRegInterval item.var item.start item.end))
 
 (define (compiler-reg-color-sift-down
   [items : (__tl_dyn-array CompilerRegInterval)]
@@ -25816,8 +25727,8 @@
             [largest-item : CompilerRegInterval
               (compiler-reg-color-interval-copy (array-ref items largest))]
             (begin
-              (array-set! items node largest-item)
-              (array-set! items largest node-item)
+              (set! (array-ref items node) largest-item)
+              (set! (array-ref items largest) node-item)
               (set! node largest))))))))
 
 (define (compiler-reg-color-heapsort
@@ -25839,8 +25750,8 @@
           [last-item : CompilerRegInterval
             (compiler-reg-color-interval-copy (array-ref items last))]
           (begin
-            (array-set! items 0 last-item)
-            (array-set! items last root-item)
+            (set! (array-ref items 0) last-item)
+            (set! (array-ref items last) root-item)
             (compiler-reg-color-sift-down items 0 last)
             (set! last (- last 1))))))))
 
@@ -25859,17 +25770,17 @@
     (begin
       (while (< i vars)
         (begin
-          (array-set! ends i (- 0 1))
+          (set! (array-ref ends i) (- 0 1))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i count)
         (let
           [interval : CompilerRegInterval (array-ref items i)]
-          [var : i64 (struct-get interval var)]
-          [end : i64 (struct-get interval end)]
+          [var : i64 interval.var]
+          [end : i64 interval.end]
           (begin
             (if (and (>= var 0) (< var vars) (> end (array-ref ends var)))
-              (array-set! ends var end)
+              (set! (array-ref ends var) end)
               unit)
             (set! i (+ i 1)))))
       ends)))
@@ -25944,9 +25855,9 @@
     used
     (let
       [interval : CompilerRegInterval (array-ref items index)]
-      [var : i64 (struct-get interval var)]
-      [start : i64 (struct-get interval start)]
-      [end : i64 (struct-get interval end)]
+      [var : i64 interval.var]
+      [start : i64 interval.start]
+      [end : i64 interval.end]
       (if (or
         ;; Already renumbered: parameter identity pins (the prologue's
         ;; param spill targets the ORIGINAL id's formula slot, so a pinned
@@ -26004,11 +25915,11 @@
               used)]
           [full-end : i64 (compiler-reg-max end (array-ref extent-ends var))]
           (begin
-            (array-set! slot-ends slot full-end)
+            (set! (array-ref slot-ends slot) full-end)
             (if (< slot (array-length slot-tys))
-              (array-set! slot-tys slot ty)
+              (set! (array-ref slot-tys slot) ty)
               unit)
-            (array-set! remap var slot)
+            (set! (array-ref remap var) slot)
             (compiler-reg-color-walk
               type-segment-bases
               items
@@ -26036,11 +25947,11 @@
         (let
           [interval : CompilerRegInterval
             (compiler-reg-interval-seq-ref intervals index)]
-          [var : i64 (struct-get interval var)]
+          [var : i64 interval.var]
           (if (and (>= var 0) (< var (array-length starts)))
             (begin
-              (array-set! starts var (struct-get interval start))
-              (array-set! ends var (struct-get interval end)))
+              (set! (array-ref starts var) interval.start)
+              (set! (array-ref ends var) interval.end))
             unit))
         (set! index (+ index 1))))))
 
@@ -26054,7 +25965,7 @@
     (while (< i count)
       (begin
         (if (and (>= (+ first i) 0) (< (+ first i) (array-length range-of-var)))
-          (array-set! range-of-var (+ first i) range-id)
+          (set! (array-ref range-of-var (+ first i)) range-id)
           unit)
         (set! i (+ i 1))))))
 
@@ -26065,7 +25976,7 @@
   [range-size : (__tl_dyn-array i64)]
   [range-count : i64]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
     [run-first : i64 (- 0 1)]
@@ -26096,8 +26007,8 @@
                   (= run-first (+ (- src run-count) 1))
                   (< ranges (array-length range-base)))
                   (begin
-                    (array-set! range-base ranges src)
-                    (array-set! range-size ranges run-count)
+                    (set! (array-ref range-base ranges) src)
+                    (set! (array-ref range-size ranges) run-count)
                     (compiler-reg-color-mark-storage-vars
                       range-of-var
                       run-first
@@ -26128,7 +26039,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-color-detect-storage-blocks
-            (box-get rest)
+            (__tl-box-place rest)
             range-of-var
             range-base
             range-size
@@ -26196,7 +26107,7 @@
           (- 0 1)
           (if (= next (- 0 2))
             (- 0 2)
-            (compiler-reg-color-phi-root roots (box-get rest) next))))]))
+            (compiler-reg-color-phi-root roots (__tl-box-place rest) next))))]))
 
 (define (compiler-reg-color-set-root!
   [roots : (__tl_dyn-array i64)]
@@ -26211,16 +26122,16 @@
         false
         (if (< old 0)
           (begin
-            (array-set! roots dst root)
+            (set! (array-ref roots dst) root)
             true)
           (begin
             (if (< old (array-length invalid))
-              (array-set! invalid old true)
+              (set! (array-ref invalid old) true)
               unit)
             (if (< root (array-length invalid))
-              (array-set! invalid root true)
+              (set! (array-ref invalid root) true)
               unit)
-            (array-set! roots dst (- 0 2))
+            (set! (array-ref roots dst) (- 0 2))
             true))))))
 
 ;; Result code of one propagation attempt. Bit 0 says the instruction is one of
@@ -26270,9 +26181,10 @@
     [(ir.CompilerIrInstr.Select payload-box)
       (compiler-reg-color-propagate-root-code
         (let
-          [dst (struct-get (box-get payload-box) dst)]
-          [true-value (struct-get (box-get payload-box) on-true)]
-          [false-value (struct-get (box-get payload-box) on-false)]
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [true-value (__tl-project-field (__tl-box-place payload-box) on-true)]
+          [false-value
+            (__tl-project-field (__tl-box-place payload-box) on-false)]
           [left : i64 (compiler-reg-color-value-root roots true-value)]
           [right : i64 (compiler-reg-color-value-root roots false-value)]
           (if (>= right 0)
@@ -26303,7 +26215,7 @@
   [candidates : (__tl_dyn-array i64)]
   [cursor : (__tl_dyn-array i64)]) : bool
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [base : i64 (array-ref cursor 0)]
     [at : i64 (array-ref cursor 1)]
@@ -26325,11 +26237,11 @@
             (if (= (bit-and code 1) 0)
               unit
               (begin
-                (array-set! candidates at (+ base i))
+                (set! (array-ref candidates at) (+ base i))
                 (set! at (+ at 1))))
             (set! i (+ i 1)))))
-      (array-set! cursor 1 at)
-      (array-set! cursor 0 (+ base len))
+      (set! (array-ref cursor 1) at)
+      (set! (array-ref cursor 0) (+ base len))
       changed)))
 
 (define (compiler-reg-color-propagate-root-blocks
@@ -26355,7 +26267,7 @@
                 cursor)]
             [tail : bool
               (compiler-reg-color-propagate-root-blocks
-                (box-get rest)
+                (__tl-box-place rest)
                 range-of-var
                 roots
                 invalid
@@ -26436,8 +26348,7 @@
               (match block
                 [(ir.CompilerIrBlock.Block _ instrs)
                   (let
-                    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-                      (struct-get instrs slots)]
+                    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
                     [limit : i64
                       (+ base (ir.compiler-ir-instr-seq-count instrs))]
                     (begin
@@ -26459,7 +26370,7 @@
                               (array-ref candidates at)
                               max-ordinal))))
                       (set! base limit)))])
-              (set! cur (box-get rest)))]
+              (set! cur (__tl-box-place rest)))]
           [(ir.CompilerIrBlockList.Array seq)
             (let
               [i : i64 0]
@@ -26471,7 +26382,7 @@
                       [(ir.CompilerIrBlock.Block _ instrs)
                         (let
                           [slots : (__tl_dyn-array ir.CompilerIrInstr)
-                            (struct-get instrs slots)]
+                            instrs.slots]
                           [limit : i64
                             (+ base (ir.compiler-ir-instr-seq-count instrs))]
                           (begin
@@ -26508,7 +26419,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-color-instr-total
-            (box-get rest)
+            (__tl-box-place rest)
             (+ total (ir.compiler-ir-instr-seq-count instrs)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -26565,7 +26476,7 @@
   [invalid : (__tl_dyn-array bool)]
   [root : i64]) : unit
   (if (and (>= root 0) (< root (array-length invalid)))
-    (array-set! invalid root true)
+    (set! (array-ref invalid root) true)
     unit))
 
 (define (compiler-reg-color-invalidate-value!
@@ -26623,13 +26534,12 @@
             (compiler-reg-color-invalidate-spmd-call-args!
               roots
               invalid
-              (box-get rest)))])]
+              (__tl-box-place rest)))])]
     [(ir.CompilerIrSpmdCallArgList.Array seq)
       (let
         [i : i64 0]
-        [count : i64 (struct-get seq len)]
-        [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-          (struct-get seq slots)]
+        [count : i64 seq.len]
+        [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg) seq.slots]
         (while (< i count)
           (begin
             (match (array-ref slots i)
@@ -26661,7 +26571,7 @@
             roots
             invalid
             dst-root
-            (box-get rest))))]))
+            (__tl-box-place rest))))]))
 
 (define (compiler-reg-color-invalidate-instr!
   [instr : ir.CompilerIrInstr]
@@ -26708,15 +26618,15 @@
       (compiler-reg-color-invalidate-value! roots invalid value)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid lhs)
           (compiler-reg-color-invalidate-value! roots invalid rhs)))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid src)
           (compiler-reg-color-invalidate-value! roots invalid carry)))]
@@ -26724,8 +26634,8 @@
       (compiler-reg-color-invalidate-value! roots invalid src)]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid lhs)
           (compiler-reg-color-invalidate-value! roots invalid rhs)))]
@@ -26739,10 +26649,10 @@
       (compiler-reg-color-invalidate-value! roots invalid src)]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [true-value (struct-get (box-get payload-box) on-true)]
-        [false-value (struct-get (box-get payload-box) on-false)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [true-value (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [false-value (__tl-project-field (__tl-box-place payload-box) on-false)]
         [left : i64 (compiler-reg-color-value-root roots true-value)]
         [right : i64 (compiler-reg-color-value-root roots false-value)]
         [dst-root : i64
@@ -26763,19 +26673,19 @@
         (compiler-reg-color-invalidate-value! roots invalid index))]
     [(ir.CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid base)
           (compiler-reg-color-invalidate-value! roots invalid index)
           (compiler-reg-color-invalidate-value! roots invalid value)))]
     [(ir.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid base)
           (compiler-reg-color-invalidate-value! roots invalid index)
@@ -26783,28 +26693,32 @@
           (compiler-reg-color-invalidate-value! roots invalid mask)))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid base)
           (compiler-reg-color-invalidate-value! roots invalid index)
           (compiler-reg-color-invalidate-value! roots invalid mask)))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid base)
           (compiler-reg-color-invalidate-value! roots invalid index-base)
           (compiler-reg-color-invalidate-value! roots invalid index)))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid source)
           (compiler-reg-color-invalidate-value! roots invalid selector-low)
@@ -26839,24 +26753,25 @@
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid base)
           (compiler-reg-color-invalidate-call-args! roots invalid args)))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [callee (struct-get (box-get payload-box) callee)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid base)
           (compiler-reg-color-invalidate-value! roots invalid callee)
           (compiler-reg-color-invalidate-call-args! roots invalid args)))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (begin
           (compiler-reg-color-invalidate-value! roots invalid active-mask)
           (compiler-reg-color-invalidate-spmd-call-args! roots invalid args)))]
@@ -26885,7 +26800,7 @@
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
     (while (< i len)
@@ -26904,7 +26819,10 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-color-invalidate-seq! instrs roots invalid)])
-        (compiler-reg-color-invalidate-blocks! (box-get rest) roots invalid))]
+        (compiler-reg-color-invalidate-blocks!
+          (__tl-box-place rest)
+          roots
+          invalid))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -26935,10 +26853,10 @@
               (if (>= start 0)
                 (begin
                   (if (< start (array-ref range-starts root))
-                    (array-set! range-starts root start)
+                    (set! (array-ref range-starts root) start)
                     unit)
                   (if (> end (array-ref range-ends root))
-                    (array-set! range-ends root end)
+                    (set! (array-ref range-ends root) end)
                     unit))
                 unit))
             unit)
@@ -26989,7 +26907,7 @@
     (while (< i size)
       (begin
         (if (< (+ slot i) (array-length slot-ends))
-          (array-set! slot-ends (+ slot i) end)
+          (set! (array-ref slot-ends (+ slot i)) end)
           unit)
         (set! i (+ i 1))))))
 
@@ -27004,7 +26922,7 @@
     (while (< i size)
       (begin
         (if (and (>= (+ first i) 0) (< (+ first i) (array-length remap)))
-          (array-set! remap (+ first i) (+ slot i))
+          (set! (array-ref remap (+ first i)) (+ slot i))
           unit)
         (set! i (+ i 1))))))
 
@@ -27097,8 +27015,8 @@
         [i : i64 0]
         (while (< i vars)
           (begin
-            (array-set! range-of-var i (- 0 1))
-            (array-set! range-base i (- 0 1))
+            (set! (array-ref range-of-var i) (- 0 1))
+            (set! (array-ref range-base i) (- 0 1))
             (set! i (+ i 1)))))]
     [range-count : i64
       (compiler-reg-color-detect-storage-blocks
@@ -27122,11 +27040,11 @@
             [i : i64 0]
             (while (< i vars)
               (begin
-                (array-set! range-starts i max-start)
-                (array-set! range-ends i (- 0 1))
-                (array-set! roots i (- 0 1))
-                (array-set! starts i (- 0 1))
-                (array-set! ends i (- 0 1))
+                (set! (array-ref range-starts i) max-start)
+                (set! (array-ref range-ends i) (- 0 1))
+                (set! (array-ref roots i) (- 0 1))
+                (set! (array-ref starts i) (- 0 1))
+                (set! (array-ref ends i) (- 0 1))
                 (set! i (+ i 1)))))]
         (begin
           (compiler-reg-color-fill-interval-bounds intervals starts ends)
@@ -27159,8 +27077,8 @@
   [items : (__tl_dyn-array ast.AstType)]
   [types : CompilerRegVarTypes]) : unit
   (let
-    [source-present : (__tl_dyn-array i64) (struct-get types present)]
-    [source-items : (__tl_dyn-array ast.AstType) (struct-get types items)]
+    [source-present : (__tl_dyn-array i64) types.present]
+    [source-items : (__tl_dyn-array ast.AstType) types.items]
     [index : i64 0]
     (while (< index (array-length source-present))
       (begin
@@ -27193,9 +27111,8 @@
   [items : (__tl_dyn-array CompilerRegLocation)]
   [assignments : CompilerRegAssignmentTable]) : unit
   (let
-    [source-present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [source-items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [source-present : (__tl_dyn-array i64) assignments.present]
+    [source-items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [var : i64 0]
     (begin
       (while (< var (array-length source-present))
@@ -27211,8 +27128,8 @@
                     [new-id : i64 (compiler-reg-remap-id remap var)]
                     (if (and (>= new-id 0) (< new-id (array-length present)))
                       (begin
-                        (array-set! present new-id 1)
-                        (array-set! items new-id location))
+                        (set! (array-ref present new-id) 1)
+                        (set! (array-ref items new-id) location))
                       unit))])))
           (set! var (+ var 1))))
       unit)))
@@ -27255,11 +27172,11 @@
               (not (compiler-reg-spmd-avx2-special-param? name))
               (< var-id (array-length remap)))
               (begin
-                (array-set! remap var-id var-id)
-                (array-set! slot-ends var-id 9223372036854775807))
+                (set! (array-ref remap var-id) var-id)
+                (set! (array-ref slot-ends var-id) 9223372036854775807))
               unit)
             (compiler-reg-color-param-pins
-              (box-get rest)
+              (__tl-box-place rest)
               remap
               slot-ends
               (if (compiler-reg-spmd-avx2-special-param? name)
@@ -27308,18 +27225,18 @@
         (let
           [interval : CompilerRegInterval
             (compiler-reg-interval-seq-ref intervals index)]
-          [var : i64 (struct-get interval var)]
-          [start : i64 (struct-get interval start)]
-          [end : i64 (struct-get interval end)]
+          [var : i64 interval.var]
+          [start : i64 interval.start]
+          [end : i64 interval.end]
           (if (and (>= var 0) (< var (array-length starts)))
             (begin
               (if (or
                 (< (array-ref starts var) 0)
                 (< start (array-ref starts var)))
-                (array-set! starts var start)
+                (set! (array-ref starts var) start)
                 unit)
               (if (> end (array-ref ends var))
-                (array-set! ends var end)
+                (set! (array-ref ends var) end)
                 unit))
             unit))
         (set! index (+ index 1))))))
@@ -27366,7 +27283,7 @@
               src-var)
               [(CompilerRegMaybeLocation.Some _) false]
               [(CompilerRegMaybeLocation.No) true]))
-            (array-set! alias dst src-var)
+            (set! (array-ref alias dst) src-var)
             unit)]
         [_ unit])]
     [_ unit]))
@@ -27383,7 +27300,7 @@
   [hull-starts : (__tl_dyn-array i64)]
   [hull-ends : (__tl_dyn-array i64)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
     (while (< i len)
@@ -27431,7 +27348,7 @@
               hull-ends)])
         (compiler-reg-color-group-mov-alias-blocks!
           type-segment-bases
-          (box-get rest)
+          (__tl-box-place rest)
           alias
           group-vars
           ineligible
@@ -27561,10 +27478,9 @@
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [after-items : (__tl_dyn-array live.CompilerLiveI64Set)
-      (struct-get live-afters items)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [after-items : (__tl_dyn-array live.CompilerLiveI64Set) live-afters.items]
     [index : i64 0]
     [out-point : i64 point]
     (begin
@@ -27626,7 +27542,7 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (compiler-reg-color-ep-hull-blocks!
-            (box-get rest)
+            (__tl-box-place rest)
             liveness
             (compiler-reg-color-ep-hull-seq!
               instrs
@@ -27676,9 +27592,8 @@
     [i : i64 0]
     (while (< i vars)
       (begin
-        (array-set!
-          slot-eligible
-          i
+        (set!
+          (array-ref slot-eligible i)
           (and
             (array-ref colorable i)
             (not (live.compiler-live-set-contains? group-vars i))
@@ -27705,9 +27620,8 @@
     [i : i64 0]
     (while (< i vars)
       (begin
-        (array-set!
-          eligible
-          i
+        (set!
+          (array-ref eligible i)
           (and
             (array-ref slot-eligible i)
             (>= (array-ref hull-starts i) 0)
@@ -27814,22 +27728,21 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! alias member root-a)
-          (array-set! web-root member false)
-          (array-set!
-            web-end
-            root-a
+          (set! (array-ref alias member) root-a)
+          (set! (array-ref web-root member) false)
+          (set!
+            (array-ref web-end root-a)
             (compiler-reg-max
               (array-ref web-end root-a)
               (array-ref ep-ends member)))
           (set! last member)
           (set! member (array-ref web-next member))
           (set! i (+ i 1))))
-      (array-set! web-next root-a root-b)
-      (array-set! web-next last a-next)
-      (array-set! alias root-a (- 0 1))
-      (array-set! web-root root-a true)
-      (array-set! web-size root-a (+ (array-ref web-size root-a) count))
+      (set! (array-ref web-next root-a) root-b)
+      (set! (array-ref web-next last) a-next)
+      (set! (array-ref alias root-a) (- 0 1))
+      (set! (array-ref web-root root-a) true)
+      (set! (array-ref web-size root-a) (+ (array-ref web-size root-a) count))
       unit)))
 
 ;; Join the web owning `later` to the web owning `earlier`. The old monotone test
@@ -28038,7 +27951,7 @@
           phi-def
           phi-pass
           dst
-          (box-get rest)))]))
+          (__tl-box-place rest)))]))
 
 ;; One instruction's link offers for ONE pass. `phi-pass` true is the loop-carry
 ;; priority pass (phi-defined phi inputs only); the Mov witness rides that pass so
@@ -28111,7 +28024,7 @@
   [ep-ends : (__tl_dyn-array i64)]
   [phi-def : (__tl_dyn-array bool)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
     (while (< i len)
@@ -28187,7 +28100,7 @@
               phi-def)])
         (compiler-reg-color-scalar-alias-blocks!
           type-segment-bases
-          (box-get rest)
+          (__tl-box-place rest)
           alias
           web-root
           web-end
@@ -28225,7 +28138,7 @@
   [instrs : ir.CompilerIrInstrSeq]
   [phi-def : (__tl_dyn-array bool)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
     (while (< i len)
@@ -28236,7 +28149,7 @@
               [(ir.CompilerIrInstr.Phi dst _ _)
                 (when
                   (and (>= dst 0) (< dst (array-length phi-def)))
-                  (array-set! phi-def dst true))]
+                  (set! (array-ref phi-def dst) true))]
               [_ unit])]
           [_ unit])
         (set! i (+ i 1))))))
@@ -28251,7 +28164,9 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-reg-color-scalar-phi-def-seq! instrs phi-def)])
-        (compiler-reg-color-scalar-phi-def-blocks! (box-get rest) phi-def))]
+        (compiler-reg-color-scalar-phi-def-blocks!
+          (__tl-box-place rest)
+          phi-def))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -28289,7 +28204,7 @@
         (compiler-reg-color-scalar-alias-candidate-inputs?
           eligible
           dst
-          (box-get rest)))]))
+          (__tl-box-place rest)))]))
 
 (define (compiler-reg-color-scalar-alias-candidate-instr?
   [instr : ir.CompilerIrInstr]
@@ -28320,7 +28235,7 @@
   [instrs : ir.CompilerIrInstrSeq]
   [eligible : (__tl_dyn-array bool)]) : bool
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
     [found : bool false]
@@ -28346,7 +28261,7 @@
           (compiler-reg-color-scalar-alias-candidate-seq? instrs eligible)])
         true
         (compiler-reg-color-scalar-alias-candidate-blocks?
-          (box-get rest)
+          (__tl-box-place rest)
           eligible))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -28413,10 +28328,10 @@
               [i : i64 0]
               (while (< i vars)
                 (begin
-                  (array-set! web-end i (array-ref ep-ends i))
-                  (array-set! web-root i false)
-                  (array-set! web-next i i)
-                  (array-set! web-size i 1)
+                  (set! (array-ref web-end i) (array-ref ep-ends i))
+                  (set! (array-ref web-root i) false)
+                  (set! (array-ref web-next i) i)
+                  (set! (array-ref web-size i) 1)
                   (set! i (+ i 1)))))
             (compiler-reg-color-scalar-alias-blocks!
               type-segment-bases
@@ -28468,11 +28383,9 @@
               (compiler-reg-interval-seq-ref intervals index)]
             (if (array-ref
               slot-eligible
-              (compiler-reg-color-group-alias-root
-                alias
-                (struct-get interval var)))
+              (compiler-reg-color-group-alias-root alias interval.var))
               (begin
-                (array-set! items out-index interval)
+                (set! (array-ref items out-index) interval)
                 (set! out-index (+ out-index 1)))
               unit))
           (set! index (+ index 1))))
@@ -28493,18 +28406,14 @@
       (begin
         (let
           [interval : CompilerRegInterval (array-ref items i)]
-          [var : i64 (struct-get interval var)]
+          [var : i64 interval.var]
           [root : i64 (compiler-reg-color-group-alias-root alias var)]
           (if (= root var)
             unit
             (begin
-              (array-set!
-                items
-                i
-                (CompilerRegInterval
-                  root
-                  (struct-get interval start)
-                  (struct-get interval end)))
+              (set!
+                (array-ref items i)
+                (CompilerRegInterval root interval.start interval.end))
               unit)))
         (set! i (+ i 1))))))
 
@@ -28523,7 +28432,7 @@
           (let
             [root : i64 (compiler-reg-color-group-alias-root alias i)]
             (if (and (not (= root i)) (>= (array-ref remap root) 0))
-              (array-set! remap i (array-ref remap root))
+              (set! (array-ref remap i) (array-ref remap root))
               unit))
           unit)
         (set! i (+ i 1))))))
@@ -28591,12 +28500,12 @@
             (begin
               (while (< i slots)
                 (begin
-                  (array-set! slot-ends i (- 0 1))
+                  (set! (array-ref slot-ends i) (- 0 1))
                   (set! i (+ i 1))))
               (set! i 0)
               (while (< i vars)
                 (begin
-                  (array-set! remap i (- 0 1))
+                  (set! (array-ref remap i) (- 0 1))
                   (set! i (+ i 1))))))]
         [_flagged : unit
           (begin
@@ -28607,7 +28516,7 @@
               [i : i64 slot-candidate-vars]
               (while (< i vars)
                 (begin
-                  (array-set! colorable i false)
+                  (set! (array-ref colorable i) false)
                   (set! i (+ i 1)))))
             ;; Clearing the colorable flag is exactly the "no shared slot"
             ;; decision: it withdraws the variable from the scalar walk AND
@@ -28620,7 +28529,7 @@
                 (while (< i vars)
                   (begin
                     (if (live.compiler-live-set-contains? fusion-pinned i)
-                      (array-set! colorable i false)
+                      (set! (array-ref colorable i) false)
                       unit)
                     (set! i (+ i 1)))))
               unit))]
@@ -28780,10 +28689,12 @@
                                   next
                                   words)]
                               (begin
-                                (array-set! remap root (+ slot (- words 1)))
+                                (set!
+                                  (array-ref remap root)
+                                  (+ slot (- words 1)))
                                 (set! next (+ slot words))))
                             unit)
-                          (array-set! remap i (array-ref remap root)))
+                          (set! (array-ref remap i) (array-ref remap root)))
                         (match (compiler-reg-assignment-table-lookup
                           assignment-index
                           i)
@@ -28801,7 +28712,9 @@
                                       next
                                       words)]
                                   (begin
-                                    (array-set! remap i (+ slot (- words 1)))
+                                    (set!
+                                      (array-ref remap i)
+                                      (+ slot (- words 1)))
                                     (set! next (+ slot words))))]
                               [_ unit])]
                           [(CompilerRegMaybeLocation.No)
@@ -28816,7 +28729,7 @@
                                   next
                                   words)]
                               (begin
-                                (array-set! remap i (+ slot (- words 1)))
+                                (set! (array-ref remap i) (+ slot (- words 1)))
                                 (set! next (+ slot words))))]))))
                   (set! i (+ i 1))))
               ;; Scratch pseudo-vars live above the real-IR watermark and are
@@ -28826,7 +28739,7 @@
               (while (< i vars)
                 (begin
                   (if (< (array-ref remap i) 0)
-                    (array-set! remap i i)
+                    (set! (array-ref remap i) i)
                     unit)
                   (set! i (+ i 1))))
               next))]
@@ -28850,7 +28763,7 @@
                   (if (and
                     (>= (array-ref remap i) 0)
                     (< (array-ref remap i) vars))
-                    (array-set! taken (array-ref remap i) true)
+                    (set! (array-ref taken (array-ref remap i)) true)
                     unit)
                   (set! i (+ i 1))))
               (set! i 0)
@@ -28862,7 +28775,7 @@
                         (array-ref taken free)
                         false)
                         (set! free (+ free 1)))
-                      (array-set! remap i free)
+                      (set! (array-ref remap i) free)
                       (set! free (+ free 1)))
                     unit)
                   (set! i (+ i 1))))))]
@@ -28901,7 +28814,7 @@
     [(ir.CompilerIrValueList.Cons head rest)
       (ir.compiler-ir-value-cons
         (compiler-reg-remap-value remap head)
-        (compiler-reg-remap-value-list remap (box-get rest)))]))
+        (compiler-reg-remap-value-list remap (__tl-box-place rest)))]))
 
 (define (compiler-reg-remap-params
   [remap : (__tl_dyn-array i64)]
@@ -28915,7 +28828,7 @@
         [(ir.CompilerIrParam.Param name ty var)
           (ir.compiler-ir-param-cons
             (ir.CompilerIrParam.Param name ty (compiler-reg-remap-id remap var))
-            (compiler-reg-remap-params remap (box-get rest)))])]))
+            (compiler-reg-remap-params remap (__tl-box-place rest)))])]))
 
 (define (compiler-reg-remap-call-args
   [remap : (__tl_dyn-array i64)]
@@ -28937,9 +28850,8 @@
         (begin
           (while (< i count)
             (begin
-              (array-set!
-                out
-                i
+              (set!
+                (array-ref out i)
                 (compiler-reg-remap-value remap (array-ref items i)))
               (set! i (+ i 1))))
           (ir.CompilerIrCallArgs.Array out)))]))
@@ -28962,21 +28874,19 @@
     [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
       (ir.CompilerIrSpmdCallArgList.Cons
         (compiler-reg-remap-spmd-call-arg remap arg)
-        (box (compiler-reg-remap-spmd-call-args remap (box-get rest))))]
+        (box (compiler-reg-remap-spmd-call-args remap (__tl-box-place rest))))]
     [(ir.CompilerIrSpmdCallArgList.Array seq)
       (let
-        [count : i64 (struct-get seq len)]
-        [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-          (struct-get seq slots)]
+        [count : i64 seq.len]
+        [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg) seq.slots]
         [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
           (array.make-array ir.CompilerIrSpmdCallArg count)]
         [i : i64 0]
         (begin
           (while (< i count)
             (begin
-              (array-set!
-                out
-                i
+              (set!
+                (array-ref out i)
                 (compiler-reg-remap-spmd-call-arg remap (array-ref slots i)))
               (set! i (+ i 1))))
           (ir.CompilerIrSpmdCallArgList.Array
@@ -29006,7 +28916,7 @@
       (ir.compiler-ir-phi-input-cons
         (compiler-reg-remap-value remap value)
         label
-        (compiler-reg-remap-phi-inputs remap (box-get rest)))]))
+        (compiler-reg-remap-phi-inputs remap (__tl-box-place rest)))]))
 
 (define (compiler-reg-remap-maybe-value
   [remap : (__tl_dyn-array i64)]
@@ -29092,12 +29002,12 @@
         ty)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-vector-bin-op
           (compiler-reg-remap-id remap dst)
           op
@@ -29107,12 +29017,12 @@
           ty))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-vector-prefix
           (compiler-reg-remap-id remap dst)
           op
@@ -29129,12 +29039,12 @@
         ty)]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-vector-compare
           (compiler-reg-remap-id remap dst)
           op
@@ -29162,12 +29072,12 @@
         lanes)]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [true-value (struct-get (box-get payload-box) on-true)]
-        [false-value (struct-get (box-get payload-box) on-false)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [true-value (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [false-value (__tl-project-field (__tl-box-place payload-box) on-false)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-select
           (compiler-reg-remap-id remap dst)
           (compiler-reg-remap-value remap mask)
@@ -29184,11 +29094,11 @@
         ty)]
     [(ir.CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-vector-store
           (compiler-reg-remap-value remap base)
           (compiler-reg-remap-value remap index)
@@ -29197,12 +29107,12 @@
           ty))]
     [(ir.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-predicated-store
           (compiler-reg-remap-value remap base)
           (compiler-reg-remap-value remap index)
@@ -29212,12 +29122,12 @@
           ty))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-predicated-load
           (compiler-reg-remap-id remap dst)
           (compiler-reg-remap-value remap base)
@@ -29227,13 +29137,15 @@
           ty))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
-        [lane-offset (struct-get (box-get payload-box) lane-offset)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [lane-offset
+          (__tl-project-field (__tl-box-place payload-box) lane-offset)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-gather-load
           (compiler-reg-remap-id remap dst)
           (compiler-reg-remap-value remap base)
@@ -29244,13 +29156,16 @@
           ty))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir.ir-instr-vector-shuffle
           (compiler-reg-remap-id remap dst)
           (compiler-reg-remap-value remap source)
@@ -29305,10 +29220,10 @@
         ty)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [name (struct-get (box-get payload-box) name)]
-        [args (struct-get (box-get payload-box) args)]
-        [slots (struct-get (box-get payload-box) slots)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [name (__tl-project-field (__tl-box-place payload-box) name)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [slots (__tl-project-field (__tl-box-place payload-box) slots)]
         (ir.ir-instr-call-cabi-store-result
           (compiler-reg-remap-value remap base)
           name
@@ -29316,10 +29231,10 @@
           slots))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [callee (struct-get (box-get payload-box) callee)]
-        [args (struct-get (box-get payload-box) args)]
-        [slots (struct-get (box-get payload-box) slots)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [slots (__tl-project-field (__tl-box-place payload-box) slots)]
         (ir.ir-instr-call-indirect-cabi-store-result
           (compiler-reg-remap-value remap base)
           (compiler-reg-remap-value remap callee)
@@ -29327,12 +29242,13 @@
           slots))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [callee (struct-get (box-get payload-box) callee)]
-        [backend (struct-get (box-get payload-box) backend)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
-        [result (struct-get (box-get payload-box) result)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [backend (__tl-project-field (__tl-box-place payload-box) backend)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (ir.ir-instr-spmd-call
           callee
           backend
@@ -29409,17 +29325,16 @@
   [remap : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (array.make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            out
-            index
+          (set!
+            (array-ref out index)
             (compiler-reg-remap-instr remap (array-ref slots index)))
           (set! index (+ index 1))))
       (ir.CompilerIrInstrSeq out count))))
@@ -29436,7 +29351,7 @@
             (ir.CompilerIrBlock.Block
               label
               (compiler-reg-remap-instr-seq remap instrs))
-            (box (compiler-reg-remap-blocks remap (box-get rest))))])]
+            (box (compiler-reg-remap-blocks remap (__tl-box-place rest))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -29448,9 +29363,8 @@
             (begin
               (match (ir.compiler-ir-block-seq-ref seq i)
                 [(ir.CompilerIrBlock.Block label instrs)
-                  (array-set!
-                    slots
-                    i
+                  (set!
+                    (array-ref slots i)
                     (ir.CompilerIrBlock.Block
                       label
                       (compiler-reg-remap-instr-seq remap instrs)))])
@@ -29491,7 +29405,7 @@
     [out : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-copy-with-capacity
         base
-        (array-length (struct-get extra present)))]
+        (array-length extra.present))]
     (begin
       (compiler-reg-assignment-table-overlay! out extra)
       out)))
@@ -29500,10 +29414,10 @@
   [extra : CompilerRegVarTypes]
   [base : CompilerRegVarTypes]) : CompilerRegVarTypes
   (let
-    [extra-present : (__tl_dyn-array i64) (struct-get extra present)]
-    [extra-items : (__tl_dyn-array ast.AstType) (struct-get extra items)]
-    [base-present : (__tl_dyn-array i64) (struct-get base present)]
-    [base-items : (__tl_dyn-array ast.AstType) (struct-get base items)]
+    [extra-present : (__tl_dyn-array i64) extra.present]
+    [extra-items : (__tl_dyn-array ast.AstType) extra.items]
+    [base-present : (__tl_dyn-array i64) base.present]
+    [base-items : (__tl_dyn-array ast.AstType) base.items]
     (if (= (array-length extra-present) 0)
       base
       (let
@@ -29518,8 +29432,8 @@
         (begin
           (while (< index (array-length base-present))
             (begin
-              (array-set! present index (array-ref base-present index))
-              (array-set! items index (array-ref base-items index))
+              (set! (array-ref present index) (array-ref base-present index))
+              (set! (array-ref items index) (array-ref base-items index))
               (set! index (+ index 1))))
           (set! index 0)
           (while (< index (array-length extra-present))
@@ -29527,8 +29441,8 @@
               (if (= (array-ref extra-present index) 0)
                 unit
                 (begin
-                  (array-set! present index 1)
-                  (array-set! items index (array-ref extra-items index))))
+                  (set! (array-ref present index) 1)
+                  (set! (array-ref items index) (array-ref extra-items index))))
               (set! index (+ index 1))))
           (CompilerRegVarTypes present items))))))
 
@@ -29569,7 +29483,7 @@
   [assignments : CompilerRegAssignmentTable]
   [in-vars : i64]) : CompilerRegAssignmentTable
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [present : (__tl_dyn-array i64) assignments.present]
     [limit : i64
       (if (< in-vars (array-length present))
         in-vars
@@ -29624,7 +29538,9 @@
         (begin
           (let
             [var : i64
-              (struct-get (compiler-reg-interval-seq-ref intervals index) var)]
+              (__tl-project-field
+                (compiler-reg-interval-seq-ref intervals index)
+                var)]
             (if (>= var out)
               (set! out (+ var 1))
               unit))
@@ -29635,7 +29551,7 @@
   [assignments : CompilerRegAssignmentTable]
   [best : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [present : (__tl_dyn-array i64) assignments.present]
     [var : i64 (- (array-length present) 1)]
     (begin
       (while (if (< var 0)
@@ -29650,7 +29566,7 @@
   [types : CompilerRegVarTypes]
   [best : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get types present)]
+    [present : (__tl_dyn-array i64) types.present]
     [index : i64 (- (array-length present) 1)]
     (begin
       (while (if (< index 0)
@@ -29776,7 +29692,7 @@
     (array.make-array i64 0)))
 
 (define (compiler-reg-scratch-plan-count [plan : CompilerRegScratchPlan]) : i64
-  (array-length (struct-get plan items)))
+  (array-length plan.items))
 
 (define (compiler-reg-scratch-plan-register
   [plan : CompilerRegScratchPlan]
@@ -29786,8 +29702,8 @@
     cabi.compiler-reg-id-invalid
     (let
       [instruction : i64 (/ point 2)]
-      [firsts : (__tl_dyn-array i64) (struct-get plan first)]
-      [slot-counts : (__tl_dyn-array i64) (struct-get plan slots)]
+      [firsts : (__tl_dyn-array i64) plan.first]
+      [slot-counts : (__tl_dyn-array i64) plan.slots]
       (if (or
         (>= instruction (array-length firsts))
         (>= instruction (array-length slot-counts))
@@ -29795,18 +29711,16 @@
         cabi.compiler-reg-id-invalid
         (let
           [index : i64 (+ (array-ref firsts instruction) ordinal)]
-          [items : (__tl_dyn-array CompilerRegScratchAssignment)
-            (struct-get plan items)]
+          [items : (__tl_dyn-array CompilerRegScratchAssignment) plan.items]
           (if (or (< index 0) (>= index (array-length items)))
             cabi.compiler-reg-id-invalid
             (let
               [item : CompilerRegScratchAssignment (array-ref items index)]
-              [requirement : CompilerRegScratchRequirement
-                (struct-get item requirement)]
+              [requirement : CompilerRegScratchRequirement item.requirement]
               (if (and
-                (= (struct-get requirement point) point)
-                (= (struct-get requirement ordinal) ordinal))
-                (struct-get item register)
+                (= requirement.point point)
+                (= requirement.ordinal ordinal))
+                item.register
                 cabi.compiler-reg-id-invalid))))))))
 
 (define (compiler-reg-scratch-var-register-homed?
@@ -30189,7 +30103,7 @@
           2)]
       [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
         (let
-          [name (struct-get (box-get payload-box) name)]
+          [name (__tl-project-field (__tl-box-place payload-box) name)]
           (if (and
             (compiler-reg-linux-abi? _abi)
             (compiler-reg-c-memory-call-name? name))
@@ -30197,7 +30111,7 @@
             2))]
       [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
         (let
-          [args (struct-get (box-get payload-box) args)]
+          [args (__tl-project-field (__tl-box-place payload-box) args)]
           (if (and
             (compiler-reg-linux-abi? _abi)
             (compiler-reg-call-args-have-c-memory-marker? args))
@@ -30250,7 +30164,7 @@
           _binop-return)]
       [(ir.CompilerIrInstr.Select payload-box)
         (let
-          [lanes (struct-get (box-get payload-box) lanes)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
           (if (= lanes 0)
             3
             0))]
@@ -30437,26 +30351,27 @@
           2)]
       [(ir.CompilerIrInstr.VectorStore payload-box)
         (let
-          [index (struct-get (box-get payload-box) index)]
+          [index (__tl-project-field (__tl-box-place payload-box) index)]
           (if (compiler-reg-scratch-value-integer-immediate? index)
             1
             2))]
       [(ir.CompilerIrInstr.PredicatedStore payload-box)
         (let
-          [index (struct-get (box-get payload-box) index)]
+          [index (__tl-project-field (__tl-box-place payload-box) index)]
           (if (compiler-reg-scratch-value-integer-immediate? index)
             1
             2))]
       [(ir.CompilerIrInstr.PredicatedLoad payload-box)
         (let
-          [index (struct-get (box-get payload-box) index)]
+          [index (__tl-project-field (__tl-box-place payload-box) index)]
           (if (compiler-reg-scratch-value-integer-immediate? index)
             1
             2))]
       [(ir.CompilerIrInstr.GatherLoad payload-box)
         (let
-          [index (struct-get (box-get payload-box) index)]
-          [lane-offset (struct-get (box-get payload-box) lane-offset)]
+          [index (__tl-project-field (__tl-box-place payload-box) index)]
+          [lane-offset
+            (__tl-project-field (__tl-box-place payload-box) lane-offset)]
           (if (or
             lane-offset
             (compiler-reg-scratch-value-integer-immediate? index))
@@ -30477,8 +30392,8 @@
       ;; carry and prefix-bit GP slots.
       [(ir.CompilerIrInstr.VectorPrefix payload-box)
         (let
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (match elem-ty
             [(ast.AstType.Bool)
               (if (> lanes 32)
@@ -30499,8 +30414,8 @@
   [phi-xmm-targets : CompilerRegLabelSeq]
   [count : i64]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [len : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [len : i64 instrs.len]
     [i : i64 0]
     [out : i64 count]
     (begin
@@ -30541,7 +30456,7 @@
             target-abi
             assignments
             types
-            (box-get rest)
+            (__tl-box-place rest)
             phi-targets
             phi-xmm-targets
             (compiler-reg-scratch-vreg-count-seq
@@ -30586,8 +30501,8 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (compiler-reg-scratch-vreg-instr-count-blocks
-            (box-get rest)
-            (+ count (struct-get instrs len)))])]
+            (__tl-box-place rest)
+            (+ count instrs.len))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -30598,7 +30513,7 @@
             (begin
               (match (ir.compiler-ir-block-seq-ref seq i)
                 [(ir.CompilerIrBlock.Block _ instrs)
-                  (set! out (+ out (struct-get instrs len)))])
+                  (set! out (+ out instrs.len))])
               (set! i (+ i 1))))
           out))]))
 
@@ -30610,7 +30525,7 @@
     unit
     (begin
       (if (< i (array-length dst))
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         unit)
       (compiler-reg-copy-i64-array! dst src (+ i 1)))))
 
@@ -30622,7 +30537,7 @@
     unit
     (begin
       (if (< i (array-length dst))
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         unit)
       (compiler-reg-copy-ast-type-array! dst src (+ i 1)))))
 
@@ -30634,7 +30549,7 @@
     unit
     (begin
       (if (< i (array-length dst))
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         unit)
       (compiler-reg-copy-interval-seq-array! dst src (+ i 1)))))
 
@@ -30644,7 +30559,7 @@
   (if (>= i (array-length items))
     unit
     (begin
-      (array-set! items i (compiler-reg-interval-seq-empty))
+      (set! (array-ref items i) (compiler-reg-interval-seq-empty))
       (compiler-reg-fill-interval-seq-array! items (+ i 1)))))
 
 ;; Same shape as the interval-seq filler above: a small recursive helper that
@@ -30663,7 +30578,7 @@
   (if (>= i (array-length items))
     unit
     (begin
-      (array-set! items i (compiler-reg-live-union-empty))
+      (set! (array-ref items i) (compiler-reg-live-union-empty))
       (compiler-reg-fill-live-union-array! items (+ i 1)))))
 
 ;; Generic constrained scratch-plan construction.  These builders attach the
@@ -30771,7 +30686,7 @@
   [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
     (CompilerRegScratchClass.Gp)
-    (struct-get policy call-allowed)
+    policy.call-allowed
     (compiler-reg-scratch-call-target-excluded)
     cabi.compiler-reg-id-invalid))
 
@@ -30838,11 +30753,14 @@
         (compiler-reg-scratch-value-registers assignments length))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
         (compiler-reg-id-seq-append
           (compiler-reg-scratch-location-registers assignments dst)
           (compiler-reg-id-seq-append
@@ -30905,9 +30823,9 @@
           (compiler-reg-scratch-value-registers assignments index)))]
     [(ir.CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
         (compiler-reg-id-seq-append
           (compiler-reg-scratch-value-registers assignments base)
           (compiler-reg-id-seq-append
@@ -30915,10 +30833,10 @@
             (compiler-reg-scratch-value-registers assignments value))))]
     [(ir.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (compiler-reg-id-seq-append
           (compiler-reg-scratch-value-registers assignments base)
           (compiler-reg-id-seq-append
@@ -30928,10 +30846,10 @@
               (compiler-reg-scratch-value-registers assignments mask)))))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (compiler-reg-id-seq-append
           (compiler-reg-scratch-location-registers assignments dst)
           (compiler-reg-id-seq-append
@@ -30941,10 +30859,11 @@
               (compiler-reg-scratch-value-registers assignments mask)))))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
         (compiler-reg-id-seq-append
           (compiler-reg-scratch-location-registers assignments dst)
           (compiler-reg-id-seq-append
@@ -30960,9 +30879,9 @@
           (compiler-reg-scratch-value-registers assignments length)))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (compiler-reg-id-seq-append
           (compiler-reg-scratch-location-registers assignments dst)
           (compiler-reg-id-seq-append
@@ -30970,9 +30889,9 @@
             (compiler-reg-scratch-value-registers assignments rhs))))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
         (compiler-reg-id-seq-append
           (compiler-reg-scratch-location-registers assignments dst)
           (compiler-reg-id-seq-append
@@ -30984,10 +30903,10 @@
         (compiler-reg-scratch-value-registers assignments src))]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
         (compiler-reg-id-seq-append
           (compiler-reg-scratch-location-registers assignments dst)
           (compiler-reg-id-seq-append
@@ -31023,7 +30942,7 @@
       (CompilerRegScratchClass.Gp))
     (if sse?
       (compiler-reg-id-seq-empty)
-      (struct-get policy gp-allowed))
+      policy.gp-allowed)
     (compiler-reg-scratch-instr-registers assignments instr)
     cabi.compiler-reg-id-invalid))
 
@@ -31035,7 +30954,7 @@
     [(ir.CompilerIrValueList.Cons word rest)
       (compiler-reg-id-seq-append
         (compiler-reg-scratch-value-registers assignments word)
-        (compiler-reg-scratch-pack-registers assignments (box-get rest)))]
+        (compiler-reg-scratch-pack-registers assignments (__tl-box-place rest)))]
     [(ir.CompilerIrValueList.Array seq)
       (compiler-reg-scratch-pack-registers
         assignments
@@ -31045,8 +30964,8 @@
   [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
     (CompilerRegScratchClass.Gp)
-    (struct-get policy gp-allowed)
-    (struct-get policy phi-excluded)
+    policy.gp-allowed
+    policy.phi-excluded
     cabi.compiler-reg-id-invalid))
 
 (define (compiler-reg-scratch-phi-xmm-constraint
@@ -31054,7 +30973,7 @@
   (CompilerRegScratchConstraint
     (CompilerRegScratchClass.Xmm)
     (compiler-reg-id-seq-empty)
-    (struct-get policy phi-excluded)
+    policy.phi-excluded
     cabi.compiler-reg-id-invalid))
 
 (define (compiler-reg-scratch-switch-constraint
@@ -31063,7 +30982,7 @@
   [instr : ir.CompilerIrInstr]) : CompilerRegScratchConstraint
   (compiler-reg-scratch-gp-constraint-excluding
     (compiler-reg-id-seq-append
-      (struct-get policy phi-excluded)
+      policy.phi-excluded
       (compiler-reg-scratch-instr-registers assignments instr))))
 
 (define (compiler-reg-scratch-fixed-constraint
@@ -31288,8 +31207,7 @@
           (CompilerRegScratchRole.CallTarget)
           (CompilerRegScratchRole.CallStage))
         (if (= ordinal 0)
-          (compiler-reg-scratch-call-target-constraint
-            (struct-get policy call-allowed))
+          (compiler-reg-scratch-call-target-constraint policy.call-allowed)
           (compiler-reg-scratch-call-stage-constraint policy))
         point
         (+ point 1)
@@ -31304,8 +31222,7 @@
           [else (CompilerRegScratchRole.CallMemoryXmm)])
         (cond
           [(= ordinal 0)
-            (compiler-reg-scratch-call-target-constraint
-              (struct-get policy call-allowed))]
+            (compiler-reg-scratch-call-target-constraint policy.call-allowed)]
           [(= ordinal 1) (compiler-reg-scratch-call-stage-constraint policy)]
           [else (compiler-reg-scratch-xmm-constraint assignments instr)])
         point
@@ -31321,8 +31238,7 @@
           [else (CompilerRegScratchRole.CallMemoryXmm)])
         (cond
           [(= ordinal 0)
-            (compiler-reg-scratch-call-target-constraint
-              (struct-get policy call-allowed))]
+            (compiler-reg-scratch-call-target-constraint policy.call-allowed)]
           [(= ordinal 1) (compiler-reg-scratch-call-stage-constraint policy)]
           [else (compiler-reg-scratch-xmm-constraint assignments instr)])
         point
@@ -31338,8 +31254,7 @@
           [else (CompilerRegScratchRole.CallMemoryXmm)])
         (cond
           [(= ordinal 0)
-            (compiler-reg-scratch-call-target-constraint
-              (struct-get policy call-allowed))]
+            (compiler-reg-scratch-call-target-constraint policy.call-allowed)]
           [(= ordinal 1) (compiler-reg-scratch-call-stage-constraint policy)]
           [else (compiler-reg-scratch-xmm-constraint assignments instr)])
         point
@@ -31353,8 +31268,7 @@
           (CompilerRegScratchRole.CallTarget)
           (CompilerRegScratchRole.CallStage))
         (if (= ordinal 0)
-          (compiler-reg-scratch-call-target-constraint
-            (struct-get policy tail-call-allowed))
+          (compiler-reg-scratch-call-target-constraint policy.tail-call-allowed)
           (compiler-reg-scratch-call-stage-constraint policy))
         point
         (+ point 1)
@@ -31866,8 +31780,8 @@
         var)]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         [avx512-bool? : bool
           (match elem-ty
             [(ast.AstType.Bool) (> lanes 32)]
@@ -31958,27 +31872,22 @@
         ordinal
         var
         binop-return)]
-    [constraint : CompilerRegScratchConstraint (struct-get local constraint)]
+    [constraint : CompilerRegScratchConstraint local.constraint]
     (CompilerRegScratchRequirement
-      (struct-get local point)
-      (struct-get local ordinal)
-      (struct-get local role)
+      local.point
+      local.ordinal
+      local.role
       (CompilerRegScratchConstraint
-        (struct-get constraint register-class)
-        (struct-get constraint allowed)
-        (match (struct-get local role)
-          [(CompilerRegScratchRole.FloatReturnResultXmm)
-            (struct-get constraint excluded)]
-          [(CompilerRegScratchRole.FloatReturnResultGp)
-            (struct-get constraint excluded)]
-          [_
-            (compiler-reg-id-seq-append
-              group-excluded
-              (struct-get constraint excluded))])
-        (struct-get constraint fixed))
+        constraint.register-class
+        constraint.allowed
+        (match local.role
+          [(CompilerRegScratchRole.FloatReturnResultXmm) constraint.excluded]
+          [(CompilerRegScratchRole.FloatReturnResultGp) constraint.excluded]
+          [_ (compiler-reg-id-seq-append group-excluded constraint.excluded)])
+        constraint.fixed)
       group-lo
       group-hi
-      (struct-get local var))))
+      local.var)))
 
 (define (compiler-reg-scratch-mark-requirement!
   [starts : (__tl_dyn-array i64)]
@@ -31988,25 +31897,23 @@
   [types : (__tl_dyn-array ast.AstType)]
   [requirement : CompilerRegScratchRequirement]) : unit
   (let
-    [var : i64 (struct-get requirement var)]
-    [lo : i64 (struct-get requirement lo)]
-    [hi : i64 (struct-get requirement hi)]
+    [var : i64 requirement.var]
+    [lo : i64 requirement.lo]
+    [hi : i64 requirement.hi]
     (if (or (< var 0) (>= var (array-length starts)))
       unit
       (begin
-        (array-set! starts var lo)
-        (array-set! ends var hi)
-        (array-set!
-          segments
-          var
+        (set! (array-ref starts var) lo)
+        (set! (array-ref ends var) hi)
+        (set!
+          (array-ref segments var)
           (compiler-reg-interval-seq-prepend
             (CompilerRegInterval var lo hi)
             (compiler-reg-interval-seq-empty)))
-        (array-set! present var 1)
-        (array-set!
-          types
-          var
-          (match (struct-get (struct-get requirement constraint) register-class)
+        (set! (array-ref present var) 1)
+        (set!
+          (array-ref types var)
+          (match requirement.constraint.register-class
             [(CompilerRegScratchClass.Gp) (ast.AstType.I64)]
             [(CompilerRegScratchClass.Xmm) (ast.AstType.F64)]))))))
 
@@ -32069,8 +31976,8 @@
     [i : i64 0]
     (while (< i len)
       (begin
-        (array-set! firsts i i)
-        (array-set! lasts i i)
+        (set! (array-ref firsts i) i)
+        (set! (array-ref lasts i) i)
         (set! i (+ i 1))))))
 
 ;; Candidate fusion regions are discovered left-to-right.  Existing regions
@@ -32104,8 +32011,8 @@
       (set! i lo)
       (while (<= i hi)
         (begin
-          (array-set! firsts i lo)
-          (array-set! lasts i hi)
+          (set! (array-ref firsts i) lo)
+          (set! (array-ref lasts i) hi)
           (set! i (+ i 1)))))))
 
 (defenum CompilerRegScratchFusionKind
@@ -32441,9 +32348,8 @@
           group-hi
           group-excluded)]
       (begin
-        (array-set!
-          items
-          item-index
+        (set!
+          (array-ref items item-index)
           (CompilerRegScratchAssignment
             requirement
             cabi.compiler-reg-id-invalid))
@@ -32498,9 +32404,8 @@
   [present : (__tl_dyn-array i64)]
   [types : (__tl_dyn-array ast.AstType)]) : CompilerRegScratchFillState
   (let
-    [instr-slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [len : i64 (struct-get instrs len)]
+    [instr-slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [len : i64 instrs.len]
     [group-firsts : (__tl_dyn-array i64) (array.make-array i64 len)]
     [group-lasts : (__tl_dyn-array i64) (array.make-array i64 len)]
     [i : i64 0]
@@ -32530,8 +32435,8 @@
               phi-xmm-targets
               (compiler-reg-scratch-binop-return-next? instrs i))]
           (begin
-            (array-set! firsts instruction item)
-            (array-set! slot-counts instruction n)
+            (set! (array-ref firsts instruction) item)
+            (set! (array-ref slot-counts instruction) n)
             (compiler-reg-scratch-fill-slots!
               type-segment-bases
               target-abi
@@ -32612,7 +32517,7 @@
                 policy
                 assignments
                 var-types
-                (box-get rest)
+                (__tl-box-place rest)
                 phi-targets
                 phi-xmm-targets
                 next-instruction
@@ -32691,8 +32596,8 @@
 
 (define (compiler-reg-early-scratch-count-seq [instrs : ir.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [len : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [len : i64 instrs.len]
     [i : i64 0]
     [count : i64 0]
     (begin
@@ -32715,7 +32620,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (compiler-reg-early-scratch-count-seq instrs)
-            (compiler-reg-early-scratch-count-blocks (box-get rest)))])]
+            (compiler-reg-early-scratch-count-blocks (__tl-box-place rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -32735,19 +32640,19 @@
 (define (compiler-reg-early-scratch-expansion-requirement
   [requirement : CompilerRegScratchRequirement]) : CompilerRegScratchRequirement
   (let
-    [point : i64 (struct-get requirement point)]
+    [point : i64 requirement.point]
     ;; The allocator's half-open [point, point+1] instruction window covers the
     ;; complete atomic divmod expansion. Inputs whose final use is this BinOp end
     ;; at `point` and may therefore donate their register to the expansion; the
     ;; result and every value live through the instruction still overlap it.
     (CompilerRegScratchRequirement
       point
-      (struct-get requirement ordinal)
-      (struct-get requirement role)
-      (struct-get requirement constraint)
+      requirement.ordinal
+      requirement.role
+      requirement.constraint
       point
       (+ point 1)
-      (struct-get requirement var))))
+      requirement.var)))
 
 (define (compiler-reg-early-scratch-mark-one!
   [type-segment-bases : i64]
@@ -32781,7 +32686,7 @@
           ordinal
           var
           binop-return))]
-    [fixed : i64 (struct-get (struct-get requirement constraint) fixed)]
+    [fixed : i64 requirement.constraint.fixed]
     (begin
       (compiler-reg-scratch-mark-requirement!
         starts
@@ -32790,10 +32695,7 @@
         present
         types
         requirement)
-      (array-set!
-        scratch-excluded
-        var
-        (struct-get (struct-get requirement constraint) excluded))
+      (set! (array-ref scratch-excluded var) requirement.constraint.excluded)
       (if (= fixed cabi.compiler-reg-id-invalid)
         unit
         (begin
@@ -32823,8 +32725,8 @@
   [scratch-weights : (__tl_dyn-array i64)]
   [scratch-excluded : (__tl_dyn-array CompilerRegIdSeq)]) : CompilerRegScratchFillState
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [len : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [len : i64 instrs.len]
     [i : i64 0]
     [instruction : i64 instruction-start]
     [scratch : i64 scratch-start]
@@ -32859,9 +32761,8 @@
                         scratch-excluded)
                       ;; Each non-fixed requirement contributes one demand
                       ;; occurrence at the expansion's loop depth.
-                      (array-set!
-                        scratch-weights
-                        (+ scratch ordinal)
+                      (set!
+                        (array-ref scratch-weights (+ scratch ordinal))
                         (if (>= ordinal 2)
                           block-weight
                           0))
@@ -32925,7 +32826,7 @@
                 assignment-view
                 assignment-table
                 var-types
-                (box-get rest)
+                (__tl-box-place rest)
                 depths
                 (+ block-index 1)
                 next-instruction
@@ -32989,7 +32890,7 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
       (let
-        [scratch-base : i64 (array-length (struct-get base-index starts))]
+        [scratch-base : i64 (array-length base-index.starts)]
         [scratch-count : i64
           (if enabled
             (compiler-reg-early-scratch-count-blocks blocks)
@@ -33032,23 +32933,14 @@
               (compiler-reg-fill-i64-array starts -1)
               (compiler-reg-fill-i64-array ends -1)
               (compiler-reg-fill-interval-seq-array! segments 0)
-              (compiler-reg-copy-i64-array!
-                starts
-                (struct-get base-index starts)
-                0)
-              (compiler-reg-copy-i64-array! ends (struct-get base-index ends) 0)
+              (compiler-reg-copy-i64-array! starts base-index.starts 0)
+              (compiler-reg-copy-i64-array! ends base-index.ends 0)
               (compiler-reg-copy-interval-seq-array!
                 segments
-                (struct-get base-index segments)
+                base-index.segments
                 0)
-              (compiler-reg-copy-i64-array!
-                present
-                (struct-get base-types present)
-                0)
-              (compiler-reg-copy-ast-type-array!
-                types
-                (struct-get base-types items)
-                0)
+              (compiler-reg-copy-i64-array! present base-types.present 0)
+              (compiler-reg-copy-ast-type-array! types base-types.items 0)
               (compiler-reg-early-scratch-fill-blocks!
                 type-segment-bases
                 target-abi
@@ -33121,9 +33013,8 @@
                 combined
                 (+ combined 1))]
             (begin
-              (array-set!
-                out
-                v
+              (set!
+                (array-ref out v)
                 (if (>= priced (compiler-reg-greedy-evict-inf))
                   (- (compiler-reg-greedy-evict-inf) 1)
                   priced))
@@ -33144,7 +33035,7 @@
           [interval : CompilerRegInterval
             (compiler-reg-interval-seq-ref intervals index)]
           (begin
-            (if (>= (struct-get interval var) scratch-base)
+            (if (>= interval.var scratch-base)
               (set! out (compiler-reg-interval-seq-append out interval))
               unit)
             (set! index (+ index 1)))))
@@ -33170,7 +33061,7 @@
 (define (compiler-reg-assignment-table-prefix
   [assignments : CompilerRegAssignmentTable]
   [vars : i64]) : CompilerRegAssignmentTable
-  (if (= vars (array-length (struct-get assignments present)))
+  (if (= vars (array-length assignments.present))
     assignments
     (let
       [out : CompilerRegAssignmentTable
@@ -33241,15 +33132,15 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [constraint : CompilerRegScratchConstraint]) : CompilerRegIdSeq
   (let
-    [fixed : i64 (struct-get constraint fixed)]
+    [fixed : i64 constraint.fixed]
     (if (not (= fixed cabi.compiler-reg-id-invalid))
       (compiler-reg-id-seq-prepend fixed (compiler-reg-id-seq-empty))
       (let
-        [allowed : CompilerRegIdSeq (struct-get constraint allowed)]
+        [allowed : CompilerRegIdSeq constraint.allowed]
         (if (compiler-reg-id-seq-empty? allowed)
           (compiler-reg-scratch-default-pool
             target-abi
-            (struct-get constraint register-class))
+            constraint.register-class)
           allowed)))))
 
 (define (compiler-reg-scratch-register-array
@@ -33290,9 +33181,8 @@
   (if (>= index vars)
     true
     (let
-      [present : (__tl_dyn-array i64) (struct-get assignments present)]
-      [items : (__tl_dyn-array CompilerRegLocation)
-        (struct-get assignments items)]
+      [present : (__tl_dyn-array i64) assignments.present]
+      [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
       (if (and
         (not (= index var))
         (< index (array-length present))
@@ -33377,10 +33267,8 @@
     unit
     (let
       [item : CompilerRegScratchAssignment (array-ref items index)]
-      [requirement : CompilerRegScratchRequirement
-        (struct-get item requirement)]
-      [constraint : CompilerRegScratchConstraint
-        (struct-get requirement constraint)]
+      [requirement : CompilerRegScratchRequirement item.requirement]
+      [constraint : CompilerRegScratchConstraint requirement.constraint]
       [reg
         : i64
         ;; The tail-mask index is copied to ordinal 1 before the end value is
@@ -33388,52 +33276,49 @@
         ;; input, but make an unrelated live-through resident fail so emission
         ;; takes the sound legacy save/restore fallback. Sibling requirements
         ;; are assigned afterward and see a successful synthetic home.
-        (if (compiler-reg-scratch-tail-mask-count-role?
-          (struct-get requirement role))
+        (if (compiler-reg-scratch-tail-mask-count-role? requirement.role)
           (if (compiler-reg-id-seq-contains?
-            (struct-get constraint excluded)
-            (struct-get constraint fixed))
-            (struct-get constraint fixed)
+            constraint.excluded
+            constraint.fixed)
+            constraint.fixed
             (compiler-reg-scratch-pick-register
               assignments
               occupancy
               interval-index
               ref-counts
-              (struct-get requirement var)
+              requirement.var
               vars
               (compiler-reg-scratch-constraint-pool target-abi constraint)
-              (struct-get constraint excluded)))
+              constraint.excluded))
           ;; A return result is the final consumer of its operand homes. Its
           ;; fixed ABI register may therefore overlap an input; a simultaneously
           ;; live RHS preservation requirement is assigned afterward and sees
           ;; this synthetic fixed home, so it must choose a distinct register.
-          (if (compiler-reg-scratch-return-fixed-role?
-            (struct-get requirement role))
-            (struct-get constraint fixed)
+          (if (compiler-reg-scratch-return-fixed-role? requirement.role)
+            constraint.fixed
             (compiler-reg-scratch-pick-register
               assignments
               occupancy
               interval-index
               ref-counts
-              (struct-get requirement var)
+              requirement.var
               vars
               (compiler-reg-scratch-constraint-pool target-abi constraint)
-              (struct-get constraint excluded))))]
+              constraint.excluded)))]
       (begin
         (if (= reg cabi.compiler-reg-id-invalid)
           unit
           (begin
             (compiler-reg-assignment-table-insert
               assignments
-              (struct-get requirement var)
+              requirement.var
               (CompilerRegLocation.Register reg))
             (compiler-reg-greedy-occupancy-record-location!
               occupancy
-              (struct-get requirement var)
+              requirement.var
               (CompilerRegLocation.Register reg))
-            (array-set!
-              items
-              index
+            (set!
+              (array-ref items index)
               (CompilerRegScratchAssignment requirement reg))))
         (compiler-reg-scratch-assign-items!
           target-abi
@@ -33456,15 +33341,11 @@
     unit
     (let
       [item : CompilerRegScratchAssignment (array-ref items index)]
-      [requirement : CompilerRegScratchRequirement
-        (struct-get item requirement)]
+      [requirement : CompilerRegScratchRequirement item.requirement]
       (begin
-        (if (and
-          (= (struct-get requirement lo) lo)
-          (= (struct-get requirement hi) hi))
-          (array-set!
-            items
-            index
+        (if (and (= requirement.lo lo) (= requirement.hi hi))
+          (set!
+            (array-ref items index)
             (CompilerRegScratchAssignment
               requirement
               cabi.compiler-reg-id-invalid))
@@ -33482,17 +33363,16 @@
     unit
     (let
       [item : CompilerRegScratchAssignment (array-ref items index)]
-      [requirement : CompilerRegScratchRequirement
-        (struct-get item requirement)]
+      [requirement : CompilerRegScratchRequirement item.requirement]
       (begin
         (if (and
-          (> (- (struct-get requirement hi) (struct-get requirement lo)) 1)
-          (= (struct-get item register) cabi.compiler-reg-id-invalid))
+          (> (- requirement.hi requirement.lo) 1)
+          (= item.register cabi.compiler-reg-id-invalid))
           (compiler-reg-scratch-clear-group-from!
             items
             0
-            (struct-get requirement lo)
-            (struct-get requirement hi))
+            requirement.lo
+            requirement.hi)
           unit)
         (compiler-reg-scratch-clear-incomplete-groups! items (+ index 1))))))
 
@@ -33524,7 +33404,7 @@
     assignments
     (let
       [item : CompilerRegScratchAssignment (array-ref items index)]
-      [reg : i64 (struct-get item register)]
+      [reg : i64 item.register]
       (if (or
         (= reg cabi.compiler-reg-id-invalid)
         (not (compiler-reg-scratch-callee-saved-register? target-abi reg))
@@ -33600,7 +33480,7 @@
               [base-interval-selection : CompilerRegIntervalSelection
                 (compiler-reg-live-interval-selection
                   _func
-                  (struct-get liveness-handle baseline))]
+                  liveness-handle.baseline)]
               (match base-interval-selection
                 [(CompilerRegIntervalSelection.Selection _ base-index)
                   (let
@@ -33626,25 +33506,19 @@
                       (compiler-reg-fill-i64-array starts -1)
                       (compiler-reg-fill-i64-array ends -1)
                       (compiler-reg-fill-interval-seq-array! segments 0)
-                      (compiler-reg-copy-i64-array!
-                        starts
-                        (struct-get base-index starts)
-                        0)
-                      (compiler-reg-copy-i64-array!
-                        ends
-                        (struct-get base-index ends)
-                        0)
+                      (compiler-reg-copy-i64-array! starts base-index.starts 0)
+                      (compiler-reg-copy-i64-array! ends base-index.ends 0)
                       (compiler-reg-copy-interval-seq-array!
                         segments
-                        (struct-get base-index segments)
+                        base-index.segments
                         0)
                       (compiler-reg-copy-i64-array!
                         present
-                        (struct-get base-type-info present)
+                        base-type-info.present
                         0)
                       (compiler-reg-copy-ast-type-array!
                         types
-                        (struct-get base-type-info items)
+                        base-type-info.items
                         0)
                       (compiler-reg-scratch-fill-blocks!
                         _type-segment-bases
@@ -33755,7 +33629,7 @@
   (if (>= index (array-length remap))
     unit
     (begin
-      (array-set! remap index index)
+      (set! (array-ref remap index) index)
       (compiler-reg-caller-save-remap-fill! remap (+ index 1)))))
 
 (define (compiler-reg-caller-save-remap [vars : i64]) : (__tl_dyn-array i64)
@@ -33810,7 +33684,7 @@
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-call-region-list-count
   [regions : CompilerRegCallRegionSeq]) : i64
-  (struct-get regions len))
+  regions.len)
 
 ;; Newest-accepted region first, matching the walk order of the former list.
 (define (compiler-reg-call-region-fill-arrays!
@@ -33822,19 +33696,19 @@
   [r-exit : (__tl_dyn-array i64)]
   [i : i64]) : unit
   (let
-    [slots : (__tl_dyn-array CompilerRegCallRegion) (struct-get regions slots)]
-    [index : i64 (- (struct-get regions len) 1)]
+    [slots : (__tl_dyn-array CompilerRegCallRegion) regions.slots]
+    [index : i64 (- regions.len 1)]
     [at : i64 i]
     (while (>= index 0)
       (begin
         (match (array-ref slots index)
           [(CompilerRegCallRegion var lo hi entry-flag exit-flag)
             (begin
-              (array-set! r-var at var)
-              (array-set! r-lo at lo)
-              (array-set! r-hi at hi)
-              (array-set! r-entry at entry-flag)
-              (array-set! r-exit at exit-flag))])
+              (set! (array-ref r-var at) var)
+              (set! (array-ref r-lo at) lo)
+              (set! (array-ref r-hi at) hi)
+              (set! (array-ref r-entry at) entry-flag)
+              (set! (array-ref r-exit at) exit-flag))])
         (set! at (+ at 1))
         (set! index (- index 1))))))
 
@@ -33845,8 +33719,8 @@
   (let
     [tmp : i64 (array-ref arr a)]
     (begin
-      (array-set! arr a (array-ref arr b))
-      (array-set! arr b tmp))))
+      (set! (array-ref arr a) (array-ref arr b))
+      (set! (array-ref arr b) tmp))))
 
 (define (compiler-reg-call-region-sort-by-lo!
   [r-var : (__tl_dyn-array i64)]
@@ -33969,8 +33843,8 @@
         [point : i64 0]
         [seq : ir.CompilerIrBlockSeq
           (live.compiler-live-ir-block-list-to-seq blocks)]
-        [bslots : (__tl_dyn-array ir.CompilerIrBlock) (struct-get seq slots)]
-        [nblocks : i64 (struct-get seq len)]
+        [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+        [nblocks : i64 seq.len]
         [out-rev : ir.CompilerIrBlockList ir.CompilerIrBlockList.Nil]
         [b : i64 0]
         (begin
@@ -34013,7 +33887,7 @@
                         (set! point (+ point span)))
                       (let
                         [islots : (__tl_dyn-array ir.CompilerIrInstr)
-                          (struct-get instrs slots)]
+                          instrs.slots]
                         [i : i64 0]
                         ;; Forward scan into a builder, interleaving
                         ;; region-entry movs and control-flow exit stores in
@@ -34084,17 +33958,17 @@
                                                 (ir.CompilerIrValue.Var root)
                                                 ty))
                                             unit)
-                                          (array-set! act-w root w)
-                                          (array-set!
-                                            act-hi
-                                            root
+                                          (set! (array-ref act-w root) w)
+                                          (set!
+                                            (array-ref act-hi root)
                                             (array-ref r-hi cursor))
-                                          (array-set!
-                                            act-exit
-                                            root
+                                          (set!
+                                            (array-ref act-exit root)
                                             (array-ref r-exit cursor))
-                                          (array-set! remap root w)
-                                          (array-set! active active-n root)
+                                          (set! (array-ref remap root) w)
+                                          (set!
+                                            (array-ref active active-n)
+                                            root)
                                           (set! active-n (+ active-n 1))))
                                       (set! cursor (+ cursor 1)))))
                                 (let
@@ -34144,12 +34018,13 @@
                                           [root : i64 (array-ref active j)]
                                           (if (= (array-ref act-hi root) point)
                                             (begin
-                                              (array-set! remap root root)
-                                              (array-set! act-w root (- 0 1))
+                                              (set! (array-ref remap root) root)
+                                              (set!
+                                                (array-ref act-w root)
+                                                (- 0 1))
                                               (set! active-n (- active-n 1))
-                                              (array-set!
-                                                active
-                                                j
+                                              (set!
+                                                (array-ref active j)
                                                 (array-ref active active-n)))
                                             (set! j (+ j 1))))))))
                                 (set! point (+ point 2))
@@ -34169,12 +34044,11 @@
                                 [root : i64 (array-ref active j)]
                                 (if (< (array-ref act-hi root) point)
                                   (begin
-                                    (array-set! remap root root)
-                                    (array-set! act-w root (- 0 1))
+                                    (set! (array-ref remap root) root)
+                                    (set! (array-ref act-w root) (- 0 1))
                                     (set! active-n (- active-n 1))
-                                    (array-set!
-                                      active
-                                      j
+                                    (set!
+                                      (array-ref active j)
                                       (array-ref active active-n)))
                                   (set! j (+ j 1))))))
                           (set!
@@ -34199,13 +34073,13 @@
   [instr : ir.CompilerIrInstr]
   [allow-invariant-loads : bool]) : unit
   (let
-    [def-counts : (__tl_dyn-array i64) (struct-get table def-counts)]
-    [candidates : (__tl_dyn-array i64) (struct-get table candidates)]
-    [kinds : (__tl_dyn-array i64) (struct-get table kinds)]
-    [values : (__tl_dyn-array ir.CompilerIrValue) (struct-get table values)]
-    [offsets : (__tl_dyn-array ir.CompilerIrValue) (struct-get table offsets)]
-    [op-types : (__tl_dyn-array ast.AstType) (struct-get table op-types)]
-    [types : (__tl_dyn-array ast.AstType) (struct-get table types)]
+    [def-counts : (__tl_dyn-array i64) table.def-counts]
+    [candidates : (__tl_dyn-array i64) table.candidates]
+    [kinds : (__tl_dyn-array i64) table.kinds]
+    [values : (__tl_dyn-array ir.CompilerIrValue) table.values]
+    [offsets : (__tl_dyn-array ir.CompilerIrValue) table.offsets]
+    [op-types : (__tl_dyn-array ast.AstType) table.op-types]
+    [types : (__tl_dyn-array ast.AstType) table.types]
     (begin
       (compiler-reg-ref-counts-add-var-weighted!
         def-counts
@@ -34219,11 +34093,11 @@
             (< dst (array-length candidates))
             (not (= (array-ref candidates dst) 2)))
             (begin
-              (array-set! candidates dst 1)
-              (array-set! kinds dst (compiler-reg-remat-kind-mov))
-              (array-set! values dst value)
-              (array-set! op-types dst ty)
-              (array-set! types dst ty))
+              (set! (array-ref candidates dst) 1)
+              (set! (array-ref kinds dst) (compiler-reg-remat-kind-mov))
+              (set! (array-ref values dst) value)
+              (set! (array-ref op-types dst) ty)
+              (set! (array-ref types dst) ty))
             unit)]
         [(ir.CompilerIrInstr.Gep dst base offset ty)
           (if (and
@@ -34232,12 +34106,12 @@
             (< dst (array-length candidates))
             (not (= (array-ref candidates dst) 2)))
             (begin
-              (array-set! candidates dst 1)
-              (array-set! kinds dst (compiler-reg-remat-kind-gep))
-              (array-set! values dst base)
-              (array-set! offsets dst offset)
-              (array-set! op-types dst ty)
-              (array-set! types dst (compiler-reg-addr-of-result-type)))
+              (set! (array-ref candidates dst) 1)
+              (set! (array-ref kinds dst) (compiler-reg-remat-kind-gep))
+              (set! (array-ref values dst) base)
+              (set! (array-ref offsets dst) offset)
+              (set! (array-ref op-types dst) ty)
+              (set! (array-ref types dst) (compiler-reg-addr-of-result-type)))
             unit)]
         [(ir.CompilerIrInstr.Load dst src ty)
           (if (and
@@ -34246,11 +34120,11 @@
             (< dst (array-length candidates))
             (not (= (array-ref candidates dst) 2)))
             (begin
-              (array-set! candidates dst 1)
-              (array-set! kinds dst (compiler-reg-remat-kind-load))
-              (array-set! values dst src)
-              (array-set! op-types dst ty)
-              (array-set! types dst ty))
+              (set! (array-ref candidates dst) 1)
+              (set! (array-ref kinds dst) (compiler-reg-remat-kind-load))
+              (set! (array-ref values dst) src)
+              (set! (array-ref op-types dst) ty)
+              (set! (array-ref types dst) ty))
             unit)]
         [(ir.CompilerIrInstr.AddrOf _ src)
           ;; Address-taken values need stable storage. Mark the source as
@@ -34258,7 +34132,7 @@
           ;; freshly materialized temporary.
           (if (and (>= src 0) (< src (array-length candidates)))
             (begin
-              (array-set! candidates src 2)
+              (set! (array-ref candidates src) 2)
               unit)
             unit)]
         [_ unit]))))
@@ -34268,8 +34142,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [allow-invariant-loads : bool]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
       (begin
@@ -34295,7 +34169,7 @@
               allow-invariant-loads)])
         (compiler-reg-remat-table-record-blocks!
           table
-          (box-get rest)
+          (__tl-box-place rest)
           allow-invariant-loads))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -34372,8 +34246,8 @@
   [merged-roots : live.CompilerLiveI64Set]
   [var : i64]) : bool
   (let
-    [def-counts : (__tl_dyn-array i64) (struct-get table def-counts)]
-    [candidates : (__tl_dyn-array i64) (struct-get table candidates)]
+    [def-counts : (__tl_dyn-array i64) table.def-counts]
+    [candidates : (__tl_dyn-array i64) table.candidates]
     (and
       (>= var 0)
       (< var (array-length def-counts))
@@ -34397,9 +34271,7 @@
   [point : i64]) : bool
   (match (compiler-reg-interval-index-lookup intervals var)
     [(CompilerRegMaybeInterval.Some interval)
-      (and
-        (<= (struct-get interval start) point)
-        (<= point (struct-get interval end)))]
+      (and (<= interval.start point) (<= point interval.end))]
     [(CompilerRegMaybeInterval.No) false]))
 
 (define (compiler-reg-remat-location-conflicts-at?
@@ -34408,9 +34280,8 @@
   [point : i64]
   [location : CompilerRegLocation]) : bool
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (struct-get assignments items)]
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
     [var : i64 0]
     [conflict : bool false]
     (begin
@@ -34461,7 +34332,7 @@
   [chosen : CompilerRegIdSeq]
   [var : i64]) : CompilerRegMaybeId
   (let
-    [types : (__tl_dyn-array ast.AstType) (struct-get table types)]
+    [types : (__tl_dyn-array ast.AstType) table.types]
     (if (or (< var 0) (>= var (array-length types)))
       CompilerRegMaybeId.No
       (compiler-reg-remat-first-free-register-at
@@ -34476,11 +34347,11 @@
   [temp : i64]
   [var : i64]) : ir.CompilerIrInstr
   (let
-    [kinds : (__tl_dyn-array i64) (struct-get table kinds)]
-    [values : (__tl_dyn-array ir.CompilerIrValue) (struct-get table values)]
-    [offsets : (__tl_dyn-array ir.CompilerIrValue) (struct-get table offsets)]
-    [op-types : (__tl_dyn-array ast.AstType) (struct-get table op-types)]
-    [types : (__tl_dyn-array ast.AstType) (struct-get table types)]
+    [kinds : (__tl_dyn-array i64) table.kinds]
+    [values : (__tl_dyn-array ir.CompilerIrValue) table.values]
+    [offsets : (__tl_dyn-array ir.CompilerIrValue) table.offsets]
+    [op-types : (__tl_dyn-array ast.AstType) table.op-types]
+    [types : (__tl_dyn-array ast.AstType) table.types]
     [ty : ast.AstType (array-ref types var)]
     [value : ir.CompilerIrValue (array-ref values var)]
     (cond
@@ -34527,7 +34398,7 @@
                 (let
                   [var : i64 (+ base bit)]
                   (if (< var vars)
-                    (array-set! remap var var)
+                    (set! (array-ref remap var) var)
                     unit))
                 unit)
               (set! bits (shr bits 1))
@@ -34557,7 +34428,7 @@
       ;; O(vars) scan + array zero. `remap` is a function-scoped identity array
       ;; reused across instructions; we restore the bits we set afterwards.
       [uses : live.CompilerLiveI64Set (live.compiler-live-instr-uses instr)]
-      [types : (__tl_dyn-array ast.AstType) (struct-get table types)]
+      [types : (__tl_dyn-array ast.AstType) table.types]
       [chosen : CompilerRegIdSeq (compiler-reg-id-seq-empty)]
       [out-next-var : i64 next-var]
       [out-extra-assignments : CompilerRegAssignmentTable extra-assignments]
@@ -34597,7 +34468,7 @@
                               [temp : i64 out-next-var]
                               [ty : ast.AstType (array-ref types var)]
                               (begin
-                                (array-set! remap var temp)
+                                (set! (array-ref remap var) temp)
                                 ;; Recipes for one instruction are pushed in
                                 ;; the order they are chosen (ascending operand
                                 ;; var). That is exactly the order the old
@@ -34769,7 +34640,7 @@
                   extra-assignments2
                   extra-types2)
                 (compiler-reg-remat-rewrite-blocks-rev
-                  (box-get rest)
+                  (__tl-box-place rest)
                   next-point
                   vars
                   next-var2
@@ -34901,8 +34772,7 @@
         (compiler-reg-function-group-vars type-segment-bases func type-info)]
       [liveness-handle : CompilerRegLivenessHandle
         (compiler-reg-liveness-handle-make func false)]
-      [liveness : live.CompilerFunctionLiveness
-        (struct-get liveness-handle baseline)]
+      [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
       (match (compiler-reg-live-interval-selection func liveness)
         [(CompilerRegIntervalSelection.Selection intervals interval-index)
           (let
@@ -34914,7 +34784,7 @@
                 group-vars
                 vars
                 (array.make-array i64 0))]
-            [parents : (__tl_dyn-array i64) (struct-get coalesce parents)]
+            [parents : (__tl_dyn-array i64) coalesce.parents]
             [merged-roots : live.CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
             ;; One function-scoped identity remap array, reused across every

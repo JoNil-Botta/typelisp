@@ -25,21 +25,18 @@
 
 (define (bundle-score [bundle : Bundle]) : i64
   (+
-    (score-bool (string.eq (struct-get bundle name) "name"))
+    (score-bool (string.eq bundle.name "name"))
     (+
-      (score-bool (string.eq (tuple-ref (struct-get bundle pair) 0) "t0"))
+      (score-bool (string.eq (tuple-ref bundle.pair 0) "t0"))
       (+
-        (score-bool (string.eq (tuple-ref (struct-get bundle pair) 1) "t1"))
+        (score-bool (string.eq (tuple-ref bundle.pair 1) "t1"))
         (+
-          (score-bool (string.eq (array-ref (struct-get bundle fixed) 0) "f0"))
+          (score-bool (string.eq (array-ref bundle.fixed 0) "f0"))
           (+
-            (score-bool
-              (string.eq (array-ref (struct-get bundle fixed) 1) "f1"))
+            (score-bool (string.eq (array-ref bundle.fixed 1) "f1"))
             (+
-              (score-bool
-                (string.eq (array-ref (struct-get bundle items) 0) "d0"))
-              (score-bool
-                (string.eq (array-ref (struct-get bundle items) 1) "d1")))))))))
+              (score-bool (string.eq (array-ref bundle.items 0) "d0"))
+              (score-bool (string.eq (array-ref bundle.items 1) "d1")))))))))
 
 (define (make-bundle [items : (__tl_dyn-array String)]) : Bundle
   (Bundle
@@ -58,8 +55,8 @@
     (let
       [items : (__tl_dyn-array String) (array.make-array String 2)]
       (begin
-        (array-set! items 0 (string.append "d" "0"))
-        (array-set! items 1 (string.append "d" "1"))
+        (set! (array-ref items 0) (string.append "d" "0"))
+        (set! (array-ref items 1) (string.append "d" "1"))
         (let
           [bundle : Bundle (make-bundle items)]
           [sequence : (__tl_dyn-array String) (make-sequence)]

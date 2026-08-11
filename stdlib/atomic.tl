@@ -39,11 +39,11 @@
 
 ;: Number of elements in an `i64` atomic buffer.
 (define (i64-buffer-length [items : (& source AtomicI64Buffer)]) : i64
-  (array-length (struct-get items slots)))
+  (array-length items.slots))
 
 ;: Number of elements in an `i32` atomic buffer.
 (define (i32-buffer-length [items : (& source AtomicI32Buffer)]) : i64
-  (array-length (struct-get items slots)))
+  (array-length items.slots))
 
 ;: Sequentially consistent atomic load of one `i64` buffer element.
 (extern (atomic-i64-load [items : (& source AtomicI64Buffer)] [index : i64]) : i64 (:symbol "tl_atomic_i64_load"))

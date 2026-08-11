@@ -52,7 +52,7 @@
             [(compiler_backend.ResultCompilerBackend.Err diag)
               (begin
                 (io.print-error
-                  (diagnostic.compiler-diagnostic-render (box-get diag)))
+                  (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))
                 1)])
           (match (compiler-backend-runtime-fixture-emit target-name)
             [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -62,5 +62,5 @@
             [(compiler_backend.ResultCompilerBackend.Err diag)
               (begin
                 (io.print-error
-                  (diagnostic.compiler-diagnostic-render (box-get diag)))
+                  (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))
                 1)]))))))

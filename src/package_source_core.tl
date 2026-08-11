@@ -150,9 +150,10 @@
         (ResultPackageSourceSet.Err
           (str_cat.str-cat
             "invalid package manifest '"
-            (compiler_diagnostic.compiler-diagnostic-path (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-path (__tl-box-place diag))
             "': "
-            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))))]
+            (compiler_diagnostic.compiler-diagnostic-message
+              (__tl-box-place diag))))]
       [(compiler_load.ResultCompilerPkgManifestDiagnostic.Ok manifest)
         (ResultPackageSourceSet.Ok
           (PackageSourceSet
@@ -336,13 +337,10 @@
 
 (define (package-source-entry-list [source-set : PackageSourceSet]) : svec.Vec
   (let
-    [manifest : compiler_load.CompilerPkgManifest
-      (struct-get source-set manifest)]
+    [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
     [entry : String
       (compiler_load.compiler-load-normalize-path
-        (package-source-root-join
-          (struct-get source-set manifest-dir)
-          (struct-get manifest entry)))]
+        (package-source-root-join source-set.manifest-dir manifest.entry))]
     [items : svec.Vec (svec.new)]
     (begin
       (svec.push (&mut items) entry)
@@ -390,7 +388,7 @@
   [command : String]
   [source-set : PackageSourceSet]) : ResultPackageSourceList
   (let
-    [root : String (struct-get source-set manifest-dir)]
+    [root : String source-set.manifest-dir]
     (match (fs.try-read-dir (& root))
       [(fs.ErrIoStringVector error)
         (if (io.error-unsupported? error)
@@ -588,20 +586,20 @@
               (str_cat.str-cat
                 command
                 ": no TypeLisp source files found in package '"
-                (struct-get base manifest-path)
+                base.manifest-path
                 "'"))
             (ResultPackageSourceSet.Ok
               (PackageSourceSet
-                (struct-get base manifest-path)
-                (struct-get base manifest-dir)
-                (struct-get base manifest)
+                base.manifest-path
+                base.manifest-dir
+                base.manifest
                 sources)))])]))
 
 (define (package-source-discover-tests-for
   [command : String]
   [source-set : PackageSourceSet]) : ResultPackageSourceList
   (let
-    [root : String (struct-get source-set manifest-dir)]
+    [root : String source-set.manifest-dir]
     (package-source-scan-optional-dir command root "tests" (svec.new))))
 
 ;; Source-set provenance transcript -------------------------------------------------
@@ -704,7 +702,7 @@
   [reason : String]) : String
   (str_cat.str-cat
     "package '"
-    (struct-get source-set manifest-path)
+    source-set.manifest-path
     "' source '"
     path
     "': "
@@ -737,10 +735,9 @@
 
 (define (package-source-set-digest [source-set : PackageSourceSet]) : ResultPackageSourceDigest
   (let
-    [sources : svec.Vec (struct-get source-set sources)]
+    [sources : svec.Vec source-set.sources]
     [root : String
-      (compiler_load.compiler-load-normalize-path
-        (struct-get source-set manifest-dir))]
+      (compiler_load.compiler-load-normalize-path source-set.manifest-dir)]
     [count : i64 (svec.len (& sources))]
     [hash0 : i64
       (package-source-binding-hash-u64
@@ -961,9 +958,8 @@
       [sections : (__tl_dyn-array tlci.TlciAuxSection)
         (make-array tlci.TlciAuxSection 1)]
       (begin
-        (array-set!
-          sections
-          0
+        (set!
+          (array-ref sections 0)
           (tlci.TlciAuxSection
             tlci.tlci-aux-kind-package-source-binding
             schema

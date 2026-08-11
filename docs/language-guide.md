@@ -19,7 +19,7 @@ For the complete language contract, see [SPEC.md](../SPEC.md).
 
 (define (main) : i64
   (let [p : Point (Point 3 4)]
-    (+ (struct-get p x)            ; 3
+    (+ p.x                         ; 3
        (area (Rect 5 6)))))        ; 30  -> main returns 33
 ```
 
@@ -115,9 +115,9 @@ to `& Slice`, or `(&mut items)` to `&mut Slice`); a bare array is never
 auto-borrowed for this conversion. The checked `slice-view` and
 `slice-mut-view` builtins accept fixed/compatibility arrays, suitable references,
 or existing Slice views and return allocation-free, provenance-tied subviews.
-`length`/`array-length`, `array-ref`, and mutable `array-set!` operate on these
-views with checked ranges and indices; zero-length views are valid. For
-example:
+`length`/`array-length` and `array-ref` operate on these views, with mutable
+element writes expressed as `set!` of an `array-ref` place. Ranges and indices
+are checked; zero-length views are valid. For example:
 
 ```lisp
 (define (middle-length [view : (& r (Slice i64))]) : i64
@@ -224,9 +224,10 @@ the server host and accepts `target` plus a string-array `cfg` in
 struct patterns, `_`), `ann`, `cast`, `return`, `try`, `foreach`,
 `spmd-reduce`, `spmd-scan`; arithmetic (`+ - * / %`), comparison
 (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and`
-`bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a struct
-field, and dotted syntax `place.field` is sugar for the same operation;
-`(set! place.field value)` writes in place.
+`bit-or` `bit-xor` `shl` `shr`) operators. Dotted syntax `place.field` reads a
+struct field, and `(set! place.field value)` writes in place. Tuple slots and
+array elements use `tuple-ref` and `array-ref`; every direct write still uses
+`set!`.
 
 Named top-level functions and `lambda` literals are pointer-sized closure
 descriptor values. Non-capturing lambdas use static descriptors; capturing
@@ -242,7 +243,8 @@ calls.
 ### Builtins and stdlib
 
 Compiler-owned builtins are a small set: fixed-array and borrowed-Slice element
-operations (`array-ref`, `array-set!`, `array-length`/`length`), checked
+operations (`array-ref`, `array-length`/`length`, with element writes through
+`set!`), checked
 `slice-view`/`slice-mut-view`, string indexing/slicing primitives
 (`substring`/`string-slice`, `int->string`), and the CPU instruction intrinsics.
 Array, Slice, and string indexing/ranges are bounds-checked at runtime.

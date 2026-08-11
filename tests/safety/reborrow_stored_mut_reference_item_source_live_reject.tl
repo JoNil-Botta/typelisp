@@ -13,12 +13,12 @@
 (define (mut-next [iter : (&mut state (MutReborrowIter source))]) : (MutReborrowNext
     source)
   (let
-    [index : i64 (struct-get iter index)]
+    [index : i64 iter.index]
     (if (>= index 1)
       (MutReborrowNext.Done)
       (begin
-        (set! (struct-get iter index) (+ index 1))
-        (MutReborrowNext.Item (&mut (array-ref (struct-get iter slots) index)))))))
+        (set! iter.index (+ index 1))
+        (MutReborrowNext.Item (&mut (array-ref iter.slots index)))))))
 
 (define (consume [value : (MutReborrowNext source)]) : unit
   (match value
@@ -34,5 +34,5 @@
           [iter : (MutReborrowIter items) (MutReborrowIter (&mut items) 0)]
           (mut-next (&mut iter)))]
       (begin
-        (array-set! items 0 42)
+        (set! (array-ref items 0) 42)
         (consume first)))))

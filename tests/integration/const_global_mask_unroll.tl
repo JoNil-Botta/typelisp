@@ -69,12 +69,12 @@
     (begin
       (while (< n 256)
         (begin
-          (array-set! table n (+ (* n 2654435761) 17))
+          (set! (array-ref table n) (+ (* n 2654435761) 17))
           (set! n (+ n 1))))
       (set! n 0)
       (while (< n 64)
         (begin
-          (array-set! buf n (cast (bit-and (+ (* n 167) 13) 255) : u8))
+          (set! (array-ref buf n) (cast (bit-and (+ (* n 167) 13) 255) : u8))
           (set! n (+ n 1))))
       ;; Both spellings must agree; a mis-versioned fast clone that dropped or
       ;; mis-ordered the mask would diverge here rather than only run slower.

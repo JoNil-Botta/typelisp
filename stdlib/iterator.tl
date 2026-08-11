@@ -64,9 +64,9 @@
 ;: Consume a scalar range into its canonical iterator state.
 (define (into-iterator [items : I64Range (:consume)]) : IntoIter
   (let
-    [start : i64 (struct-get items start)]
-    [end : i64 (struct-get items end)]
-    [inclusive : bool (struct-get items inclusive)]
+    [start : i64 items.start]
+    [end : i64 items.end]
+    [inclusive : bool items.inclusive]
     [empty : bool
       (if inclusive
         (> start end)
@@ -76,22 +76,22 @@
 ;: Return and advance the next scalar range item through the canonical
 ;: consuming iterator protocol.
 (define (into-next [iter : (&mut iter IntoIter)]) : IntoNext
-  (if (struct-get iter exhausted)
+  (if iter.exhausted
     (Done)
     (let
-      [current : i64 (struct-get iter current)]
-      [end : i64 (struct-get iter end)]
-      [inclusive : bool (struct-get iter inclusive)]
+      [current : i64 iter.current]
+      [end : i64 iter.end]
+      [inclusive : bool iter.inclusive]
       (begin
         (if inclusive
           (if (= current end)
-            (set! (struct-get iter exhausted) true)
-            (set! (struct-get iter current) (+ current 1)))
+            (set! iter.exhausted true)
+            (set! iter.current (+ current 1)))
           (let
             [next-current : i64 (+ current 1)]
             (begin
-              (set! (struct-get iter current) next-current)
-              (set! (struct-get iter exhausted) (= next-current end)))))
+              (set! iter.current next-current)
+              (set! iter.exhausted (= next-current end)))))
         (Item current)))))
 
 (cfg test (import stdlib.test))

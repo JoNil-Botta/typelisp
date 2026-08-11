@@ -8,15 +8,15 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i -99)
+        (set! (array-ref out i) -99)
         (set! i (+ i 1))))))
 
 (define (fill-masked [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 6)
-      (array-set! out i i)
-      (array-set! out i (+ i 1)))))
+      (set! (array-ref out i) i)
+      (set! (array-ref out i) (+ i 1)))))
 
 (define (fill-scalar [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
@@ -24,8 +24,8 @@
     (while (< i n)
       (begin
         (if (< i 6)
-          (array-set! out i i)
-          (array-set! out i (+ i 1)))
+          (set! (array-ref out i) i)
+          (set! (array-ref out i) (+ i 1)))
         (set! i (+ i 1))))))
 
 (define (arrays-eq

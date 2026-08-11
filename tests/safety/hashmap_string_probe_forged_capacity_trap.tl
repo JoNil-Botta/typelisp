@@ -10,9 +10,8 @@
       (array.make-array map.GeneratedHashmapSlot 1)]
     [key : String "missing"]
     (begin
-      (array-set!
-        slots
-        0
+      (set!
+        (array-ref slots 0)
         (map.GeneratedHashmapSlot
           (map.GeneratedHashmapSlotState.Tombstone)
           ""

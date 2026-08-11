@@ -28,8 +28,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i (+ i 1))
-        (array-set! b-slots i (* i 2))
+        (set! (array-ref a-slots i) (+ i 1))
+        (set! (array-ref b-slots i) (* i 2))
         (set! i (+ i 1))))))
 
 (define (fill-i64-foreach
@@ -43,9 +43,8 @@
     [out-slots (i64v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (bit-or
             (+ (array-ref a-slots i) (array-ref b-slots i))
@@ -64,9 +63,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (bit-or
               (+ (array-ref a-slots i) (array-ref b-slots i))
@@ -108,8 +106,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i (cast (+ i 1) : i32))
-        (array-set! b-slots i (cast (* i 2) : i32))
+        (set! (array-ref a-slots i) (cast (+ i 1) : i32))
+        (set! (array-ref b-slots i) (cast (* i 2) : i32))
         (set! i (+ i 1))))))
 
 (define (fill-i32-foreach
@@ -123,9 +121,8 @@
     [out-slots (i32v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (bit-or
             (+ (array-ref a-slots i) (array-ref b-slots i))
@@ -144,9 +141,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (bit-or
               (+ (array-ref a-slots i) (array-ref b-slots i))
@@ -188,8 +184,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i (cast (+ (* i 17) 5) : u64))
-        (array-set! b-slots i (cast (+ (* i 3) 11) : u64))
+        (set! (array-ref a-slots i) (cast (+ (* i 17) 5) : u64))
+        (set! (array-ref b-slots i) (cast (+ (* i 3) 11) : u64))
         (set! i (+ i 1))))))
 
 (define (fill-u64-foreach
@@ -204,9 +200,8 @@
     [out-slots (u64v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (bit-or
             (+
@@ -228,9 +223,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (bit-or
               (+
@@ -275,8 +269,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i (cast (+ (* i 19) 7) : u32))
-        (array-set! b-slots i (cast (+ (* i 5) 23) : u32))
+        (set! (array-ref a-slots i) (cast (+ (* i 19) 7) : u32))
+        (set! (array-ref b-slots i) (cast (+ (* i 5) 23) : u32))
         (set! i (+ i 1))))))
 
 (define (fill-u32-foreach
@@ -291,9 +285,8 @@
     [out-slots (u32v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (bit-or
             (+
@@ -315,9 +308,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (bit-or
               (+
@@ -362,8 +354,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i (cast (+ i 1) : i8))
-        (array-set! b-slots i (cast (+ (* i 2) 3) : i8))
+        (set! (array-ref a-slots i) (cast (+ i 1) : i8))
+        (set! (array-ref b-slots i) (cast (+ (* i 2) 3) : i8))
         (set! i (+ i 1))))))
 
 (define (fill-i8-foreach
@@ -377,9 +369,8 @@
     [out-slots (i8v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (bit-or
             (+ (array-ref a-slots i) (array-ref b-slots i))
@@ -398,9 +389,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (bit-or
               (+ (array-ref a-slots i) (array-ref b-slots i))
@@ -442,8 +432,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i (cast (+ i 1) : u8))
-        (array-set! b-slots i (cast (+ (* i 2) 3) : u8))
+        (set! (array-ref a-slots i) (cast (+ i 1) : u8))
+        (set! (array-ref b-slots i) (cast (+ (* i 2) 3) : u8))
         (set! i (+ i 1))))))
 
 (define (fill-u8-foreach
@@ -457,9 +447,8 @@
     [out-slots (u8v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (bit-or
             (+ (array-ref a-slots i) (array-ref b-slots i))
@@ -478,9 +467,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (bit-or
               (+ (array-ref a-slots i) (array-ref b-slots i))
@@ -522,8 +510,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i (cast (+ (* i 257) 12000) : i16))
-        (array-set! b-slots i (cast (+ (* i 13) 300) : i16))
+        (set! (array-ref a-slots i) (cast (+ (* i 257) 12000) : i16))
+        (set! (array-ref b-slots i) (cast (+ (* i 13) 300) : i16))
         (set! i (+ i 1))))))
 
 (define (fill-i16-foreach
@@ -538,9 +526,8 @@
     [out-slots (i16v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (bit-or
             (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
@@ -560,9 +547,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (bit-or
               (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
@@ -605,8 +591,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i (cast (+ (* i 257) 65000) : u16))
-        (array-set! b-slots i (cast (+ (* i 37) 500) : u16))
+        (set! (array-ref a-slots i) (cast (+ (* i 257) 65000) : u16))
+        (set! (array-ref b-slots i) (cast (+ (* i 37) 500) : u16))
         (set! i (+ i 1))))))
 
 (define (fill-u16-foreach
@@ -621,9 +607,8 @@
     [out-slots (u16v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (bit-or
             (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
@@ -643,9 +628,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (bit-or
               (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
@@ -688,8 +672,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i 1.5)
-        (array-set! b-slots i 2.25)
+        (set! (array-ref a-slots i) 1.5)
+        (set! (array-ref b-slots i) 2.25)
         (set! i (+ i 1))))))
 
 (define (fill-f64-foreach
@@ -703,9 +687,8 @@
     [out-slots (f64v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (+ (array-ref a-slots i) (array-ref b-slots i))
           (array-ref b-slots i))))))
@@ -722,9 +705,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (+ (array-ref a-slots i) (array-ref b-slots i))
             (array-ref b-slots i)))
@@ -764,8 +746,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a-slots i 1.5)
-        (array-set! b-slots i 2.25)
+        (set! (array-ref a-slots i) 1.5)
+        (set! (array-ref b-slots i) 2.25)
         (set! i (+ i 1))))))
 
 (define (fill-f32-foreach
@@ -779,9 +761,8 @@
     [out-slots (f32v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (-
           (+ (array-ref a-slots i) (array-ref b-slots i))
           (array-ref b-slots i))))))
@@ -798,9 +779,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (-
             (+ (array-ref a-slots i) (array-ref b-slots i))
             (array-ref b-slots i)))
@@ -845,8 +825,8 @@
         (foreach
           ([i : i64 0 (array-ref bound-slots 0)])
           (begin
-            (array-set! bound-slots 0 0)
-            (array-set! out-slots i (+ i 1)))))
+            (set! (array-ref bound-slots 0) 0)
+            (set! (array-ref out-slots i) (+ i 1)))))
       (= (i64v.get (& out) 2 0) 3))))
 
 (define (case-index-binding-is-scoped) : bool

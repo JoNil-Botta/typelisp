@@ -39,15 +39,15 @@
 
 ;: Return the normalized seed stored in `state`.
 (define (state-seed [state : RandomState]) : i64
-  (struct-get state seed))
+  state.seed)
 
 ;: Return the next state from a draw result.
 (define (draw-state [draw : RandomDraw]) : RandomState
-  (struct-get draw state))
+  draw.state)
 
 ;: Return the generated value from a draw result.
 (define (draw-value [draw : RandomDraw]) : i64
-  (struct-get draw value))
+  draw.value)
 
 ;: Recoverable bounded draw result.
 (defenum RandomBoundedResult
@@ -179,21 +179,21 @@
 ;: Prepend `weight` to a weight list, copying `rest` into a right-sized array.
 (define (weight-list-cons [weight : i64] [rest : RandomWeightList]) : RandomWeightList
   (let
-    [len : i64 (struct-get rest len)]
+    [len : i64 rest.len]
     [slots : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
-    [source : (__tl_dyn-array i64) (struct-get rest slots)]
+    [source : (__tl_dyn-array i64) rest.slots]
     [index : i64 0]
     (begin
-      (array-set! slots 0 weight)
+      (set! (array-ref slots 0) weight)
       (while (< index len)
         (begin
-          (array-set! slots (+ index 1) (array-ref source index))
+          (set! (array-ref slots (+ index 1)) (array-ref source index))
           (set! index (+ index 1))))
       (RandomWeightList slots (+ len 1)))))
 
 ;: Return true when a weight list has no entries.
 (define (weight-list-empty? [weights : RandomWeightList]) : bool
-  (= (struct-get weights len) 0))
+  (= weights.len 0))
 
 ;: Accumulate and validate non-negative Slice weights in the prefix
 ;: `[0, count)`.
@@ -286,8 +286,8 @@
 ;: Return the total weight, rejecting empty lists and negative weights.
 (define (weight-list-total [weights : RandomWeightList]) : RandomWeightTotalResult
   (weight-slice-total-prefix
-    (slice-view (& (struct-get weights slots)) 0 (struct-get weights len))
-    (struct-get weights len)
+    (slice-view (& weights.slots) 0 weights.len)
+    weights.len
     "random: weight list must not be empty"))
 
 ;: Choose an index from `weights`, skipping zero weights.
@@ -297,8 +297,8 @@
 (define (weighted-index [state : RandomState] [weights : RandomWeightList]) : RandomWeightedIndexResult
   (weighted-index-slice-prefix
     state
-    (slice-view (& (struct-get weights slots)) 0 (struct-get weights len))
-    (struct-get weights len)
+    (slice-view (& weights.slots) 0 weights.len)
+    weights.len
     "random: weight list must not be empty"))
 
 ;: Return the shared system-seed failure result.

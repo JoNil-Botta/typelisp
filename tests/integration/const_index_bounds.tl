@@ -26,7 +26,7 @@
   (let
     [xs : (__tl_dyn-array i64) (array.make-array i64 5)]
     (begin
-      (array-set! xs 2 42)
+      (set! (array-ref xs 2) 42)
       (if (= (get2 xs 0) 42)
         42
         1))))

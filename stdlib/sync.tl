@@ -72,13 +72,13 @@
             (sync.SyncI64Channel 0 0 0 0 0 0 0))
           (define (to-raw [channel : Channel]) : sync.SyncI64Channel
             (sync.SyncI64Channel
-              (struct-get channel slots-addr)
-              (struct-get channel state-addr)
-              (struct-get channel capacity)
-              (struct-get channel slots-bytes)
-              (struct-get channel mutex-handle)
-              (struct-get channel items-handle)
-              (struct-get channel spaces-handle)))
+              channel.slots-addr
+              channel.state-addr
+              channel.capacity
+              channel.slots-bytes
+              channel.mutex-handle
+              channel.items-handle
+              channel.spaces-handle))
           (define (create-capacity-ok? [capacity : i64]) : bool
             (sync.i64-channel-create-capacity-ok? capacity))
           (define (create [capacity : i64]) : CreateResult
@@ -87,17 +87,17 @@
               (let
                 [raw : sync.SyncI64Channel
                   (sync.i64-channel-create-capacity-or capacity (empty-raw))]
-                (if (= (struct-get raw spaces-handle) 0)
+                (if (= raw.spaces-handle 0)
                   (CreateErr 1)
                   (CreateOk
                     (Channel
-                      (struct-get raw slots-addr)
-                      (struct-get raw state-addr)
-                      (struct-get raw capacity)
-                      (struct-get raw slots-bytes)
-                      (struct-get raw mutex-handle)
-                      (struct-get raw items-handle)
-                      (struct-get raw spaces-handle)))))))
+                      raw.slots-addr
+                      raw.state-addr
+                      raw.capacity
+                      raw.slots-bytes
+                      raw.mutex-handle
+                      raw.items-handle
+                      raw.spaces-handle))))))
           (define (create-capacity-or [capacity : i64] [fallback : Channel]) : Channel
             (match (create capacity)
               [(CreateOk channel) channel]
@@ -125,13 +125,13 @@
             [dst : (__tl_dyn-array i64)]
             [offset : i64]) : unit
             (begin
-              (array-set! dst offset (struct-get channel slots-addr))
-              (array-set! dst (+ offset 1) (struct-get channel state-addr))
-              (array-set! dst (+ offset 2) (struct-get channel capacity))
-              (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
-              (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
-              (array-set! dst (+ offset 5) (struct-get channel items-handle))
-              (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+              (set! (array-ref dst offset) channel.slots-addr)
+              (set! (array-ref dst (+ offset 1)) channel.state-addr)
+              (set! (array-ref dst (+ offset 2)) channel.capacity)
+              (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
+              (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
+              (set! (array-ref dst (+ offset 5)) channel.items-handle)
+              (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
           (define (load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : Channel
             (Channel
               (array_ops.ref src offset)
@@ -185,19 +185,16 @@
             (Mutex 0 0 0))
           (define (to-raw [mutex : Mutex]) : sync.SyncI64Mutex
             (sync.SyncI64Mutex
-              (struct-get mutex value-addr)
-              (struct-get mutex mutex-handle)
-              (struct-get mutex control-addr)))
+              mutex.value-addr
+              mutex.mutex-handle
+              mutex.control-addr))
           (define (from-raw [raw : sync.SyncI64Mutex]) : Mutex
-            (Mutex
-              (struct-get raw value-addr)
-              (struct-get raw mutex-handle)
-              (struct-get raw control-addr)))
+            (Mutex raw.value-addr raw.mutex-handle raw.control-addr))
           (define (create [initial : i64]) : CreateResult
             (let
               [raw : sync.SyncI64Mutex
                 (sync.i64-mutex-create-initial-or initial (empty-raw))]
-              (if (= (struct-get raw mutex-handle) 0)
+              (if (= raw.mutex-handle 0)
                 (CreateErr 1)
                 (CreateOk (from-raw raw)))))
           (define (create-initial-or [initial : i64] [fallback : Mutex]) : Mutex
@@ -212,9 +209,9 @@
                   true)]))
           (define (lock [mutex : Mutex]) : Guard
             (let
-              [control-addr : i64 (struct-get mutex control-addr)]
-              [mutex-handle : i64 (struct-get mutex mutex-handle)]
-              [value-addr : i64 (struct-get mutex value-addr)]
+              [control-addr : i64 mutex.control-addr]
+              [mutex-handle : i64 mutex.mutex-handle]
+              [value-addr : i64 mutex.value-addr]
               (if (sync.i64-mutex-closed? control-addr)
                 (sync.abort 134)
                 (let
@@ -228,24 +225,24 @@
                       (Guard control-addr mutex-handle value-addr)
                       (sync.i64-mutex-lock-abort control-addr)))))))
           (define (guard-control-addr [guard : (& guard Guard)]) : i64
-            (struct-get guard control-addr))
+            guard.control-addr)
           (define (guard-mutex-handle [guard : (& guard Guard)]) : i64
-            (struct-get guard mutex-handle))
+            guard.mutex-handle)
           (define (guard-value-addr [guard : (& guard Guard)]) : i64
-            (struct-get guard value-addr))
+            guard.value-addr)
           (define (get [guard : (& guard Guard)]) : i64
-            (sync.read-i64 (struct-get guard value-addr) 0))
+            (sync.read-i64 guard.value-addr 0))
           (define (,set-name [guard : (& guard Guard)] [value : i64]) : unit
-            (sync.write-i64! (struct-get guard value-addr) 0 value))
+            (sync.write-i64! guard.value-addr 0 value))
           (define (add! [guard : (& guard Guard)] [delta : i64]) : i64
             (let
               [next : i64 (+ (get guard) delta)]
               (begin
-                (sync.write-i64! (struct-get guard value-addr) 0 next)
+                (sync.write-i64! guard.value-addr 0 next)
                 next)))
           (define (close [mutex : Mutex]) : bool
             (let
-              [control-addr : i64 (struct-get mutex control-addr)]
+              [control-addr : i64 mutex.control-addr]
               (if (sync.i64-mutex-closed? control-addr)
                 false
                 (if (=
@@ -263,13 +260,12 @@
                         1)
                       (set!
                         ok
-                        (if (sync.semaphore-close
-                          (struct-get mutex mutex-handle))
+                        (if (sync.semaphore-close mutex.mutex-handle)
                           ok
                           false))
                       (set!
                         ok
-                        (if (sync.runtime-free (struct-get mutex value-addr) 8)
+                        (if (sync.runtime-free mutex.value-addr 8)
                           ok
                           false))
                       ok))
@@ -284,9 +280,9 @@
             [dst : (__tl_dyn-array i64)]
             [offset : i64]) : unit
             (begin
-              (array-set! dst offset (struct-get mutex value-addr))
-              (array-set! dst (+ offset 1) (struct-get mutex mutex-handle))
-              (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
+              (set! (array-ref dst offset) mutex.value-addr)
+              (set! (array-ref dst (+ offset 1)) mutex.mutex-handle)
+              (set! (array-ref dst (+ offset 2)) mutex.control-addr)))
           (define (load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : Mutex
             (Mutex
               (array_ops.ref src offset)
@@ -731,9 +727,9 @@
 ;: Lock `mutex`, blocking until the protected value is available.
 (define (i64-mutex-lock [mutex : SyncI64Mutex]) : SyncI64MutexGuard
   (let
-    [control-addr : i64 (struct-get mutex control-addr)]
-    [mutex-handle : i64 (struct-get mutex mutex-handle)]
-    [value-addr : i64 (struct-get mutex value-addr)]
+    [control-addr : i64 mutex.control-addr]
+    [mutex-handle : i64 mutex.mutex-handle]
+    [value-addr : i64 mutex.value-addr]
     (if (i64-mutex-closed? control-addr)
       (abort 134)
       (let
@@ -748,23 +744,23 @@
 
 ;: Return the control cell address from a mutex guard.
 (define (i64-mutex-guard-control-addr [guard : (& guard SyncI64MutexGuard)]) : i64
-  (struct-get guard control-addr))
+  guard.control-addr)
 
 ;: Return the semaphore handle from a mutex guard.
 (define (i64-mutex-guard-mutex-handle [guard : (& guard SyncI64MutexGuard)]) : i64
-  (struct-get guard mutex-handle))
+  guard.mutex-handle)
 
 ;: Return the protected value address from a mutex guard.
 (define (i64-mutex-guard-value-addr [guard : (& guard SyncI64MutexGuard)]) : i64
-  (struct-get guard value-addr))
+  guard.value-addr)
 
 ;: Read the protected value while holding `guard`.
 (define (i64-mutex-get [guard : (& guard SyncI64MutexGuard)]) : i64
-  (read-i64 (struct-get guard value-addr) 0))
+  (read-i64 guard.value-addr 0))
 
 ;: Write the protected value while holding `guard`.
 (define (i64-mutex-set! [guard : (& guard SyncI64MutexGuard)] [value : i64]) : unit
-  (write-i64! (struct-get guard value-addr) 0 value))
+  (write-i64! guard.value-addr 0 value))
 
 ;: Add `delta` to the protected value and return the new value.
 (define (i64-mutex-add! [guard : (& guard SyncI64MutexGuard)] [delta : i64]) : i64
@@ -780,7 +776,7 @@
 ;: of touching freed semaphore/value storage after a successful close.
 (define (i64-mutex-close [mutex : SyncI64Mutex]) : bool
   (let
-    [control-addr : i64 (struct-get mutex control-addr)]
+    [control-addr : i64 mutex.control-addr]
     (if (i64-mutex-closed? control-addr)
       false
       (if (=
@@ -795,12 +791,12 @@
             (atomic-i64-store! control-addr i64-mutex-control-closed-slot 1)
             (set!
               ok
-              (if (semaphore-close (struct-get mutex mutex-handle))
+              (if (semaphore-close mutex.mutex-handle)
                 ok
                 false))
             (set!
               ok
-              (if (runtime-free (struct-get mutex value-addr) 8)
+              (if (runtime-free mutex.value-addr 8)
                 ok
                 false))
             ok))
@@ -817,9 +813,9 @@
   [dst : (__tl_dyn-array i64)]
   [offset : i64]) : unit
   (begin
-    (array-set! dst offset (struct-get mutex value-addr))
-    (array-set! dst (+ offset 1) (struct-get mutex mutex-handle))
-    (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
+    (set! (array-ref dst offset) mutex.value-addr)
+    (set! (array-ref dst (+ offset 1)) mutex.mutex-handle)
+    (set! (array-ref dst (+ offset 2)) mutex.control-addr)))
 
 ;: Rebuild a mutex handle from a raw `i64` array at `offset`.
 (define (i64-mutex-load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : SyncI64Mutex
@@ -850,9 +846,9 @@
     state-addr
     capacity
     slots-bytes
-    (struct-get mutex handle)
-    (struct-get items handle)
-    (struct-get spaces handle)))
+    mutex.handle
+    items.handle
+    spaces.handle))
 
 ;: Finish channel creation after storage allocation.
 (define (i64-channel-create-semaphores
@@ -924,45 +920,45 @@
 
 ;: Send `value`, blocking until one slot is available.
 (define (i64-channel-send [channel : SyncI64Channel] [value : i64]) : SyncI64ChannelSendResult
-  (if (not (semaphore-wait (struct-get channel spaces-handle)))
+  (if (not (semaphore-wait channel.spaces-handle))
     (i64-channel-send-err-result "sync: channel send wait failed")
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel spaces-handle))
+        (semaphore-post channel.spaces-handle)
         (i64-channel-send-err-result "sync: channel lock failed"))
       (let
-        [tail : i64 (read-i64 (struct-get channel state-addr) 1)]
+        [tail : i64 (read-i64 channel.state-addr 1)]
         (begin
-          (write-i64! (struct-get channel slots-addr) tail value)
+          (write-i64! channel.slots-addr tail value)
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             1
-            (i64-channel-next-index (struct-get channel capacity) tail))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+            (i64-channel-next-index channel.capacity tail))
+          (if (not (semaphore-post channel.mutex-handle))
             (i64-channel-send-err-result "sync: channel unlock failed")
-            (if (semaphore-post (struct-get channel items-handle))
+            (if (semaphore-post channel.items-handle)
               (i64-channel-send-ok-result)
               (i64-channel-send-err-result "sync: channel send signal failed"))))))))
 
 ;: Receive one value, blocking until one queued message is available.
 (define (i64-channel-recv [channel : SyncI64Channel]) : SyncI64ChannelRecvResult
-  (if (not (semaphore-wait (struct-get channel items-handle)))
+  (if (not (semaphore-wait channel.items-handle))
     (i64-channel-recv-err-result "sync: channel recv wait failed")
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel items-handle))
+        (semaphore-post channel.items-handle)
         (i64-channel-recv-err-result "sync: channel lock failed"))
       (let
-        [head : i64 (read-i64 (struct-get channel state-addr) 0)]
-        [value : i64 (read-i64 (struct-get channel slots-addr) head)]
+        [head : i64 (read-i64 channel.state-addr 0)]
+        [value : i64 (read-i64 channel.slots-addr head)]
         (begin
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             0
-            (i64-channel-next-index (struct-get channel capacity) head))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+            (i64-channel-next-index channel.capacity head))
+          (if (not (semaphore-post channel.mutex-handle))
             (i64-channel-recv-err-result "sync: channel unlock failed")
-            (if (semaphore-post (struct-get channel spaces-handle))
+            (if (semaphore-post channel.spaces-handle)
               (i64-channel-recv-ok-result value)
               (i64-channel-recv-err-result "sync: channel recv signal failed"))))))))
 
@@ -973,29 +969,27 @@
     (begin
       (set!
         ok
-        (if (semaphore-close (struct-get channel mutex-handle))
+        (if (semaphore-close channel.mutex-handle)
           ok
           false))
       (set!
         ok
-        (if (semaphore-close (struct-get channel items-handle))
+        (if (semaphore-close channel.items-handle)
           ok
           false))
       (set!
         ok
-        (if (semaphore-close (struct-get channel spaces-handle))
+        (if (semaphore-close channel.spaces-handle)
           ok
           false))
       (set!
         ok
-        (if (runtime-free
-          (struct-get channel slots-addr)
-          (struct-get channel slots-bytes))
+        (if (runtime-free channel.slots-addr channel.slots-bytes)
           ok
           false))
       (set!
         ok
-        (if (runtime-free (struct-get channel state-addr) 16)
+        (if (runtime-free channel.state-addr 16)
           ok
           false))
       ok)))
@@ -1006,13 +1000,13 @@
   [dst : (__tl_dyn-array i64)]
   [offset : i64]) : unit
   (begin
-    (array-set! dst offset (struct-get channel slots-addr))
-    (array-set! dst (+ offset 1) (struct-get channel state-addr))
-    (array-set! dst (+ offset 2) (struct-get channel capacity))
-    (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
-    (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
-    (array-set! dst (+ offset 5) (struct-get channel items-handle))
-    (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+    (set! (array-ref dst offset) channel.slots-addr)
+    (set! (array-ref dst (+ offset 1)) channel.state-addr)
+    (set! (array-ref dst (+ offset 2)) channel.capacity)
+    (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
+    (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
+    (set! (array-ref dst (+ offset 5)) channel.items-handle)
+    (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
 
 ;: Rebuild a channel handle from a raw `i64` array at `offset`.
 (define (i64-channel-load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : SyncI64Channel
@@ -1031,7 +1025,7 @@
   [index : i64]) : i64
   (let
     [next : i64 (+ index 1)]
-    (if (>= next (struct-get channel capacity))
+    (if (>= next channel.capacity)
       0
       next)))
 
@@ -1049,9 +1043,9 @@
     state-addr
     capacity
     slots-bytes
-    (struct-get mutex handle)
-    (struct-get items handle)
-    (struct-get spaces handle)))
+    mutex.handle
+    items.handle
+    spaces.handle))
 
 ;: Finish pair channel creation after storage allocation.
 (define (channel-i64-pair-create-semaphores
@@ -1128,56 +1122,50 @@
 (define (channel-i64-pair-send
   [channel : ChannelI64PairChannel]
   [value : ChannelI64Pair]) : ChannelI64PairSendResult
-  (if (not (semaphore-wait (struct-get channel spaces-handle)))
+  (if (not (semaphore-wait channel.spaces-handle))
     (channel-i64-pair-send-err-result "sync: channel send wait failed")
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel spaces-handle))
+        (semaphore-post channel.spaces-handle)
         (channel-i64-pair-send-err-result "sync: channel lock failed"))
       (let
-        [tail : i64 (read-i64 (struct-get channel state-addr) 1)]
+        [tail : i64 (read-i64 channel.state-addr 1)]
         [slot : i64 (* tail 2)]
         (begin
+          (write-i64! channel.slots-addr slot value.left)
+          (write-i64! channel.slots-addr (+ slot 1) value.right)
           (write-i64!
-            (struct-get channel slots-addr)
-            slot
-            (struct-get value left))
-          (write-i64!
-            (struct-get channel slots-addr)
-            (+ slot 1)
-            (struct-get value right))
-          (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             1
             (channel-i64-pair-next-index channel tail))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+          (if (not (semaphore-post channel.mutex-handle))
             (channel-i64-pair-send-err-result "sync: channel unlock failed")
-            (if (semaphore-post (struct-get channel items-handle))
+            (if (semaphore-post channel.items-handle)
               (channel-i64-pair-send-ok-result)
               (channel-i64-pair-send-err-result
                 "sync: channel send signal failed"))))))))
 
 ;: Receive one pair value, blocking until one queued message is available.
 (define (channel-i64-pair-recv [channel : ChannelI64PairChannel]) : ChannelI64PairRecvResult
-  (if (not (semaphore-wait (struct-get channel items-handle)))
+  (if (not (semaphore-wait channel.items-handle))
     (channel-i64-pair-recv-err-result "sync: channel recv wait failed")
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel items-handle))
+        (semaphore-post channel.items-handle)
         (channel-i64-pair-recv-err-result "sync: channel lock failed"))
       (let
-        [head : i64 (read-i64 (struct-get channel state-addr) 0)]
+        [head : i64 (read-i64 channel.state-addr 0)]
         [slot : i64 (* head 2)]
-        [left : i64 (read-i64 (struct-get channel slots-addr) slot)]
-        [right : i64 (read-i64 (struct-get channel slots-addr) (+ slot 1))]
+        [left : i64 (read-i64 channel.slots-addr slot)]
+        [right : i64 (read-i64 channel.slots-addr (+ slot 1))]
         (begin
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             0
             (channel-i64-pair-next-index channel head))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+          (if (not (semaphore-post channel.mutex-handle))
             (channel-i64-pair-recv-err-result "sync: channel unlock failed")
-            (if (semaphore-post (struct-get channel spaces-handle))
+            (if (semaphore-post channel.spaces-handle)
               (channel-i64-pair-recv-ok-result (ChannelI64Pair left right))
               (channel-i64-pair-recv-err-result
                 "sync: channel recv signal failed"))))))))
@@ -1189,29 +1177,27 @@
     (begin
       (set!
         ok
-        (if (semaphore-close (struct-get channel mutex-handle))
+        (if (semaphore-close channel.mutex-handle)
           ok
           false))
       (set!
         ok
-        (if (semaphore-close (struct-get channel items-handle))
+        (if (semaphore-close channel.items-handle)
           ok
           false))
       (set!
         ok
-        (if (semaphore-close (struct-get channel spaces-handle))
+        (if (semaphore-close channel.spaces-handle)
           ok
           false))
       (set!
         ok
-        (if (runtime-free
-          (struct-get channel slots-addr)
-          (struct-get channel slots-bytes))
+        (if (runtime-free channel.slots-addr channel.slots-bytes)
           ok
           false))
       (set!
         ok
-        (if (runtime-free (struct-get channel state-addr) 16)
+        (if (runtime-free channel.state-addr 16)
           ok
           false))
       ok)))
@@ -1222,13 +1208,13 @@
   [dst : (__tl_dyn-array i64)]
   [offset : i64]) : unit
   (begin
-    (array-set! dst offset (struct-get channel slots-addr))
-    (array-set! dst (+ offset 1) (struct-get channel state-addr))
-    (array-set! dst (+ offset 2) (struct-get channel capacity))
-    (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
-    (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
-    (array-set! dst (+ offset 5) (struct-get channel items-handle))
-    (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+    (set! (array-ref dst offset) channel.slots-addr)
+    (set! (array-ref dst (+ offset 1)) channel.state-addr)
+    (set! (array-ref dst (+ offset 2)) channel.capacity)
+    (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
+    (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
+    (set! (array-ref dst (+ offset 5)) channel.items-handle)
+    (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
 
 ;: Rebuild a pair channel handle from a raw `i64` array at `offset`.
 (define (channel-i64-pair-load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : ChannelI64PairChannel
@@ -1245,7 +1231,7 @@
 (define (channel-string-next-index [channel : ChannelString] [index : i64]) : i64
   (let
     [next : i64 (+ index 1)]
-    (if (>= next (struct-get channel capacity))
+    (if (>= next channel.capacity)
       0
       next)))
 
@@ -1263,9 +1249,9 @@
     state-addr
     capacity
     slots-bytes
-    (struct-get mutex handle)
-    (struct-get items handle)
-    (struct-get spaces handle)))
+    mutex.handle
+    items.handle
+    spaces.handle))
 
 ;: Finish string channel creation after storage allocation.
 (define (channel-string-create-semaphores
@@ -1339,46 +1325,46 @@
 
 ;: Send `value`, blocking until one string slot is available.
 (define (channel-string-send [channel : ChannelString] [value : String]) : ChannelStringSendResult
-  (if (not (semaphore-wait (struct-get channel spaces-handle)))
+  (if (not (semaphore-wait channel.spaces-handle))
     (channel-string-send-err-result "sync: channel send wait failed")
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel spaces-handle))
+        (semaphore-post channel.spaces-handle)
         (channel-string-send-err-result "sync: channel lock failed"))
       (let
-        [tail : i64 (read-i64 (struct-get channel state-addr) 1)]
+        [tail : i64 (read-i64 channel.state-addr 1)]
         (begin
-          (write-string! (struct-get channel slots-addr) tail value)
+          (write-string! channel.slots-addr tail value)
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             1
             (channel-string-next-index channel tail))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+          (if (not (semaphore-post channel.mutex-handle))
             (channel-string-send-err-result "sync: channel unlock failed")
-            (if (semaphore-post (struct-get channel items-handle))
+            (if (semaphore-post channel.items-handle)
               (channel-string-send-ok-result)
               (channel-string-send-err-result
                 "sync: channel send signal failed"))))))))
 
 ;: Receive one string value, blocking until one queued message is available.
 (define (channel-string-recv [channel : ChannelString]) : ChannelStringRecvResult
-  (if (not (semaphore-wait (struct-get channel items-handle)))
+  (if (not (semaphore-wait channel.items-handle))
     (channel-string-recv-err-result "sync: channel recv wait failed")
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel items-handle))
+        (semaphore-post channel.items-handle)
         (channel-string-recv-err-result "sync: channel lock failed"))
       (let
-        [head : i64 (read-i64 (struct-get channel state-addr) 0)]
-        [value : String (read-string (struct-get channel slots-addr) head)]
+        [head : i64 (read-i64 channel.state-addr 0)]
+        [value : String (read-string channel.slots-addr head)]
         (begin
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             0
             (channel-string-next-index channel head))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+          (if (not (semaphore-post channel.mutex-handle))
             (channel-string-recv-err-result "sync: channel unlock failed")
-            (if (semaphore-post (struct-get channel spaces-handle))
+            (if (semaphore-post channel.spaces-handle)
               (ChannelStringRecvOk value)
               (channel-string-recv-err-result
                 "sync: channel recv signal failed"))))))))
@@ -1390,29 +1376,27 @@
     (begin
       (set!
         ok
-        (if (semaphore-close (struct-get channel mutex-handle))
+        (if (semaphore-close channel.mutex-handle)
           ok
           false))
       (set!
         ok
-        (if (semaphore-close (struct-get channel items-handle))
+        (if (semaphore-close channel.items-handle)
           ok
           false))
       (set!
         ok
-        (if (semaphore-close (struct-get channel spaces-handle))
+        (if (semaphore-close channel.spaces-handle)
           ok
           false))
       (set!
         ok
-        (if (runtime-free
-          (struct-get channel slots-addr)
-          (struct-get channel slots-bytes))
+        (if (runtime-free channel.slots-addr channel.slots-bytes)
           ok
           false))
       (set!
         ok
-        (if (runtime-free (struct-get channel state-addr) 16)
+        (if (runtime-free channel.state-addr 16)
           ok
           false))
       ok)))
@@ -1423,13 +1407,13 @@
   [dst : (__tl_dyn-array i64)]
   [offset : i64]) : unit
   (begin
-    (array-set! dst offset (struct-get channel slots-addr))
-    (array-set! dst (+ offset 1) (struct-get channel state-addr))
-    (array-set! dst (+ offset 2) (struct-get channel capacity))
-    (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
-    (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
-    (array-set! dst (+ offset 5) (struct-get channel items-handle))
-    (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+    (set! (array-ref dst offset) channel.slots-addr)
+    (set! (array-ref dst (+ offset 1)) channel.state-addr)
+    (set! (array-ref dst (+ offset 2)) channel.capacity)
+    (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
+    (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
+    (set! (array-ref dst (+ offset 5)) channel.items-handle)
+    (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
 
 ;: Rebuild a string channel handle from a raw `i64` array at `offset`.
 (define (channel-string-load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : ChannelString
@@ -1504,43 +1488,43 @@
 
 ;: Send one i64 value and return whether the send succeeded.
 (define (i64-channel-send-value-ok? [channel : SyncI64Channel] [value : i64]) : bool
-  (if (not (semaphore-wait (struct-get channel spaces-handle)))
+  (if (not (semaphore-wait channel.spaces-handle))
     false
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel spaces-handle))
+        (semaphore-post channel.spaces-handle)
         false)
       (let
-        [tail : i64 (read-i64 (struct-get channel state-addr) 1)]
+        [tail : i64 (read-i64 channel.state-addr 1)]
         (begin
-          (write-i64! (struct-get channel slots-addr) tail value)
+          (write-i64! channel.slots-addr tail value)
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             1
-            (i64-channel-next-index (struct-get channel capacity) tail))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+            (i64-channel-next-index channel.capacity tail))
+          (if (not (semaphore-post channel.mutex-handle))
             false
-            (semaphore-post (struct-get channel items-handle))))))))
+            (semaphore-post channel.items-handle)))))))
 
 ;: Receive one i64 value, or return `fallback` on error.
 (define (i64-channel-recv-or [channel : SyncI64Channel] [fallback : i64]) : i64
-  (if (not (semaphore-wait (struct-get channel items-handle)))
+  (if (not (semaphore-wait channel.items-handle))
     fallback
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel items-handle))
+        (semaphore-post channel.items-handle)
         fallback)
       (let
-        [head : i64 (read-i64 (struct-get channel state-addr) 0)]
-        [value : i64 (read-i64 (struct-get channel slots-addr) head)]
+        [head : i64 (read-i64 channel.state-addr 0)]
+        [value : i64 (read-i64 channel.slots-addr head)]
         (begin
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             0
-            (i64-channel-next-index (struct-get channel capacity) head))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+            (i64-channel-next-index channel.capacity head))
+          (if (not (semaphore-post channel.mutex-handle))
             fallback
-            (if (semaphore-post (struct-get channel spaces-handle))
+            (if (semaphore-post channel.spaces-handle)
               value
               fallback)))))))
 
@@ -1608,55 +1592,49 @@
 (define (channel-i64-pair-send-value-ok?
   [channel : ChannelI64PairChannel]
   [value : ChannelI64Pair]) : bool
-  (if (not (semaphore-wait (struct-get channel spaces-handle)))
+  (if (not (semaphore-wait channel.spaces-handle))
     false
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel spaces-handle))
+        (semaphore-post channel.spaces-handle)
         false)
       (let
-        [tail : i64 (read-i64 (struct-get channel state-addr) 1)]
+        [tail : i64 (read-i64 channel.state-addr 1)]
         [slot : i64 (* tail 2)]
         (begin
+          (write-i64! channel.slots-addr slot value.left)
+          (write-i64! channel.slots-addr (+ slot 1) value.right)
           (write-i64!
-            (struct-get channel slots-addr)
-            slot
-            (struct-get value left))
-          (write-i64!
-            (struct-get channel slots-addr)
-            (+ slot 1)
-            (struct-get value right))
-          (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             1
             (channel-i64-pair-next-index channel tail))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+          (if (not (semaphore-post channel.mutex-handle))
             false
-            (semaphore-post (struct-get channel items-handle))))))))
+            (semaphore-post channel.items-handle)))))))
 
 ;: Receive one pair value, or return `fallback` on error.
 (define (channel-i64-pair-recv-or
   [channel : ChannelI64PairChannel]
   [fallback : ChannelI64Pair]) : ChannelI64Pair
-  (if (not (semaphore-wait (struct-get channel items-handle)))
+  (if (not (semaphore-wait channel.items-handle))
     fallback
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel items-handle))
+        (semaphore-post channel.items-handle)
         fallback)
       (let
-        [head : i64 (read-i64 (struct-get channel state-addr) 0)]
+        [head : i64 (read-i64 channel.state-addr 0)]
         [slot : i64 (* head 2)]
-        [left : i64 (read-i64 (struct-get channel slots-addr) slot)]
-        [right : i64 (read-i64 (struct-get channel slots-addr) (+ slot 1))]
+        [left : i64 (read-i64 channel.slots-addr slot)]
+        [right : i64 (read-i64 channel.slots-addr (+ slot 1))]
         (begin
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             0
             (channel-i64-pair-next-index channel head))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+          (if (not (semaphore-post channel.mutex-handle))
             fallback
-            (if (semaphore-post (struct-get channel spaces-handle))
+            (if (semaphore-post channel.spaces-handle)
               (ChannelI64Pair left right)
               fallback)))))))
 
@@ -1724,43 +1702,43 @@
 (define (channel-string-send-value-ok?
   [channel : ChannelString]
   [value : String]) : bool
-  (if (not (semaphore-wait (struct-get channel spaces-handle)))
+  (if (not (semaphore-wait channel.spaces-handle))
     false
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel spaces-handle))
+        (semaphore-post channel.spaces-handle)
         false)
       (let
-        [tail : i64 (read-i64 (struct-get channel state-addr) 1)]
+        [tail : i64 (read-i64 channel.state-addr 1)]
         (begin
-          (write-string! (struct-get channel slots-addr) tail value)
+          (write-string! channel.slots-addr tail value)
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             1
             (channel-string-next-index channel tail))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+          (if (not (semaphore-post channel.mutex-handle))
             false
-            (semaphore-post (struct-get channel items-handle))))))))
+            (semaphore-post channel.items-handle)))))))
 
 ;: Receive one string value, or return `fallback` on error.
 (define (channel-string-recv-or [channel : ChannelString] [fallback : String]) : String
-  (if (not (semaphore-wait (struct-get channel items-handle)))
+  (if (not (semaphore-wait channel.items-handle))
     fallback
-    (if (not (semaphore-wait (struct-get channel mutex-handle)))
+    (if (not (semaphore-wait channel.mutex-handle))
       (begin
-        (semaphore-post (struct-get channel items-handle))
+        (semaphore-post channel.items-handle)
         fallback)
       (let
-        [head : i64 (read-i64 (struct-get channel state-addr) 0)]
-        [value : String (read-string (struct-get channel slots-addr) head)]
+        [head : i64 (read-i64 channel.state-addr 0)]
+        [value : String (read-string channel.slots-addr head)]
         (begin
           (write-i64!
-            (struct-get channel state-addr)
+            channel.state-addr
             0
             (channel-string-next-index channel head))
-          (if (not (semaphore-post (struct-get channel mutex-handle)))
+          (if (not (semaphore-post channel.mutex-handle))
             fallback
-            (if (semaphore-post (struct-get channel spaces-handle))
+            (if (semaphore-post channel.spaces-handle)
               value
               fallback)))))))
 
@@ -1769,7 +1747,7 @@
   (let
     [mutex : SyncI64Mutex
       (i64-mutex-create-initial-or initial (SyncI64Mutex 0 0 0))]
-    [ok : bool (not (= (struct-get mutex mutex-handle) 0))]
+    [ok : bool (not (= mutex.mutex-handle 0))]
     (begin
       (if ok
         (begin

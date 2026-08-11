@@ -134,9 +134,8 @@
                         (set! valid false)
                         (set! error "compiler lzss: truncated literal token"))
                       (begin
-                        (array-set!
-                          out
-                          out-index
+                        (set!
+                          (array-ref out out-index)
                           (array-ref
                             payload
                             (+ compressed-start compressed-index)))
@@ -185,9 +184,8 @@
                                 [copy-index : i64 0]
                                 (while (< copy-index length)
                                   (begin
-                                    (array-set!
-                                      out
-                                      out-index
+                                    (set!
+                                      (array-ref out out-index)
                                       (array-ref out (- out-index offset)))
                                     (set! out-index (+ out-index 1))
                                     (set! copy-index (+ copy-index 1)))))])))))

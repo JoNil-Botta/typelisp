@@ -13,11 +13,11 @@
 
 (define (next [iter : (&mut iter (Iter source))]) : Next
   (let
-    [index : i64 (struct-get iter index)]
-    (if (>= index (struct-get iter len))
+    [index : i64 iter.index]
+    (if (>= index iter.len)
       (Done)
       (begin
-        (set! (struct-get iter index) (+ index 1))
+        (set! iter.index (+ index 1))
         (Item index)))))
 
 (define (hold [iter : (&mut iter (Iter source))]) : (&mut iter (Iter source))
@@ -29,6 +29,6 @@
     [iter : (Iter items) (Iter (& items) 1 0)]
     [borrowed : (&mut iter (Iter items)) (hold (&mut iter))]
     (begin
-      (set! (struct-get iter index) 1)
+      (set! iter.index 1)
       (next borrowed)
       unit)))

@@ -12,8 +12,8 @@
     [items : (__tl_dyn-array PtrOffsetTriple)
       (array.make-array PtrOffsetTriple 2)]
     (begin
-      (array-set! items 0 (PtrOffsetTriple 1 2 3))
-      (array-set! items 1 (PtrOffsetTriple 13 17 19))
+      (set! (array-ref items 0) (PtrOffsetTriple 1 2 3))
+      (set! (array-ref items 1) (PtrOffsetTriple 13 17 19))
       (let
         [second : PtrOffsetTriple
           (unsafe
@@ -21,7 +21,7 @@
               (ptr-offset
                 (ptr-cast (array-data items) : (Ptr PtrOffsetTriple))
                 1)))]
-        [value : i64 (struct-get second b)]
+        [value : i64 second.b]
         (if (= value 17)
           42
           value)))))

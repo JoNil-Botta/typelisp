@@ -33,9 +33,8 @@
       (Pair (mix (+ seed 50) (+ seed 51)) (mix (+ seed 52) (+ seed 53)))]
     [p5 : Pair
       (Pair (mix (+ seed 60) (+ seed 61)) (mix (+ seed 62) (+ seed 63)))]
-    [cell : (Box i64)
-      (box (+ (struct-get p0 x) (+ (struct-get p3 y) (struct-get p5 x))))]
-    [bonus : i64 (box-get cell)]
+    [cell : (Box i64) (box (+ p0.x (+ p3.y p5.x)))]
+    [bonus : i64 (__tl-box-place cell)]
     (+
       (bit-xor
         (bit-xor
@@ -45,19 +44,15 @@
                 (bit-xor
                   (bit-xor
                     (bit-xor
-                      (bit-xor
-                        (bit-xor
-                          (bit-xor (struct-get p0 x) (struct-get p0 y))
-                          (struct-get p1 x))
-                        (struct-get p1 y))
-                      (struct-get p2 x))
-                    (struct-get p2 y))
-                  (struct-get p3 x))
-                (struct-get p3 y))
-              (struct-get p4 x))
-            (struct-get p4 y))
-          (struct-get p5 x))
-        (struct-get p5 y))
+                      (bit-xor (bit-xor (bit-xor p0.x p0.y) p1.x) p1.y)
+                      p2.x)
+                    p2.y)
+                  p3.x)
+                p3.y)
+              p4.x)
+            p4.y)
+          p5.x)
+        p5.y)
       bonus)))
 
 (define (run-ref [seed : i64]) : i64

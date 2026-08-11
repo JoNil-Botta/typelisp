@@ -3674,6 +3674,30 @@
     "a call-bearing body at the dominant floor stays out of line at every straight-line site"))
 
 (test
+  inline-accessor-depth-weight
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-weight-ok?)
+    "two nested-loop sites weigh 128 and take the accessor; the same two sites one loop shallower weigh 16 and keep both calls"))
+
+(test
+  inline-accessor-depth-oversize-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-oversize-refusal-ok?)
+    "a body past the accessor block ceiling stays out of line at the same nested-loop sites"))
+
+(test
+  inline-accessor-depth-bounds-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-bounds-refusal-ok?)
+    "a bounds-carrying body stays out of line at the same nested-loop sites: weighted evidence admits only the cheap class"))
+
+(test
+  inline-depth-multiple-latches
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-depth-multiple-latches-ok?)
+    "multiple backedges to one loop header contribute one depth level"))
+
+(test
   inline-branch-chain-site
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-branch-chain-site-ok?)

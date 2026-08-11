@@ -3601,6 +3601,336 @@
                 (reg.compiler-reg-call-split-shadows split-vars)
                 6)))]))))
 
+;; ---------------------------------------------------------------------------
+;; P11b loop-scoped rescue regions.
+;;
+;; Three-block layout, which is the whole admitted shape in miniature:
+;;   0 "entry": defines the invariant, jumps to the loop
+;;   1 "loop" : reads the invariant, branches back to itself (self-loop) or out
+;;   2 "exit" : returns
+;; The header's predecessors are exactly {entry, itself}, so entry is the sole
+;; preheader and its terminator (point 4) is the region anchor; the region runs
+;; to the loop's last instruction (point 10) so the BACK EDGE stays inside it.
+;; ---------------------------------------------------------------------------
+(cfg
+  test
+  (define (compiler-reg-loop-region-fixture
+    [define-in-loop? : bool]
+    [call-in-loop? : bool]) : ir.CompilerIrFunction
+    (let
+      [loop-tail : ir.CompilerIrInstrList
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.BinOp
+            2
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.Var 0)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              1
+              (ir.CompilerIrValue.Var 2)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 2)
+                (ir.compiler-ir-label "loop")
+                (ir.compiler-ir-label "exit"))
+              ir.CompilerIrInstrList.Nil)))]
+      [loop-body : ir.CompilerIrInstrList
+        (if define-in-loop?
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 9)
+              (compiler-reg-i64-ty))
+            loop-tail)
+          (if call-in-loop?
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                3
+                (ir.compiler-ir-test-symbol "side_effect")
+                (ir.CompilerIrCallArgs.Nil)
+                (ast.AstType.Unit))
+              loop-tail)
+            loop-tail))]
+      (ir.CompilerIrFunction.Function
+        (ir.compiler-ir-test-symbol "loop_region_fixture")
+        ir.CompilerIrParamList.Nil
+        (ast.AstType.Unit)
+        4
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "entry")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                0
+                (ir.CompilerIrValue.I64 7)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  1
+                  (ir.CompilerIrValue.I64 0)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+                  ir.CompilerIrInstrList.Nil))))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block (ir.compiler-ir-label "loop") loop-body)
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "exit")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                  ir.CompilerIrInstrList.Nil))
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; Collect loop rows for var 0 (marked a full-grade candidate) and return the
+;; bucket the collector filled.
+(cfg
+  test
+  (define (compiler-reg-loop-region-rows-for
+    [define-in-loop? : bool]
+    [call-in-loop? : bool]) : reg.CompilerRegCallRegionStatSeq
+    (match (compiler-reg-loop-region-fixture define-in-loop? call-in-loop?)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        (let
+          [cand : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [order : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [buckets : (__tl_dyn-array reg.CompilerRegCallRegionStatSeq)
+            (array.make-array reg.CompilerRegCallRegionStatSeq vars)]
+          [bi : i64 0]
+          (begin
+            (while (< bi vars)
+              (begin
+                (array-set!
+                  buckets
+                  bi
+                  (reg.compiler-reg-call-region-stat-seq-empty))
+                (set! bi (+ bi 1))))
+            (array-set! cand 0 (reg.compiler-reg-call-region-cand-full))
+            (array-set! order 0 0)
+            (reg.compiler-reg-call-region-loop-rows!
+              (ast.ast-node-pool-reader-type-segment-bases)
+              blocks
+              (reg.compiler-reg-function-loop-depths blocks)
+              cand
+              order
+              1
+              vars
+              buckets)
+            (array-ref buckets 0)))])))
+
+;; (a) A read-only loop invariant gets ONE loop row anchored in the preheader.
+(cfg
+  test
+  (define (compiler-reg-loop-region-invariant-ok?) : bool
+    (let
+      [rows : reg.CompilerRegCallRegionStatSeq
+        (compiler-reg-loop-region-rows-for false false)]
+      (and
+        (= (struct-get rows len) 1)
+        (match (array-ref (struct-get rows slots) 0)
+          [(reg.CompilerRegCallRegionStat
+              var
+              lo
+              hi
+              uses
+              defs
+              firstdef
+              depth
+              kind)
+            (and
+              (= var 0)
+              ;; anchor = the preheader's terminator, NOT the loop header: the
+              ;; entry reload has to run once per loop entry, not per iteration
+              (= lo 4)
+              ;; ... and the region runs to the loop's last instruction so the
+              ;; back edge is covered and the shadow survives the iteration
+              (= hi 10)
+              (= uses 1)
+              (= defs 0)
+              (= firstdef 0)
+              (= depth 1)
+              (= kind (reg.compiler-reg-call-region-kind-loop)))])))))
+
+;; (c) A root DEFINED inside the region is not loop-invariant: refuse it. The
+;; shadow would go stale against its own home slot on the next iteration.
+(cfg
+  test
+  (define (compiler-reg-loop-region-defined-in-loop-refused?) : bool
+    (= (struct-get (compiler-reg-loop-region-rows-for true false) len) 0)))
+
+;; (b) A call in the loop body kills the whole region -- the shadow cannot
+;; survive a kind-0 clobber, so no loop-wide row is offered and the invariant
+;; falls back to the per-inter-call-range block rows the walk already emits.
+(cfg
+  test
+  (define (compiler-reg-loop-region-call-refused?) : bool
+    (= (struct-get (compiler-reg-loop-region-rows-for false true) len) 0)))
+
+;; Predecessor-range fixture: block 1 is the header under test, block 0 the
+;; layout preheader, block 2 the exit.
+(cfg
+  test
+  (define (compiler-reg-loop-region-ranges [header-lo : i64] [header-hi : i64]) : (__tl_dyn-array
+      i64)
+    (let
+      [ranges : (__tl_dyn-array i64) (array.make-array i64 6)]
+      (begin
+        (array-set! ranges 0 3)
+        (array-set! ranges 1 (- 0 1))
+        (array-set! ranges 2 header-lo)
+        (array-set! ranges 3 header-hi)
+        (array-set! ranges 4 1)
+        (array-set! ranges 5 1)
+        ranges))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-region-depths [header-depth : i64]) : (__tl_dyn-array
+      i64)
+    (let
+      [depths : (__tl_dyn-array i64) (array.make-array i64 3)]
+      (begin
+        (array-set! depths 0 0)
+        (array-set! depths 1 header-depth)
+        (array-set! depths 2 0)
+        depths))))
+
+;; (e) Single-entry admission. The header may be entered ONLY from its layout
+;; predecessor and from inside the region; any other edge in means the anchor
+;; does not dominate the remapped uses.
+(cfg
+  test
+  (define (compiler-reg-loop-region-admit-ok?) : bool
+    (and
+      ;; preds {entry, self}: the admitted self-loop shape
+      (reg.compiler-reg-call-region-loop-admit?
+        (compiler-reg-loop-region-ranges 0 1)
+        (compiler-reg-loop-region-depths 1)
+        3
+        1
+        1)
+      ;; a later block also jumps into the header -> refuse
+      (not
+        (reg.compiler-reg-call-region-loop-admit?
+          (compiler-reg-loop-region-ranges 0 2)
+          (compiler-reg-loop-region-depths 1)
+          3
+          1
+          1))
+      ;; no edge from the layout predecessor -> there is no preheader to anchor
+      (not
+        (reg.compiler-reg-call-region-loop-admit?
+          (compiler-reg-loop-region-ranges 1 1)
+          (compiler-reg-loop-region-depths 1)
+          3
+          1
+          1))
+      ;; not a loop at all
+      (not
+        (reg.compiler-reg-call-region-loop-admit?
+          (compiler-reg-loop-region-ranges 0 1)
+          (compiler-reg-loop-region-depths 0)
+          3
+          1
+          1))
+      ;; the header is block 0: no layout predecessor exists
+      (not
+        (reg.compiler-reg-call-region-loop-admit?
+          (compiler-reg-loop-region-ranges 0 1)
+          (compiler-reg-loop-region-depths 1)
+          3
+          0
+          0)))))
+
+;; (d) Scoring. A block row charges its entry reload against refs that run at
+;; the same frequency; a loop row's reload has LEFT the loop, so its uses take
+;; the depth weight alone. One use per iteration is worth nothing under the
+;; block formula and is exactly what the loop formula is for.
+(cfg
+  test
+  (define (compiler-reg-loop-region-score-ok?) : bool
+    (let
+      [ends : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [one-use-block : reg.CompilerRegCallRegionStat
+        (reg.CompilerRegCallRegionStat
+          0
+          4
+          10
+          1
+          0
+          0
+          1
+          (reg.compiler-reg-call-region-kind-block))]
+      [one-use-loop : reg.CompilerRegCallRegionStat
+        (reg.CompilerRegCallRegionStat
+          0
+          4
+          10
+          1
+          0
+          0
+          1
+          (reg.compiler-reg-call-region-kind-loop))]
+      [deep-loop : reg.CompilerRegCallRegionStat
+        (reg.CompilerRegCallRegionStat
+          0
+          4
+          10
+          2
+          0
+          0
+          3
+          (reg.compiler-reg-call-region-kind-loop))]
+      (begin
+        (reg.compiler-reg-fill-i64-array ends 1073741824)
+        (and
+          ;; one use, one entry mov: no static win, so the block row is refused
+          (not (reg.compiler-reg-call-region-stat-eligible? one-use-block ends))
+          ;; the same shape as a loop row pays weight(1) - 1 = 1 reload
+          (reg.compiler-reg-call-region-stat-eligible? one-use-loop ends)
+          (= (reg.compiler-reg-call-region-stat-score one-use-loop ends) 1)
+          ;; depth 3, two uses: 2 * 8 - 1
+          (= (reg.compiler-reg-call-region-stat-score deep-loop ends) 15)
+          ;; a loop row outside any loop is not a loop row
+          (not
+            (reg.compiler-reg-call-region-stat-eligible?
+              (reg.CompilerRegCallRegionStat
+                0
+                4
+                10
+                1
+                0
+                0
+                0
+                (reg.compiler-reg-call-region-kind-loop))
+              ends)))))))
+
+;; Picked-row exclusion is an OVERLAP test now: a loop row spans the block rows
+;; nested inside it, and one root can only hold one shadow at a time.
+(cfg
+  test
+  (define (compiler-reg-loop-region-overlap-ok?) : bool
+    (let
+      [lo : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [hi : (__tl_dyn-array i64) (array.make-array i64 4)]
+      (begin
+        (array-set! lo 0 100)
+        (array-set! hi 0 200)
+        (and
+          ;; strictly inside
+          (reg.compiler-reg-call-region-picked? lo hi 1 120 140)
+          ;; touching at either end still overlaps
+          (reg.compiler-reg-call-region-picked? lo hi 1 200 260)
+          (reg.compiler-reg-call-region-picked? lo hi 1 40 100)
+          ;; disjoint on both sides
+          (not (reg.compiler-reg-call-region-picked? lo hi 1 40 98))
+          (not (reg.compiler-reg-call-region-picked? lo hi 1 202 260))
+          ;; nothing picked yet
+          (not (reg.compiler-reg-call-region-picked? lo hi 0 120 140)))))))
+
 (cfg
   test
   (define (compiler-reg-edge-copy-list-has?
@@ -11810,6 +12140,24 @@
         test
         (compiler-reg-scalar-call-spanning-multiblock-boundary-ok?)
         true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-region-invariant-ok?"
+      (cfg test (compiler-reg-loop-region-invariant-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-region-defined-in-loop-refused?"
+      (cfg test (compiler-reg-loop-region-defined-in-loop-refused?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-region-call-refused?"
+      (cfg test (compiler-reg-loop-region-call-refused?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-region-admit-ok?"
+      (cfg test (compiler-reg-loop-region-admit-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-region-score-ok?"
+      (cfg test (compiler-reg-loop-region-score-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-region-overlap-ok?"
+      (cfg test (compiler-reg-loop-region-overlap-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-edge-copy-linear-ok?"
       (cfg test (compiler-reg-edge-copy-linear-ok?) true))

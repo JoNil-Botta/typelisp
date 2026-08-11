@@ -46929,7 +46929,9 @@
 ;; Source-level runtime witness for the whole classifier path: lowering must
 ;; form the compare chain, bit_test must rewrite it, and the backend must fuse
 ;; the shift/test/branch without changing any boundary result. The inputs live
-;; in an array so the opt2 smoke cannot constant-fold the calls away.
+;; in an array so the opt2 smoke cannot constant-fold the calls away. The
+;; predicate feeds the validation branch directly: after inlining, that is the
+;; hot lexer shape whose branch targets need no phi copies and admit `btq`.
 (define (opt-bit-test-runtime-classifier? [c : i64]) : bool
   (cond
     [(and (>= c 48) (<= c 57)) true]
@@ -46984,12 +46986,11 @@
     (begin
       (while (< index (array-length values))
         (let
-          [actual : i64
+          [expected-value : i64 (array-ref expected index)]
+          (begin
             (if (opt-bit-test-runtime-classifier? (array-ref values index))
-              1
-              0)]
-          (if (!= actual (array-ref expected index))
-            (return (+ index 1))
+              (when (!= expected-value 1) (return (+ index 1)))
+              (when (!= expected-value 0) (return (+ index 1))))
             (set! index (+ index 1)))))
       42)))
 

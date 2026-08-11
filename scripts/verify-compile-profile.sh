@@ -1338,6 +1338,13 @@ fi
 # boundary from 31 to 32 segments: the authoritative Windows CI probe measured
 # 2,031,667 used nodes, 2,097,152 capacity, and 67,108,864 physical payload
 # bytes.
+# #5460's default trusted TLCI route changes where the byte-identical selfhost
+# graph is retained: native commits put macro_expand at 46 segments (2,989,325
+# used nodes, 3,014,656 capacity, 96,468,992 payload bytes) and reduce typecheck
+# to 32 segments (2,045,446 used nodes, 2,097,152 capacity, 67,108,864 payload
+# bytes). The controlled route-off/default-route outputs had identical
+# 66,255,493-byte assembly; default routing reduced total time by 2.57%, while
+# peak live allocation increased by 1.29% without changing its budget.
 # #5493's removal of the splice-tail rebuild plans and filtered-environment
 # walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
 # authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
@@ -1477,12 +1484,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 46 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # Path-sensitive scalar-loop ownership joins (#6227) put the checked
-    # selfhost expression graph just past the former 32-segment boundary.
+    # Native result commit leaves the checked expression graph within the
+    # 32-segment boundary; macro_expand owns the corresponding exact increase.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 33 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \

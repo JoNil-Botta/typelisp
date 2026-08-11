@@ -19486,20 +19486,6 @@
               backend-state
               (+ var index))))])))
 
-;; Compatibility boundary for older callers that do not yet carry a backend
-;; capability. Production emission uses the explicit-state twin above.
-(define (compiler-backend-group-word-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [var : i64]
-  [index : i64]
-  [vars : i64]) : ResultCompilerBackend
-  (compiler-backend-group-word-operand-with-backend-state
-    assignments
-    var
-    index
-    vars
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))))
-
 ;; Load a group value's two words into `reg0`/`reg1` (for return -> rax:rdx
 ;; or an argument register pair). The value must be a group var.
 (define (compiler-backend-emit-group-load
@@ -58573,13 +58559,6 @@
       (+ point 1)
       (compiler_abi.compiler-abi-register-id-from-spelling reg))))
 
-;; Register scavenger context (step 15b). Holds the FINAL-IR per-var live
-;; intervals + assignments for one explicitly passed function owner, so the
-;; backend can ask which physical register is free at an instruction's point
-;; instead of hardcoding scratch. Installed once per function (read-only).
-(define (compiler-backend-scavenge-empty-assignments) : compiler_regalloc.CompilerRegAssignmentTable
-  (compiler_regalloc.compiler-reg-assignment-table-empty))
-
 ;; Forward span (in point units; each instruction step is +2) that a scavenged
 ;; STAGING register is queried across, beyond its emit position. Loads sharing a
 ;; base register fuse into one emit step but the lowering numbers their def points
@@ -68466,24 +68445,6 @@
     (CompilerBackendMode.Scalar)
     spans
     emit-entry))
-
-(define (compiler-backend-emit-program-target-with-mode-buffer
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    false
-    false
-    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-backend-emit-program-prefix-buffer
   [target : CompilerBackendTarget]
@@ -80084,16 +80045,6 @@
     compiler-backend-function-i64-array-addr-of-forwarding-src
     value))
 
-(define (compiler-backend-test-set-compiler-backend-assembly-stream-home-arena!
-  [stream : CompilerBackendStreamState]
-  [value : arena.Arena]) : unit
-  (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (begin
-      (set! data.assembly-home-arena value)
-      (compiler-backend-stream-state-data-set! stream data))))
-
 (define (compiler-backend-function-scratch-fixture-set-const-hoist-frame-count!
   [function-state : CompilerBackendFunctionState]
   [value : i64]) : unit
@@ -80415,12 +80366,6 @@
   (compiler-backend-function-scratch-i64
     function-state
     compiler-backend-scratch-i64-scavenge-plan-reg-mask))
-
-(define (compiler-backend-function-scratch-fixture-get-scavenge-ctx-scratch-masks
-  [function-state : CompilerBackendFunctionState]) : (__tl_dyn-array i64)
-  (compiler-backend-function-scratch-i64-array
-    function-state
-    compiler-backend-scratch-i64-array-scavenge-scratch-masks))
 
 (define (compiler-backend-test-get-compiler-backend-peephole-memory-base-none) : i64
   compiler-backend-peephole-memory-base-none)
@@ -80884,12 +80829,6 @@
   (compiler-backend-function-scratch-bool?
     function-state
     compiler-backend-scratch-bool-emergency-used))
-
-(define (compiler-backend-function-scratch-fixture-get-emergency-regs
-  [function-state : CompilerBackendFunctionState]) : (__tl_dyn-array i64)
-  (compiler-backend-function-scratch-i64-array
-    function-state
-    compiler-backend-scratch-i64-array-emergency-regs))
 
 (define (compiler-backend-test-get-compiler-backend-gep-fold-ready
   [backend-state : CompilerBackendState]) : bool

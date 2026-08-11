@@ -89,6 +89,7 @@ Some gate-owned helpers deliberately retain measurement-oriented names:
 | `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` and `measure-compile-rss.sh` |
 | `measure-result-import-cost.sh` | `verify-result-import-harness.sh` fixture preparation |
 | `analyze-stage0-size.sh` | `verify-stage0-smoke.sh` report |
+| `analyze-selfhost-build-asm-size.sh` | `ci-verify.sh` parser self-test; optional linked-size report |
 | `benchmark-bootstrap.ps1` | `ci-verify.sh` command-construction self-test |
 
 Keep these at the top level while their owning gate references them.

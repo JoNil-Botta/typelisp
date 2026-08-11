@@ -210,6 +210,43 @@ EOF
     return 1
 }
 
+# Emit the legacy global-view cfg only after
+# bootstrap_resolve_seed_global_views has classified the compiler that will
+# consume it. Keep this fail-closed: silently omitting the cfg for an
+# unclassified legacy seed is as broken as handing it to a modern seed.
+bootstrap_legacy_global_view_cfg_args() {
+    case "${SEED_REQUIRES_LEGACY_GLOBAL_VIEWS:-}" in
+        0) ;;
+        1) printf '%s\n' --cfg stage0-seed-bootstrap ;;
+        *)
+            echo "bootstrap global shared-view capability is unresolved" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Resolve the original seed before any one-generation compatibility compiler
+# is built. A bridge source mirror can carry the only stdlib spelling that the
+# seed understands, so probe against the last prepared mirror in the same
+# precedence order used by the bridge build itself.
+bootstrap_resolve_seed_global_views_for_bridges() {
+    root=$1
+    compiler=$2
+    workdir=$3
+    dotted_bridge_root=${4:-}
+    comptime_bridge_root=${5:-}
+
+    seed_global_view_probe_root=$root
+    if [ -n "$dotted_bridge_root" ]; then
+        seed_global_view_probe_root=$dotted_bridge_root
+    fi
+    if [ -n "$comptime_bridge_root" ]; then
+        seed_global_view_probe_root=$comptime_bridge_root
+    fi
+    bootstrap_resolve_seed_global_views \
+        "$compiler" "$workdir" "$seed_global_view_probe_root"
+}
+
 # A seed compiler's backend runtime is baked into the seed binary. When source
 # introduces a new runtime entry point, the first generated compiler therefore
 # needs a one-generation compatibility definition. Newer compilers emit the

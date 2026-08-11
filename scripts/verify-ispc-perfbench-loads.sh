@@ -23,6 +23,48 @@ for required in bench.tl kernel.ispc driver.c case.tsv LICENSE.BSD-3-Clause; do
     }
 done
 
+BENCH_SOURCE="$CASE_DIR/bench.tl"
+if grep -Eq '\(Array[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*\)' "$BENCH_SOURCE"; then
+    echo "perfbench_loads: public unsized Array compatibility form remains" >&2
+    exit 1
+fi
+if grep -Fq '__tl_dyn-array' "$BENCH_SOURCE"; then
+    echo "perfbench_loads: caller-authored private dynamic array remains" >&2
+    exit 1
+fi
+if grep -Fq '(import stdlib.array)' "$BENCH_SOURCE" ||
+   grep -Fq '(array.make-array ' "$BENCH_SOURCE"; then
+    echo "perfbench_loads: benchmark still owns compatibility array backing" >&2
+    exit 1
+fi
+for required_surface in \
+    '(import stdlib.vector)' \
+    '(import (vector.vector f32) as f32v)' \
+    '[values : (&mut values (Slice f32))]' \
+    '[values : f32v.Vec (loads-buffer 65536)]'; do
+    grep -Fq "$required_surface" "$BENCH_SOURCE" || {
+        echo "perfbench_loads: missing Vec/Slice surface: $required_surface" >&2
+        exit 1
+    }
+done
+grep -Fq '(while (< repetition 100)' "$BENCH_SOURCE" || {
+    echo "perfbench_loads: missing 100-call measured loop" >&2
+    exit 1
+}
+view_count=$(grep -Ec '\(f32v\.view(-mut)?[[:space:]]' "$BENCH_SOURCE" || true)
+[ "$view_count" -eq 1 ] || {
+    echo "perfbench_loads: expected one persistent Vec view, found $view_count" >&2
+    exit 1
+}
+awk '
+    /\(while \(< repetition 100\)/ { measured = 1 }
+    measured && /\(f32v\.view(-mut)?[[:space:]]/ { bad = 1 }
+    END { exit bad ? 1 : 0 }
+' "$BENCH_SOURCE" || {
+    echo "perfbench_loads: Vec view construction entered the measured loop" >&2
+    exit 1
+}
+
 awk -F '\t' '
 BEGIN {
     expected_header = "schema\tcase\tmode\ttypelisp_status\ttypelisp_diagnostic\tispc_status\tispc_diagnostic\tispc_target\tgang_width\tlane_type\ttypelisp_source\ttypelisp_symbol\tispc_source\tispc_symbol\tdriver\targuments\trepetitions\texpected_exit\tupstream_tag\tupstream_commit\tupstream_path\tupstream_function\tlicense"

@@ -14541,6 +14541,89 @@
       [(ir.CompilerIrValue.Var _) resolved]
       [_ value])))
 
+;; --- wide-literal operand suppression ---------------------------------------
+;;
+;; x86-64 has exactly ONE instruction form that takes a 64-bit immediate:
+;; `movabsq $K, %reg`. Every other operand position -- an ALU source, the value
+;; a shift shifts, a compare's operand -- encodes at most a sign-extended
+;; imm32, so a constant outside [-2^31, 2^31) placed there is not an immediate
+;; at all: the backend must materialize it into a register AT THE USE, once per
+;; execution of the instruction.
+;;
+;; That flips the usual sign of propagating a constant into an operand. The
+;; defining `Mov v, K` is loop-invariant, so LICM hoists it to the preheader
+;; where it costs one `movabsq` per loop ENTRY; folding the literal back into
+;; the operand deletes that Mov and pays a `movabsq` per ITERATION instead --
+;; and, when no register is free at the use, a spill/reload pair around the
+;; scavenged scratch on top. Refusing the substitution keeps the hoisted Mov,
+;; and it is not the worse choice even under pressure: a constant-valued Mov is
+;; rematerializable rather than spillable (compiler-reg-remat-value?), and when
+;; the allocator does leave it in memory the consumer reloads it in one
+;; instruction -- the same one the folded form spent materializing it.
+;;
+;; Flagship: `opt-bit-test-mask-block` materializes its 64-bit window mask as
+;; its own `Mov` precisely so that hoist and the two-register `bt` lowering can
+;; happen (see the note there). Before this rule the global copy sweep folded
+;; the literal straight back into the `Shr`, and lex_source's two classifier
+;; sites each paid `movabsq $4899916392364504625` on every one of the ~2.27M
+;; chain entries, one of them wrapped in a `movq %r9, 8(%rsp)` /
+;; `movq 8(%rsp), %r9` spill pair. Keeping the Var costs the register-rich site
+;; nothing at all (a bare `bt` against the hoisted register) and the
+;; register-poor site one reload, which is why the `bt` lowering had to learn to
+;; place a non-register-homed mask (compiler-backend-bit-test-load-mask) before
+;; this rule was a win everywhere: -2,690,288 Ir on lex_source, every other
+;; benchmark row unchanged.
+;;
+;; Scope: the LEFT operand of a BinOp only. The backend's own wide-constant
+;; relief reads the RIGHT operand exclusively
+;; (compiler-backend-const-hoist-instr-wide?, which hoists a wide RHS out of a
+;; loop region), and several lowerings need the right operand to still BE a
+;; literal to fire at all -- the div/mod magic-multiply expansion, shift by a
+;; constant count, `imul $imm, r, r`. A LEFT literal unlocks no lowering in any
+;; of them; it is materialized unconditionally, so suppressing it can only
+;; remove work. This is why the rule is stated by operand position rather than
+;; by loop position: a wide left literal is never encodable, whatever block it
+;; lands in, and the position test needs no loop analysis at this point in the
+;; pipeline.
+;;
+;; The suppression is skipped when the other operand is also a constant, so a
+;; fully-constant expression still reaches the scalar folder and folds.
+(define (opt-copy-operand-imm32-fits? [n : i64]) : bool
+  (and (>= n (- 0 2147483648)) (<= n 2147483647)))
+
+(define (opt-copy-wide-literal? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 n) (not (opt-copy-operand-imm32-fits? n))]
+    [_ false]))
+
+;; The scalar literals copy propagation is allowed to move
+;; (`opt-copy-safe-source?` minus `Var`): if the other operand is one of these,
+;; the instruction is fully constant and folding it is the whole point.
+(define (opt-copy-scalar-literal? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 _) true]
+    [(ir.CompilerIrValue.Bool _) true]
+    [(ir.CompilerIrValue.Char _) true]
+    [(ir.CompilerIrValue.Unit) true]
+    [_ false]))
+
+;; `resolved` is what copy propagation would place in the left operand and
+;; `other` what it would place in the right; returns the operand to emit.
+;; `original` is returned only when it is still a Var (the Mov the refusal
+;; keeps alive) -- an already-literal left operand is left exactly as written.
+(define (opt-global-copy-keep-wide-left
+  [original : ir.CompilerIrValue]
+  [resolved : ir.CompilerIrValue]
+  [other : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (if (and
+    (opt-copy-wide-literal? resolved)
+    (not (opt-copy-scalar-literal? other))
+    (match original
+      [(ir.CompilerIrValue.Var _) true]
+      [_ false]))
+    original
+    resolved))
+
 (define (opt-global-copy-subst-call-args-array
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
@@ -14796,12 +14879,17 @@
         from-ty
         to-ty)]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (ir.CompilerIrInstr.BinOp
-        dst
-        op
-        (opt-global-copy-resolve facts doms block-id pos lhs)
-        (opt-global-copy-resolve facts doms block-id pos rhs)
-        ty)]
+      (let
+        [resolved-lhs : ir.CompilerIrValue
+          (opt-global-copy-resolve facts doms block-id pos lhs)]
+        [resolved-rhs : ir.CompilerIrValue
+          (opt-global-copy-resolve facts doms block-id pos rhs)]
+        (ir.CompilerIrInstr.BinOp
+          dst
+          op
+          (opt-global-copy-keep-wide-left lhs resolved-lhs resolved-rhs)
+          resolved-rhs
+          ty))]
     [(ir.CompilerIrInstr.UnOp dst op src ty)
       (ir.CompilerIrInstr.UnOp
         dst
@@ -18334,7 +18422,18 @@
   (ptrs OptLicmPtrEnv)
   (roots OptLicmRootEnv)
   (store-roots OptLicmStoreRootList)
-  (any-call? bool))
+  (any-call? bool)
+  ;; Did anything in the body possibly write a GLOBAL CELL? This is the exact
+  ;; question opt-licm-globals-clean? asks, tracked on its own rather than read
+  ;; off the store summaries, because those answer a different one. A summary
+  ;; that is `call-or-unknown?` because a direct callee writes through the
+  ;; objects its parameters name says nothing about global storage, and the
+  ;; call-memory fixpoint often proves that callee touches none
+  ;; (opt-direct-call-global-clean?). Every other contributor sets this flag
+  ;; exactly when it sets `call-or-unknown?` or `header-or-unknown-store?`, so
+  ;; the only decisions that move are the ones a per-callee summary newly
+  ;; proves.
+  (global-write? bool))
 
 (define (opt-licm-root-env-with-capacity [capacity : i64]) : OptLicmRootEnv
   (OptLicmRootEnv (opt_i64_i64_map.with-capacity capacity)))
@@ -18525,28 +18624,36 @@
     (opt-licm-value-invariant? globals-clean? loop-defs hoisted b)))
 
 ;; The loop-level precondition for treating a `Global` operand as invariant
-;; (see opt-licm-value-invariant?): the body's composed RAW store summary --
-;; before the return-shaped side-exit poison, which is a profitability gate and
-;; not a memory fact -- proves no call that may write and no header-or-unknown
-;; store. `any-call?` closes the remaining case for profitability, not
-;; soundness: a proven-clean direct call still marks a call boundary, and the
-;; P6 hoist/allocate interlock measured loop-spanning ranges that cross a call
-;; costing more in spill staging than the reloads they save. Measured here
-;; (cachegrind, this host, one run each): dropping the `any-call?` term admits
-;; the clean-call loops and gives back the entire gvn_table win --
-;; 1,299,265,156 with the term, 1,306,531,147 without it against a
-;; 1,306,562,712 baseline -- while buying peephole_lines a further 7.59M
-;; (849,990,762 vs 857,577,638). cfg_domloops and the remaining rows are
-;; identical either way, so the call-free gate stays. `any-call?` no longer
-;; counts the non-returning trap helpers: nothing is live across a call the
-;; continuing path never returns from, so an abort has none of the spill
-;; staging cost this gate is pricing (opt-licm-store-state-direct-call).
-(define (opt-licm-globals-clean?
-  [raw-legacy-summary : OptLicmStoreSummary]
-  [any-call? : bool]) : bool
-  (and
-    (not any-call?)
-    (opt-licm-store-summary-header-load-safe? raw-legacy-summary)))
+;; (see opt-licm-value-invariant?): nothing the body executes can write a global
+;; cell.
+;;
+;; This used to be spelled as two proxies -- `any-call?` plus the composed RAW
+;; store summary's header-load-safety -- because no fact answered the actual
+;; question. Both proxies over-refuse for the same reason: they answer "can this
+;; write MEMORY", and a callee that writes only through the objects its
+;; parameters name writes plenty of memory while touching no global storage at
+;; all. `global-write?` answers the real question directly, contributed by
+;; exactly the terms the two proxies contributed (see the field comment on
+;; OptLicmStoreState) except at a direct call the call-memory fixpoint has
+;; proven global-clean -- which is the one class of decision this predicate
+;; moves.
+;;
+;; The older reading's register-pressure argument is preserved where it was
+;; measured. `any-call?` stays, untouched, on the Gep and Load arms of
+;; opt-licm-candidate?, which is where the P6 hoist/allocate interlock priced
+;; loop-spanning live ranges that cross a call (cachegrind, one run each on the
+;; then-baseline: dropping that term gave back the whole gvn_table win,
+;; 1,299,265,156 with it and 1,306,531,147 without against a 1,306,562,712
+;; baseline, while buying peephole_lines 7.59M). What a `Global` operand's
+;; invariance costs is not a live range that crosses the call -- the promoted
+;; cell load lands in the PREHEADER, outside every loop-spanning range that gate
+;; is pricing -- so that verdict never applied to this question.
+;;
+;; Non-returning trap helpers contribute nothing here for the same reason they
+;; contribute no call boundary: the continuing path never resumes after one
+;; (opt-licm-store-state-direct-call, opt-direct-call-noreturn?).
+(define (opt-licm-globals-clean? [global-write? : bool]) : bool
+  (not global-write?))
 
 (define (opt-licm-store-summary-empty) : OptLicmStoreSummary
   (OptLicmStoreSummary false false false))
@@ -18622,6 +18729,30 @@
 (define (opt-direct-call-noreturn? [name : i64]) : bool
   (ir.compiler-ir-runtime-control-flow-id? name))
 
+;; Writes no memory at all -- the fact the store summaries are asking for.
+(define (opt-direct-call-memory-clean?
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (opt-direct-call-clean-has-bit?
+    direct-call-clean
+    name
+    (opt-direct-call-clean-memory-bit)))
+
+;; Writes no GLOBAL storage. Weaker than memory-clean and implied by it, so the
+;; test takes either bit. This is what a `Global` operand's invariance needs:
+;; a callee that writes only through the objects its parameters name cannot
+;; reach a cell -- unless the caller handed it a cell's ADDRESS, which is why
+;; the call site pairs this with opt-licm-call-args-global-addr-free?.
+(define (opt-direct-call-global-clean?
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (opt-direct-call-clean-has-bit?
+    direct-call-clean
+    name
+    (bit-or
+      (opt-direct-call-clean-memory-bit)
+      (opt-direct-call-clean-global-bit))))
+
 ;; Direct callees that DO return. opt-licm-store-state-direct-call filters the
 ;; non-returning trap helpers out ahead of this, so a ControlFlow effect never
 ;; reaches the match below and the `_` arm keeps its old meaning: an ordinary
@@ -18629,15 +18760,41 @@
 (define (opt-licm-store-summary-for-direct-call
   [direct-call-clean : opt_i64_i64_map.Map]
   [name : i64]) : OptLicmStoreSummary
-  (if (opt_i64_i64_map.contains?
-    (& direct-call-clean)
-    (ir.compiler-ir-symbol-id name))
+  (if (opt-direct-call-memory-clean? direct-call-clean name)
     (opt-licm-store-summary-empty)
     (match (ir.compiler-ir-direct-call-effect-id name)
       [(ir.CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
       [(ir.CompilerIrEffect.MemoryWrite)
         (opt-licm-store-summary-header-or-unknown-store)]
       [_ (opt-licm-store-summary-call-or-unknown)])))
+
+;; A `GlobalAddr` argument hands the callee a cell's address, so its writes
+;; through that parameter reach the cell itself. No such argument, and a callee
+;; the summaries prove writes no global storage cannot touch any cell.
+(define (opt-licm-value-global-addr? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.GlobalAddr _) true]
+    [_ false]))
+
+(define (opt-licm-call-args-array-global-addr-free?
+  [values : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : bool
+  (if (>= index (array-length values))
+    true
+    (and
+      (not (opt-licm-value-global-addr? (array-ref values index)))
+      (opt-licm-call-args-array-global-addr-free? values (+ index 1)))))
+
+(define (opt-licm-call-args-global-addr-free? [args : ir.CompilerIrCallArgs]) : bool
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) true]
+    [(ir.CompilerIrCallArgs.One a) (not (opt-licm-value-global-addr? a))]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (and
+        (not (opt-licm-value-global-addr? a))
+        (not (opt-licm-value-global-addr? b)))]
+    [(ir.CompilerIrCallArgs.Array values)
+      (opt-licm-call-args-array-global-addr-free? values 0)]))
 
 (define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
   (match env
@@ -18977,7 +19134,27 @@
     ptrs
     roots
     (opt-licm-store-roots-new)
+    false
     false))
+
+;; The part of a store summary that can reach a global cell: an unknown call and
+;; an unknown-or-header store both can, an element-only store cannot (its
+;; pointer is a descriptor's data, never a cell -- the same argument the older
+;; opt-licm-store-summary-header-load-safe? made).
+(define (opt-licm-store-summary-global-write? [summary : OptLicmStoreSummary]) : bool
+  (or summary.call-or-unknown? summary.header-or-unknown-store?))
+
+(define (opt-licm-store-state-add-summary-keeping-globals
+  [state : OptLicmStoreState]
+  [summary : OptLicmStoreSummary]) : OptLicmStoreState
+  (OptLicmStoreState
+    (opt-licm-store-summary-merge state.summary summary)
+    state.rooted-summary
+    state.ptrs
+    state.roots
+    state.store-roots
+    state.any-call?
+    state.global-write?))
 
 (define (opt-licm-store-state-add-summary
   [state : OptLicmStoreState]
@@ -18988,7 +19165,8 @@
     state.ptrs
     state.roots
     state.store-roots
-    state.any-call?))
+    state.any-call?
+    (or state.global-write? (opt-licm-store-summary-global-write? summary))))
 
 (define (opt-licm-store-state-bind-ptr
   [state : OptLicmStoreState]
@@ -19000,7 +19178,8 @@
     (opt-licm-ptr-bind state.ptrs var kind)
     state.roots
     state.store-roots
-    state.any-call?))
+    state.any-call?
+    state.global-write?))
 
 (define (opt-licm-store-state-bind-root
   [state : OptLicmStoreState (:consume)]
@@ -19020,7 +19199,8 @@
     state.ptrs
     state.roots
     (opt-licm-store-roots-add state.store-roots root)
-    state.any-call?))
+    state.any-call?
+    (or state.global-write? (opt-licm-store-summary-global-write? summary))))
 
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -19029,6 +19209,17 @@
     state.ptrs
     state.roots
     state.store-roots
+    true
+    state.global-write?))
+
+(define (opt-licm-store-state-mark-global-write [state : OptLicmStoreState]) : OptLicmStoreState
+  (OptLicmStoreState
+    state.summary
+    state.rooted-summary
+    state.ptrs
+    state.roots
+    state.store-roots
+    state.any-call?
     true))
 
 ;; Fold a DIRECT call (`Call` or `TailCall`) into the body state: the call
@@ -19037,15 +19228,61 @@
 ;; It is not a call boundary for `any-call?`, and it adds no store summary, so
 ;; a loop whose only call is a bounds/divide/shift trap reads as call-free to
 ;; every invariance question the loop passes ask.
+;;
+;; The store summary and the global-cell flag part company here, and this is the
+;; only place they do. A callee that writes through the objects its parameters
+;; name is `call-or-unknown?` to every memory question -- it can invalidate a
+;; load of any of those objects -- while writing no global storage at all, which
+;; the call-memory fixpoint proves per callee. Given that proof, and given that
+;; no argument is a cell's own address, nothing this call does can change what a
+;; `Global` operand reads, so it leaves `global-write?` alone and the loop's
+;; cell operands stay invariant across it. Everything else about the call --
+;; the `any-call?` boundary the register-pressure interlock prices, the store
+;; summary the memory proofs read -- is unchanged.
+;;
+;; A MEMORY-clean callee is deliberately NOT relaxed, even though it is the
+;; stronger fact. That is the one case the P6 hoist/allocate interlock already
+;; measured, and it still loses: a body whose only call writes no memory has
+;; every load, address, and descriptor word in it already hoistable, so the
+;; preheader is already holding the loop's register budget and the cell copies
+;; are what tips it over. Measured here, one cachegrind run each: relaxing both
+;; tiers put gvn_table at 1,224,971,833 against 1,216,261,789 for this tier
+;; alone -- the same +7M shape the earlier all-calls experiment recorded -- for
+;; a further 7.6M on peephole_lines. Where the callee DOES write memory those
+;; hoists are all still refused, the budget the interlock prices is untouched,
+;; and the only thing that moves is a cell read whose copy lands in the
+;; preheader. peephole_lines takes 15.2M from that tier on its own.
+(define (opt-licm-direct-call-keeps-globals-clean?
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]) : bool
+  (and
+    (opt-direct-call-global-clean? direct-call-clean name)
+    (not (opt-direct-call-memory-clean? direct-call-clean name))
+    (opt-licm-call-args-global-addr-free? args)))
+
 (define (opt-licm-store-state-direct-call
   [state : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
-  [name : i64]) : OptLicmStoreState
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]) : OptLicmStoreState
   (if (opt-direct-call-noreturn? name)
     state
-    (opt-licm-store-state-add-summary
-      (opt-licm-store-state-mark-call state)
-      (opt-licm-store-summary-for-direct-call direct-call-clean name))))
+    (let
+      [called : OptLicmStoreState (opt-licm-store-state-mark-call state)]
+      [summary : OptLicmStoreSummary
+        (opt-licm-store-summary-for-direct-call direct-call-clean name)]
+      (if (opt-licm-direct-call-keeps-globals-clean?
+        direct-call-clean
+        name
+        args)
+        (opt-licm-store-state-add-summary-keeping-globals called summary)
+        ;; Unproven: the flag is set here rather than left to the summary,
+        ;; because a memory-clean callee contributes the EMPTY summary and would
+        ;; otherwise sail through. `any-call?` used to be what closed that case.
+        (opt-licm-store-state-add-summary
+          (opt-licm-store-state-mark-global-write called)
+          summary)))))
 
 (define (opt-licm-store-state-invalidate-ptr-def
   [state : OptLicmStoreState]
@@ -19056,7 +19293,8 @@
     (opt-licm-ptr-unbind state.ptrs var)
     state.roots
     state.store-roots
-    state.any-call?))
+    state.any-call?
+    state.global-write?))
 
 (define (opt-licm-store-state-invalidate-ptr-instr
   [state : OptLicmStoreState]
@@ -19148,8 +19386,12 @@
         (opt-licm-provenance-state-instr type-segment-bases types state instr)
         state)]
     (match instr
-      [(ir.CompilerIrInstr.Call _ name _ _)
-        (opt-licm-store-state-direct-call provenance direct-call-clean name)]
+      [(ir.CompilerIrInstr.Call _ name args _)
+        (opt-licm-store-state-direct-call
+          provenance
+          direct-call-clean
+          name
+          args)]
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
         (opt-licm-store-state-add-summary
           (opt-licm-store-state-mark-call provenance)
@@ -19170,8 +19412,12 @@
         (opt-licm-store-state-add-summary
           (opt-licm-store-state-mark-call provenance)
           (opt-licm-store-summary-call-or-unknown))]
-      [(ir.CompilerIrInstr.TailCall name _ _)
-        (opt-licm-store-state-direct-call provenance direct-call-clean name)]
+      [(ir.CompilerIrInstr.TailCall name args _)
+        (opt-licm-store-state-direct-call
+          provenance
+          direct-call-clean
+          name
+          args)]
       [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
         (opt-licm-store-state-add-summary
           (opt-licm-store-state-mark-call provenance)
@@ -19407,6 +19653,7 @@
           (OptLicmPtrEnv.Nil)
           (opt-licm-root-env-with-capacity 17)
           (opt-licm-store-roots-new)
+          false
           false))]
     (opt-licm-store-summary-merge state.summary state.rooted-summary)))
 
@@ -20606,7 +20853,7 @@
         ;; plus the descriptor words re-derived from it) the preheader copy
         ;; removes outright rather than merely relocating.
         [globals-clean? : bool
-          (opt-licm-globals-clean? raw-legacy-summary any-call?)]
+          (opt-licm-globals-clean? store-state.global-write?)]
         (match (opt-licm-filter-body-blocks
           type-segment-bases
           loop-defs
@@ -32931,9 +33178,10 @@
 (define (opt-bit-test-max-plans) : i64
   8)
 
-;; Vars one conversion introduces: mask, offset, window guard, shift, bit test.
+;; Vars one conversion introduces: mask, offset, window guard, shift, bit test,
+;; masked offset.
 (define (opt-bit-test-plan-vars) : i64
-  5)
+  6)
 
 (define (opt-bit-test-window-width) : i64
   64)
@@ -33735,6 +33983,19 @@
                     false-label)
                   ir.CompilerIrInstrList.Nil))))))]))
 
+;; The shift count is spelled `offset & 63` rather than bare `offset`. The two
+;; are the same value on every edge that reaches this block -- the head block's
+;; window guard admits it only when `offset <=u width` and a plan's width is at
+;; most 63 (opt-bit-test-run-length, opt-bit-test-window-width) -- so the mask
+;; changes nothing the chain computes. What it changes is what the BACKEND can
+;; prove: a count masked to 6 bits cannot be an out-of-range shift, so the
+;; shift-count guard in front of the `bt` (cmp $64/jb, two instructions on the
+;; hot path) is provably dead and the lowering drops it, folding the mask into
+;; `bt`'s own modulo-64 reading of its offset
+;; (compiler-backend-bit-test-masked-count-match). Written as ordinary IR
+;; rather than as a side-channel fact, so the same relief reaches a hand-written
+;; `(!= (bit-and (shr MASK (bit-and d 63)) 1) 0)` and so every pass between here
+;; and emission keeps reading a total, self-describing instruction.
 (define (opt-bit-test-mask-block
   [mask-label : i64]
   [true-label : i64]
@@ -33742,29 +34003,37 @@
   [mask-var : i64]
   [offset-var : i64]
   [shift-var : i64]
-  [test-var : i64]) : ir.CompilerIrBlock
+  [test-var : i64]
+  [masked-var : i64]) : ir.CompilerIrBlock
   (ir.compiler-ir-block
     mask-label
     (ir.compiler-ir-instr-cons
       (ir.CompilerIrInstr.BinOp
-        shift-var
-        (ir.CompilerIrBinOp.Shr (ast.AstType.U64))
-        (ir.CompilerIrValue.Var mask-var)
+        masked-var
+        (ir.CompilerIrBinOp.BitAnd)
         (ir.CompilerIrValue.Var offset-var)
+        (ir.CompilerIrValue.I64 (- (opt-bit-test-window-width) 1))
         (ast.AstType.U64))
       (ir.compiler-ir-instr-cons
         (ir.CompilerIrInstr.BinOp
-          test-var
-          (ir.CompilerIrBinOp.BitTestNe)
-          (ir.CompilerIrValue.Var shift-var)
-          (ir.CompilerIrValue.I64 1)
+          shift-var
+          (ir.CompilerIrBinOp.Shr (ast.AstType.U64))
+          (ir.CompilerIrValue.Var mask-var)
+          (ir.CompilerIrValue.Var masked-var)
           (ast.AstType.U64))
         (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var test-var)
-            true-label
-            false-label)
-          ir.CompilerIrInstrList.Nil)))))
+          (ir.CompilerIrInstr.BinOp
+            test-var
+            (ir.CompilerIrBinOp.BitTestNe)
+            (ir.CompilerIrValue.Var shift-var)
+            (ir.CompilerIrValue.I64 1)
+            (ast.AstType.U64))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var test-var)
+              true-label
+              false-label)
+            ir.CompilerIrInstrList.Nil))))))
 
 (define (opt-bit-test-rewrite-blocks
   [remaining : ir.CompilerIrBlockList]
@@ -33809,7 +34078,8 @@
                       first-var
                       (+ first-var 1)
                       (+ first-var 3)
-                      (+ first-var 4))
+                      (+ first-var 4)
+                      (+ first-var 5))
                     tail)))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bit-test-rewrite-blocks
@@ -62329,6 +62599,528 @@
   (match (opt-cmp-sink-blocks-pass blocks)
     [(OptBlockListPassResult.Result next _) next]))
 
+;; --- late compare duplication ----------------------------------------------
+;;
+;; GVN unifies textually identical comparisons, so one compare can end up
+;; feeding several conditional branches. The backend then materialises that
+;; boolean instead of fusing it, because its fusion gate is not "single use"
+;; but "every use is free": a compare folds into `cmp`/`jcc` only when the
+;; condition var's total use count equals its count of branch uses whose
+;; IMMEDIATELY PRECEDING instruction is a compare defining that var
+;; (`compiler-backend-var-fuse-safe?` over the tally
+;; `compiler-backend-fuse-free-branch-var` builds). A branch reading the same
+;; boolean from another block is not such a use, so BOTH sites lose fusion and
+;; the pair costs `cmp`/`setcc`/`movzbq`/`test`/`jcc` plus `test`/`jcc` -- seven
+;; instructions where two fused pairs would spend four.
+;;
+;; Give each branch its own copy of the compare and every site fuses again.
+;; This is the measured cure for three separately recorded regressions of the
+;; same family: an inlined accessor's guard merging with its caller's loop test,
+;; a bit-test head compare losing single-use status, and a late-rotation guard
+;; clone CSE'ing with the versioning guard.
+;;
+;; Placement is the whole design. The pass must run BELOW every CSE/GVN round
+;; or the copies are folded straight back together -- the same interlock that
+;; forced loop rotation below `global_gvn`. It therefore sits at the very bottom
+;; of the pipeline, next to the `dce` that retires an original whose every
+;; reader took a copy.
+;;
+;; Only compares whose uses are ALL branch conditions duplicate. With any other
+;; reader (a stored bool, a phi input, arithmetic on the bool) the boolean is
+;; materialised regardless, so a copy merely trades the site's `test` for a
+;; `cmp` -- instruction-count neutral, and it lengthens both operand live
+;; ranges. Phi inputs are never rewritten: only branch conditions are.
+;; The condition var of a conditional branch, or -1. `TotalEnumBranch` is the
+;; same shape to the backend (`compiler-ir-instr-scalar-fact` maps it onto
+;; `Branch`) and fuses through the same path.
+(define (opt-cmp-dup-branch-cond [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Branch cond _ _)
+      (match cond
+        [(ir.CompilerIrValue.Var v) v]
+        [_ (- 0 1)])]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+      (match cond
+        [(ir.CompilerIrValue.Var v) v]
+        [_ (- 0 1)])]
+    [_ (- 0 1)]))
+
+;; The branch at `index` already owns its compare: the instruction right before
+;; it defines the condition with a comparison. This is exactly the adjacency the
+;; backend counts as a free branch use, so such a site needs no copy.
+(define (opt-cmp-dup-fused-here?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [cond-var : i64]) : bool
+  (if (<= index 0)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs (- index 1))
+      [(ir.CompilerIrInstr.BinOp dst op _ _ _)
+        (and (= dst cond-var) (opt-bool-branch-compare-op? op))]
+      [_ false])))
+
+;; Cheap allocation-free prefilter: unless some branch reads a condition it did
+;; not just compute, no copy can help and the frame-sized analysis below is pure
+;; overhead.
+(define (opt-cmp-dup-seq-wants-pass? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (let
+          [v : i64
+            (opt-cmp-dup-branch-cond
+              (ir.compiler-ir-instr-seq-ref instrs index))]
+          (begin
+            (if (and (>= v 0) (not (opt-cmp-dup-fused-here? instrs index v)))
+              (set! found true)
+              unit)
+            (set! index (+ index 1)))))
+      found)))
+
+(define (opt-cmp-dup-blocks-want-pass? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-cmp-dup-seq-wants-pass? instrs)
+            (opt-cmp-dup-blocks-want-pass? (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (< index count) (not found))
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq index)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (if (opt-cmp-dup-seq-wants-pass? instrs)
+                    (set! found true)
+                    unit)])
+              (set! index (+ index 1))))
+          found))]))
+
+;; One walk fills every array the candidate test reads: definition counts, the
+;; comparison recipe behind each var, branch-use counts, and how many of those
+;; branch uses are not already fused.
+(define (opt-cmp-dup-scan-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [defs : (__tl_dyn-array i64)]
+  [branch-uses : (__tl_dyn-array i64)]
+  [loose : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]
+  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
+  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [tys : (__tl_dyn-array ast.AstType)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [frame : i64 (array-length defs)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          [cond-var : i64 (opt-cmp-dup-branch-cond instr)]
+          (begin
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (if (and (>= dst 0) (< dst frame))
+                  (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
+                  unit)]
+              [(option_i64.None) unit])
+            (match instr
+              [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+                (if (and
+                  (>= dst 0)
+                  (< dst frame)
+                  (opt-bool-branch-compare-op? op)
+                  ;; Float compares never fuse in the backend, so a copy of one
+                  ;; is pure cost.
+                  (not (opt-float-type? ty)))
+                  (begin
+                    (set! (array-ref marks dst) 1)
+                    (set! (array-ref ops dst) op)
+                    (set! (array-ref lhss dst) lhs)
+                    (set! (array-ref rhss dst) rhs)
+                    (set! (array-ref tys dst) ty))
+                  unit)]
+              [_ unit])
+            (if (and (>= cond-var 0) (< cond-var frame))
+              (begin
+                (set!
+                  (array-ref branch-uses cond-var)
+                  (+ (array-ref branch-uses cond-var) 1))
+                (if (opt-cmp-dup-fused-here? instrs index cond-var)
+                  unit
+                  (set!
+                    (array-ref loose cond-var)
+                    (+ (array-ref loose cond-var) 1))))
+              unit)
+            (set! index (+ index 1)))))
+      unit)))
+
+(define (opt-cmp-dup-scan-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [defs : (__tl_dyn-array i64)]
+  [branch-uses : (__tl_dyn-array i64)]
+  [loose : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]
+  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
+  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [tys : (__tl_dyn-array ast.AstType)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-cmp-dup-scan-instrs!
+              instrs
+              defs
+              branch-uses
+              loose
+              marks
+              ops
+              lhss
+              rhss
+              tys)
+            (opt-cmp-dup-scan-blocks!
+              (__tl-box-place rest)
+              defs
+              branch-uses
+              loose
+              marks
+              ops
+              lhss
+              rhss
+              tys))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq index)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (opt-cmp-dup-scan-instrs!
+                    instrs
+                    defs
+                    branch-uses
+                    loose
+                    marks
+                    ops
+                    lhss
+                    rhss
+                    tys)])
+              (set! index (+ index 1))))
+          unit))]))
+
+;; An operand is safe to re-evaluate at the copy when its value is the same
+;; there. Literals and code addresses always are; a variable is when it has one
+;; single definition (SSA then puts that definition above every use of the
+;; boolean, so it also dominates the copy). `Global`/`RuntimeGlobal` are
+;; implicit mutable reads, so a second evaluation may see a different value.
+(define (opt-cmp-dup-operand-ok?
+  [value : ir.CompilerIrValue]
+  [self : i64]
+  [defs : (__tl_dyn-array i64)]) : bool
+  (match value
+    [(ir.CompilerIrValue.Global _) false]
+    [(ir.CompilerIrValue.RuntimeGlobal _) false]
+    [(ir.CompilerIrValue.Var v)
+      (and
+        (!= v self)
+        (>= v 0)
+        (< v (array-length defs))
+        (= (array-ref defs v) 1))]
+    [_ true]))
+
+(define (opt-cmp-dup-candidate?
+  [v : i64]
+  [uses : (__tl_dyn-array i64)]
+  [branch-uses : (__tl_dyn-array i64)]
+  [loose : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]
+  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [rhss : (__tl_dyn-array ir.CompilerIrValue)]) : bool
+  (and
+    (= (array-ref marks v) 1)
+    (= (array-ref defs v) 1)
+    (>= (array-ref uses v) 2)
+    ;; Every reader is a branch condition: only then does the copy retire the
+    ;; boolean materialisation instead of just moving work around.
+    (= (array-ref uses v) (array-ref branch-uses v))
+    ;; At least one of those readers does not already have its own compare.
+    (>= (array-ref loose v) 1)
+    (opt-cmp-dup-operand-ok? (array-ref lhss v) v defs)
+    (opt-cmp-dup-operand-ok? (array-ref rhss v) v defs)))
+
+;; Reduce `marks` to the final candidate set in place and report whether any
+;; survived.
+(define (opt-cmp-dup-candidates!
+  [uses : (__tl_dyn-array i64)]
+  [branch-uses : (__tl_dyn-array i64)]
+  [loose : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]
+  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [rhss : (__tl_dyn-array ir.CompilerIrValue)]) : bool
+  (let
+    [count : i64 (array-length marks)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref marks index) 1)
+            (if (opt-cmp-dup-candidate?
+              index
+              uses
+              branch-uses
+              loose
+              defs
+              marks
+              lhss
+              rhss)
+              (set! found true)
+              (set! (array-ref marks index) 0))
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+;; A duplicated compare is one extra instruction, so the cap only exists to
+;; bound pathological functions; nothing in the corpus approaches it.
+(define (opt-cmp-dup-budget) : i64
+  64)
+
+(define (opt-cmp-dup-retarget [instr : ir.CompilerIrInstr] [fresh : i64]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Branch _ yes no)
+      (ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var fresh) yes no)]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ yes no)
+      (ir.CompilerIrInstr.TotalEnumBranch (ir.CompilerIrValue.Var fresh) yes no)]
+    [_ instr]))
+
+;; Emit one input instruction, expanding a branch that needs its own compare
+;; into `compare; branch`. Adjacency is what the backend's fusion gate reads, so
+;; the copy is pushed immediately ahead of its consumer.
+(define (opt-cmp-dup-push-instr!
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [cands : (__tl_dyn-array i64)]
+  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
+  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [tys : (__tl_dyn-array ast.AstType)]
+  [cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
+  (let
+    [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+    [cond-var : i64 (opt-cmp-dup-branch-cond instr)]
+    (if (and
+      (>= cond-var 0)
+      (< cond-var (array-length cands))
+      (= (array-ref cands cond-var) 1)
+      (> (array-ref budget 0) 0)
+      (not (opt-cmp-dup-fused-here? instrs index cond-var)))
+      (let
+        [fresh : i64 (opt-bce-version-alloc-var cell)]
+        (begin
+          (set! (array-ref budget 0) (- (array-ref budget 0) 1))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.BinOp
+              fresh
+              (array-ref ops cond-var)
+              (array-ref lhss cond-var)
+              (array-ref rhss cond-var)
+              (array-ref tys cond-var)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (opt-cmp-dup-retarget instr fresh))))
+      (ir.compiler-ir-instr-builder-push! (&mut builder) instr))))
+
+(define (opt-cmp-dup-rewrite-instr-seq
+  [instrs : ir.CompilerIrInstrSeq]
+  [cands : (__tl_dyn-array i64)]
+  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
+  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [tys : (__tl_dyn-array ast.AstType)]
+  [cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (opt-cmp-dup-push-instr!
+            instrs
+            index
+            cands
+            ops
+            lhss
+            rhss
+            tys
+            cell
+            budget
+            (&mut builder))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-cmp-dup-rewrite-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [cands : (__tl_dyn-array i64)]
+  [ops : (__tl_dyn-array ir.CompilerIrBinOp)]
+  [lhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [tys : (__tl_dyn-array ast.AstType)]
+  [cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-cmp-dup-rewrite-instr-seq
+                instrs
+                cands
+                ops
+                lhss
+                rhss
+                tys
+                cell
+                budget))
+            (opt-cmp-dup-rewrite-blocks
+              (__tl-box-place rest)
+              cands
+              ops
+              lhss
+              rhss
+              tys
+              cell
+              budget))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [slots : (__tl_dyn-array ir.CompilerIrBlock)
+          (array.make-array ir.CompilerIrBlock count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq index)
+                [(ir.CompilerIrBlock.Block label instrs)
+                  (set!
+                    (array-ref slots index)
+                    (ir.CompilerIrBlock.Block
+                      label
+                      (opt-cmp-dup-rewrite-instr-seq
+                        instrs
+                        cands
+                        ops
+                        lhss
+                        rhss
+                        tys
+                        cell
+                        budget)))])
+              (set! index (+ index 1))))
+          (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count))))]))
+
+(define (opt-cmp-dup-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (opt-cmp-dup-function-with-budget func (opt-cmp-dup-budget)))
+
+(define (opt-cmp-dup-function-with-budget
+  [func : ir.CompilerIrFunction]
+  [copies : i64]) : ir.CompilerIrFunction
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (or (<= copies 0) (not (opt-cmp-dup-blocks-want-pass? blocks)))
+        func
+        (let
+          [uses : (__tl_dyn-array i64)
+            (opt-collect-blocks-uses-array frame blocks)]
+          [defs : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          [branch-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          [loose : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          [marks : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          [ops : (__tl_dyn-array ir.CompilerIrBinOp)
+            (array.make-array ir.CompilerIrBinOp frame)]
+          [lhss : (__tl_dyn-array ir.CompilerIrValue)
+            (array.make-array ir.CompilerIrValue frame)]
+          [rhss : (__tl_dyn-array ir.CompilerIrValue)
+            (array.make-array ir.CompilerIrValue frame)]
+          [tys : (__tl_dyn-array ast.AstType)
+            (array.make-array ast.AstType frame)]
+          ;; Parameters are definitions too, and the most stable operands a
+          ;; copied compare can read; the seeding walk is shared with gep-split.
+          [_defs : unit
+            (begin
+              (opt-gep-split-seed-params! params defs)
+              (opt-cmp-dup-scan-blocks!
+                blocks
+                defs
+                branch-uses
+                loose
+                marks
+                ops
+                lhss
+                rhss
+                tys))]
+          [any? : bool
+            (opt-cmp-dup-candidates!
+              uses
+              branch-uses
+              loose
+              defs
+              marks
+              lhss
+              rhss)]
+          (if (not any?)
+            func
+            (let
+              [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+              [_cell : unit (set! (array-ref cell 0) frame)]
+              [budget : (__tl_dyn-array i64) (array.make-array i64 1)]
+              [_budget : unit (set! (array-ref budget 0) copies)]
+              [next-blocks : ir.CompilerIrBlockList
+                (opt-cmp-dup-rewrite-blocks
+                  blocks
+                  marks
+                  ops
+                  lhss
+                  rhss
+                  tys
+                  cell
+                  budget)]
+              [next : ir.CompilerIrFunction
+                (ir.CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  (array-ref cell 0)
+                  next-blocks)]
+              (match (opt-verify-function next)
+                [(ResultCompilerOptimizeVerify.Ok) next]
+                [(ResultCompilerOptimizeVerify.Err _) func])))))]))
+
 ;; --- single-predecessor successor sinking ----------------------------------
 ;;
 ;; Move a pure definition out of a Branch/Switch block when all of its uses
@@ -66839,6 +67631,42 @@
                             name
                             _t-bool-branch-late)
                           unit)]
+                      ;; Give every branch reading a GVN-unified comparison its
+                      ;; own copy, so each site fuses to `cmp`/`jcc` instead of
+                      ;; sharing one materialised boolean. Last in the pipeline
+                      ;; on purpose: any CSE round below it would fold the
+                      ;; copies straight back together. The `dce` that follows
+                      ;; retires an original whose every reader took a copy.
+                      [_t-cmp-dup : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [cmp-dup-function : ir.CompilerIrFunction
+                        (opt-cmp-dup-function
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            bool-branch-late-frame
+                            bool-branch-late))]
+                      [cmp-dup : ir.CompilerIrBlockList
+                        (compiler-opt-debug-observe-blocks
+                          type-segment-bases
+                          "cmp_dup"
+                          name
+                          params
+                          ret-ty
+                          (opt-function-frame cmp-dup-function)
+                          (opt-function-blocks cmp-dup-function))]
+                      [cmp-dup-frame : i64
+                        (opt-function-frame cmp-dup-function)]
+                      [_p-cmp-dup : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            summaries.profile-state
+                            "cmp_dup"
+                            name
+                            _t-cmp-dup)
+                          unit)]
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [dced : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
@@ -66847,10 +67675,10 @@
                           name
                           params
                           ret-ty
-                          bool-branch-late-frame
+                          cmp-dup-frame
                           (opt-dce-block-list-array-fixpoint
-                            bool-branch-late-frame
-                            bool-branch-late
+                            cmp-dup-frame
+                            cmp-dup
                             8))]
                       [_p-dce : unit
                         (cfg
@@ -66865,7 +67693,7 @@
                         name
                         params
                         ret-ty
-                        bool-branch-late-frame
+                        cmp-dup-frame
                         dced))]))]))])))
 
 (define (optimize-function-once
@@ -72603,8 +73431,23 @@
                 added3
                 spans3)])]))))
 
+;; Rewrite the instruction range [seq-start, end) through the single-block
+;; expansion path and emit it as one block labelled `head-label`, with `lead`
+;; spliced in front of the expansion.
+;;
+;; `block-label` stays the *original* block's label: it is what names inline
+;; sites (opt-inline-site-prefix) and what the loop-membership fact reads, so a
+;; continuation range carved out of that block keeps both. `head-label` is the
+;; label the range is emitted under, which is the continuation label once a
+;; multiblock rewrite has already split the block ahead of this range, and
+;; `lead` carries that rewrite's result instruction into the block it opens.
+;; `site-pos` and `pos` advance in lockstep everywhere in this walk, so the
+;; range's first site position is `seq-start`.
 (define (opt-inline-rewrite-single-block-seq
   [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrList]
   [instrs : ir.CompilerIrInstrSeq]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -72616,13 +73459,13 @@
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
   (match (opt-inline-walk-instr-seq-from
     instrs
-    0
+    seq-start
     (ir.compiler-ir-instr-seq-count instrs)
     index
     census
     func-name
     block-label
-    0
+    seq-start
     vars
     caller-blocks
     added-so-far
@@ -72631,13 +73474,16 @@
     [(OptInlineState.State new-instrs vars2 added2)
       (OptInlineMaybeBlockRewrite.SomeBlockRewrite
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block block-label new-instrs)
+          (ir.compiler-ir-block head-label (opt-inline-append lead new-instrs))
           ir.CompilerIrBlockList.Nil)
         vars2
         added2)]))
 
 (define (opt-inline-multiblock-build-rewrite-seq
   [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrList]
   [instrs : ir.CompilerIrInstrSeq]
   [call-pos : i64]
   [count : i64]
@@ -72807,13 +73653,13 @@
                 (if inline?
                   (match (opt-inline-walk-instr-seq-from
                     instrs
-                    0
+                    seq-start
                     call-pos
                     index
                     census
                     func-name
                     block-label
-                    0
+                    seq-start
                     vars
                     caller-blocks
                     added-so-far
@@ -72896,12 +73742,14 @@
                             prefix-vars)]
                         [prefix-instrs2 : ir.CompilerIrInstrList
                           (opt-inline-append
-                            prefix-instrs
+                            lead
                             (opt-inline-append
-                              stage-instrs
-                              (ir.compiler-ir-instr-cons
-                                (ir.CompilerIrInstr.Jump entry-label)
-                                ir.CompilerIrInstrList.Nil)))]
+                              prefix-instrs
+                              (opt-inline-append
+                                stage-instrs
+                                (ir.compiler-ir-instr-cons
+                                  (ir.CompilerIrInstr.Jump entry-label)
+                                  ir.CompilerIrInstrList.Nil))))]
                         (match (opt-inline-clone-multiblock-blocks
                           cblocks
                           prefix
@@ -72912,63 +73760,98 @@
                           [(OptInlineMultiClone.Clone
                               cloned-blocks
                               return-inputs)
-                            (match (opt-inline-walk-instr-seq-from
-                              instrs
-                              (+ call-pos 1)
-                              count
-                              index
-                              census
-                              func-name
-                              block-label
-                              (+ site-pos 1)
-                              vars2
-                              caller-blocks
-                              added2
-                              scc-result
-                              caller-scc)
-                              [(OptInlineState.State suffix vars3 added3)
-                                (let
-                                  [result-instr : ir.CompilerIrInstr
-                                    (opt-inline-cont-result-instr
-                                      dst
-                                      return-inputs
-                                      cret)]
-                                  [cont-instrs : ir.CompilerIrInstrList
-                                    (ir.compiler-ir-instr-cons
-                                      result-instr
-                                      suffix)]
-                                  [_record-pred-rename : unit
-                                    (if opt-inline-current-phi-predecessor?
-                                      (set!
-                                        (array-ref opt-inline-pred-renames 0)
-                                        (opt-inline-pred-renames-cons
-                                          block-label
-                                          cont-label
-                                          (opt-inline-pred-renames-shared-view)))
-                                      unit)]
-                                  (OptInlineMaybeBlockRewrite.SomeBlockRewrite
-                                    (ir.compiler-ir-block-cons
-                                      (ir.compiler-ir-block
-                                        block-label
-                                        prefix-instrs2)
-                                      (opt-inline-block-append
-                                        cloned-blocks
-                                        (ir.compiler-ir-block-cons
-                                          (ir.compiler-ir-block
-                                            cont-label
-                                            cont-instrs)
-                                          ir.CompilerIrBlockList.Nil)))
+                            (let
+                              [result-instr : ir.CompilerIrInstr
+                                (opt-inline-cont-result-instr
+                                  dst
+                                  return-inputs
+                                  cret)]
+                              ;; The suffix opens the continuation block, so it
+                              ;; is rewritten by this same scan rather than by
+                              ;; the single-block walk: a second admitted
+                              ;; multiblock candidate in the same block gets its
+                              ;; own split instead of being evicted by whichever
+                              ;; candidate came first. The scan bottoms out in
+                              ;; opt-inline-rewrite-single-block-seq, which is
+                              ;; exactly the walk this call site used to make,
+                              ;; so a block with one admitted candidate rebuilds
+                              ;; byte-for-byte as before. Every gate still runs
+                              ;; per candidate, and `added2` hands the suffix the
+                              ;; fuel this site already spent.
+                              (match (opt-inline-try-multiblock-rewrite-seq-from
+                                instrs
+                                (+ call-pos 1)
+                                count
+                                block-label
+                                cont-label
+                                (+ call-pos 1)
+                                (ir.compiler-ir-instr-cons
+                                  result-instr
+                                  ir.CompilerIrInstrList.Nil)
+                                (+ site-pos 1)
+                                index
+                                census
+                                func-name
+                                vars2
+                                caller-blocks
+                                added2
+                                scc-result
+                                caller-scc)
+                                [(OptInlineMaybeBlockRewrite.SomeBlockRewrite
+                                    cont-blocks
                                     vars3
-                                    added3))])]))])
+                                    added3)
+                                  (let
+                                    ;; Recorded after the suffix so a nested
+                                    ;; split's rename lands behind this one:
+                                    ;; opt-inline-repair-phi-predecessors
+                                    ;; applies the newest rename first, and the
+                                    ;; chain has to run outer-to-inner
+                                    ;; (block -> cont -> cont') to leave a
+                                    ;; successor phi naming the block that
+                                    ;; actually reaches it.
+                                    [_record-pred-rename : unit
+                                      (if opt-inline-current-phi-predecessor?
+                                        (set!
+                                          (array-ref opt-inline-pred-renames 0)
+                                          (opt-inline-pred-renames-cons
+                                            head-label
+                                            cont-label
+                                            (opt-inline-pred-renames-shared-view)))
+                                        unit)]
+                                    (OptInlineMaybeBlockRewrite.SomeBlockRewrite
+                                      (ir.compiler-ir-block-cons
+                                        (ir.compiler-ir-block
+                                          head-label
+                                          prefix-instrs2)
+                                        (opt-inline-block-append
+                                          cloned-blocks
+                                          cont-blocks))
+                                      vars3
+                                      added3))]
+                                ;; Unreachable: the scan always ends in a
+                                ;; single-block rewrite. Refusing the site is the
+                                ;; safe reading if that ever changes.
+                                [(OptInlineMaybeBlockRewrite.NoBlockRewrite)
+                                  (OptInlineMaybeBlockRewrite.NoBlockRewrite)]))]))])
                   (OptInlineMaybeBlockRewrite.NoBlockRewrite)))
               (OptInlineMaybeBlockRewrite.NoBlockRewrite)))])]
     [_ (OptInlineMaybeBlockRewrite.NoBlockRewrite)]))
 
+;; Scan [pos, count) for a multiblock-admitted call and rewrite the range
+;; [seq-start, count) around the first one found, emitting the range's opening
+;; block under `head-label` with `lead` in front of it. The rewrite recurses on
+;; the suffix, so every admitted candidate in a block gets its own split rather
+;; than the first one claiming the block: the "never evict a banked inline"
+;; invariant the gate comments assert is structural here, not first-come.
 (define (opt-inline-try-multiblock-rewrite-seq-from
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]
   [count : i64]
   [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrList]
   [site-pos : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -72981,6 +73864,9 @@
   (if (>= pos count)
     (opt-inline-rewrite-single-block-seq
       block-label
+      head-label
+      seq-start
+      lead
       instrs
       index
       census
@@ -73003,6 +73889,9 @@
             [(OptMaybeFunction.Some callee)
               (match (opt-inline-multiblock-build-rewrite-seq
                 block-label
+                head-label
+                seq-start
+                lead
                 instrs
                 pos
                 count
@@ -73031,6 +73920,9 @@
                     (+ pos 1)
                     count
                     block-label
+                    head-label
+                    seq-start
+                    lead
                     (+ site-pos 1)
                     index
                     census
@@ -73046,6 +73938,9 @@
                 (+ pos 1)
                 count
                 block-label
+                head-label
+                seq-start
+                lead
                 (+ site-pos 1)
                 index
                 census
@@ -73061,6 +73956,9 @@
             (+ pos 1)
             count
             block-label
+            head-label
+            seq-start
+            lead
             (+ site-pos 1)
             index
             census
@@ -73115,6 +74013,9 @@
             0
             (ir.compiler-ir-instr-seq-count seq)
             label
+            label
+            0
+            ir.CompilerIrInstrList.Nil
             0
             index
             census
@@ -73326,8 +74227,13 @@
         call-instr
         callee)]))
 
+;; Span-carrying twin of opt-inline-rewrite-single-block-seq; `block-label`,
+;; `head-label`, `seq-start`, and `lead` mean exactly what they mean there.
 (define (opt-inline-rewrite-single-block-seq-with-spans
   [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrList]
   [instrs : ir.CompilerIrInstrSeq]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -73341,13 +74247,13 @@
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (match (opt-inline-walk-instr-seq-with-spans-from
     instrs
-    0
+    seq-start
     (ir.compiler-ir-instr-seq-count instrs)
     index
     census
     func-name
     block-label
-    0
+    seq-start
     vars
     caller-blocks
     added-so-far
@@ -73358,7 +74264,7 @@
     [(OptInlineSpanState.State new-instrs vars2 added2 spans2)
       (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block block-label new-instrs)
+          (ir.compiler-ir-block head-label (opt-inline-append lead new-instrs))
           ir.CompilerIrBlockList.Nil)
         vars2
         added2
@@ -73366,6 +74272,9 @@
 
 (define (opt-inline-multiblock-build-span-rewrite-seq
   [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrList]
   [instrs : ir.CompilerIrInstrSeq]
   [call-pos : i64]
   [count : i64]
@@ -73523,13 +74432,13 @@
                 (if inline?
                   (match (opt-inline-walk-instr-seq-with-spans-from
                     instrs
-                    0
+                    seq-start
                     call-pos
                     index
                     census
                     func-name
                     block-label
-                    0
+                    seq-start
                     vars
                     caller-blocks
                     added-so-far
@@ -73614,12 +74523,14 @@
                             prefix-vars)]
                         [prefix-instrs2 : ir.CompilerIrInstrList
                           (opt-inline-append
-                            prefix-instrs
+                            lead
                             (opt-inline-append
-                              stage-instrs
-                              (ir.compiler-ir-instr-cons
-                                (ir.CompilerIrInstr.Jump entry-label)
-                                ir.CompilerIrInstrList.Nil)))]
+                              prefix-instrs
+                              (opt-inline-append
+                                stage-instrs
+                                (ir.compiler-ir-instr-cons
+                                  (ir.CompilerIrInstr.Jump entry-label)
+                                  ir.CompilerIrInstrList.Nil))))]
                         (match (opt-inline-clone-multiblock-blocks-with-spans
                           cblocks
                           prefix
@@ -73636,77 +74547,91 @@
                               cloned-blocks
                               return-inputs
                               spans3)
-                            (match (opt-inline-walk-instr-seq-with-spans-from
-                              instrs
-                              (+ call-pos 1)
-                              count
-                              index
-                              census
-                              func-name
-                              block-label
-                              (+ site-pos 1)
-                              vars2
-                              caller-blocks
-                              added2
-                              scc-result
-                              caller-scc
-                              source-spans
-                              spans3)
-                              [(OptInlineSpanState.State
-                                  suffix
-                                  vars3
-                                  added3
-                                  spans4)
-                                (let
-                                  [result-instr : ir.CompilerIrInstr
-                                    (opt-inline-cont-result-instr
-                                      dst
-                                      return-inputs
-                                      cret)]
-                                  [spans5 : ir.CompilerSourceSpans
-                                    (opt-inline-call-span-to-instr
-                                      source-spans
-                                      spans4
-                                      func-name
-                                      call-instr
-                                      result-instr)]
-                                  [cont-instrs : ir.CompilerIrInstrList
-                                    (ir.compiler-ir-instr-cons
-                                      result-instr
-                                      suffix)]
-                                  [_record-pred-rename : unit
-                                    (if opt-inline-current-phi-predecessor?
-                                      (set!
-                                        (array-ref opt-inline-pred-renames 0)
-                                        (opt-inline-pred-renames-cons
-                                          block-label
-                                          cont-label
-                                          (opt-inline-pred-renames-shared-view)))
-                                      unit)]
-                                  (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
-                                    (ir.compiler-ir-block-cons
-                                      (ir.compiler-ir-block
-                                        block-label
-                                        prefix-instrs2)
-                                      (opt-inline-block-append
-                                        cloned-blocks
-                                        (ir.compiler-ir-block-cons
-                                          (ir.compiler-ir-block
-                                            cont-label
-                                            cont-instrs)
-                                          ir.CompilerIrBlockList.Nil)))
+                            (let
+                              [result-instr : ir.CompilerIrInstr
+                                (opt-inline-cont-result-instr
+                                  dst
+                                  return-inputs
+                                  cret)]
+                              ;; Same suffix recursion as the non-span path.
+                              ;; `result-instr` rides down as the continuation
+                              ;; block's lead instruction, and its span is
+                              ;; recorded on the way back out so the span stream
+                              ;; keeps the order it had when the suffix was a
+                              ;; plain single-block walk.
+                              (match (opt-inline-try-multiblock-span-rewrite-seq-from
+                                instrs
+                                (+ call-pos 1)
+                                count
+                                block-label
+                                cont-label
+                                (+ call-pos 1)
+                                (ir.compiler-ir-instr-cons
+                                  result-instr
+                                  ir.CompilerIrInstrList.Nil)
+                                (+ site-pos 1)
+                                index
+                                census
+                                func-name
+                                vars2
+                                caller-blocks
+                                added2
+                                scc-result
+                                caller-scc
+                                source-spans
+                                spans3)
+                                [(OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+                                    cont-blocks
                                     vars3
                                     added3
-                                    spans5))])]))])
+                                    spans4)
+                                  (let
+                                    [spans5 : ir.CompilerSourceSpans
+                                      (opt-inline-call-span-to-instr
+                                        source-spans
+                                        spans4
+                                        func-name
+                                        call-instr
+                                        result-instr)]
+                                    [_record-pred-rename : unit
+                                      (if opt-inline-current-phi-predecessor?
+                                        (set!
+                                          (array-ref opt-inline-pred-renames 0)
+                                          (opt-inline-pred-renames-cons
+                                            head-label
+                                            cont-label
+                                            (opt-inline-pred-renames-shared-view)))
+                                        unit)]
+                                    (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+                                      (ir.compiler-ir-block-cons
+                                        (ir.compiler-ir-block
+                                          head-label
+                                          prefix-instrs2)
+                                        (opt-inline-block-append
+                                          cloned-blocks
+                                          cont-blocks))
+                                      vars3
+                                      added3
+                                      spans5))]
+                                ;; Unreachable for the same reason as the
+                                ;; non-span path; refusing the site is the safe
+                                ;; reading.
+                                [(OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)
+                                  (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)]))]))])
                   (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)))
               (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)))])]
     [_ (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)]))
 
+;; Span-carrying twin of opt-inline-try-multiblock-rewrite-seq-from, including
+;; its suffix recursion: this is the variant the driver compiles through.
 (define (opt-inline-try-multiblock-span-rewrite-seq-from
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]
   [count : i64]
   [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrList]
   [site-pos : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -73721,6 +74646,9 @@
   (if (>= pos count)
     (opt-inline-rewrite-single-block-seq-with-spans
       block-label
+      head-label
+      seq-start
+      lead
       instrs
       index
       census
@@ -73745,6 +74673,9 @@
             [(OptMaybeFunction.Some callee)
               (match (opt-inline-multiblock-build-span-rewrite-seq
                 block-label
+                head-label
+                seq-start
+                lead
                 instrs
                 pos
                 count
@@ -73777,6 +74708,9 @@
                     (+ pos 1)
                     count
                     block-label
+                    head-label
+                    seq-start
+                    lead
                     (+ site-pos 1)
                     index
                     census
@@ -73794,6 +74728,9 @@
                 (+ pos 1)
                 count
                 block-label
+                head-label
+                seq-start
+                lead
                 (+ site-pos 1)
                 index
                 census
@@ -73811,6 +74748,9 @@
             (+ pos 1)
             count
             block-label
+            head-label
+            seq-start
+            lead
             (+ site-pos 1)
             index
             census
@@ -73854,6 +74794,9 @@
             0
             (ir.compiler-ir-instr-seq-count seq)
             label
+            label
+            0
+            ir.CompilerIrInstrList.Nil
             0
             index
             census
@@ -76519,6 +77462,7 @@
 ;;   bits 0..59  writes through that checked-reference parameter index
 ;;   bit 60      writes direct/reachable global storage
 ;;   bit 61      unknown memory effects
+;;   bit 62      writes only into descriptor ELEMENT storage
 ;;
 ;; The summary map is intentionally partial. Leaves are discovered first and
 ;; callers become eligible in later fixed-point rounds. An internal call whose
@@ -76533,6 +77477,27 @@
 (define (opt-call-memory-unknown-bit) : i64
   (shl 1 61))
 
+;; A write whose pointer is an address INTO the element storage a descriptor's
+;; data slot names -- `(i64vec.slots-mut v)` and every other slot accessor,
+;; whose store lands in the heap buffer the descriptor points at rather than in
+;; the descriptor (or the parameter) itself.
+;;
+;; This is deliberately NOT a parameter-write bit. The buffer is a DIFFERENT
+;; allocation from the parameter's own storage, and the per-parameter bits mean
+;; "writes through the object argument i names", which is what
+;; opt-load-table-filter-call-writes turns into a root-keyed table filter. Only
+;; the one question a data buffer answers on its own gets a weaker verdict here:
+;; a global CELL is a symbol's own storage -- a scalar, a register group, or the
+;; payload pointer of a memory-class global -- and is never the element storage
+;; a descriptor points at, so a callee whose every write is of this class writes
+;; no global cell no matter what its caller passed. That is the same argument
+;; opt-licm-store-summary-global-write? already makes for an in-function
+;; element-only store; this bit is its per-callee form. Every OTHER reader
+;; treats the bit exactly like `unknown` (see opt-load-cse-state-direct-call),
+;; so nothing that reasons about which caller object was written moves.
+(define (opt-call-memory-element-bit) : i64
+  (shl 1 62))
+
 (define (opt-call-memory-summary-param-write? [summary : i64] [index : i64]) : bool
   (and
     (>= index 0)
@@ -76545,6 +77510,9 @@
 (define (opt-call-memory-summary-unknown? [summary : i64]) : bool
   (not (= (bit-and summary (opt-call-memory-unknown-bit)) 0)))
 
+(define (opt-call-memory-summary-element? [summary : i64]) : bool
+  (not (= (bit-and summary (opt-call-memory-element-bit)) 0)))
+
 (define (opt-call-memory-summary-has-param-writes? [summary : i64]) : bool
   (not (= (bit-and summary (- (opt-call-memory-global-bit) 1)) 0)))
 
@@ -76553,6 +77521,18 @@
 
 (define (opt-call-memory-summary-add-global [summary : i64]) : i64
   (bit-or summary (opt-call-memory-global-bit)))
+
+(define (opt-call-memory-summary-add-element [summary : i64]) : i64
+  (bit-or summary (opt-call-memory-element-bit)))
+
+;; The bits a call site copies out of its callee's summary unchanged: verdicts
+;; about storage the caller has no argument for and therefore cannot refine.
+;; The parameter bits are NOT here -- those are mapped through the arguments by
+;; opt-call-memory-map-callee-param-writes.
+(define (opt-call-memory-carried-mask) : i64
+  (bit-or
+    (opt-call-memory-element-bit)
+    (bit-or (opt-call-memory-global-bit) (opt-call-memory-unknown-bit))))
 
 (define (opt-call-memory-function-set
   [functions : ir.CompilerIrFunctionList]
@@ -76685,21 +77665,239 @@
         roots
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-call-memory-roots
+(define (opt-call-memory-sources
+  [params : ir.CompilerIrParamList]
+  [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (opt-gvn-sources-blocks
+    blocks
+    (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 32))))
+
+(define (opt-call-memory-roots-with-sources
   [type-segment-bases : i64]
+  [sources : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
   (let
-    [sources : opt_i64_i64_map.Map
-      (opt-gvn-sources-blocks
-        blocks
-        (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 32)))]
     [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
     (begin
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)
       (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
       (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
       roots)))
+
+(define (opt-call-memory-roots
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamList]
+  [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
+  (opt-call-memory-roots-with-sources
+    type-segment-bases
+    (opt-call-memory-sources params blocks)
+    params
+    blocks))
+
+;; --- element-storage pointer classification ---------------------------------
+;;
+;; A vector slot accessor -- `(i64vec.slots-mut v)` and its shared twin -- is a
+;; `Gep` to the descriptor field followed by a `Load` of the descriptor itself,
+;; so the write that follows is based at the accessor's RESULT and the root walk
+;; above sees no parameter. What that store DOES reach is fixed by the shape,
+;; though: `gep <header-typed var>, 0` is the descriptor's data slot, the load
+;; through it is the heap buffer that slot names, and every further gep stays
+;; inside that buffer. This map records exactly those two facts per var --
+;; `data-slot` for the slot ADDRESS, `buffer` for a pointer INTO the storage --
+;; so a store through a `buffer` pointer can be summarized as an element write
+;; instead of falling to `unknown`.
+;;
+;; This mirrors opt-licm-gep-kind / opt-licm-provenance-state-instr's
+;; DataSlot -> DataBuffer -> DataElement chain, minus the root rebinding: the
+;; roots this pass would produce would claim the buffer IS the parameter's
+;; allocation, which is what the parameter-write bits mean and is not what a
+;; separately-allocated buffer is. Deriving nothing keeps the two facts apart.
+;;
+;; Summary construction runs before scalar SSA, so every var consulted -- the
+;; classified def AND the header-typed base -- has to pass the same
+;; whole-function single-source gate the root walk uses; a var written twice
+;; could otherwise be a data buffer at one store and something else at another.
+(define (opt-call-memory-element-kind-data-slot) : i64
+  1)
+
+(define (opt-call-memory-element-kind-buffer) : i64
+  2)
+
+(define (opt-call-memory-element-kind
+  [elements : (& elements opt_i64_i64_map.Map)]
+  [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (opt_i64_i64_map.get elements var)
+        [(opt_i64_i64_map.LookupFound kind) kind]
+        [(opt_i64_i64_map.LookupMissing) 0])]
+    [_ 0]))
+
+;; A store through this pointer lands in descriptor element storage.
+(define (opt-call-memory-element-ptr?
+  [elements : (& elements opt_i64_i64_map.Map)]
+  [value : ir.CompilerIrValue]) : bool
+  (=
+    (opt-call-memory-element-kind elements value)
+    (opt-call-memory-element-kind-buffer)))
+
+(define (opt-call-memory-element-header-base?
+  [type-segment-bases : i64]
+  [sources : opt_i64_i64_map.Map]
+  [types : OptSsaVarTypes]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (and
+        (opt-gvn-stable-var? sources var)
+        (opt-licm-array-header-var? type-segment-bases types var))]
+    [_ false]))
+
+(define (opt-call-memory-element-bind!
+  [elements : (&mut elements opt_i64_i64_map.Map)]
+  [var : i64]
+  [kind : i64]) : unit
+  (if (= kind 0)
+    (begin
+      (opt_i64_i64_map.remove-ref! elements var)
+      unit)
+    (opt_i64_i64_map.insert-ref! elements var kind)))
+
+(define (opt-call-memory-element-kind-for-instr
+  [type-segment-bases : i64]
+  [sources : opt_i64_i64_map.Map]
+  [types : OptSsaVarTypes]
+  [elements : (& elements opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    ;; Inside the buffer stays inside the buffer; otherwise only the literal-
+    ;; zero slot of a descriptor-typed base names the data pointer (the length
+    ;; slot and every other offset do not).
+    [(ir.CompilerIrInstr.Gep _ base offset ty)
+      (if (opt-call-memory-element-ptr? elements base)
+        (opt-call-memory-element-kind-buffer)
+        (if (and
+          (opt-call-memory-element-header-base?
+            type-segment-bases
+            sources
+            types
+            base)
+          (opt-licm-data-slot? offset ty))
+          (opt-call-memory-element-kind-data-slot)
+          0))]
+    ;; The data pointer read out of a slot address, or out of a
+    ;; descriptor-typed var directly (offset 0 is the same word).
+    [(ir.CompilerIrInstr.Load _ src _)
+      (if (or
+        (=
+          (opt-call-memory-element-kind elements src)
+          (opt-call-memory-element-kind-data-slot))
+        (opt-call-memory-element-header-base?
+          type-segment-bases
+          sources
+          types
+          src))
+        (opt-call-memory-element-kind-buffer)
+        0)]
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (opt-call-memory-element-kind elements src)]
+    [_ 0]))
+
+(define (opt-call-memory-element-update-instr!
+  [type-segment-bases : i64]
+  [sources : opt_i64_i64_map.Map]
+  [types : OptSsaVarTypes]
+  [elements : (&mut elements opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (opt-instr-def-var instr)
+    [(option_i64.None) unit]
+    [(option_i64.Some dst)
+      (let
+        [kind : i64
+          (if (not (opt-gvn-stable-var? sources dst))
+            0
+            (opt-call-memory-element-kind-for-instr
+              type-segment-bases
+              sources
+              types
+              elements
+              instr))]
+        (opt-call-memory-element-bind! elements dst kind))]))
+
+(define (opt-call-memory-element-scan-instrs!
+  [type-segment-bases : i64]
+  [sources : opt_i64_i64_map.Map]
+  [types : OptSsaVarTypes]
+  [elements : (&mut elements opt_i64_i64_map.Map)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : unit
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (begin
+      (opt-call-memory-element-update-instr!
+        type-segment-bases
+        sources
+        types
+        elements
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      (opt-call-memory-element-scan-instrs!
+        type-segment-bases
+        sources
+        types
+        elements
+        instrs
+        (+ index 1)))))
+
+(define (opt-call-memory-element-scan-blocks!
+  [type-segment-bases : i64]
+  [sources : opt_i64_i64_map.Map]
+  [types : OptSsaVarTypes]
+  [elements : (&mut elements opt_i64_i64_map.Map)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-call-memory-element-scan-instrs!
+              type-segment-bases
+              sources
+              types
+              elements
+              instrs
+              0)])
+        (opt-call-memory-element-scan-blocks!
+          type-segment-bases
+          sources
+          types
+          elements
+          (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-call-memory-element-scan-blocks!
+        type-segment-bases
+        sources
+        types
+        elements
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-call-memory-element-ptrs
+  [type-segment-bases : i64]
+  [sources : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamList]
+  [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (let
+    [types : OptSsaVarTypes (opt-licm-type-env-from-function params blocks)]
+    [elements : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+    (begin
+      (opt-call-memory-element-scan-blocks!
+        type-segment-bases
+        sources
+        types
+        (&mut elements)
+        blocks)
+      elements)))
 
 (define (opt-call-memory-arg-at [args : ir.CompilerIrCallArgs] [index : i64]) : ir.CompilerIrMaybeValue
   (match args
@@ -76776,11 +77974,7 @@
             (OptCallMemoryCandidate.Known
               (bit-or
                 summary
-                (bit-and
-                  callee-summary
-                  (bit-or
-                    (opt-call-memory-global-bit)
-                    (opt-call-memory-unknown-bit)))))
+                (bit-and callee-summary (opt-call-memory-carried-mask))))
             callee-summary
             params
             roots
@@ -76797,12 +77991,32 @@
                 (OptCallMemoryCandidate.Known
                   (opt-call-memory-summary-add-unknown summary))]))])]))
 
+;; One memory write's class. The parameter root wins whenever the pointer
+;; carries one, so nothing an existing bit already describes moves; the element
+;; fact is consulted only where the root walk gives up, replacing `unknown` and
+;; never a parameter bit.
+(define (opt-call-memory-summary-add-write
+  [summary : i64]
+  [params : ir.CompilerIrParamList]
+  [roots : OptLicmRootEnv]
+  [elements : opt_i64_i64_map.Map]
+  [ptr : ir.CompilerIrValue]) : i64
+  (let
+    [root : OptLicmRoot (opt-licm-root-of-value roots ptr)]
+    (match root
+      [(OptLicmRoot.NoRoot)
+        (if (opt-call-memory-element-ptr? (& elements) ptr)
+          (opt-call-memory-summary-add-element summary)
+          (opt-call-memory-summary-add-unknown summary))]
+      [_ (opt-call-memory-summary-add-root-write summary params root)])))
+
 (define (opt-call-memory-candidate-instr
   [candidate : OptCallMemoryCandidate]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamList]
   [roots : OptLicmRootEnv]
+  [elements : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : OptCallMemoryCandidate
   (match candidate
     [(OptCallMemoryCandidate.Unresolved) candidate]
@@ -76810,16 +78024,20 @@
       (match instr
         [(ir.CompilerIrInstr.StorePtr ptr _ _)
           (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-root-write
+            (opt-call-memory-summary-add-write
               summary
               params
-              (opt-licm-root-of-value roots ptr)))]
+              roots
+              elements
+              ptr))]
         [(ir.CompilerIrInstr.CopyBytes dst _ _)
           (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-root-write
+            (opt-call-memory-summary-add-write
               summary
               params
-              (opt-licm-root-of-value roots dst)))]
+              roots
+              elements
+              dst))]
         [(ir.CompilerIrInstr.Store _ _ _)
           (OptCallMemoryCandidate.Known
             (opt-call-memory-summary-add-global summary))]
@@ -76857,6 +78075,7 @@
   [function-set : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamList]
   [roots : OptLicmRootEnv]
+  [elements : opt_i64_i64_map.Map]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptCallMemoryCandidate
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
@@ -76868,11 +78087,13 @@
         function-set
         params
         roots
+        elements
         (ir.compiler-ir-instr-seq-ref instrs index))
       summaries
       function-set
       params
       roots
+      elements
       instrs
       (+ index 1))))
 
@@ -76882,6 +78103,7 @@
   [function-set : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamList]
   [roots : OptLicmRootEnv]
+  [elements : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : OptCallMemoryCandidate
   (match candidate
     [(OptCallMemoryCandidate.Unresolved) candidate]
@@ -76898,12 +78120,14 @@
                   function-set
                   params
                   roots
+                  elements
                   instrs
                   0)
                 summaries
                 function-set
                 params
                 roots
+                elements
                 (__tl-box-place rest))])]
         [(ir.CompilerIrBlockList.Array seq)
           (opt-call-memory-candidate-blocks
@@ -76912,6 +78136,7 @@
             function-set
             params
             roots
+            elements
             (ir.compiler-ir-block-seq-to-list seq))])]))
 
 (define (opt-call-memory-direct-needs-roots?
@@ -76962,6 +78187,39 @@
         summaries
         (ir.compiler-ir-block-seq-to-list seq))]))
 
+;; Only a direct write instruction can consult the element map, so the type
+;; environment and the classification walk it needs are built only for
+;; functions that contain one -- a strict subset of the ones already paying for
+;; the root walk.
+(define (opt-call-memory-instr-writes-memory? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.StorePtr _ _ _) true]
+    [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
+    [_ false]))
+
+(define (opt-call-memory-instrs-write-memory?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-call-memory-instr-writes-memory?
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      (opt-call-memory-instrs-write-memory? instrs (+ index 1)))))
+
+(define (opt-call-memory-blocks-write-memory? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-call-memory-instrs-write-memory? instrs 0)
+            (opt-call-memory-blocks-write-memory? (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-call-memory-blocks-write-memory?
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-call-memory-function-candidate
   [type-segment-bases : i64]
   [summaries : opt_i64_i64_map.Map]
@@ -76969,15 +78227,36 @@
   [func : ir.CompilerIrFunction]) : OptCallMemoryCandidate
   (match func
     [(ir.CompilerIrFunction.Function _ params _ _ blocks)
-      (opt-call-memory-candidate-blocks
-        (OptCallMemoryCandidate.Known 0)
-        summaries
-        function-set
-        params
-        (if (opt-call-memory-blocks-need-roots? summaries blocks)
-          (opt-call-memory-roots type-segment-bases params blocks)
-          (opt-licm-root-env-with-capacity 1))
-        blocks)]))
+      (if (not (opt-call-memory-blocks-need-roots? summaries blocks))
+        (opt-call-memory-candidate-blocks
+          (OptCallMemoryCandidate.Known 0)
+          summaries
+          function-set
+          params
+          (opt-licm-root-env-with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          blocks)
+        (let
+          [sources : opt_i64_i64_map.Map
+            (opt-call-memory-sources params blocks)]
+          (opt-call-memory-candidate-blocks
+            (OptCallMemoryCandidate.Known 0)
+            summaries
+            function-set
+            params
+            (opt-call-memory-roots-with-sources
+              type-segment-bases
+              sources
+              params
+              blocks)
+            (if (opt-call-memory-blocks-write-memory? blocks)
+              (opt-call-memory-element-ptrs
+                type-segment-bases
+                sources
+                params
+                blocks)
+              (opt_i64_i64_map.with-capacity 1))
+            blocks)))]))
 
 (defenum OptCallMemoryBuildPass
   (Pass opt_i64_i64_map.Map bool))
@@ -77645,6 +78924,55 @@
 ;; the map is unresolved and stays opaque, and indirect/C-ABI/SPMD call sites
 ;; have no callee name to look up and keep their unconditional
 ;; `opt-licm-store-summary-call-or-unknown`.
+;; The `direct-call-clean` map's value is a bit set, not a presence marker.
+;;
+;;   bit 0 (opt-direct-call-clean-memory-bit)  writes no memory at all
+;;   bit 1 (opt-direct-call-clean-global-bit)  writes no GLOBAL storage
+;;
+;; Bit 0 is the older fact and implies bit 1. Bit 1 alone is the weaker,
+;; strictly more common one: a callee that writes only through the objects its
+;; parameters name -- every `(&mut v)` helper -- writes no global cell, which is
+;; all the global-operand invariance question asks (opt-licm-globals-clean?).
+;; Membership is therefore never a sound test on its own; every reader asks for
+;; the bit it needs.
+(define (opt-direct-call-clean-memory-bit) : i64
+  1)
+
+(define (opt-direct-call-clean-global-bit) : i64
+  2)
+
+(define (opt-direct-call-clean-has-bit?
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [name : i64]
+  [bit : i64]) : bool
+  (match (opt_i64_i64_map.get
+    (& direct-call-clean)
+    (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound bits) (not (= (bit-and bits bit) 0))]
+    [(opt_i64_i64_map.LookupMissing) false]))
+
+;; Bit 0 for the provably-write-nothing leaves, bit 1 for everything the
+;; call-memory fixpoint resolved without a global-storage write and without an
+;; unknown effect. Both are read off the same partial map: a name it leaves
+;; absent is unresolved (recursive cycles, over-budget programs) and earns no
+;; bit, so this can only ADD facts to the syntactic walk's verdict.
+;;
+;; A summary carrying only the element bit lands in the second arm and earns
+;; bit 1 alone -- which is the point of that bit existing. The callee writes
+;; memory (so no bit 0), but every write it makes is into the storage a
+;; descriptor's data slot names, and a global cell is a symbol's own storage,
+;; never that. The argument holds for any argument list, so unlike the
+;; parameter-write bits it needs no help from the call site's GlobalAddr gate;
+;; that gate still guards the parameter-write case it was written for.
+(define (opt-loop-bce-direct-call-clean-bits [summary : i64]) : i64
+  (if (= summary 0)
+    (+ (opt-direct-call-clean-memory-bit) (opt-direct-call-clean-global-bit))
+    (if (or
+      (opt-call-memory-summary-global? summary)
+      (opt-call-memory-summary-unknown? summary))
+      0
+      (opt-direct-call-clean-global-bit))))
+
 (define (opt-loop-bce-direct-call-clean-add-memory-clean
   [functions : ir.CompilerIrFunctionList]
   [call-memory : opt_i64_i64_map.Map]
@@ -77659,9 +78987,18 @@
             [_record : unit
               (match (opt_i64_i64_map.get (& call-memory) name-id)
                 [(opt_i64_i64_map.LookupFound summary)
-                  (if (= summary 0)
-                    (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)
-                    unit)]
+                  (let
+                    [bits : i64 (opt-loop-bce-direct-call-clean-bits summary)]
+                    [existing : i64
+                      (match (opt_i64_i64_map.get (& out) name-id)
+                        [(opt_i64_i64_map.LookupFound old) old]
+                        [(opt_i64_i64_map.LookupMissing) 0])]
+                    (if (= (bit-or existing bits) existing)
+                      unit
+                      (opt_i64_i64_map.insert-ref!
+                        (&mut out)
+                        name-id
+                        (bit-or existing bits))))]
                 [(opt_i64_i64_map.LookupMissing) unit])]
             (opt-loop-bce-direct-call-clean-add-memory-clean
               (__tl-box-place rest)
@@ -85051,7 +86388,15 @@
             (& call-memory)
             (ir.compiler-ir-symbol-id name))
             [(opt_i64_i64_map.LookupFound summary)
+              ;; The element bit clears exactly like `unknown`. It names a
+              ;; write into a descriptor's element storage without naming
+              ;; WHICH caller object owns that descriptor, and the filter below
+              ;; is root-keyed -- it has no root to key on, so there is nothing
+              ;; weaker than an empty table to say. (This is the same verdict
+              ;; those callees got before the bit existed, so no cached load
+              ;; survives a call today that did not survive one before.)
               (if (or
+                (opt-call-memory-summary-element? summary)
                 (opt-call-memory-summary-global? summary)
                 (opt-call-memory-summary-unknown? summary))
                 (OptLoadTable.Nil)

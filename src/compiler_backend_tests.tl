@@ -5363,6 +5363,76 @@
 (define (keep4 [f : (-> i64 i64 i64 i64 i64)]) : i64 0)
 (define (main) : i64 (keep4 tc-dispatch))")
 
+;; A classifier chain inside a loop, spelled with nested `if`s because the raw
+;; source path lowers without the prelude that defines `or`. Its constants span
+;; a window whose 64-bit mask -- bits {0,4,9,10,12,14,33} above base 33, i.e.
+;; 8589956625 -- lands outside imm32, so no instruction operand can encode it.
+;;
+;; The bit_test rewrite converts the chain, the mask is loop-invariant, LICM
+;; hoists its `Mov` into the preheader, and the wide-literal operand rule
+;; (opt-global-copy-keep-wide-left) keeps it there instead of folding the
+;; literal back into the shift. Emitted, that is a `movq $imm` once in the
+;; preheader plus a bare `btq` per iteration, and NO `movabsq` of the mask
+;; anywhere -- `movabsq` is the emitter's operand-materialization spelling
+;; (compiler-backend-emit-load-i64-absolute), so its absence is a precise
+;; witness that the constant is not being rebuilt at the test. The eighth
+;; constant (70) stays outside the window as the chain's tail compare, leaving
+;; the seven that the profitability floor needs.
+(define compiler-backend-wide-bit-test-mask-source : String
+  "(define (wbt-classify [c : i64]) : bool
+  (if (= c 33)
+    true
+    (if (= c 37)
+      true
+      (if (= c 42)
+        true
+        (if (= c 43)
+          true
+          (if (= c 45)
+            true
+            (if (= c 47)
+              true
+              (if (= c 66)
+                true
+                (= c 70)))))))))
+(define (wbt-count [n : i64] [seed : i64]) : i64
+  (let
+    [i : i64 0]
+    [c : i64 seed]
+    [hits : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (if (wbt-classify c)
+            (set! hits (+ hits 1))
+            unit)
+          (set! c (+ c 1))
+          (set! i (+ i 1))))
+      hits)))
+(define (keep2 [f : (-> i64 i64 i64)]) : i64 0)
+(define (main) : i64 (keep2 wbt-count))")
+
+(define (compiler-backend-wide-bit-test-mask-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (string.copy (& compiler-backend-wide-bit-test-mask-source))
+    (compiler_backend.CompilerBackendTarget.Linux))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        ;; The chain became one bit test.
+        (compiler_backend.compiler-backend-string-contains? asm "    btq ")
+        ;; The mask reaches the emitter as its own `Mov`, spelled with the plain
+        ;; `movq $imm` form -- it is materialized once where that Mov landed.
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq $8589956625")
+        ;; ...and never as an operand materialization at the test itself, which
+        ;; is what folding the literal into the shift used to emit per entry.
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "movabsq $8589956625")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-tail-dispatch-no-csr-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
     (string.copy (& compiler-backend-tail-dispatch-source))
@@ -5417,6 +5487,260 @@
             body
             "    jmp _tl_tc_arm_c\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; M9: both `if`s test the same comparison, so GVN leaves ONE compare with two
+;; branch readers. The backend fuses a compare into `cmp`/`jcc` only when every
+;; reader is a branch fed by its own adjacent compare, so the shared boolean
+;; used to be materialised (`cmp`/`setl`/`movzbq`) and tested at each site --
+;; seven instructions where two fused pairs cost four. The late duplication pass
+;; gives each branch its own copy. Address-taking the function keeps opt2 from
+;; inlining the shape away.
+(define compiler-backend-shared-compare-source : String
+  "(define (cd-two-branch [a : i64] [b : i64] [c : i64]) : i64
+  (let
+    [t : i64 0]
+    (begin
+      (if (< a b)
+        (set! t 1)
+        (set! t 2))
+      (if (< a b)
+        (set! t (+ t (* c 3)))
+        (set! t (+ t (* c 5))))
+      t)))
+(define (cd-keep [f : (-> i64 i64 i64 i64)]) : i64 0)
+(define (main) : i64 (cd-keep cd-two-branch))")
+
+(define (compiler-backend-shared-compare-duplication-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (string.copy (& compiler-backend-shared-compare-source))
+    (compiler_backend.CompilerBackendTarget.Linux))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_cd_two_branch")]
+        (and
+          (not (string.eq body ""))
+          ;; Each branch owns a compare, and each of those fuses.
+          (>=
+            (compiler_backend.compiler-backend-string-count body "    cmpq ")
+            2)
+          ;; The boolean is never materialised, so neither half of the
+          ;; `setcc`/`movzbq` pair survives and no site spends a `test`.
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    setl "))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    movzbq "))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    testq "))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Flags reuse. Every `flag` below is stored to a global as well as branched on,
+;; so the boolean MUST be materialised: `compiler-backend-var-fuse-safe?` sees a
+;; non-branch reader and refuses the fusion, and the late compare duplication
+;; refuses the copy for the same reason. `setcc` and `movzb` read EFLAGS and
+;; write none, so the comparison's own flags survive the materialisation and the
+;; adjacent branch takes its `jcc` directly instead of spending a `test` to
+;; recompute what it already has. Address-taking the function keeps opt2 from
+;; inlining the shape away; each case is its own program so every assertion
+;; reads the same `_tl_fr_lt` body.
+;;
+;; Signed `<` with the false edge falling through to the then-block: the branch
+;; jumps on the INVERSE of the boolean's own condition.
+(define compiler-backend-flags-reuse-lt-source : String
+  "(define fr-sink : bool false)
+(define (fr-lt [a : i64] [b : i64]) : i64
+  (let
+    [flag : bool (< a b)]
+    [t : i64 0]
+    (begin
+      (if flag (set! t (* a 3)) (set! t (+ b 7)))
+      (set! fr-sink flag)
+      t)))
+(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
+(define (main) : i64 (fr-keep fr-lt))")
+
+;; Unsigned `<` takes the unsigned condition on both halves.
+(define compiler-backend-flags-reuse-ult-source : String
+  "(define fr-sink : bool false)
+(define (fr-lt [a : u64] [b : u64]) : i64
+  (let
+    [flag : bool (< a b)]
+    [t : i64 0]
+    (begin
+      (if flag (set! t 3) (set! t 9))
+      (set! fr-sink flag)
+      t)))
+(define (fr-keep [f : (-> u64 u64 i64)]) : i64 0)
+(define (main) : i64 (fr-keep fr-lt))")
+
+;; A negated condition only exchanges the successors, so the reused `jcc` is the
+;; comparison's own with the labels swapped.
+(define compiler-backend-flags-reuse-neg-source : String
+  "(define fr-sink : bool false)
+(define (fr-lt [a : i64] [b : i64]) : i64
+  (let
+    [flag : bool (< a b)]
+    [t : i64 0]
+    (begin
+      (if (not flag) (set! t (* a 5)) (set! t (+ b 11)))
+      (set! fr-sink flag)
+      t)))
+(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
+(define (main) : i64 (fr-keep fr-lt))")
+
+;; Float comparisons are excluded, as they are from every other fusion here.
+(define compiler-backend-flags-reuse-f64-source : String
+  "(define fr-sink : bool false)
+(define (fr-lt [a : f64] [b : f64]) : i64
+  (let
+    [flag : bool (< a b)]
+    [t : i64 0]
+    (begin
+      (if flag (set! t 13) (set! t 19))
+      (set! fr-sink flag)
+      t)))
+(define (fr-keep [f : (-> f64 f64 i64)]) : i64 0)
+(define (main) : i64 (fr-keep fr-lt))")
+
+;; The window is closed at zero instructions: storing the boolean BEFORE the
+;; branch puts something between the materialisation and the jump -- here a
+;; flag-preserving `movb`, and it is refused all the same -- so the `test` stays.
+(define compiler-backend-flags-reuse-gap-source : String
+  "(define fr-sink : bool false)
+(define (fr-lt [a : i64] [b : i64]) : i64
+  (let
+    [flag : bool (< a b)]
+    [t : i64 0]
+    (begin
+      (set! fr-sink flag)
+      (if flag (set! t (* a 3)) (set! t (+ b 7)))
+      t)))
+(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
+(define (main) : i64 (fr-keep fr-lt))")
+
+;; The boolean materialises in every case (`setcc` and `movzb` both survive).
+;; `reused?` says whether the branch then reads the comparison's own flags with
+;; `jcc` and spends no `test`, or falls back to re-deriving them.
+(define (compiler-backend-flags-reuse-body-ok?
+  [source : String]
+  [setcc : String]
+  [jcc : String]
+  [reused? : bool]) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    source
+    (compiler_backend.CompilerBackendTarget.Linux))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_fr_lt")]
+        (and
+          (not (string.eq body ""))
+          (compiler_backend.compiler-backend-string-contains? body setcc)
+          (compiler_backend.compiler-backend-string-contains?
+            body
+            "    movzbq ")
+          (if reused?
+            (and
+              (compiler_backend.compiler-backend-string-contains? body jcc)
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  body
+                  "    testq ")))
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    testq "))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-flags-reuse-branch-ok?) : bool
+  (and
+    (compiler-backend-flags-reuse-body-ok?
+      (string.copy (& compiler-backend-flags-reuse-lt-source))
+      "    setl "
+      "    jge "
+      true)
+    (compiler-backend-flags-reuse-body-ok?
+      (string.copy (& compiler-backend-flags-reuse-ult-source))
+      "    setb "
+      "    jae "
+      true)
+    (compiler-backend-flags-reuse-body-ok?
+      (string.copy (& compiler-backend-flags-reuse-neg-source))
+      "    setl "
+      "    jl "
+      true)
+    (compiler-backend-flags-reuse-body-ok?
+      (string.copy (& compiler-backend-flags-reuse-f64-source))
+      "    setb "
+      ""
+      false)
+    (compiler-backend-flags-reuse-body-ok?
+      (string.copy (& compiler-backend-flags-reuse-gap-source))
+      "    setl "
+      ""
+      false)))
+
+;; Runtime parity for the same peephole, in the compiler's own binary rather
+;; than in inspected text: `compiler-backend-flags-reuse-arg` is mutable, so
+;; these calls cannot fold away and the rewritten shape actually EXECUTES here.
+;; The guard case is the sharp one -- it divides only on the taken edge, so a
+;; mis-derived condition would trap on the zero divisor instead of returning 0.
+(define compiler-backend-flags-reuse-arg : i64
+  1)
+(define compiler-backend-flags-reuse-flag : bool
+  false)
+
+(define (compiler-backend-flags-reuse-lt [a : i64] [b : i64]) : i64
+  (let
+    [flag : bool (< a b)]
+    [t : i64 0]
+    (begin
+      (if flag
+        (set! t (* a 3))
+        (set! t (+ b 7)))
+      (set! compiler-backend-flags-reuse-flag flag)
+      t)))
+
+(define (compiler-backend-flags-reuse-neg [a : i64] [b : i64]) : i64
+  (let
+    [flag : bool (< a b)]
+    [t : i64 0]
+    (begin
+      (if (not flag)
+        (set! t (* a 5))
+        (set! t (+ b 11)))
+      (set! compiler-backend-flags-reuse-flag flag)
+      t)))
+
+(define (compiler-backend-flags-reuse-guard [a : i64] [b : i64]) : i64
+  (let
+    [flag : bool (< a b)]
+    [t : i64 0]
+    (begin
+      (if flag
+        (set! t (/ 100 a))
+        (set! t 0))
+      (set! compiler-backend-flags-reuse-flag flag)
+      t)))
+
+(define (compiler-backend-flags-reuse-runtime-ok?) : bool
+  (let
+    [one : i64 compiler-backend-flags-reuse-arg]
+    (and
+      (= (compiler-backend-flags-reuse-lt one (+ one 1)) 3)
+      compiler-backend-flags-reuse-flag
+      (= (compiler-backend-flags-reuse-lt (+ one 4) (+ one 1)) 9)
+      (not compiler-backend-flags-reuse-flag)
+      (= (compiler-backend-flags-reuse-neg one (+ one 1)) 13)
+      compiler-backend-flags-reuse-flag
+      (= (compiler-backend-flags-reuse-neg (+ one 4) (+ one 1)) 25)
+      (not compiler-backend-flags-reuse-flag)
+      (= (compiler-backend-flags-reuse-guard (+ one 4) (+ one 8)) 20)
+      (= (compiler-backend-flags-reuse-guard (- one 1) (- one 2)) 0))))
 
 (define (compiler-backend-shifted-loop-bound-win64-ok?) : bool
   (let
@@ -43830,6 +44154,10 @@ b_keep:
         (compiler-backend-regalloc-ok?)
         (compiler-backend-call-save-r9-wrap-ok?)
         (compiler-backend-shifted-loop-bound-win64-ok?)
+        (compiler-backend-wide-bit-test-mask-ok?)
+        (compiler-backend-shared-compare-duplication-ok?)
+        (compiler-backend-flags-reuse-branch-ok?)
+        (compiler-backend-flags-reuse-runtime-ok?)
         (compiler-backend-tail-dispatch-no-csr-ok?)
         (compiler-backend-fusion-pin-store-fusion-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)

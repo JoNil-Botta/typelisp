@@ -28404,6 +28404,102 @@
       (compiler-backend-emergency-restore-before-jumps backend-state)
       jumps-asm)))
 
+;; Byte offset just past the last newline strictly before `limit`: the start of
+;; the assembly line whose terminating newline sits at `limit`. Zero when the
+;; text holds no earlier newline (the line is the first one).
+(define (compiler-backend-asm-prev-line-start [data : (Ptr u8)] [limit : i64]) : i64
+  (let
+    [i : i64 limit]
+    [start : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> i 0))
+        (if (= (compiler-backend-peephole-byte-at data (- i 1)) 10)
+          (begin
+            (set! start i)
+            (set! done true))
+          (set! i (- i 1))))
+      start)))
+
+;; The flags-reuse window rule. True when `head` -- the assembly a materialized
+;; comparison just emitted -- ends with exactly the two lines
+;;
+;;     <setcc> <r8>
+;;     movzb{l,q} <r8>, <r>
+;;
+;; and the `setcc` spelling is `setcc`, the mnemonic the caller's op/type maps
+;; to. `setcc` and `movzb` both READ and neither WRITES EFLAGS, so the flags the
+;; comparison itself set are still live at the end of `head`: a branch on the
+;; materialized boolean may consume them with the matching `jcc` instead of
+;; re-deriving them with `test`/`cmp $0`. Requiring the pair to be the LAST two
+;; lines is what makes "nothing wrote flags in between" true -- the window is
+;; closed, not enumerated -- and requiring the `setcc` mnemonic to be the one
+;; the caller's `jcc` pair was derived from is what ties the reused condition to
+;; the boolean the branch actually reads. Emergency spill save/restore text may
+;; still wrap this head; it is `movq` only, and so flag-safe on both sides.
+(define (compiler-backend-asm-tail-setcc-materializes?
+  [head : (& head str)]
+  [setcc : String]) : bool
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data head))]
+    [n : i64 (string.string-length head)]
+    [cc-len : i64 (string.string-length setcc)]
+    (if (or
+      (= cc-len 0)
+      (< n 2)
+      (not (= (compiler-backend-peephole-byte-at data (- n 1)) 10)))
+      false
+      (let
+        [zext-start : i64 (compiler-backend-asm-prev-line-start data (- n 1))]
+        [src-start : i64 (+ zext-start 11)]
+        (if (or
+          (= zext-start 0)
+          (>= src-start (- n 1))
+          (not
+            (or
+              (compiler-backend-peephole-range-eq?
+                data
+                zext-start
+                src-start
+                "    movzbq ")
+              (compiler-backend-peephole-range-eq?
+                data
+                zext-start
+                src-start
+                "    movzbl "))))
+          false
+          (let
+            [comma : i64
+              (compiler-backend-peephole-scan-byte-range
+                data
+                src-start
+                (- n 1)
+                44)]
+            [set-start : i64
+              (compiler-backend-asm-prev-line-start data (- zext-start 1))]
+            [set-op : i64 (+ set-start 4)]
+            [set-src : i64 (+ set-op (+ cc-len 1))]
+            (and
+              (> comma src-start)
+              (< comma (- n 1))
+              (< set-src (- zext-start 1))
+              (compiler-backend-peephole-range-eq? data set-start set-op "    ")
+              (compiler-backend-peephole-range-eq?
+                data
+                set-op
+                (+ set-op cc-len)
+                setcc)
+              (= (compiler-backend-peephole-byte-at data (+ set-op cc-len)) 32)
+              (compiler-backend-peephole-ranges-eq?
+                data
+                set-src
+                (- zext-start 1)
+                data
+                src-start
+                comma))))))))
+
 (define (compiler-backend-compare-uses-zero-test?
   [op : compiler_ir_types.CompilerIrBinOp]) : bool
   (and
@@ -41611,6 +41707,43 @@
         false-label
         false-copies))))
 
+;; A branch's own flag-setting step, or none at all. An empty `true-jcc` is the
+;; ordinary branch: load/test the condition and jump on ZF. A non-empty one is a
+;; caller that already proved EFLAGS holds the condition -- a materialized
+;; comparison's own flags, still live across its flag-preserving
+;; `setcc`/`movzb` -- so only the jumps are emitted and `cond`, which names the
+;; boolean those flags were set from, needs no instruction of its own.
+(define (compiler-backend-emit-branch-test-or-jcc
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [function : String]
+  [cond : compiler_ir_types.CompilerIrValue]
+  [true-label : i64]
+  [false-label : i64]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [true-jcc : String]
+  [false-jcc : String]
+  [planned-test : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (if (string.eq true-jcc "")
+    (compiler-backend-emit-branch-with-plan
+      assignments
+      function
+      cond
+      true-label
+      false-label
+      fallthrough
+      planned-test
+      backend-state)
+    (ResultCompilerBackend.Ok
+      (compiler-backend-emit-compare-branch-jumps
+        function
+        true-label
+        false-label
+        fallthrough
+        true-jcc
+        false-jcc
+        backend-state))))
+
 (define (compiler-backend-emit-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -41623,6 +41756,8 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
+  [true-jcc : String]
+  [false-jcc : String]
   [planned-test : String]
   [planned-cycle : String]
   [planned-stage : String]) : ResultCompilerBackend
@@ -41631,13 +41766,15 @@
       (compiler-backend-state-function-state program-index.backend-state)
       true-label
       false-label))
-    (compiler-backend-emit-branch-with-plan
+    (compiler-backend-emit-branch-test-or-jcc
       assignments
       function
       cond
       true-label
       false-label
       fallthrough
+      true-jcc
+      false-jcc
       planned-test
       program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
@@ -41687,13 +41824,15 @@
                   true-copies
                   false-copies
                   fallthrough)]
-              (match (compiler-backend-emit-branch-with-plan
+              (match (compiler-backend-emit-branch-test-or-jcc
                 assignments
                 function
                 cond
                 true-target
                 false-target
                 edge-fallthrough
+                true-jcc
+                false-jcc
                 planned-test
                 program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
@@ -47619,6 +47758,8 @@
           fallthrough
           ctx.program-index
           ctx.vars
+          ""
+          ""
           planned-scratch0
           planned-scratch1
           planned-scratch2)
@@ -49375,6 +49516,8 @@
     (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
     ctx.program-index
     ctx.vars
+    ""
+    ""
     (compiler-backend-scratch-plan-register-ahead
       (compiler-backend-runtime-plan-scratch ctx.plan)
       1
@@ -55773,9 +55916,15 @@
 ;; and any hand-written `(!= (bit-and (shr MASK d) 1) 0)` gets the same
 ;; treatment.
 ;;
-;; The guard stays: `bt` reads its offset modulo 64 where the language aborts,
-;; so dropping it would change what an out-of-range count does. Its compare and
-;; branch are the only cost that survives on the taken path.
+;; The guard stays wherever the count could be out of range: `bt` reads its
+;; offset modulo 64 where the language aborts, so dropping it there would change
+;; what an out-of-range count does. It goes away where the count is spelled
+;; `(bit-and c 63)`: six bits cannot name an out-of-range shift, the abort is
+;; unreachable, and `bt` already reads its offset modulo 64 -- so the mask is
+;; exactly `bt`'s own behavior and both it and the guard fold into the one
+;; instruction. That is the shape the optimizer's bit_test pass emits
+;; (opt-bit-test-mask-block); a bare count keeps the guard, which is the only
+;; cost that then survives on the taken path.
 ;; A literal mask still has to be materialized, so it needs a register the count
 ;; does not occupy; a mask already in a var is only READ by `bt` and needs
 ;; nothing beyond its own home. The optimizer emits the second form, and the
@@ -55787,8 +55936,10 @@
 
 (defenum CompilerBackendMaybeBitTest
   (No)
-  ;; mask, count var, true label, false label, index after the branch
-  (Some CompilerBackendBitTestMask i64 i64 i64 i64))
+  ;; mask, count var, true label, false label, index after the branch,
+  ;; the shift's dst (the register the literal-mask materialization may borrow),
+  ;; and whether the shift-count guard is still owed
+  (Some CompilerBackendBitTestMask i64 i64 i64 i64 i64 bool))
 
 (define (compiler-backend-bit-test-one?
   [value : compiler_ir_types.CompilerIrValue]) : bool
@@ -55855,10 +56006,10 @@
     [(CompilerBackendBitTestMask.No) false]
     [_ true]))
 
-;; Register the `bt` base operand ends up in: a var-homed mask keeps its own
-;; home (nothing is written to it), a literal mask is materialized into a
-;; register the count does not occupy. An empty answer keeps the general shift
-;; lowering.
+;; Register the `bt` base operand ends up in: a register-homed mask keeps its own
+;; home (nothing is written to it); a literal mask, or a var mask the allocator
+;; left somewhere other than a register, is placed into a register the count does
+;; not occupy. An empty answer keeps the general shift lowering.
 (define (compiler-backend-bit-test-base-reg
   [ctx : CompilerBackendEmissionContext]
   [mask : CompilerBackendBitTestMask]
@@ -55867,29 +56018,55 @@
   (match mask
     [(CompilerBackendBitTestMask.No) ""]
     [(CompilerBackendBitTestMask.Var mask-var)
-      (compiler-backend-var-register-home
-        ctx.backend-state
-        ctx.assignments
-        mask-var)]
-    [(CompilerBackendBitTestMask.Literal _)
-      (compiler-backend-bit-test-mask-reg ctx dst count-reg)]))
-
-;; Match-time form: a literal mask can always be placed (the emitter falls back
-;; to a scavenged register), a var mask must already have a register home.
-(define (compiler-backend-bit-test-base-available?
-  [ctx : CompilerBackendEmissionContext]
-  [mask : CompilerBackendBitTestMask]) : bool
-  (match mask
-    [(CompilerBackendBitTestMask.No) false]
-    [(CompilerBackendBitTestMask.Literal _) true]
-    [(CompilerBackendBitTestMask.Var mask-var)
-      (not
-        (string.eq
+      (let
+        [home : String
           (compiler-backend-var-register-home
             ctx.backend-state
             ctx.assignments
-            mask-var)
-          ""))]))
+            mask-var)]
+        (if (string.eq home "")
+          (compiler-backend-bit-test-mask-reg ctx dst count-reg)
+          home))]
+    [(CompilerBackendBitTestMask.Literal _)
+      (compiler-backend-bit-test-mask-reg ctx dst count-reg)]))
+
+;; Text placing the mask in `mask-reg` ahead of the `bt`: a literal is
+;; materialized; a var the allocator did NOT leave in a register -- spilled,
+;; rematerialized, or slot-homed -- is loaded through the ordinary scalar loader,
+;; which is exactly the one load the general shift lowering would have performed
+;; on the same operand. A register-homed var needs nothing.
+;;
+;; This is what keeps the wide-mask suppression in the optimizer
+;; (`opt-global-copy-keep-wide-left`) a strict win. Before it, a mask the
+;; optimizer had left as a Var only lowered to `bt` when the allocator found it
+;; a register; under pressure it fell all the way back to the general quad --
+;; and, shift-count guard, shift, test -- while the folded literal form kept its
+;; two-instruction `movabsq`/`btq`. The register-poor case is now `load`/`btq`:
+;; the same two instructions, and one fewer whenever the register IS free.
+(define (compiler-backend-bit-test-load-mask
+  [ctx : CompilerBackendEmissionContext]
+  [mask : CompilerBackendBitTestMask]
+  [ty : compiler_ast_types.AstType]
+  [mask-reg : String]) : String
+  (match mask
+    [(CompilerBackendBitTestMask.Literal literal)
+      (compiler-backend-emit-load-i64-absolute literal mask-reg)]
+    [(CompilerBackendBitTestMask.Var mask-var)
+      (if (string.eq
+        (compiler-backend-var-register-home
+          ctx.backend-state
+          ctx.assignments
+          mask-var)
+        "")
+        (compiler-backend-emit-load-typed-var-to-reg-with-plan
+          ctx.type-segment-bases
+          ctx.assignments
+          mask-var
+          ty
+          mask-reg
+          ctx.backend-state)
+        "")]
+    [_ ""]))
 
 (define (compiler-backend-bit-test-shr-mask
   [lhs : compiler_ir_types.CompilerIrValue]) : CompilerBackendBitTestMask
@@ -55905,6 +56082,7 @@
   [dst : i64]
   [mask : CompilerBackendBitTestMask]
   [count : i64]
+  [guard? : bool]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : CompilerBackendMaybeBitTest
   (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
@@ -55921,8 +56099,13 @@
             (compiler-backend-bit-test-one? test-rhs)
             (compiler-backend-var-single-use? ctx.use-counts test-dst)
             (compiler-backend-branch-uses-var? cond test-dst)
+            ;; The mask needs no availability test of its own: a known mask can
+            ;; always be placed. A literal materializes into the planned scratch
+            ;; (falling back to a scavenged register), and every allocator home a
+            ;; var can have -- register, spill slot, remat, plain slot -- is
+            ;; loadable by the same scalar loader the general lowering would have
+            ;; used on it (compiler-backend-bit-test-load-mask).
             (not (string.eq (compiler-backend-bit-test-count-reg ctx count) ""))
-            (compiler-backend-bit-test-base-available? ctx mask)
             (not
               (compiler-backend-branch-needs-phi-copies?
                 ctx.function-state
@@ -55933,10 +56116,71 @@
               count
               true-label
               false-label
-              (+ index 2))
+              (+ index 2)
+              dst
+              guard?)
             (CompilerBackendMaybeBitTest.No))]
         [_ (CompilerBackendMaybeBitTest.No)])]
     [_ (CompilerBackendMaybeBitTest.No)]))
+
+;; `(bit-and c 63)` feeding the shift: the count is six bits, so the shift's
+;; abort is unreachable and `bt`'s modulo-64 offset already performs the mask.
+;; The whole quad -- and, shift, bit test, branch -- becomes one `bt` reading
+;; `c`'s own home, with no guard in front of it.
+(define (compiler-backend-bit-test-count-mask?
+  [value : compiler_ir_types.CompilerIrValue]) : bool
+  (match value
+    [(compiler_ir_types.CompilerIrValue.I64 n) (= n 63)]
+    [_ false]))
+
+(define (compiler-backend-bit-test-masked-shift
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [masked : i64]) : CompilerBackendMaybeBitTest
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        shift-dst
+        (compiler_ir_types.CompilerIrBinOp.Shr _)
+        shift-lhs
+        (compiler_ir_types.CompilerIrValue.Var shift-count)
+        _)
+      (if (= shift-count masked)
+        (CompilerBackendMaybeBitTest.Some
+          (compiler-backend-bit-test-shr-mask shift-lhs)
+          shift-dst
+          0
+          0
+          0
+          shift-dst
+          false)
+        (CompilerBackendMaybeBitTest.No))]
+    [_ (CompilerBackendMaybeBitTest.No)]))
+
+(define (compiler-backend-bit-test-masked-count-match
+  [ctx : CompilerBackendEmissionContext]
+  [masked : i64]
+  [count : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendMaybeBitTest
+  (if (>= (+ index 2) instrs.len)
+    (CompilerBackendMaybeBitTest.No)
+    (match (compiler-backend-bit-test-masked-shift
+      (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      masked)
+      [(CompilerBackendMaybeBitTest.No) (CompilerBackendMaybeBitTest.No)]
+      [(CompilerBackendMaybeBitTest.Some mask shift-dst _ _ _ _ _)
+        (if (and
+          (compiler-backend-bit-test-mask-known? mask)
+          (compiler-backend-var-single-use? ctx.use-counts masked)
+          (compiler-backend-var-single-use? ctx.use-counts shift-dst))
+          (compiler-backend-bit-test-branch-tail
+            ctx
+            shift-dst
+            mask
+            count
+            false
+            instrs
+            (+ index 1))
+          (CompilerBackendMaybeBitTest.No))])))
 
 (define (compiler-backend-bit-test-branch-match
   [ctx : CompilerBackendEmissionContext]
@@ -55962,9 +56206,22 @@
                 dst
                 mask
                 count
+                true
                 instrs
                 index)
               (CompilerBackendMaybeBitTest.No)))]
+        [_ (CompilerBackendMaybeBitTest.No)])]
+    [(compiler_ir_types.CompilerIrBinOp.BitAnd)
+      (match lhs
+        [(compiler_ir_types.CompilerIrValue.Var count)
+          (if (compiler-backend-bit-test-count-mask? rhs)
+            (compiler-backend-bit-test-masked-count-match
+              ctx
+              dst
+              count
+              instrs
+              index)
+            (CompilerBackendMaybeBitTest.No))]
         [_ (CompilerBackendMaybeBitTest.No)])]
     [_ (CompilerBackendMaybeBitTest.No)]))
 
@@ -55978,6 +56235,7 @@
   [count : i64]
   [true-label : i64]
   [false-label : i64]
+  [guard? : bool]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
@@ -55986,18 +56244,17 @@
     [mask-reg : String
       (compiler-backend-bit-test-base-reg ctx mask dst count-reg)]
     [load-mask : String
-      (match mask
-        [(CompilerBackendBitTestMask.Literal literal)
-          (compiler-backend-emit-load-i64-absolute literal mask-reg)]
-        [_ ""])]
+      (compiler-backend-bit-test-load-mask ctx mask ty mask-reg)]
     [head : String
       (str_cat.str-cat
-        (compiler-backend-shift-guard-asm
-          ctx.type-segment-bases
-          ty
-          (compiler_ir_types.compiler-ir-binop-rhs-type op ty)
-          count-reg
-          ctx.backend-state)
+        (if guard?
+          (compiler-backend-shift-guard-asm
+            ctx.type-segment-bases
+            ty
+            (compiler_ir_types.compiler-ir-binop-rhs-type op ty)
+            count-reg
+            ctx.backend-state)
+          "")
         load-mask
         (str_cat.str-cat "    btq " count-reg ", " mask-reg "\n")
         (compiler-backend-emit-compare-branch-jumps
@@ -56039,17 +56296,20 @@
         count
         true-label
         false-label
-        after-branch)
+        after-branch
+        base-dst
+        guard?)
       (compiler-backend-emit-bit-test-branch
         ctx
         fallthrough
-        dst
+        base-dst
         op
         ty
         mask
         count
         true-label
         false-label
+        guard?
         instrs
         after-branch
         out)]
@@ -56066,6 +56326,240 @@
         instrs
         index
         out)]))
+
+(defenum CompilerBackendMaybeFlagsBranch
+  (No)
+  ;; branch condition, true label, false label, index just past the branch
+  (Some compiler_ir_types.CompilerIrValue i64 i64 i64))
+
+;; The `not` shape of the flags-reuse match: the comparison materializes, a
+;; boolean negation of it follows, and the branch reads the negation. The `not`
+;; only swaps the two successors -- the same inversion
+;; `compiler-backend-emit-fused-not-branch-rest` performs -- so the comparison's
+;; own flags still decide the branch, read with the SAME jcc pair against
+;; exchanged labels. Admitted only when the negation never materializes
+;; (single-use or fuse-safe), because otherwise its `xorq $1` would land between
+;; the comparison and the jumps and clobber the flags being reused.
+(define (compiler-backend-flags-not-branch-match
+  [ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [next : compiler_ir_types.CompilerIrInstr]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendMaybeFlagsBranch
+  (match next
+    [(compiler_ir_types.CompilerIrInstr.UnOp
+        not-dst
+        (compiler_ir_types.CompilerIrUnOp.Not)
+        not-src
+        (compiler_ast_types.AstType.Bool))
+      (if (and
+        (compiler-backend-branch-uses-var? not-src dst)
+        (or
+          (compiler-backend-var-single-use? ctx.use-counts not-dst)
+          (compiler-backend-var-fuse-safe? ctx.backend-state not-dst))
+        (< index instrs.len))
+        (match (compiler_ir_types.compiler-ir-instr-scalar-fact
+          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))
+          [(compiler_ir_types.CompilerIrInstrScalarFact.Branch
+              cond
+              true-label
+              false-label)
+            (if (compiler-backend-branch-uses-var? cond not-dst)
+              (CompilerBackendMaybeFlagsBranch.Some
+                cond
+                false-label
+                true-label
+                (+ index 1))
+              (CompilerBackendMaybeFlagsBranch.No))]
+          [_ (CompilerBackendMaybeFlagsBranch.No)])
+        (CompilerBackendMaybeFlagsBranch.No))]
+    [_ (CompilerBackendMaybeFlagsBranch.No)]))
+
+;; The branch that may consume a materialized comparison's own flags: it must be
+;; the instruction right after the comparison and must read exactly the boolean
+;; the comparison defined. `compiler-ir-instr-scalar-fact` folds TotalEnumBranch
+;; into Branch, so both terminator spellings are covered. A branch on a COPY of
+;; the boolean is refused -- the copy's home is what such a branch reads, and
+;; whatever produced the copy is not this comparison.
+(define (compiler-backend-flags-branch-match
+  [ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendMaybeFlagsBranch
+  (if (>= index instrs.len)
+    (CompilerBackendMaybeFlagsBranch.No)
+    (let
+      [next : compiler_ir_types.CompilerIrInstr
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      (match (compiler_ir_types.compiler-ir-instr-scalar-fact next)
+        [(compiler_ir_types.CompilerIrInstrScalarFact.Branch
+            cond
+            true-label
+            false-label)
+          (if (compiler-backend-branch-uses-var? cond dst)
+            (CompilerBackendMaybeFlagsBranch.Some
+              cond
+              true-label
+              false-label
+              (+ index 1))
+            (CompilerBackendMaybeFlagsBranch.No))]
+        [_
+          (compiler-backend-flags-not-branch-match
+            ctx
+            dst
+            next
+            instrs
+            (+ index 1))]))))
+
+;; Emit the jumps of a branch whose condition is already live in EFLAGS, then
+;; the rest of the block. `ahead` is how many instructions past the comparison
+;; the branch sits, so the phi-copy scratch comes from that instruction's own
+;; planned allocation, exactly as the ordinary branch emission would take it.
+(define (compiler-backend-emit-flags-reuse-branch-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [cond : compiler_ir_types.CompilerIrValue]
+  [true-label : i64]
+  [false-label : i64]
+  [true-jcc : String]
+  [false-jcc : String]
+  [ahead : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  (match (compiler-backend-emit-branch-with-phi-copies-with-plan
+    ctx.type-segment-bases
+    ctx.assignments
+    ctx.function
+    ctx.blocks
+    ctx.current-label
+    cond
+    true-label
+    false-label
+    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+    ctx.program-index
+    ctx.vars
+    true-jcc
+    false-jcc
+    ""
+    (compiler-backend-scratch-plan-register-ahead
+      (compiler-backend-runtime-plan-scratch ctx.plan)
+      ahead
+      1
+      ctx.backend-state)
+    (compiler-backend-scratch-plan-register-ahead
+      (compiler-backend-runtime-plan-scratch ctx.plan)
+      ahead
+      2
+      ctx.backend-state))
+    [(ResultCompilerBackend.Ok head)
+      (begin
+        (compiler-backend-asm-append
+          out
+          (compiler-backend-emergency-wrap head ctx.backend-state))
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+
+;; Flags reuse for a comparison that MUST materialize. The fused paths above
+;; fire only when the boolean is never needed as a value; with a stored bool or
+;; a phi input among its readers the setcc/movzb stay, and the adjacent branch
+;; used to re-derive the very flags they were computed from:
+;;
+;;     cmpq %rcx, %rax / setl %al / movzbq %al, %rax / testq %rax, %rax / jne L
+;;
+;; `setcc` and `movzb` read EFLAGS and write none, so the `cmp`'s flags are
+;; still exactly what `setl` saw. Branching with the comparison's own `jcc`
+;; retires the `test` -- one instruction, no duplicated compare, no extra live
+;; range. The materialization is emitted first and then INSPECTED
+;; (`compiler-backend-asm-tail-setcc-materializes?`): the rewrite is taken only
+;; when the emitted text really ends with the matching `setcc`/`movzb` pair, so
+;; every lowering that ends some other way -- a folded constant, a float
+;; compare, an operand staged after the flags were set -- falls back to the
+;; ordinary branch untouched instead of having to be enumerated here.
+(define (compiler-backend-emit-materialized-compare-branch-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  (match (if (compiler-backend-compare-op? op)
+    (compiler-backend-flags-branch-match ctx dst instrs index)
+    (CompilerBackendMaybeFlagsBranch.No))
+    [(CompilerBackendMaybeFlagsBranch.No)
+      (compiler-backend-emit-instrs-normal
+        ctx
+        fallthrough
+        instr
+        instrs
+        index
+        out)]
+    [(CompilerBackendMaybeFlagsBranch.Some cond true-label false-label after)
+      (let
+        [operand-ty : compiler_ast_types.AstType
+          (compiler-backend-binop-operand-ty
+            ctx.types
+            ctx.global-types
+            op
+            lhs
+            rhs
+            ty)]
+        [setcc : String (compiler-backend-compare-setcc op operand-ty)]
+        [true-jcc : String (compiler-backend-compare-true-jcc op operand-ty)]
+        [false-jcc : String (compiler-backend-compare-false-jcc op operand-ty)]
+        (if (or
+          (string.eq setcc "")
+          (string.eq true-jcc "")
+          (string.eq false-jcc "")
+          (compiler-backend-binop-f64? ctx.types ctx.global-types lhs rhs ty))
+          (compiler-backend-emit-instrs-normal
+            ctx
+            fallthrough
+            instr
+            instrs
+            index
+            out)
+          (match (compiler-backend-emit-instr
+            ctx
+            (CompilerBackendMaybeLabel.No)
+            instr)
+            [(ResultCompilerBackend.Ok head)
+              (if (compiler-backend-asm-tail-setcc-materializes? head setcc)
+                (begin
+                  (let
+                    [location : String
+                      (compiler-backend-debug-instr-location ctx instr)]
+                    (if (> (string.string-length location) 0)
+                      (compiler-backend-asm-append out location)
+                      unit))
+                  (compiler-backend-emergency-append out head ctx.backend-state)
+                  (compiler-backend-emit-flags-reuse-branch-rest
+                    ctx
+                    fallthrough
+                    cond
+                    true-label
+                    false-label
+                    true-jcc
+                    false-jcc
+                    (- after index)
+                    instrs
+                    after
+                    out))
+                (compiler-backend-emit-instrs-after-emitted
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  index
+                  head
+                  out))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])))]))
 
 (define (compiler-backend-emit-binop-step-general
   [ctx : CompilerBackendEmissionContext]
@@ -56361,10 +56855,19 @@
           instrs
           index
           out))
-      (compiler-backend-emit-instrs-normal
+      ;; The comparison materializes (a stored bool or a phi input reads it), so
+      ;; the setcc/movzb stay -- but an adjacent branch on that same boolean can
+      ;; still read the comparison's own flags instead of re-deriving them. Every
+      ;; other binop falls straight through to the ordinary emission there.
+      (compiler-backend-emit-materialized-compare-branch-step
         ctx
         fallthrough
         instr
+        dst
+        op
+        lhs
+        rhs
+        ty
         instrs
         index
         out))))
@@ -68838,6 +69341,7 @@
                             regalloc-census
                             (begin
                               (compiler_regalloc.compiler-reg-call-span-census-print!)
+                              (compiler_regalloc.compiler-reg-evict-census-print!)
                               (compiler_regalloc.compiler-reg-assignment-census-print!)
                               (compiler_regalloc.compiler-reg-move-census-print!)
                               (io.print-error

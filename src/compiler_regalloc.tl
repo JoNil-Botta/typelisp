@@ -338,9 +338,71 @@
   (slots (__tl_dyn-array CompilerRegCallRegion))
   (len i64))
 
+;; P11b phase 3 (loop-scope EVICTION): one materialization step for a PARKED
+;; occupant whose pool register was lent to a hot loop invariant.
+;;
+;; A parked occupant O is a value the plan homes in register R whose live range
+;; COVERS a rescue region but which is never mentioned inside it -- a value
+;; computed before the loop and read after it. Lending R to the region's
+;; invariant costs exactly one store of O at the region anchor plus one reload
+;; per region exit edge on which O is still live; no in-region traffic at all,
+;; which is what separates this from ordinary spilling.
+;;
+;;   kind = save    (0): at `point`, `Mov S <- O` into a fresh slot-homed var S
+;;                       minted by the rewrite. Emitted BEFORE the region's own
+;;                       activation mov, which is what frees R for the shadow.
+;;   kind = restore (1): at `point`, `Mov O <- S` -- R gets O's value back.
+;;
+;; `point` is in the same instruction-point space as the regions, and both
+;; kinds insert BEFORE the instruction at that point.
+(defenum CompilerRegCallEvict
+  (CompilerRegCallEvict i64 i64 i64))
+
+;; Eviction steps in RECORD order (saves precede their restores per victim).
+(defstruct CompilerRegCallEvictSeq
+  (slots (__tl_dyn-array CompilerRegCallEvict))
+  (len i64))
+
+(define (compiler-reg-call-evict-kind-save) : i64
+  0)
+
+(define (compiler-reg-call-evict-kind-restore) : i64
+  1)
+
+(define (compiler-reg-call-evict-seq-empty) : CompilerRegCallEvictSeq
+  (CompilerRegCallEvictSeq (array.make-array CompilerRegCallEvict 0) 0))
+
+(define (compiler-reg-call-evict-seq-push
+  [seq : CompilerRegCallEvictSeq]
+  [item : CompilerRegCallEvict]) : CompilerRegCallEvictSeq
+  (let
+    [slots : (__tl_dyn-array CompilerRegCallEvict) seq.slots]
+    [len : i64 seq.len]
+    [cap : i64 (array-length slots)]
+    (if (< len cap)
+      (begin
+        (set! (array-ref slots len) item)
+        (CompilerRegCallEvictSeq slots (+ len 1)))
+      (let
+        [grown : (__tl_dyn-array CompilerRegCallEvict)
+          (array.make-array
+            CompilerRegCallEvict
+            (if (< cap 4)
+              4
+              (* cap 2)))]
+        [i : i64 0]
+        (begin
+          (while (< i len)
+            (begin
+              (set! (array-ref grown i) (array-ref slots i))
+              (set! i (+ i 1))))
+          (set! (array-ref grown len) item)
+          (CompilerRegCallEvictSeq grown (+ len 1)))))))
+
 ;; Call-spanning split result: the shadow (split) var set, a per-var map
 ;; (var-id -> caller-saved register ID for its call-free regions, -1 = none),
-;; and the accepted per-call-region placements the backend rewrite realizes.
+;; the accepted per-call-region placements the backend rewrite realizes, and
+;; the parked-occupant eviction steps those placements depend on.
 ;; The regs map generalizes the former single hardcoded %r9 so multiple
 ;; OVERLAPPING call-spanning values can each be kept in a distinct caller-saved
 ;; register between the same calls.
@@ -348,20 +410,25 @@
   (CompilerRegCallSplit
     live.CompilerLiveI64Set
     (__tl_dyn-array i64)
-    CompilerRegCallRegionSeq))
+    CompilerRegCallRegionSeq
+    CompilerRegCallEvictSeq))
 
 (define (compiler-reg-call-split-shadows [s : CompilerRegCallSplit]) : live.CompilerLiveI64Set
   (match s
-    [(CompilerRegCallSplit shadows _ _) shadows]))
+    [(CompilerRegCallSplit shadows _ _ _) shadows]))
 
 (define (compiler-reg-call-split-regs [s : CompilerRegCallSplit]) : (__tl_dyn-array
     i64)
   (match s
-    [(CompilerRegCallSplit _ regs _) regs]))
+    [(CompilerRegCallSplit _ regs _ _) regs]))
 
 (define (compiler-reg-call-split-regions [s : CompilerRegCallSplit]) : CompilerRegCallRegionSeq
   (match s
-    [(CompilerRegCallSplit _ _ regions) regions]))
+    [(CompilerRegCallSplit _ _ regions _) regions]))
+
+(define (compiler-reg-call-split-evictions [s : CompilerRegCallSplit]) : CompilerRegCallEvictSeq
+  (match s
+    [(CompilerRegCallSplit _ _ _ evictions) evictions]))
 
 (define (compiler-reg-call-region-seq-empty) : CompilerRegCallRegionSeq
   (CompilerRegCallRegionSeq (array.make-array CompilerRegCallRegion 0) 0))
@@ -370,7 +437,8 @@
   (CompilerRegCallSplit
     (live.compiler-live-set-empty)
     (array.make-array i64 0)
-    (compiler-reg-call-region-seq-empty)))
+    (compiler-reg-call-region-seq-empty)
+    (compiler-reg-call-evict-seq-empty)))
 
 ;; SplitKit occupant-liberation record (design 3.2): to free a callee-saved
 ;; register R for a call-spanning value V across its crossing region, a cold
@@ -17848,19 +17916,66 @@
           (compiler-reg-call-region-stat-entry stat)
           (compiler-reg-call-region-stat-exit stat ends)))]))
 
+;; TRIP-COUNT FACTOR, for the rescue's frequency model ONLY.
+;;
+;; compiler-reg-loop-depth-weight is a RANK-ORDERING device: the greedy uses it
+;; to decide which of two values to spill, and only the relative order matters
+;; there. Its 1/2/4/8/16 ladder therefore encodes "a loop body runs twice per
+;; entry", which is fine for ranking and wrong as an absolute frequency.
+;;
+;; The rescue is the one consumer that reads it as an absolute frequency, in a
+;; cost/BENEFIT inequality: it compares reloads removed from a loop body against
+;; movs added at the loop's boundary. Measured consequence of the ladder's
+;; trip-2 assumption (regalloc-evict-census over an opt2 self-compile): 39 of 91
+;; eviction candidates priced out, and NONE of them reached break-even -- a
+;; single reload moved out of a loop cannot pay for a store plus a reload when
+;; the loop is modelled as iterating twice. 85 parked victims sat there
+;; unusable for that reason alone.
+;;
+;; So the rescue -- and nothing else -- multiplies the body side by T per loop
+;; level the use sits below the cost point. The global ladder is untouched, so
+;; every spill and eviction decision elsewhere in the allocator is unchanged.
+;;
+;; T = 8 is the base the house depth currency already uses (the ladder's own
+;; step, and the inliner's depth currency), so the two frequency models agree
+;; rather than inventing a third number; combined with the ladder's own factor
+;; of 2 per level it prices a loop at ~16 iterations, which is conservative for
+;; the hot loops the rescue targets. Capped at two levels, exactly as the depth
+;; ladder saturates, so a deep nest cannot manufacture an unbounded benefit.
+(define (compiler-reg-call-region-trip-factor) : i64
+  8)
+
+(define (compiler-reg-call-region-trip-multiplier [delta : i64]) : i64
+  (cond
+    [(<= delta 0) 1]
+    [(= delta 1) (compiler-reg-call-region-trip-factor)]
+    [else
+      (*
+        (compiler-reg-call-region-trip-factor)
+        (compiler-reg-call-region-trip-factor))]))
+
 ;; Block rows: every ref and every boundary mov runs at the same frequency, so
-;; the depth weight multiplies the whole net.
+;; the depth weight multiplies the whole net, and no trip factor applies -- both
+;; sides sit at the same point.
 ;; Loop rows: the uses run once per ITERATION and the single entry reload runs
-;; once per loop ENTRY, so only the uses take the depth weight. That is the
-;; whole point of the preheader anchor -- a one-use-per-iteration invariant has
-;; net 0 under the block formula and is worth `weight - 1` reloads here.
+;; once per loop ENTRY, so only the uses take the depth weight AND the trip
+;; factor. That is the whole point of the preheader anchor -- a
+;; one-use-per-iteration invariant has net 0 under the block formula. Admission
+;; proves the anchor block is the loop's sole preheader and therefore sits
+;; exactly one loop level above the header, so the delta is 1 by construction.
 (define (compiler-reg-call-region-stat-score
   [stat : CompilerRegCallRegionStat]
   [ends : (__tl_dyn-array i64)]) : i64
   (match stat
     [(CompilerRegCallRegionStat _ _ _ uses _ _ depth kind)
       (if (= kind (compiler-reg-call-region-kind-loop))
-        (- (* uses (compiler-reg-loop-depth-weight depth)) 1)
+        (-
+          (*
+            uses
+            (*
+              (compiler-reg-loop-depth-weight depth)
+              (compiler-reg-call-region-trip-multiplier 1)))
+          1)
         (*
           (compiler-reg-call-region-stat-net stat ends)
           (compiler-reg-loop-depth-weight depth)))]))
@@ -18074,6 +18189,1047 @@
           (set! j (+ j 1))))
       conflict)))
 
+;; ===========================================================================
+;; P11b PHASE 3: loop-scope EVICTION of a PARKED occupant.
+;;
+;; Phase 2 homes a spilled loop invariant in a pool register that is FREE over
+;; the whole region. Measurement says the flagship never gets that far: in
+;; liveness_storage's versioned `recompute!` clones every one of the nine pool
+;; registers is held by a value live across the ENCLOSING loop, so the
+;; find-a-free-register model has nothing to find and the invariant keeps its
+;; three per-iteration reloads.
+;;
+;; This is the missing lever. When the search fails, look for an occupant that
+;; is merely PARKED across the region -- live over it, mentioned nowhere inside
+;; it -- and lend its register out for the region's extent:
+;;
+;;      anchor:  Mov S <- O          (one store, once per loop ENTRY)
+;;               Mov W <- V          (the Phase 2 shadow load)
+;;      region:  ... uses of V read W in O's register, no memory traffic ...
+;;      exit_i:  Mov O <- S          (one reload per LIVE exit edge)
+;;
+;; Why only parked occupants (v1): a victim mentioned inside the region would
+;; need its own reloads there, and pricing that against the invariant's is a
+;; comparative-frequency problem this pass does not model. Zero-mention victims
+;; make the trade unconditional -- the region gains a register and pays only at
+;; its boundary.
+;;
+;; SOUNDNESS, in the same terms Phase 2 used:
+;;
+;;   * DOMINATION. The save sits at the region anchor, which admission already
+;;     proved is the sole way into the loop, so S is written before any path
+;;     that clobbers O's register.
+;;
+;;   * COVERAGE. Every exit EDGE of [h..e] gets a reload placed at the head of
+;;     its target block, and the target is admitted only when ALL of its
+;;     predecessors lie inside [h..e] -- so the reload is reached exactly on
+;;     paths that ran the save, never on a first entry from outside. Targets
+;;     are further restricted to blocks laid out AFTER the region, which rules
+;;     out the one shape that would break that argument: an exit back into the
+;;     preheader or an enclosing header, whose first entry precedes the save.
+;;     A target starting with a phi is refused (nothing may be inserted above
+;;     a phi). Any exit edge that cannot be served refuses the whole candidate.
+;;
+;;   * EXIT KINDS. Return and TailCall inside the region are exits with NO
+;;     successor and need no reload: the epilogue restores callee-saved
+;;     registers from their prologue slots, not from the register, and the
+;;     victim -- unmentioned in the region by construction -- is neither a
+;;     return value nor a tail-call argument. Every other terminator's
+;;     successors are enumerated from the block's successor set, so a Switch
+;;     arm is an ordinary exit edge.
+;;
+;;   * NO IN-REGION READ. The mention scan covers the ANCHOR INSTRUCTION as
+;;     well as the loop body. That instruction runs AFTER both movs, so an
+;;     occupant read by the preheader's own terminator (a branch condition,
+;;     say) would observe the shadow; the closed-interval occupancy test hides
+;;     that case from Phase 2, and eviction has to reject it explicitly.
+;; ===========================================================================
+;; pool index to lend, victim var, live reload count, save-point count. The
+;; reload and save points themselves come back in the caller's two out arrays.
+(defenum CompilerRegCallEvictPick
+  (CompilerRegCallEvictNoPick)
+  (CompilerRegCallEvictSomePick i64 i64 i64 i64))
+
+;; Accepted evictions per function. Each one adds a store plus up to three
+;; reloads to the function's boundary code, all at loop-ENTRY frequency.
+(define (compiler-reg-call-region-evict-cap) : i64
+  2)
+
+;; Attempts per function, accepted or not. Each attempt walks the function's
+;; blocks twice (pred ranges + mention marking), so this is the compile-time
+;; bound; functions that never fail the free-register search pay nothing.
+(define (compiler-reg-call-region-evict-attempt-cap) : i64
+  4)
+
+;; Reloads per eviction. Beyond this the boundary cost stops being a boundary
+;; cost, and a region with many exits is usually not the tight inner loop the
+;; rescue is for.
+(define (compiler-reg-call-region-evict-exit-cap) : i64
+  3)
+
+;; Record one mentioned var, in BOTH currencies the decision needs:
+;;
+;;   * stamp, keyed by var AND by coalesce ROOT. Storage-shared siblings are one
+;;     value to the interval index -- a member carries no segments of its own and
+;;     the root's hull conservatively covers the whole class -- so a root can
+;;     look "parked across the region" purely BECAUSE a sibling is read inside
+;;     it. Stamping the class is what makes the parked test mean what it says.
+;;
+;;   * busy, keyed by POOL REGISTER. The occupancy index only sees vars the
+;;     plan gave a register AND the interval index gave a range; anything that
+;;     misses either test is invisible to it. Asking instead "does any var
+;;     mentioned in this region live in that register" answers the question the
+;;     eviction actually depends on -- is the register READ here -- without
+;;     relying on the occupancy index being complete.
+(define (compiler-reg-call-region-evict-mark-var!
+  [v : i64]
+  [n : i64]
+  [parents : (__tl_dyn-array i64)]
+  [assignments : CompilerRegAssignmentTable]
+  [pool : (__tl_dyn-array i64)]
+  [stamp : (__tl_dyn-array i64)]
+  [busy : (__tl_dyn-array i64)]) : unit
+  (when
+    (and (>= v 0) (< v n))
+    (begin
+      (set! (array-ref stamp v) 1)
+      (let
+        [rr : i64 (compiler-reg-call-region-root parents n v)]
+        (when (and (>= rr 0) (< rr n)) (set! (array-ref stamp rr) 1)))
+      (match (compiler-reg-assignment-table-lookup assignments v)
+        [(CompilerRegMaybeLocation.Some location)
+          (match location
+            [(CompilerRegLocation.Register r)
+              (compiler-reg-call-region-evict-mark-busy! pool busy r)]
+            [(CompilerRegLocation.RegisterPair r0 r1)
+              (begin
+                (compiler-reg-call-region-evict-mark-busy! pool busy r0)
+                (compiler-reg-call-region-evict-mark-busy! pool busy r1))]
+            [_ unit])]
+        [(CompilerRegMaybeLocation.No) unit]))))
+
+(define (compiler-reg-call-region-evict-mark-busy!
+  [pool : (__tl_dyn-array i64)]
+  [busy : (__tl_dyn-array i64)]
+  [reg : i64]) : unit
+  (let
+    [pi : i64 (compiler-reg-call-region-pool-index-of pool reg)]
+    (when
+      (and (>= pi 0) (< pi (array-length busy)))
+      (set! (array-ref busy pi) 1))))
+
+(define (compiler-reg-call-region-evict-mark-set!
+  [set : live.CompilerLiveI64Set]
+  [n : i64]
+  [parents : (__tl_dyn-array i64)]
+  [assignments : CompilerRegAssignmentTable]
+  [pool : (__tl_dyn-array i64)]
+  [stamp : (__tl_dyn-array i64)]
+  [busy : (__tl_dyn-array i64)]) : unit
+  (let
+    [wi : i64 0]
+    [wc : i64 (live.compiler-live-set-word-count set)]
+    (while (< wi wc)
+      (let
+        [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
+        (begin
+          (while (not (= bits 0))
+            (let
+              [b : i64 (compiler-reg-low-bit-index32 bits)]
+              (begin
+                (compiler-reg-call-region-evict-mark-var!
+                  (+ (* wi (live.compiler-live-set-word-bits)) b)
+                  n
+                  parents
+                  assignments
+                  pool
+                  stamp
+                  busy)
+                (set! bits (bit-and bits (- bits 1))))))
+          (set! wi (+ wi 1)))))))
+
+;; Every var one instruction touches -- uses AND def. Unlike the candidate
+;; walker this counts a phi's INPUTS too: they are read on the edges into the
+;; block, which for a victim is a read the eviction must not hide.
+(define (compiler-reg-call-region-evict-mark-instr!
+  [instr : ir.CompilerIrInstr]
+  [n : i64]
+  [parents : (__tl_dyn-array i64)]
+  [assignments : CompilerRegAssignmentTable]
+  [pool : (__tl_dyn-array i64)]
+  [stamp : (__tl_dyn-array i64)]
+  [busy : (__tl_dyn-array i64)]) : unit
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    (begin
+      (if (< id-count 0)
+        (compiler-reg-call-region-evict-mark-set!
+          (live.compiler-live-instr-uses instr)
+          n
+          parents
+          assignments
+          pool
+          stamp
+          busy)
+        (let
+          [index : i64 0]
+          (while (< index id-count)
+            (begin
+              (compiler-reg-call-region-evict-mark-var!
+                (array-ref ids index)
+                n
+                parents
+                assignments
+                pool
+                stamp
+                busy)
+              (set! index (+ index 1))))))
+      (compiler-reg-call-region-evict-mark-var!
+        (live.compiler-live-instr-def-var instr)
+        n
+        parents
+        assignments
+        pool
+        stamp
+        busy))))
+
+;; Mark every var mentioned at a point in [lo,hi]. Blocks [s..e] are walked
+;; whole and the point filter drops the preheader's prefix, so the ANCHOR
+;; instruction (the last of block h-1, at exactly `lo`) is included.
+(define (compiler-reg-call-region-evict-mark-blocks!
+  [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
+  [points : (__tl_dyn-array i64)]
+  [s : i64]
+  [e : i64]
+  [lo : i64]
+  [n : i64]
+  [parents : (__tl_dyn-array i64)]
+  [assignments : CompilerRegAssignmentTable]
+  [pool : (__tl_dyn-array i64)]
+  [stamp : (__tl_dyn-array i64)]
+  [busy : (__tl_dyn-array i64)]) : unit
+  (let
+    [b : i64 s]
+    (while (<= b e)
+      (match (array-ref bslots b)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+            [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [i : i64 0]
+            [point : i64 (array-ref points b)]
+            (begin
+              (while (< i ilen)
+                (begin
+                  (when
+                    (>= point lo)
+                    (compiler-reg-call-region-evict-mark-instr!
+                      (array-ref islots i)
+                      n
+                      parents
+                      assignments
+                      pool
+                      stamp
+                      busy))
+                  (set! point (+ point 2))
+                  (set! i (+ i 1))))
+              (set! b (+ b 1))))]))))
+
+;; Does any var of the coalesce CLASS rooted at `vr` appear in this set?
+(define (compiler-reg-call-region-evict-set-hits-class?
+  [set : live.CompilerLiveI64Set]
+  [parents : (__tl_dyn-array i64)]
+  [n : i64]
+  [vr : i64]) : bool
+  (let
+    [wi : i64 0]
+    [wc : i64 (live.compiler-live-set-word-count set)]
+    (begin
+      (while (< wi wc)
+        (let
+          [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
+          (begin
+            (while (not (= bits 0))
+              (let
+                [u : i64
+                  (+
+                    (* wi (live.compiler-live-set-word-bits))
+                    (compiler-reg-low-bit-index32 bits))]
+                (begin
+                  (when
+                    (= (compiler-reg-call-region-root parents n u) vr)
+                    (return true))
+                  (set! bits (bit-and bits (- bits 1))))))
+            (set! wi (+ wi 1)))))
+      false)))
+
+;; VERIFIER. The search decides on the stamp array above; this asks the same
+;; question for ONE coalesce class down an independent path (set membership plus
+;; the def accessor, no shared id buffer), so a bug in either one cannot pass
+;; both. Class-scoped for the same reason the stamp is: siblings share storage,
+;; so a sibling's read is a read of the register the eviction is lending out.
+(define (compiler-reg-call-region-evict-var-mentioned?
+  [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
+  [points : (__tl_dyn-array i64)]
+  [s : i64]
+  [e : i64]
+  [lo : i64]
+  [parents : (__tl_dyn-array i64)]
+  [n : i64]
+  [v : i64]) : bool
+  (let
+    [b : i64 s]
+    [vr : i64 (compiler-reg-call-region-root parents n v)]
+    (begin
+      (while (<= b e)
+        (match (array-ref bslots b)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+              [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              [i : i64 0]
+              [point : i64 (array-ref points b)]
+              (begin
+                (while (< i ilen)
+                  (let
+                    [instr : ir.CompilerIrInstr (array-ref islots i)]
+                    (begin
+                      (when
+                        (and
+                          (>= point lo)
+                          (or
+                            (=
+                              (compiler-reg-call-region-root
+                                parents
+                                n
+                                (live.compiler-live-instr-def-var instr))
+                              vr)
+                            (compiler-reg-call-region-evict-set-hits-class?
+                              (live.compiler-live-instr-uses instr)
+                              parents
+                              n
+                              vr)))
+                        (return true))
+                      (set! point (+ point 2))
+                      (set! i (+ i 1)))))
+                (set! b (+ b 1))))]))
+      false)))
+
+;; A reload target only has to be a block whose head accepts an instruction.
+;;
+;; It does NOT have to be entered exclusively from the region -- that is the
+;; whole reason the save sits at the victim's definition rather than at the
+;; region anchor. A reload reached from OUTSIDE the region writes the victim's
+;; own value back over itself:
+;;
+;;   * the slot is correct there, because the sole definition refreshes it and
+;;     dominates every point the victim is live at, and
+;;   * nothing else is destroyed, because the reload only runs where the victim
+;;     is live, and a live victim means no other value can be sharing its
+;;     register at that point -- they would interfere.
+;;
+;; Measurement is what forced this: on the liveness/gvn/cfg corpus EVERY exit
+;; edge of a rescue region is critical (versioned loop clones merge into shared
+;; tails), so an anchor-saved eviction could never place a single reload.
+;;
+;; 0 = usable; the nonzero codes name the refusals for the census.
+(define (compiler-reg-call-region-evict-exit-target-status
+  [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
+  [nblocks : i64]
+  [t : i64]) : i64
+  (if (or (< t 0) (>= t nblocks))
+    1
+    (match (array-ref bslots t)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (if (<= (ir.compiler-ir-instr-seq-count instrs) 0)
+          3
+          (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            [(ir.CompilerIrInstr.Phi _ _ _) 3]
+            [_ 0]))])))
+
+;; Is `v` alone in its coalesce class? Siblings share storage but are DISTINCT
+;; values at disjoint times, so a class with members breaks the "a live victim
+;; owns its register alone" argument the reload placement rests on: a sibling
+;; could be the value in the register at a reload point. v1 takes only
+;; singletons.
+(define (compiler-reg-call-region-evict-class-singleton?
+  [parents : (__tl_dyn-array i64)]
+  [n : i64]
+  [v : i64]) : bool
+  (let
+    [u : i64 0]
+    (begin
+      (unless (= (compiler-reg-call-region-root parents n v) v) (return false))
+      (while (< u n)
+        (begin
+          (when
+            (and
+              (not (= u v))
+              (= (compiler-reg-call-region-root parents n u) v))
+            (return false))
+          (set! u (+ u 1))))
+      true)))
+
+;; Save points for the victim: the point just AFTER each of its defining
+;; instructions, which is where the slot mirror is written. Every def has to be
+;; mirrored -- one missed def leaves the slot stale against the register, which
+;; is the whole invariant the reload placement rests on.
+;;
+;; A ZERO-def victim -- a parameter, whose value the prologue establishes and no
+;; instruction ever rewrites -- is mirrored once at the function's first point,
+;; which dominates everything by construction. That population is not marginal:
+;; it is what the liveness flagship's parked pool registers actually hold.
+;;
+;; Negative results refuse and say why: -2 the def is a phi (an edge def; a
+;; mirror between phis would break the block's phi prefix), -3 it is its block's
+;; last instruction (the mirror has to stay in the same block), -4 it is not
+;; strictly before the region (a parked value is defined before the loop, so a
+;; later def means the interval overlap was a hull artifact), -5 more defs than
+;; `cap` -- each costs a store at its own frequency.
+(define (compiler-reg-call-region-evict-def-points!
+  [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
+  [points : (__tl_dyn-array i64)]
+  [nblocks : i64]
+  [v : i64]
+  [lo : i64]
+  [cap : i64]
+  [out : (__tl_dyn-array i64)]) : i64
+  (let
+    [b : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< b nblocks)
+        (match (array-ref bslots b)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+              [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              [i : i64 0]
+              (begin
+                (while (< i ilen)
+                  (let
+                    [instr : ir.CompilerIrInstr (array-ref islots i)]
+                    (begin
+                      (when
+                        (= (live.compiler-live-instr-def-var instr) v)
+                        (let
+                          [p : i64 (+ (array-ref points b) (* 2 i))]
+                          (begin
+                            (match instr
+                              [(ir.CompilerIrInstr.Phi _ _ _) (return (- 0 2))]
+                              [_ unit])
+                            (when (>= i (- ilen 1)) (return (- 0 3)))
+                            (when (>= p lo) (return (- 0 4)))
+                            (when (>= count cap) (return (- 0 5)))
+                            (set! (array-ref out count) (+ p 2))
+                            (set! count (+ count 1)))))
+                      (set! i (+ i 1)))))
+                (set! b (+ b 1))))]))
+      (if (= count 0)
+        (begin
+          (set! (array-ref out 0) 0)
+          1)
+        count))))
+
+;; Defs of one victim that the save protocol will mirror. Two is already an
+;; if/else assigning the same value; beyond that the stores stop being boundary
+;; code.
+(define (compiler-reg-call-region-evict-def-cap) : i64
+  2)
+
+(define (compiler-reg-call-region-evict-block-of-point
+  [points : (__tl_dyn-array i64)]
+  [nblocks : i64]
+  [p : i64]) : i64
+  (let
+    [b : i64 0]
+    [found : i64 0]
+    (begin
+      (while (< b nblocks)
+        (begin
+          (when (<= (array-ref points b) p) (set! found b))
+          (set! b (+ b 1))))
+      found)))
+
+(define (compiler-reg-call-region-evict-point-recorded?
+  [out : (__tl_dyn-array i64)]
+  [count : i64]
+  [p : i64]) : bool
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (when (= (array-ref out i) p) (return true))
+          (set! i (+ i 1))))
+      false)))
+
+;; Distinct reload points for the natural loop [h..e], one per exit TARGET.
+;; -1 refuses the candidate: an exit edge whose target cannot host a reload
+;; (phi head, empty block, unresolved label) or more targets than the cap.
+(define (compiler-reg-call-region-evict-exit-points!
+  [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
+  [nblocks : i64]
+  [ids : reg_label_i64_map.Map]
+  [points : (__tl_dyn-array i64)]
+  [h : i64]
+  [e : i64]
+  [out : (__tl_dyn-array i64)]) : i64
+  (let
+    [b : i64 h]
+    [count : i64 0]
+    (begin
+      (while (<= b e)
+        (let
+          [succs : live.CompilerLiveLabelSet
+            (live.compiler-live-block-successors (array-ref bslots b))]
+          [more : bool true]
+          (begin
+            (while more
+              (match succs
+                [(live.CompilerLiveLabelSet.Nil) (set! more false)]
+                [(live.CompilerLiveLabelSet.Dense _ _)
+                  (begin
+                    (match (reg_label_i64_map.get
+                      (& ids)
+                      (live.compiler-live-label-set-ref succs 0))
+                      [(reg_label_i64_map.LookupFound t)
+                        (when
+                          (or (< t h) (> t e))
+                          (let
+                            [status : i64
+                              (compiler-reg-call-region-evict-exit-target-status
+                                bslots
+                                nblocks
+                                t)]
+                            (begin
+                              (unless
+                                (= status 0)
+                                (begin
+                                  (cfg
+                                    regalloc-census
+                                    (compiler-reg-evict-census-bump!
+                                      (+ 8 status))
+                                    unit)
+                                  (return (- 0 1))))
+                              (unless
+                                (compiler-reg-call-region-evict-point-recorded?
+                                  out
+                                  count
+                                  (array-ref points t))
+                                (begin
+                                  (when
+                                    (>=
+                                      count
+                                      (compiler-reg-call-region-evict-exit-cap))
+                                    (begin
+                                      (cfg
+                                        regalloc-census
+                                        (compiler-reg-evict-census-bump! 12)
+                                        unit)
+                                      (return (- 0 1))))
+                                  (set!
+                                    (array-ref out count)
+                                    (array-ref points t))
+                                  (set! count (+ count 1)))))))]
+                      [(reg_label_i64_map.LookupMissing)
+                        (begin
+                          (cfg
+                            regalloc-census
+                            (compiler-reg-evict-census-bump! 13)
+                            unit)
+                          (return (- 0 1)))])
+                    (set! succs (live.compiler-live-label-set-tail succs)))]))
+            (set! b (+ b 1)))))
+      count)))
+
+;; Occupant kinds recorded alongside the pool-register occupancy index.
+(define (compiler-reg-call-region-occ-kind-scalar) : i64
+  0)
+
+(define (compiler-reg-call-region-occ-kind-pair) : i64
+  1)
+
+(define (compiler-reg-call-region-occ-kind-shadow) : i64
+  2)
+
+;; The ONE value occupying pool register `pix` over [lo,hi], or -1 when there is
+;; none, when two DISTINCT values share it, or when any of them is a register
+;; pair half / an already accepted shadow. Identity is the coalesce ROOT, not
+;; the var: storage-shared siblings are one value with one home, so counting
+;; them separately would refuse every multi-member class outright. A shadow
+;; occupant is by definition read inside its own region.
+(define (compiler-reg-call-region-evict-sole-occupant
+  [occ-var : (__tl_dyn-array i64)]
+  [occ-reg : (__tl_dyn-array i64)]
+  [occ-kind : (__tl_dyn-array i64)]
+  [occ-n : i64]
+  [interval-index : CompilerRegIntervalIndex]
+  [parents : (__tl_dyn-array i64)]
+  [n : i64]
+  [pix : i64]
+  [lo : i64]
+  [hi : i64]) : i64
+  (let
+    [j : i64 0]
+    [found : i64 (- 0 1)]
+    [found-root : i64 (- 0 1)]
+    (begin
+      (while (< j occ-n)
+        (begin
+          (when
+            (and
+              (= (array-ref occ-reg j) pix)
+              (compiler-reg-call-region-var-overlaps?
+                interval-index
+                (array-ref occ-var j)
+                lo
+                hi))
+            (let
+              [rr : i64
+                (compiler-reg-call-region-root parents n (array-ref occ-var j))]
+              (begin
+                (unless
+                  (=
+                    (array-ref occ-kind j)
+                    (compiler-reg-call-region-occ-kind-scalar))
+                  (return (- 0 1)))
+                (unless (or (< found 0) (= rr found-root)) (return (- 0 1)))
+                (when
+                  (< found 0)
+                  (begin
+                    (set! found (array-ref occ-var j))
+                    (set! found-root rr))))))
+          (set! j (+ j 1))))
+      found)))
+
+;; May the victim still be live at `p`? Intervals cover every live point, so a
+;; miss is proof of deadness and the reload can be dropped; a var with no
+;; interval data of its own answers through its coalesce root, and an unknown
+;; var answers "live" (compiler-reg-call-region-var-overlaps? returns true out
+;; of range). A false "live" costs one dead reload; a false "dead" is a
+;; miscompile, which is why both views are consulted.
+(define (compiler-reg-call-region-evict-live-at?
+  [interval-index : CompilerRegIntervalIndex]
+  [parents : (__tl_dyn-array i64)]
+  [n : i64]
+  [v : i64]
+  [p : i64]) : bool
+  (or
+    (compiler-reg-call-region-var-overlaps? interval-index v p p)
+    (compiler-reg-call-region-var-overlaps?
+      interval-index
+      (compiler-reg-call-region-root parents n v)
+      p
+      p)))
+
+(define (compiler-reg-call-region-evict-weight
+  [weights : (__tl_dyn-array i64)]
+  [v : i64]) : i64
+  (if (and (>= v 0) (< v (array-length weights)))
+    (array-ref weights v)
+    0))
+
+;; PRICING. The invariant's uses run at LOOP depth, amplified by the trip factor
+;; for each level the body sits below the anchor -- see
+;; compiler-reg-call-region-trip-multiplier for why the raw depth ladder cannot
+;; carry this inequality. Against that: the shadow load once per loop ENTRY, one
+;; reload per live exit (an exit target of a loop at depth d sits at depth <= d,
+;; so the anchor's weight bounds it), and the victim's store at the frequency of
+;; its DEFINITION -- a separate number, and the one that sinks the trade when the
+;; parked value is recomputed inside an enclosing loop.
+;;
+;; The 2x margin stays ON TOP of the trip estimate. It is what still refuses a
+;; region whose only justification is a use that does not sit below the cost
+;; point at all (delta 0 -> multiplier 1, the old arithmetic), and a victim whose
+;; store lands in an enclosing loop.
+;;
+;; SINGLE-USE FLOOR, and it is measured, not assumed. An eviction is not a free
+;; rescue: the victim's save sits at its DEFINITION, which for the parameter
+;; victims this pass actually finds is the function entry -- so the store runs on
+;; every call, including calls that never reach the region, while the benefit
+;; accrues only when the loop is entered. No depth model sees that asymmetry:
+;; the ladder rates a function-entry block and an unconditionally-reached
+;; preheader as equally frequent. Landing the trip factor without this floor
+;; activated exactly one site in the whole 22-row corpus --
+;; liveness_storage's live_out_into_bang, two victims serving ONE in-region use
+;; each -- and cost 878,505 Ir there (+0.116% on the row), while the flagship
+;; recompute_bang did not move at all. Two or more in-region uses is the same
+;; floor the block rows have carried since M-G2b, and it is the margin the
+;; conditional-entry gap needs.
+(define (compiler-reg-call-region-evict-use-floor) : i64
+  2)
+
+(define (compiler-reg-call-region-evict-price-ok?
+  [uses : i64]
+  [body-depth : i64]
+  [entry-depth : i64]
+  [def-weight : i64]
+  [exits : i64]) : bool
+  (and
+    (>= uses (compiler-reg-call-region-evict-use-floor))
+    (>=
+      (*
+        (* uses (compiler-reg-loop-depth-weight body-depth))
+        (compiler-reg-call-region-trip-multiplier (- body-depth entry-depth)))
+      (*
+        2
+        (+
+          (* (+ 1 exits) (compiler-reg-loop-depth-weight entry-depth))
+          def-weight)))))
+
+;; Summed frequency weight of the victim's save stores.
+(define (compiler-reg-call-region-evict-def-weight
+  [points : (__tl_dyn-array i64)]
+  [nblocks : i64]
+  [depths : (__tl_dyn-array i64)]
+  [saves : (__tl_dyn-array i64)]
+  [count : i64]) : i64
+  (let
+    [i : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            total
+            (+
+              total
+              (compiler-reg-loop-depth-weight
+                (array-ref
+                  depths
+                  (compiler-reg-call-region-evict-block-of-point
+                    points
+                    nblocks
+                    (- (array-ref saves i) 2))))))
+          (set! i (+ i 1))))
+      total)))
+
+;; Locate the region's header/end block pair from its point range: a loop row's
+;; lo is the point BEFORE block h's first instruction and its hi is the point of
+;; block e's last one, so points[h] = lo+2 and points[e+1] = hi+2.
+(define (compiler-reg-call-region-evict-header-of
+  [points : (__tl_dyn-array i64)]
+  [nblocks : i64]
+  [lo : i64]) : i64
+  (let
+    [b : i64 1]
+    (begin
+      (while (< b nblocks)
+        (begin
+          (when (= (array-ref points b) (+ lo 2)) (return b))
+          (set! b (+ b 1))))
+      (- 0 1))))
+
+(define (compiler-reg-call-region-evict-end-of
+  [points : (__tl_dyn-array i64)]
+  [nblocks : i64]
+  [h : i64]
+  [hi : i64]) : i64
+  (let
+    [b : i64 h]
+    (begin
+      (while (< b nblocks)
+        (begin
+          (when (= (array-ref points (+ b 1)) (+ hi 2)) (return b))
+          (set! b (+ b 1))))
+      (- 0 1))))
+
+;; One eviction attempt for loop region [lo,hi] of `root`. Returns the pool
+;; index to lend, the victim, and the number of reload points left in
+;; `out-points` after the liveness filter.
+(define (compiler-reg-call-region-evict-try
+  [blocks : ir.CompilerIrBlockList]
+  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
+  [interval-index : CompilerRegIntervalIndex]
+  [parents : (__tl_dyn-array i64)]
+  [assignments : CompilerRegAssignmentTable]
+  [pool : (__tl_dyn-array i64)]
+  [pool-count : i64]
+  [occ-var : (__tl_dyn-array i64)]
+  [occ-reg : (__tl_dyn-array i64)]
+  [occ-kind : (__tl_dyn-array i64)]
+  [occ-n : i64]
+  [evicted : (__tl_dyn-array i64)]
+  [root : i64]
+  [uses : i64]
+  [lo : i64]
+  [hi : i64]
+  [n : i64]
+  [out-points : (__tl_dyn-array i64)]
+  [out-saves : (__tl_dyn-array i64)]) : CompilerRegCallEvictPick
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+    [nblocks : i64 seq.len]
+    (if (< nblocks 2)
+      (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
+      (let
+        [points : (__tl_dyn-array i64)
+          (compiler-reg-loop-phi-mb-block-points bslots)]
+        [h : i64 (compiler-reg-call-region-evict-header-of points nblocks lo)]
+        (if (< h 1)
+          (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
+          (let
+            [e : i64
+              (compiler-reg-call-region-evict-end-of points nblocks h hi)]
+            [ids : reg_label_i64_map.Map
+              (compiler-reg-loop-depth-block-ids
+                blocks
+                (reg_label_i64_map.with-capacity
+                  (compiler-reg-bits-map-capacity nblocks))
+                0)]
+            (if (< e h)
+              (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
+              (let
+                [ranges : (__tl_dyn-array i64)
+                  (compiler-reg-call-region-pred-ranges bslots nblocks ids)]
+                (if (not
+                  (compiler-reg-call-region-loop-admit?
+                    ranges
+                    depths
+                    nblocks
+                    h
+                    e))
+                  (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
+                  (let
+                    ;; Victim search first, exits second. Both orders decide the
+                    ;; same candidates; this one makes the census say whether a
+                    ;; corpus lacks PARKED VALUES or merely lacks placeable
+                    ;; exits, which are different problems with different fixes.
+                    [raw-exits : i64 0]
+                    [stamp : (__tl_dyn-array i64)
+                      (array.make-array
+                        i64
+                        (if (< n 1)
+                          1
+                          n))]
+                    [busy : (__tl_dyn-array i64)
+                      (array.make-array
+                        i64
+                        (if (< pool-count 1)
+                          1
+                          pool-count))]
+                    [victim : i64 (- 0 1)]
+                    [victim-pix : i64 (- 0 1)]
+                    [victim-weight : i64 0]
+                    [pix : i64 0]
+                    (begin
+                      (compiler-reg-call-region-evict-mark-blocks!
+                        bslots
+                        points
+                        (- h 1)
+                        e
+                        lo
+                        n
+                        parents
+                        assignments
+                        pool
+                        stamp
+                        busy)
+                      (while (< pix pool-count)
+                        (let
+                          [o : i64
+                            (if (and
+                              (= (array-ref busy pix) 0)
+                              (compiler-reg-call-region-loop-pool-reg-ok?
+                                (array-ref pool pix)))
+                              (compiler-reg-call-region-evict-sole-occupant
+                                occ-var
+                                occ-reg
+                                occ-kind
+                                occ-n
+                                interval-index
+                                parents
+                                n
+                                pix
+                                lo
+                                hi)
+                              (- 0 1))]
+                          (begin
+                            (when
+                              (>= o 0)
+                              (begin
+                                (cfg
+                                  regalloc-census
+                                  (compiler-reg-evict-census-bump! 5)
+                                  unit)
+                                (when
+                                  (and
+                                    (not (= o root))
+                                    (< o n)
+                                    (= (array-ref evicted o) 0)
+                                    (= (array-ref stamp o) 0)
+                                    ;; parked as a CLASS: a storage-shared
+                                    ;; sibling's read is a read of this
+                                    ;; register
+                                    (=
+                                      (array-ref
+                                        stamp
+                                        (compiler-reg-call-region-root
+                                          parents
+                                          n
+                                          o))
+                                      0)
+                                    (compiler-reg-call-region-evict-class-singleton?
+                                      parents
+                                      n
+                                      o))
+                                  (let
+                                    [w : i64
+                                      (compiler-reg-call-region-evict-weight
+                                        weights
+                                        o)]
+                                    (begin
+                                      (cfg
+                                        regalloc-census
+                                        (compiler-reg-evict-census-bump! 6)
+                                        unit)
+                                      (when
+                                        (or (< victim 0) (< w victim-weight))
+                                        (begin
+                                          (set! victim o)
+                                          (set! victim-pix pix)
+                                          (set! victim-weight w))))))))
+                            (set! pix (+ pix 1)))))
+                      (if (< victim 0)
+                        (begin
+                          (cfg
+                            regalloc-census
+                            (compiler-reg-evict-census-bump! 3)
+                            unit)
+                          (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))
+                        (if (compiler-reg-call-region-evict-var-mentioned?
+                          bslots
+                          points
+                          (- h 1)
+                          e
+                          lo
+                          parents
+                          n
+                          victim)
+                          (begin
+                            (cfg
+                              regalloc-census
+                              (compiler-reg-evict-census-bump! 7)
+                              unit)
+                            (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))
+                          (let
+                            [live-exits : i64 0]
+                            [i : i64 0]
+                            [def-count : i64
+                              (compiler-reg-call-region-evict-def-points!
+                                bslots
+                                points
+                                nblocks
+                                victim
+                                lo
+                                (compiler-reg-call-region-evict-def-cap)
+                                out-saves)]
+                            (begin
+                              ;; The save mirrors the victim into its slot
+                              ;; right after EVERY definition, so a reload --
+                              ;; on any edge, reached from inside the region
+                              ;; or not -- reads the current value.
+                              (when
+                                (< def-count 1)
+                                (begin
+                                  (cfg
+                                    regalloc-census
+                                    (compiler-reg-evict-census-bump!
+                                      (- 12 def-count))
+                                    unit)
+                                  (return
+                                    (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))
+                              (set!
+                                raw-exits
+                                (compiler-reg-call-region-evict-exit-points!
+                                  bslots
+                                  nblocks
+                                  ids
+                                  points
+                                  h
+                                  e
+                                  out-points))
+                              (when
+                                (< raw-exits 0)
+                                (begin
+                                  (cfg
+                                    regalloc-census
+                                    (compiler-reg-evict-census-bump! 2)
+                                    unit)
+                                  (return
+                                    (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))
+                              (while (< i raw-exits)
+                                (begin
+                                  (when
+                                    (compiler-reg-call-region-evict-live-at?
+                                      interval-index
+                                      parents
+                                      n
+                                      victim
+                                      (array-ref out-points i))
+                                    (begin
+                                      (set!
+                                        (array-ref out-points live-exits)
+                                        (array-ref out-points i))
+                                      (set! live-exits (+ live-exits 1))))
+                                  (set! i (+ i 1))))
+                              (if (compiler-reg-call-region-evict-price-ok?
+                                uses
+                                (array-ref depths h)
+                                (array-ref depths (- h 1))
+                                (compiler-reg-call-region-evict-def-weight
+                                  points
+                                  nblocks
+                                  depths
+                                  out-saves
+                                  def-count)
+                                live-exits)
+                                (CompilerRegCallEvictPick.CompilerRegCallEvictSomePick
+                                  victim-pix
+                                  victim
+                                  live-exits
+                                  def-count)
+                                (begin
+                                  (cfg
+                                    regalloc-census
+                                    (begin
+                                      (compiler-reg-evict-census-bump! 4)
+                                      ;; how far short: 18 counts the ones
+                                      ;; that clear a bare break-even, so
+                                      ;; the report can say whether the
+                                      ;; safety margin or the model itself
+                                      ;; is what refuses a corpus
+                                      (when
+                                        (>=
+                                          (*
+                                            (*
+                                              uses
+                                              (compiler-reg-loop-depth-weight
+                                                (array-ref depths h)))
+                                            (compiler-reg-call-region-trip-multiplier
+                                              (-
+                                                (array-ref depths h)
+                                                (array-ref depths (- h 1)))))
+                                          (+
+                                            (*
+                                              (+ 1 live-exits)
+                                              (compiler-reg-loop-depth-weight
+                                                (array-ref depths (- h 1))))
+                                            (compiler-reg-call-region-evict-def-weight
+                                              points
+                                              nblocks
+                                              depths
+                                              out-saves
+                                              def-count)))
+                                        (compiler-reg-evict-census-bump! 18)))
+                                    unit)
+                                  (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))))))))))))))))
+
 ;; Mark candidate roots in `cand` (spilled + register-eligible scalar/handle
 ;; type + no remat-candidate class member -- a remat'd value has no stable slot
 ;; to reload from) and record their ids in walk order in `order`. Returns the
@@ -18176,7 +19332,10 @@
   [interval-index : CompilerRegIntervalIndex]
   [type-info : CompilerRegVarTypes]
   [group-vars : live.CompilerLiveI64Set]
-  [parents : (__tl_dyn-array i64)]) : CompilerRegCallSaveAssignState
+  [parents : (__tl_dyn-array i64)]
+  ;; the greedy's coalesced spill weights, which order eviction victims
+  ;; coldest-first; empty is tolerated (every victim then scores 0)
+  [weights : (__tl_dyn-array i64)]) : CompilerRegCallSaveAssignState
   (let
     [starts : (__tl_dyn-array i64) interval-index.starts]
     [ends : (__tl_dyn-array i64) interval-index.ends]
@@ -18303,7 +19462,29 @@
                     (array.make-array i64 (+ (* 3 an) 1))]
                   [occ-reg : (__tl_dyn-array i64)
                     (array.make-array i64 (+ (* 3 an) 1))]
+                  ;; scalar / pair-half / accepted-shadow, so the eviction
+                  ;; search can tell a lendable home from one it must not touch
+                  [occ-kind : (__tl_dyn-array i64)
+                    (array.make-array i64 (+ (* 3 an) 1))]
                   [occ-n : i64 0]
+                  ;; one lend per victim per function (the greedy's single-
+                  ;; evictee discipline): the second root wanting the same
+                  ;; parked value refuses rather than nesting two save/reload
+                  ;; protocols over the same register
+                  [evicted : (__tl_dyn-array i64) (array.make-array i64 an)]
+                  [evictions : CompilerRegCallEvictSeq
+                    (compiler-reg-call-evict-seq-empty)]
+                  [evict-budget : i64 (compiler-reg-call-region-evict-cap)]
+                  [evict-attempts : i64
+                    (compiler-reg-call-region-evict-attempt-cap)]
+                  [evict-points : (__tl_dyn-array i64)
+                    (array.make-array
+                      i64
+                      (+ (compiler-reg-call-region-evict-exit-cap) 1))]
+                  [evict-saves : (__tl_dyn-array i64)
+                    (array.make-array
+                      i64
+                      (+ (compiler-reg-call-region-evict-def-cap) 1))]
                   [shadows : live.CompilerLiveI64Set
                     (live.compiler-live-set-empty)]
                   [shadow-regs : (__tl_dyn-array i64) (array.make-array i64 an)]
@@ -18363,6 +19544,9 @@
                                   (begin
                                     (set! (array-ref occ-var occ-n) idx)
                                     (set! (array-ref occ-reg occ-n) pi)
+                                    (set!
+                                      (array-ref occ-kind occ-n)
+                                      (compiler-reg-call-region-occ-kind-scalar))
                                     (set! occ-n (+ occ-n 1)))
                                   unit))]
                             [(CompilerRegLocation.RegisterPair r0 r1)
@@ -18376,6 +19560,9 @@
                                     (begin
                                       (set! (array-ref occ-var occ-n) idx)
                                       (set! (array-ref occ-reg occ-n) pi)
+                                      (set!
+                                        (array-ref occ-kind occ-n)
+                                        (compiler-reg-call-region-occ-kind-pair))
                                       (set! occ-n (+ occ-n 1)))
                                     unit))
                                 (let
@@ -18387,6 +19574,9 @@
                                     (begin
                                       (set! (array-ref occ-var occ-n) idx)
                                       (set! (array-ref occ-reg occ-n) pi)
+                                      (set!
+                                        (array-ref occ-kind occ-n)
+                                        (compiler-reg-call-region-occ-kind-pair))
                                       (set! occ-n (+ occ-n 1)))
                                     unit)))]
                             [_ unit])
@@ -18573,6 +19763,167 @@
                                           (set! (array-ref picked-exit 0) 0)
                                           (set! k 1))
                                         unit))))
+                                ;; LAST RESORT: EVICTION. Every pool register is
+                                ;; occupied over the region -- the state the
+                                ;; flagship is permanently in. Retry the loop
+                                ;; rows, best score first, asking whether some
+                                ;; occupant is merely PARKED across the region
+                                ;; and can lend its register for the region's
+                                ;; extent. Nothing here runs unless the two
+                                ;; free-register searches above both failed, so
+                                ;; no already-homed root changes register.
+                                (when
+                                  (and
+                                    (< chosen 0)
+                                    (> evict-budget 0)
+                                    (> evict-attempts 0))
+                                  (let
+                                    [tries : i64 0]
+                                    [tmore : bool true]
+                                    [acc-lo : i64 (- 0 1)]
+                                    [acc-hi : i64 (- 0 1)]
+                                    [acc-victim : i64 (- 0 1)]
+                                    [acc-exits : i64 0]
+                                    [acc-saves : i64 0]
+                                    (begin
+                                      (compiler-reg-fill-i64-array
+                                        picked-lo
+                                        (- 0 1))
+                                      (compiler-reg-fill-i64-array
+                                        picked-hi
+                                        (- 0 1))
+                                      (while (and
+                                        tmore
+                                        (< tries root-cap)
+                                        (< chosen 0)
+                                        (> evict-attempts 0))
+                                        (match (compiler-reg-call-region-best-loop-from
+                                          rows
+                                          vend
+                                          picked-lo
+                                          picked-hi
+                                          tries)
+                                          [(CompilerRegCallRegionNoStat)
+                                            (set! tmore false)]
+                                          [(CompilerRegCallRegionSomeStat stat)
+                                            (match stat
+                                              [(CompilerRegCallRegionStat
+                                                  _
+                                                  lo
+                                                  hi
+                                                  uses
+                                                  _
+                                                  _
+                                                  _
+                                                  _)
+                                                (begin
+                                                  (set!
+                                                    evict-attempts
+                                                    (- evict-attempts 1))
+                                                  (cfg
+                                                    regalloc-census
+                                                    (compiler-reg-evict-census-bump!
+                                                      0)
+                                                    unit)
+                                                  (match (compiler-reg-call-region-evict-try
+                                                    blocks
+                                                    depths
+                                                    weights
+                                                    interval-index
+                                                    parents
+                                                    assignments
+                                                    pool
+                                                    pool-count
+                                                    occ-var
+                                                    occ-reg
+                                                    occ-kind
+                                                    occ-n
+                                                    evicted
+                                                    root
+                                                    uses
+                                                    lo
+                                                    hi
+                                                    n
+                                                    evict-points
+                                                    evict-saves)
+                                                    [(CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
+                                                      unit]
+                                                    [(CompilerRegCallEvictPick.CompilerRegCallEvictSomePick
+                                                        pix
+                                                        victim
+                                                        exits
+                                                        save)
+                                                      (begin
+                                                        (set! chosen pix)
+                                                        (set! acc-lo lo)
+                                                        (set! acc-hi hi)
+                                                        (set! acc-victim victim)
+                                                        (set! acc-exits exits)
+                                                        (set! acc-saves save))])
+                                                  (set!
+                                                    (array-ref picked-lo tries)
+                                                    lo)
+                                                  (set!
+                                                    (array-ref picked-hi tries)
+                                                    hi)
+                                                  (set! tries (+ tries 1)))])]))
+                                      (when
+                                        (>= chosen 0)
+                                        (begin
+                                          (set! (array-ref picked-lo 0) acc-lo)
+                                          (set! (array-ref picked-hi 0) acc-hi)
+                                          (set! (array-ref picked-entry 0) 1)
+                                          (set! (array-ref picked-exit 0) 0)
+                                          (set! k 1)
+                                          (set!
+                                            (array-ref evicted acc-victim)
+                                            1)
+                                          (set! evict-budget (- evict-budget 1))
+                                          ;; No live exit means the victim does
+                                          ;; not outlive the region at all: the
+                                          ;; register was free in fact and only
+                                          ;; the conservative hull overlap hid
+                                          ;; it, so there is nothing to preserve
+                                          ;; and no save is emitted either.
+                                          (when
+                                            (> acc-exits 0)
+                                            (let
+                                              [i : i64 0]
+                                              (while (< i acc-saves)
+                                                (begin
+                                                  (set!
+                                                    evictions
+                                                    (compiler-reg-call-evict-seq-push
+                                                      evictions
+                                                      (CompilerRegCallEvict
+                                                        acc-victim
+                                                        (array-ref
+                                                          evict-saves
+                                                          i)
+                                                        (compiler-reg-call-evict-kind-save))))
+                                                  (set! i (+ i 1))))))
+                                          (let
+                                            [i : i64 0]
+                                            (while (< i acc-exits)
+                                              (begin
+                                                (set!
+                                                  evictions
+                                                  (compiler-reg-call-evict-seq-push
+                                                    evictions
+                                                    (CompilerRegCallEvict
+                                                      acc-victim
+                                                      (array-ref evict-points i)
+                                                      (compiler-reg-call-evict-kind-restore))))
+                                                (set! i (+ i 1)))))
+                                          (cfg
+                                            regalloc-census
+                                            (begin
+                                              (compiler-reg-evict-census-bump!
+                                                1)
+                                              (compiler-reg-evict-census-add!
+                                                8
+                                                acc-exits))
+                                            unit))))))
                                 (if (>= chosen 0)
                                   (let
                                     [j : i64 0]
@@ -18610,6 +19961,9 @@
                                           n
                                           root))
                                       (set! (array-ref occ-reg occ-n) chosen)
+                                      (set!
+                                        (array-ref occ-kind occ-n)
+                                        (compiler-reg-call-region-occ-kind-shadow))
                                       (set! occ-n (+ occ-n 1))
                                       (set! budget (- budget k))))
                                   unit)))
@@ -18617,7 +19971,11 @@
                           (set! ci (+ ci 1)))))
                     (CompilerRegCallSaveAssignState.State
                       assignments
-                      (CompilerRegCallSplit shadows shadow-regs regions))))])))))))
+                      (CompilerRegCallSplit
+                        shadows
+                        shadow-regs
+                        regions
+                        evictions))))])))))))
 
 (cfg
   (any regalloc-census test)
@@ -18853,6 +20211,109 @@
       (io.print-error (compiler-reg-call-span-census-row "1" 1))
       (io.print-error (compiler-reg-call-span-census-row "2-3" 2))
       (io.print-error (compiler-reg-call-span-census-row "4+" 3)))))
+
+;; P11b phase 3 eviction census. Slots, in the order the attempt walks them:
+;;   0 attempts        1 accepted        2 refused: an exit edge cannot be served
+;;   3 refused: no parked victim on any pool register
+;;   4 refused: fails the 2x price bar
+;;   5 registers with exactly ONE occupant over the region (the eviction's
+;;     precondition; the gap to slot 6 is how often that occupant is BUSY)
+;;   6 of those, occupants with zero mentions inside the region (parked)
+;;   7 verifier disagreements (must stay 0)
+;;   8 reloads emitted across all accepted evictions
+;; and the exit refusal breakdown, which is the shape of the corpus:
+;;   9 target is backward / out of range   10 target has a predecessor OUTSIDE
+;;   the region (a critical edge)          11 target opens with a phi
+;;  12 more targets than the cap           13 successor label unresolved
+;; and the victim-definition refusals, which decide where the mirror can go:
+;;  14 the def is a phi                    15 the def ends its block
+;;  16 the def is not before the region    17 more defs than the cap
+(cfg
+  regalloc-census
+  (define compiler-reg-evict-census-counts : (__tl_dyn-array i64)
+    (array.make-array i64 20)))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-evict-census-bump! [slot : i64]) : unit
+    (set!
+      (array-ref compiler-reg-evict-census-counts slot)
+      (+ (array-ref compiler-reg-evict-census-counts slot) 1))))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-evict-census-add! [slot : i64] [amount : i64]) : unit
+    (set!
+      (array-ref compiler-reg-evict-census-counts slot)
+      (+ (array-ref compiler-reg-evict-census-counts slot) amount))))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-evict-census-print!) : unit
+    (io.print-error
+      (str_cat.str-cat
+        "regalloc-evict-census|attempts="
+        (string.int->string (array-ref compiler-reg-evict-census-counts 0))
+        "|accepted="
+        (string.int->string (array-ref compiler-reg-evict-census-counts 1))
+        (str_cat.str-cat
+          "|no-exit="
+          (string.int->string (array-ref compiler-reg-evict-census-counts 2))
+          "|no-victim="
+          (string.int->string (array-ref compiler-reg-evict-census-counts 3))
+          (str_cat.str-cat
+            "|priced-out="
+            (string.int->string (array-ref compiler-reg-evict-census-counts 4))
+            "|sole-occupant="
+            (string.int->string (array-ref compiler-reg-evict-census-counts 5))
+            (str_cat.str-cat
+              "|parked="
+              (string.int->string
+                (array-ref compiler-reg-evict-census-counts 6))
+              "|verifier-refused="
+              (string.int->string
+                (array-ref compiler-reg-evict-census-counts 7))
+              (str_cat.str-cat
+                "|reloads="
+                (string.int->string
+                  (array-ref compiler-reg-evict-census-counts 8))
+                (str_cat.str-cat
+                  "|exit-backward="
+                  (string.int->string
+                    (array-ref compiler-reg-evict-census-counts 9))
+                  "|exit-critical="
+                  (string.int->string
+                    (array-ref compiler-reg-evict-census-counts 10))
+                  (str_cat.str-cat
+                    "|exit-phi="
+                    (string.int->string
+                      (array-ref compiler-reg-evict-census-counts 11))
+                    "|exit-cap="
+                    (string.int->string
+                      (array-ref compiler-reg-evict-census-counts 12))
+                    (str_cat.str-cat
+                      "|exit-label="
+                      (string.int->string
+                        (array-ref compiler-reg-evict-census-counts 13))
+                      "|def-phi="
+                      (string.int->string
+                        (array-ref compiler-reg-evict-census-counts 14))
+                      (str_cat.str-cat
+                        "|def-last="
+                        (string.int->string
+                          (array-ref compiler-reg-evict-census-counts 15))
+                        "|def-late="
+                        (string.int->string
+                          (array-ref compiler-reg-evict-census-counts 16))
+                        (str_cat.str-cat
+                          "|def-many="
+                          (string.int->string
+                            (array-ref compiler-reg-evict-census-counts 17))
+                          (str_cat.str-cat
+                            "|priced-break-even="
+                            (string.int->string
+                              (array-ref compiler-reg-evict-census-counts 18))
+                            "\n"))))))))))))))
 
 ;; Dense assignment occupancy for performance and representation audits. These
 ;; counters are compiled only for explicit regalloc-census builds.
@@ -23354,7 +24815,7 @@
   [split : CompilerRegCallSplit]
   [reg : i64]) : bool
   (match split
-    [(CompilerRegCallSplit _ shadow-regs regions)
+    [(CompilerRegCallSplit _ shadow-regs regions _)
       (compiler-reg-group-pair-shadow-reg-conflicts-regions?
         interval-index
         members
@@ -23547,8 +25008,19 @@
   [caller-saved? : bool]
   [split : CompilerRegCallSplit]
   [reg : i64]) : i64
+  ;; A caller-saved pair candidate is checked against the shadow table because
+  ;; the rescue's base pool IS caller-saved. A callee-saved candidate normally
+  ;; is not: its register is already homed by a plan value, so no shadow can be
+  ;; sitting in it. Loop-scope EVICTION breaks exactly that premise -- it lends
+  ;; a callee-saved register whose parked occupant the pair pass is free to
+  ;; demote as "colder", after which the pair and the shadow would both own the
+  ;; register over the region. So when this function evicted anything, every
+  ;; candidate consults the shadow table. Eviction-free functions keep the
+  ;; caller-saved-only test bit for bit.
   (if (and
-    caller-saved?
+    (or
+      caller-saved?
+      (> (__tl-project-field (compiler-reg-call-split-evictions split) len) 0))
     (compiler-reg-group-pair-shadow-reg-conflicts?
       interval-index
       members
@@ -24721,7 +26193,8 @@
           eff-index
           type-info
           group-vars
-          coalesce.parents)
+          coalesce.parents
+          base-eviction-ref-counts)
         (CompilerRegCallSaveAssignState.State
           integer-assignments
           (compiler-reg-call-split-empty)))]
@@ -29398,6 +30871,11 @@
     [(CompilerRegPlan.Plan _ _ _ _ split _)
       (compiler-reg-call-split-regions split)]))
 
+(define (compiler-reg-plan-caller-save-evictions [plan : CompilerRegPlan]) : CompilerRegCallEvictSeq
+  (match plan
+    [(CompilerRegPlan.Plan _ _ _ _ split _)
+      (compiler-reg-call-split-evictions split)]))
+
 (define (compiler-reg-assignment-table-merge
   [extra : CompilerRegAssignmentTable]
   [base : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
@@ -33790,6 +35268,46 @@
             unit)
           (set! j (+ j 1)))))))
 
+;; Eviction steps sorted by point, saves before restores when a point carries
+;; both (it never does, but the order is the semantically safe one).
+(define (compiler-reg-call-evict-fill-arrays!
+  [evictions : CompilerRegCallEvictSeq]
+  [e-var : (__tl_dyn-array i64)]
+  [e-point : (__tl_dyn-array i64)]
+  [e-kind : (__tl_dyn-array i64)]) : unit
+  (let
+    [slots : (__tl_dyn-array CompilerRegCallEvict) evictions.slots]
+    [count : i64 evictions.len]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (array-ref slots i)
+            [(CompilerRegCallEvict var point kind)
+              (begin
+                (set! (array-ref e-var i) var)
+                (set! (array-ref e-point i) point)
+                (set! (array-ref e-kind i) kind))])
+          (set! i (+ i 1))))
+      (set! i 1)
+      (while (< i count)
+        (let
+          [j : i64 i]
+          (begin
+            (while (and
+              (> j 0)
+              (or
+                (> (array-ref e-point (- j 1)) (array-ref e-point j))
+                (and
+                  (= (array-ref e-point (- j 1)) (array-ref e-point j))
+                  (> (array-ref e-kind (- j 1)) (array-ref e-kind j)))))
+              (begin
+                (compiler-reg-call-region-sort-swap! e-var (- j 1) j)
+                (compiler-reg-call-region-sort-swap! e-point (- j 1) j)
+                (compiler-reg-call-region-sort-swap! e-kind (- j 1) j)
+                (set! j (- j 1))))
+            (set! i (+ i 1))))))))
+
 (define (compiler-reg-caller-save-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [vars : i64]
@@ -33809,6 +35327,22 @@
       (let
         [shadow-regs : (__tl_dyn-array i64)
           (compiler-reg-plan-caller-save-regs plan)]
+        ;; Parked-occupant save/reload steps (P11b phase 3). Empty for every
+        ;; function the free-register search served, which is all but a handful.
+        [evictions : CompilerRegCallEvictSeq
+          (compiler-reg-plan-caller-save-evictions plan)]
+        [e-count : i64 evictions.len]
+        [e-var : (__tl_dyn-array i64) (array.make-array i64 (+ e-count 1))]
+        [e-point : (__tl_dyn-array i64) (array.make-array i64 (+ e-count 1))]
+        [e-kind : (__tl_dyn-array i64) (array.make-array i64 (+ e-count 1))]
+        [e-cursor : i64 0]
+        ;; victim var -> the slot-homed var minted for its save, -1 = none yet
+        [evict-w : (__tl_dyn-array i64)
+          (array.make-array
+            i64
+            (if (< vars 1)
+              1
+              vars))]
         [r-var : (__tl_dyn-array i64) (array.make-array i64 count)]
         [r-lo : (__tl_dyn-array i64) (array.make-array i64 count)]
         [r-hi : (__tl_dyn-array i64) (array.make-array i64 count)]
@@ -33863,7 +35397,47 @@
             r-entry
             r-exit
             count)
+          (compiler-reg-call-evict-fill-arrays! evictions e-var e-point e-kind)
           (compiler-reg-fill-i64-array act-w (- 0 1))
+          (compiler-reg-fill-i64-array evict-w (- 0 1))
+          ;; Mint each victim's slot var UP FRONT. A reload can sit at a point
+          ;; earlier in layout than its save (the save follows the victim's
+          ;; definition, and a loop may exit backwards into an enclosing body),
+          ;; so the var has to exist before the walk, not at the save's turn.
+          (let
+            [ei : i64 0]
+            (while (< ei e-count)
+              (let
+                [victim : i64 (array-ref e-var ei)]
+                (begin
+                  (when
+                    (and
+                      (=
+                        (array-ref e-kind ei)
+                        (compiler-reg-call-evict-kind-save))
+                      (>= victim 0)
+                      (< victim (array-length evict-w))
+                      (< (array-ref evict-w victim) 0))
+                    (let
+                      [w : i64 next-var]
+                      (begin
+                        (set! next-var (+ next-var 1))
+                        (set! (array-ref evict-w victim) w)
+                        (set!
+                          extra-assignments
+                          (compiler-reg-assignments-prepend
+                            (CompilerRegAssignment
+                              w
+                              (CompilerRegLocation.Spill
+                                (compiler-reg-stack-slot-offset w)))
+                            extra-assignments))
+                        (set!
+                          extra-types
+                          (compiler-reg-var-types-insert
+                            extra-types
+                            w
+                            (compiler-reg-caller-save-var-type type-info victim))))))
+                  (set! ei (+ ei 1))))))
           (while (< b nblocks)
             (begin
               (match (array-ref bslots b)
@@ -33875,7 +35449,13 @@
                       (= active-n 0)
                       (or
                         (>= cursor count)
-                        (>= (array-ref r-lo cursor) (+ point span))))
+                        (>= (array-ref r-lo cursor) (+ point span)))
+                      ;; ... and no eviction step lands in this block either:
+                      ;; a reload target is a block the region walk otherwise
+                      ;; has no reason to open
+                      (or
+                        (>= e-cursor e-count)
+                        (>= (array-ref e-point e-cursor) (+ point span))))
                       ;; nothing active from an earlier block and no region
                       ;; starts here -> keep the block untouched
                       (begin
@@ -33910,6 +35490,47 @@
                                   (< cursor count)
                                   (< (array-ref r-lo cursor) point))
                                   (set! cursor (+ cursor 1)))
+                                (while (and
+                                  (< e-cursor e-count)
+                                  (< (array-ref e-point e-cursor) point))
+                                  (set! e-cursor (+ e-cursor 1)))
+                                ;; Parked-occupant save/reload steps, emitted
+                                ;; BEFORE the activations below: at the anchor
+                                ;; the victim's store has to read its register
+                                ;; while it still holds the victim, and the
+                                ;; shadow load is exactly what overwrites it.
+                                (while (and
+                                  (< e-cursor e-count)
+                                  (= (array-ref e-point e-cursor) point))
+                                  (let
+                                    [victim : i64 (array-ref e-var e-cursor)]
+                                    (begin
+                                      (when
+                                        (and
+                                          (>= victim 0)
+                                          (< victim (array-length evict-w))
+                                          (>= (array-ref evict-w victim) 0))
+                                        (if (=
+                                          (array-ref e-kind e-cursor)
+                                          (compiler-reg-call-evict-kind-save))
+                                          (ir.compiler-ir-instr-builder-push!
+                                            (&mut builder)
+                                            (ir.CompilerIrInstr.Mov
+                                              (array-ref evict-w victim)
+                                              (ir.CompilerIrValue.Var victim)
+                                              (compiler-reg-caller-save-var-type
+                                                type-info
+                                                victim)))
+                                          (ir.compiler-ir-instr-builder-push!
+                                            (&mut builder)
+                                            (ir.CompilerIrInstr.Mov
+                                              victim
+                                              (ir.CompilerIrValue.Var
+                                                (array-ref evict-w victim))
+                                              (compiler-reg-caller-save-var-type
+                                                type-info
+                                                victim)))))
+                                      (set! e-cursor (+ e-cursor 1)))))
                                 ;; activations at this point
                                 (while (and
                                   (< cursor count)

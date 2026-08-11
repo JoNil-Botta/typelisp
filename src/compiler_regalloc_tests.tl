@@ -3924,11 +3924,30 @@
         (and
           ;; one use, one entry mov: no static win, so the block row is refused
           (not (reg.compiler-reg-call-region-stat-eligible? one-use-block ends))
-          ;; the same shape as a loop row pays weight(1) - 1 = 1 reload
+          ;; The same shape as a loop row pays weight(1) * T - 1 reloads. The
+          ;; trip factor entered here with P11b phase 3: admission proves the
+          ;; anchor block is the loop's sole preheader, so the body sits exactly
+          ;; one loop level below the entry mov and the ladder's trip-2
+          ;; assumption is the wrong absolute frequency. Block rows are NOT
+          ;; amplified -- both of their sides sit at the same point.
           (reg.compiler-reg-call-region-stat-eligible? one-use-loop ends)
-          (= (reg.compiler-reg-call-region-stat-score one-use-loop ends) 1)
-          ;; depth 3, two uses: 2 * 8 - 1
-          (= (reg.compiler-reg-call-region-stat-score deep-loop ends) 15)
+          (= (reg.compiler-reg-call-region-stat-score one-use-loop ends) 15)
+          ;; depth 3, two uses: 2 * 8 * T - 1
+          (= (reg.compiler-reg-call-region-stat-score deep-loop ends) 127)
+          ;; the block row's score is untouched by the trip factor
+          (=
+            (reg.compiler-reg-call-region-stat-score
+              (reg.CompilerRegCallRegionStat
+                0
+                4
+                10
+                3
+                0
+                0
+                1
+                (reg.compiler-reg-call-region-kind-block))
+              ends)
+            4)
           ;; a loop row outside any loop is not a loop row
           (not
             (reg.compiler-reg-call-region-stat-eligible?
@@ -3965,6 +3984,662 @@
           (not (reg.compiler-reg-call-region-picked? lo hi 1 202 260))
           ;; nothing picked yet
           (not (reg.compiler-reg-call-region-picked? lo hi 0 120 140)))))))
+
+;; ---------------------------------------------------------------------------
+;; P11b phase 3: loop-scope EVICTION of a parked occupant.
+;;
+;; One fixture, four blocks' worth of points:
+;;   0 "entry": v0 = 7 (the spilled invariant), v3 = 11 (the pool-register
+;;              occupant), v1 = 0, jump -> loop     [the jump is the ANCHOR, p6]
+;;   1 "loop" : v2 = v1 + v0, v5 = v2 + <t>, v6 = v5 + v0, v1 = v6,
+;;              branch v6 -> loop | exit            [region hi = p16]
+;;   2 "exit" : v4 = v3 -- the occupant's read AFTER the loop, which is what
+;;              makes the reload obligatory -- then return    [head at p18]
+;;
+;; <t> selects the two populations the search has to separate: v0 leaves the
+;; occupant PARKED across the region, v3 makes it BUSY inside it.
+;; ---------------------------------------------------------------------------
+(cfg
+  test
+  (define (compiler-reg-evict-fixture [victim-in-loop? : bool]) : ir.CompilerIrFunction
+    (let
+      [mid : ir.CompilerIrValue
+        (if victim-in-loop?
+          (ir.CompilerIrValue.Var 3)
+          (ir.CompilerIrValue.Var 0))]
+      (ir.CompilerIrFunction.Function
+        (ir.compiler-ir-test-symbol "evict_fixture")
+        ir.CompilerIrParamList.Nil
+        (ast.AstType.Unit)
+        7
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "entry")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                0
+                (ir.CompilerIrValue.I64 7)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  3
+                  (ir.CompilerIrValue.I64 11)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Mov
+                    1
+                    (ir.CompilerIrValue.I64 0)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+                    ir.CompilerIrInstrList.Nil)))))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "loop")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    5
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.Var 2)
+                    mid
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      6
+                      (ir.CompilerIrBinOp.Add)
+                      (ir.CompilerIrValue.Var 5)
+                      (ir.CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Mov
+                        1
+                        (ir.CompilerIrValue.Var 6)
+                        (compiler-reg-i64-ty))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var 6)
+                          (ir.compiler-ir-label "loop")
+                          (ir.compiler-ir-label "exit"))
+                        ir.CompilerIrInstrList.Nil))))))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "exit")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Mov
+                    4
+                    (ir.CompilerIrValue.Var 3)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                    ir.CompilerIrInstrList.Nil)))
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; r12/r13: two callee-saved homes that clear the loop-pool hazard filter.
+(cfg
+  test
+  (define (compiler-reg-evict-test-pool) : (__tl_dyn-array i64)
+    (make-array (cast cabi.compiler-reg-id-r12 : i64) cabi.compiler-reg-id-r13)))
+
+(cfg
+  test
+  (define (compiler-reg-evict-test-parents) : (__tl_dyn-array i64)
+    (let
+      [parents : (__tl_dyn-array i64) (array.make-array i64 7)]
+      [i : i64 0]
+      (begin
+        (while (< i 7)
+          (begin
+            (set! (array-ref parents i) i)
+            (set! i (+ i 1))))
+        parents))))
+
+;; v3 spans the region and is read after it (`victim-end` 18); v5 is defined and
+;; consumed strictly inside the loop, which is what a BUSY co-occupant looks
+;; like to the interval index.
+(cfg
+  test
+  (define (compiler-reg-evict-test-index [victim-end : i64]) : reg.CompilerRegIntervalIndex
+    (let
+      [starts : (__tl_dyn-array i64) (array.make-array i64 7)]
+      [ends : (__tl_dyn-array i64) (array.make-array i64 7)]
+      (begin
+        (reg.compiler-reg-fill-i64-array starts (- 0 1))
+        (reg.compiler-reg-fill-i64-array ends (- 0 1))
+        (set! (array-ref starts 3) 2)
+        (set! (array-ref ends 3) victim-end)
+        (set! (array-ref starts 5) 12)
+        (set! (array-ref ends 5) 14)
+        (reg.CompilerRegIntervalIndex
+          starts
+          ends
+          (array.make-array reg.CompilerRegIntervalSeq 0))))))
+
+(cfg
+  test
+  (define (compiler-reg-evict-test-assignments) : reg.CompilerRegAssignmentTable
+    (let
+      [table : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-empty)]
+      [with-victim : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-insert
+          table
+          3
+          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
+      (reg.compiler-reg-assignment-table-insert
+        with-victim
+        5
+        (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r13)))))
+
+;; One attempt against the fixture. `occupants` 1 indexes only v3 (on r12);
+;; 2 also indexes v5 (on r13), the busy co-occupant.
+(cfg
+  test
+  (define (compiler-reg-evict-attempt
+    [victim-in-loop? : bool]
+    [victim-end : i64]
+    [uses : i64]
+    [already-evicted? : bool]
+    [occupants : i64]
+    [coalesced? : bool]
+    [out-points : (__tl_dyn-array i64)]
+    [out-saves : (__tl_dyn-array i64)]) : reg.CompilerRegCallEvictPick
+    (match (compiler-reg-evict-fixture victim-in-loop?)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        (let
+          [occ-var : (__tl_dyn-array i64) (array.make-array i64 4)]
+          [occ-reg : (__tl_dyn-array i64) (array.make-array i64 4)]
+          [occ-kind : (__tl_dyn-array i64) (array.make-array i64 4)]
+          [evicted : (__tl_dyn-array i64) (array.make-array i64 7)]
+          [weights : (__tl_dyn-array i64) (array.make-array i64 7)]
+          [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
+          (begin
+            (set! (array-ref occ-var 0) 3)
+            (set! (array-ref occ-reg 0) 0)
+            (set!
+              (array-ref occ-kind 0)
+              (reg.compiler-reg-call-region-occ-kind-scalar))
+            (set! (array-ref occ-var 1) 5)
+            (set! (array-ref occ-reg 1) 1)
+            (set!
+              (array-ref occ-kind 1)
+              (reg.compiler-reg-call-region-occ-kind-scalar))
+            (set! (array-ref weights 3) 5)
+            (set! (array-ref weights 5) 9)
+            (when already-evicted? (set! (array-ref evicted 3) 1))
+            (when coalesced? (set! (array-ref parents 5) 3))
+            (reg.compiler-reg-call-region-evict-try
+              blocks
+              (reg.compiler-reg-function-loop-depths blocks)
+              weights
+              (compiler-reg-evict-test-index victim-end)
+              parents
+              (compiler-reg-evict-test-assignments)
+              (compiler-reg-evict-test-pool)
+              2
+              occ-var
+              occ-reg
+              occ-kind
+              occupants
+              evicted
+              0
+              uses
+              6
+              16
+              7
+              out-points
+              out-saves)))])))
+
+(cfg
+  test
+  (define (compiler-reg-evict-picked?
+    [pick : reg.CompilerRegCallEvictPick]
+    [pix : i64]
+    [victim : i64]
+    [exits : i64]
+    [save : i64]) : bool
+    (match pick
+      [(reg.CompilerRegCallEvictPick.CompilerRegCallEvictNoPick) false]
+      [(reg.CompilerRegCallEvictPick.CompilerRegCallEvictSomePick p v e s)
+        (and (= p pix) (= v victim) (= e exits) (= s save))])))
+
+(cfg
+  test
+  (define (compiler-reg-evict-no-pick? [pick : reg.CompilerRegCallEvictPick]) : bool
+    (match pick
+      [(reg.CompilerRegCallEvictPick.CompilerRegCallEvictNoPick) true]
+      [(reg.CompilerRegCallEvictPick.CompilerRegCallEvictSomePick _ _ _ _)
+        false])))
+
+;; (a) The pool is exhausted, but r12's occupant is parked across the region:
+;; lend r12 to the invariant, mirror the occupant into a slot right after its
+;; definition (p2 -> save at p4) and reload it at the loop's one exit target
+;; (p18, the head of "exit"). Nothing lands inside the loop.
+(cfg
+  test
+  (define (compiler-reg-evict-parked-ok?) : bool
+    (let
+      [points : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [saves : (__tl_dyn-array i64) (array.make-array i64 4)]
+      (and
+        (compiler-reg-evict-picked?
+          (compiler-reg-evict-attempt false 18 3 false 1 false points saves)
+          0
+          3
+          1
+          1)
+        (= (array-ref points 0) 18)
+        (= (array-ref saves 0) 4)))))
+
+;; (b) The same occupant, read once inside the loop: refuse. Lending the
+;; register would need reloads INSIDE the region, which is the comparative-cost
+;; problem this pass does not model.
+(cfg
+  test
+  (define (compiler-reg-evict-busy-victim-refused?) : bool
+    (compiler-reg-evict-no-pick?
+      (compiler-reg-evict-attempt
+        true
+        18
+        3
+        false
+        1
+        false
+        (array.make-array i64 4)
+        (array.make-array i64 4)))))
+
+;; (c) BOTH pool registers busy in the region (v3 read inside it, v5 defined
+;; and consumed inside it): no parked victim exists, refuse cleanly.
+(cfg
+  test
+  (define (compiler-reg-evict-all-busy-refused?) : bool
+    (compiler-reg-evict-no-pick?
+      (compiler-reg-evict-attempt
+        true
+        18
+        3
+        false
+        2
+        false
+        (array.make-array i64 4)
+        (array.make-array i64 4)))))
+
+;; (d) The occupant dies with the region (interval ends at p16, before the exit
+;; head at p18): the exit is dead, so no reload is emitted at all.
+(cfg
+  test
+  (define (compiler-reg-evict-dead-exit-ok?) : bool
+    (compiler-reg-evict-picked?
+      (compiler-reg-evict-attempt
+        false
+        16
+        3
+        false
+        1
+        false
+        (array.make-array i64 4)
+        (array.make-array i64 4))
+      0
+      3
+      0
+      1)))
+
+;; (e) PRICING, in its final shape: a trip-amplified benefit, a 2x margin, and a
+;; two-use floor.
+;;
+;; The fixture's ONE in-region use is refused by the floor -- and that is the
+;; case that regressed the flagship row when the trip factor landed without it.
+;; The victim's save sits at its definition, which for a parameter is the
+;; function entry, so it runs on every CALL while the benefit needs the loop to
+;; be entered; no depth model sees that asymmetry. Two uses in the same fixture
+;; pay: 2*2*8 = 32 >= 2*(2*1 + 1).
+(cfg
+  test
+  (define (compiler-reg-evict-price-refused?) : bool
+    (and
+      ;; one in-region use: under the floor, refused
+      (compiler-reg-evict-no-pick?
+        (compiler-reg-evict-attempt
+          false
+          18
+          1
+          false
+          1
+          false
+          (array.make-array i64 4)
+          (array.make-array i64 4)))
+      ;; two: accepted
+      (compiler-reg-evict-picked?
+        (compiler-reg-evict-attempt
+          false
+          18
+          2
+          false
+          1
+          false
+          (array.make-array i64 4)
+          (array.make-array i64 4))
+        0
+        3
+        1
+        1)
+      ;; The bar itself, independent of the fixture. Arguments are
+      ;; (uses body-depth entry-depth def-weight exits); the 4th is the summed
+      ;; WEIGHT of the victim's save stores.
+      ;;
+      ;; the floor holds at every depth
+      (not (reg.compiler-reg-call-region-evict-price-ok? 1 3 0 1 1))
+      ;; delta 0: the use runs no more often than the anchor, so no trip
+      ;; amplification applies and two uses cannot pay -- 4 < 2*(2+1)
+      (not (reg.compiler-reg-call-region-evict-price-ok? 2 1 1 1 1))
+      ;; delta 1: the same two uses, amplified -- 2*2*8 = 32 >= 2*(1+1)
+      (reg.compiler-reg-call-region-evict-price-ok? 2 1 0 1 1)
+      ;; the trip factor saturates at two levels, so a deep nest cannot
+      ;; manufacture an unbounded benefit
+      (=
+        (reg.compiler-reg-call-region-trip-multiplier 2)
+        (reg.compiler-reg-call-region-trip-multiplier 9))
+      (= (reg.compiler-reg-call-region-trip-multiplier 0) 1)
+      ;; a victim REDEFINED inside an enclosing loop: the store costs what the
+      ;; reloads it replaces would have, and the bar refuses -- 32 < 2*(2+32)
+      (not (reg.compiler-reg-call-region-evict-price-ok? 2 1 0 32 1))
+      ;; ... and three exits at the anchor's own frequency still refuse when the
+      ;; body barely runs more often than the anchor: 4 < 2*(4*1+1)
+      (not (reg.compiler-reg-call-region-evict-price-ok? 2 1 1 1 3)))))
+
+;; (f) DOUBLE LENDING. A victim already lent to an earlier root is off the
+;; table: one save/reload protocol per parked value per function.
+(cfg
+  test
+  (define (compiler-reg-evict-double-lend-refused?) : bool
+    (compiler-reg-evict-no-pick?
+      (compiler-reg-evict-attempt
+        false
+        18
+        3
+        true
+        1
+        false
+        (array.make-array i64 4)
+        (array.make-array i64 4)))))
+
+;; A victim sharing storage with a sibling is refused outright: the reload
+;; placement argument ("a live victim owns its register alone") does not hold
+;; for a class whose members are distinct values at disjoint times.
+(cfg
+  test
+  (define (compiler-reg-evict-coalesced-victim-refused?) : bool
+    (compiler-reg-evict-no-pick?
+      (compiler-reg-evict-attempt
+        false
+        18
+        3
+        false
+        1
+        true
+        (array.make-array i64 4)
+        (array.make-array i64 4)))))
+
+;; Occupant identity is the coalesce ROOT. Two entries of one class are one
+;; value (lendable); two distinct classes, a pair half, or an accepted shadow
+;; are not.
+(cfg
+  test
+  (define (compiler-reg-evict-sole-occupant-ok?) : bool
+    (let
+      [occ-var : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [occ-reg : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [occ-kind : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [index : reg.CompilerRegIntervalIndex (compiler-reg-evict-test-index 18)]
+      [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
+      [class-parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
+      (begin
+        (set! (array-ref occ-var 0) 3)
+        (set! (array-ref occ-reg 0) 0)
+        (set!
+          (array-ref occ-kind 0)
+          (reg.compiler-reg-call-region-occ-kind-scalar))
+        (set! (array-ref occ-var 1) 5)
+        (set! (array-ref occ-reg 1) 0)
+        (set!
+          (array-ref occ-kind 1)
+          (reg.compiler-reg-call-region-occ-kind-scalar))
+        ;; v5 joins v3's storage class
+        (set! (array-ref class-parents 5) 3)
+        (and
+          ;; one entry, one value
+          (=
+            (reg.compiler-reg-call-region-evict-sole-occupant
+              occ-var
+              occ-reg
+              occ-kind
+              1
+              index
+              parents
+              7
+              0
+              6
+              16)
+            3)
+          ;; two entries, two distinct classes -> not lendable
+          (<
+            (reg.compiler-reg-call-region-evict-sole-occupant
+              occ-var
+              occ-reg
+              occ-kind
+              2
+              index
+              parents
+              7
+              0
+              6
+              16)
+            0)
+          ;; the same two entries as ONE storage class -> lendable again
+          (=
+            (reg.compiler-reg-call-region-evict-sole-occupant
+              occ-var
+              occ-reg
+              occ-kind
+              2
+              index
+              class-parents
+              7
+              0
+              6
+              16)
+            3)
+          ;; an accepted shadow already owns the register
+          (begin
+            (set!
+              (array-ref occ-kind 0)
+              (reg.compiler-reg-call-region-occ-kind-shadow))
+            (<
+              (reg.compiler-reg-call-region-evict-sole-occupant
+                occ-var
+                occ-reg
+                occ-kind
+                1
+                index
+                parents
+                7
+                0
+                6
+                16)
+              0))
+          ;; ... and a register pair half is not a lendable scalar either
+          (begin
+            (set!
+              (array-ref occ-kind 0)
+              (reg.compiler-reg-call-region-occ-kind-pair))
+            (<
+              (reg.compiler-reg-call-region-evict-sole-occupant
+                occ-var
+                occ-reg
+                occ-kind
+                1
+                index
+                parents
+                7
+                0
+                6
+                16)
+              0)))))))
+
+;; A sibling's read is the class's read: with v5 (used inside the loop) coalesced
+;; onto v3, v3 is no longer parked and the verifier says so. This is the exact
+;; shape that made the first cut of this pass miscompile -- the root's hull
+;; covered the region BECAUSE a member was read inside it.
+(cfg
+  test
+  (define (compiler-reg-evict-class-mention-ok?) : bool
+    (match (compiler-reg-evict-fixture false)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        (let
+          [seq : ir.CompilerIrBlockSeq
+            (live.compiler-live-ir-block-list-to-seq blocks)]
+          [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+          [points : (__tl_dyn-array i64)
+            (reg.compiler-reg-loop-phi-mb-block-points bslots)]
+          [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
+          [class-parents : (__tl_dyn-array i64)
+            (compiler-reg-evict-test-parents)]
+          (begin
+            (set! (array-ref class-parents 5) 3)
+            (and
+              ;; the anchor's point is the preheader's terminator
+              (= (- (array-ref points 1) 2) 6)
+              (= (- (array-ref points 2) 2) 16)
+              ;; v3 alone: parked
+              (not
+                (reg.compiler-reg-call-region-evict-var-mentioned?
+                  bslots
+                  points
+                  0
+                  1
+                  6
+                  parents
+                  7
+                  3))
+              ;; v3 with v5 in its class: busy
+              (reg.compiler-reg-call-region-evict-var-mentioned?
+                bslots
+                points
+                0
+                1
+                6
+                class-parents
+                7
+                3)
+              ;; v0 is read three times in the loop under any parenting
+              (reg.compiler-reg-call-region-evict-var-mentioned?
+                bslots
+                points
+                0
+                1
+                6
+                parents
+                7
+                0))))])))
+
+;; (g) PLAN SHAPE. The rewrite realizes exactly three movs for the accepted
+;; eviction above: the victim's store right after its definition, the shadow's
+;; load at the region anchor, and the victim's reload at the head of the exit
+;; block. The loop body gains NOTHING; its reads of v0 are remapped to the
+;; shadow var.
+(cfg
+  test
+  (define (compiler-reg-evict-rewrite-shape-ok?) : bool
+    (match (compiler-reg-evict-fixture false)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        (let
+          [shadow-regs : (__tl_dyn-array i64) (array.make-array i64 7)]
+          [split : reg.CompilerRegCallSplit
+            (begin
+              (reg.compiler-reg-fill-i64-array
+                shadow-regs
+                cabi.compiler-reg-id-invalid)
+              (set! (array-ref shadow-regs 0) cabi.compiler-reg-id-r12)
+              (reg.CompilerRegCallSplit
+                (live.compiler-live-set1 0)
+                shadow-regs
+                (reg.compiler-reg-call-region-seq-push
+                  (reg.compiler-reg-call-region-seq-empty)
+                  (reg.CompilerRegCallRegion 0 6 16 1 0))
+                (reg.compiler-reg-call-evict-seq-push
+                  (reg.compiler-reg-call-evict-seq-push
+                    (reg.compiler-reg-call-evict-seq-empty)
+                    (reg.CompilerRegCallEvict
+                      3
+                      4
+                      (reg.compiler-reg-call-evict-kind-save)))
+                  (reg.CompilerRegCallEvict
+                    3
+                    18
+                    (reg.compiler-reg-call-evict-kind-restore)))))]
+          [plan : reg.CompilerRegPlan
+            (reg.CompilerRegPlan.Plan
+              (reg.compiler-reg-assignment-table-empty)
+              (live.compiler-live-set-empty)
+              (reg.compiler-reg-interval-seq-empty)
+              (reg.compiler-reg-var-types-empty)
+              split
+              (reg.compiler-reg-split-plan-empty))]
+          (match (reg.compiler-reg-caller-save-rewrite-blocks
+            blocks
+            vars
+            (reg.compiler-reg-var-types-empty)
+            plan)
+            [(reg.CompilerRegCallSaveRewrite.Rewrite out _ next-vars _ _)
+              (let
+                [oseq : ir.CompilerIrBlockSeq
+                  (live.compiler-live-ir-block-list-to-seq out)]
+                [oslots : (__tl_dyn-array ir.CompilerIrBlock) oseq.slots]
+                (and
+                  (= oseq.len 3)
+                  ;; two minted vars: the victim's slot and the shadow
+                  (= next-vars 9)
+                  ;; entry: 4 originals, the save right after v3's def (index 2)
+                  ;; and the shadow load right before the terminator (index 4)
+                  (= (compiler-reg-evict-block-len (array-ref oslots 0)) 6)
+                  (compiler-reg-evict-block-mov? (array-ref oslots 0) 2 7 3)
+                  (compiler-reg-evict-block-mov? (array-ref oslots 0) 4 8 0)
+                  ;; loop body untouched in COUNT: no reload lands inside it
+                  (= (compiler-reg-evict-block-len (array-ref oslots 1)) 5)
+                  ;; exit: the reload, then the two originals
+                  (= (compiler-reg-evict-block-len (array-ref oslots 2)) 3)
+                  (compiler-reg-evict-block-mov? (array-ref oslots 2) 0 3 7)))]))])))
+
+(cfg
+  test
+  (define (compiler-reg-evict-block-len [block : ir.CompilerIrBlock]) : i64
+    (match block
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (ir.compiler-ir-instr-seq-count instrs)])))
+
+(cfg
+  test
+  (define (compiler-reg-evict-block-mov?
+    [block : ir.CompilerIrBlock]
+    [index : i64]
+    [dst : i64]
+    [src : i64]) : bool
+    (match block
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+          false
+          (match (ir.compiler-ir-instr-seq-ref instrs index)
+            [(ir.CompilerIrInstr.Mov d value _)
+              (match value
+                [(ir.CompilerIrValue.Var s) (and (= d dst) (= s src))]
+                [_ false])]
+            [_ false]))])))
 
 (cfg
   test
@@ -5819,7 +6494,8 @@
               shadow-regs
               (reg.compiler-reg-call-region-seq-push
                 (reg.compiler-reg-call-region-seq-empty)
-                (reg.CompilerRegCallRegion 1 0 10 0 0)))]
+                (reg.CompilerRegCallRegion 1 0 10 0 0))
+              (reg.compiler-reg-call-evict-seq-empty))]
           [phi-excluded : live.CompilerLiveI64Set
             (reg.compiler-reg-group-pair-excluded-instr
               (live.compiler-live-set-empty)
@@ -12160,6 +12836,36 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-region-overlap-ok?"
       (cfg test (compiler-reg-loop-region-overlap-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-parked-ok?"
+      (cfg test (compiler-reg-evict-parked-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-busy-victim-refused?"
+      (cfg test (compiler-reg-evict-busy-victim-refused?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-all-busy-refused?"
+      (cfg test (compiler-reg-evict-all-busy-refused?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-dead-exit-ok?"
+      (cfg test (compiler-reg-evict-dead-exit-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-price-refused?"
+      (cfg test (compiler-reg-evict-price-refused?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-double-lend-refused?"
+      (cfg test (compiler-reg-evict-double-lend-refused?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-coalesced-victim-refused?"
+      (cfg test (compiler-reg-evict-coalesced-victim-refused?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-sole-occupant-ok?"
+      (cfg test (compiler-reg-evict-sole-occupant-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-class-mention-ok?"
+      (cfg test (compiler-reg-evict-class-mention-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-evict-rewrite-shape-ok?"
+      (cfg test (compiler-reg-evict-rewrite-shape-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-edge-copy-linear-ok?"
       (cfg test (compiler-reg-edge-copy-linear-ok?) true))

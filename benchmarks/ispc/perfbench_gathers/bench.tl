@@ -6,10 +6,15 @@
 ;; Keep offsets lane-specific and the values/sums exactly representable as
 ;; binary32. Five elements of backing padding admit every active offset while
 ;; leaving inactive tail lanes out of range if masking is lost.
-(import stdlib.array)
 (import stdlib.io)
+(import stdlib.vector)
+(import (vector.vector f32) as f32v)
+(import (vector.vector i64) as i64v)
 
-(define (gathers [values : (Array f32)] [count : i64] [offsets : (Array i64)]) : f32
+(define (gathers
+  [values : (&mut values (Slice f32))]
+  [count : i64]
+  [offsets : (&mut offsets (Slice i64))]) : f32
   (spmd-reduce
     sum
     ([i : i64 0 count])
@@ -17,9 +22,9 @@
     (array-ref values (+ i (array-ref offsets (program-index))))))
 
 (define (gathers-scalar
-  [values : (Array f32)]
+  [values : (&mut values (Slice f32))]
   [count : i64]
-  [offsets : (Array i64)]
+  [offsets : (&mut offsets (Slice i64))]
   [width : i64]) : f32
   (let
     [sum : f32 (cast 0.0 : f32)]
@@ -44,7 +49,7 @@
     [(= (% lane 8) 6) 4]
     [else 1]))
 
-(define (gathers-init-offsets! [offsets : (Array i64)]) : unit
+(define (gathers-init-offsets! [offsets : (&mut offsets (Slice i64))]) : unit
   (let
     [i : i64 0]
     (while (< i 32)
@@ -55,7 +60,9 @@
 (define (gathers-value [index : i64]) : f32
   (cast (+ 1 (% (* index 5) 17)) : f32))
 
-(define (gathers-fill-values! [values : (Array f32)] [length : i64]) : unit
+(define (gathers-fill-values!
+  [values : (&mut values (Slice f32))]
+  [length : i64]) : unit
   (let
     [i : i64 0]
     (while (< i length)
@@ -63,25 +70,49 @@
         (set! (array-ref values i) (gathers-value i))
         (set! i (+ i 1))))))
 
+(define (gathers-f32-buffer [capacity : i64]) : f32v.Vec
+  (let
+    [out : f32v.Vec (f32v.with-capacity capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index capacity)
+        (begin
+          (f32v.push (&mut out) (cast 0.0 : f32))
+          (set! index (+ index 1))))
+      out)))
+
+(define (gathers-i64-buffer [capacity : i64]) : i64v.Vec
+  (let
+    [out : i64v.Vec (i64v.with-capacity capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index capacity)
+        (begin
+          (i64v.push (&mut out) 0)
+          (set! index (+ index 1))))
+      out)))
+
 (define (gathers-detect-width) : i64
   (let
-    [markers : (Array f32) (array.make-array f32 32)]
-    [lanes : (Array f32) (array.make-array f32 32)]
+    [markers : f32v.Vec (gathers-f32-buffer 32)]
+    [lanes : f32v.Vec (gathers-f32-buffer 32)]
+    [markers-view : (&mut markers (Slice f32)) (f32v.view-mut (&mut markers))]
+    [lanes-view : (&mut lanes (Slice f32)) (f32v.view-mut (&mut lanes))]
     [i : i64 0]
     [first-bits : u32 0]
     [width : i64 1]
     (begin
       (while (< i 32)
         (begin
-          (set! (array-ref markers i) (cast (+ i 1) : f32))
+          (set! (array-ref markers-view i) (cast (+ i 1) : f32))
           (set! i (+ i 1))))
       (foreach
         ([i : i64 0 32])
-        (set! (array-ref lanes i) (array-ref markers (program-index))))
-      (set! first-bits (io.float-f32-bits (array-ref lanes 0)))
+        (set! (array-ref lanes-view i) (array-ref markers-view (program-index))))
+      (set! first-bits (io.float-f32-bits (array-ref lanes-view 0)))
       (while (and
         (< width 32)
-        (!= (io.float-f32-bits (array-ref lanes width)) first-bits))
+        (!= (io.float-f32-bits (array-ref lanes-view width)) first-bits))
         (set! width (+ width 1)))
       width)))
 
@@ -97,12 +128,13 @@
 
 (define (main) : i64
   (let
-    [offsets : (Array i64) (array.make-array i64 32)]
+    [offsets : i64v.Vec (gathers-i64-buffer 32)]
+    [offsets-view : (&mut offsets (Slice i64)) (i64v.view-mut (&mut offsets))]
     [width : i64 (gathers-detect-width)]
     [case-id : i64 0]
     [ok : bool true]
     (begin
-      (gathers-init-offsets! offsets)
+      (gathers-init-offsets! offsets-view)
       (if (or (= width 1) (= width 8) (= width 16))
         unit
         (set! ok false))
@@ -110,16 +142,28 @@
         (let
           [count : i64 (gathers-case-count case-id)]
           [length : i64 (+ count 5)]
-          [values : (Array f32) (array.make-array f32 length)]
+          [values : f32v.Vec (gathers-f32-buffer length)]
+          ;; Reuse this one live borrow across all 100 measured calls.
+          [values-view : (&mut values (Slice f32))
+            (f32v.view-mut (&mut values))]
+          ;; Keep the measured kernel out of line so static reports cover its body.
+          [kernel : (->
+            (&mut values (Slice f32))
+            i64
+            (&mut offsets (Slice i64))
+            f32)
+            gathers]
           [expected : f32 (cast 0.0 : f32)]
           [result : f32 (cast 0.0 : f32)]
           [repetition : i64 0]
           (begin
-            (gathers-fill-values! values length)
-            (set! expected (gathers-scalar values count offsets width))
+            (gathers-fill-values! values-view length)
+            (set!
+              expected
+              (gathers-scalar values-view count offsets-view width))
             (while (< repetition 100)
               (begin
-                (set! result (gathers values count offsets))
+                (set! result (kernel values-view count offsets-view))
                 (set! repetition (+ repetition 1))))
             (if (= (io.float-f32-bits result) (io.float-f32-bits expected))
               unit

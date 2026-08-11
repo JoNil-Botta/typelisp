@@ -6,13 +6,14 @@
 ;; The source deliberately preserves f32 accumulation and horizontal-sum
 ;; intent. Scalar, AVX2, and AVX-512 TypeLisp modes must all pass the fixed
 ;; bit-pattern oracle; do not widen this case to f64.
-(import stdlib.array)
 (import stdlib.io)
+(import stdlib.vector)
+(import (vector.vector f32) as f32v)
 
-(define (loads [values : (Array f32)] [count : i64]) : f32
+(define (loads [values : (&mut values (Slice f32))] [count : i64]) : f32
   (spmd-reduce sum ([i : i64 0 count]) (cast 0.0 : f32) (array-ref values i)))
 
-(define (loads-scalar [values : (Array f32)] [count : i64]) : f32
+(define (loads-scalar [values : (&mut values (Slice f32))] [count : i64]) : f32
   (let
     [sum : f32 (cast 0.0 : f32)]
     [i : i64 0]
@@ -45,13 +46,27 @@
         (cast -1024.0 : f32))]
     [else (cast 1.0 : f32)]))
 
-(define (loads-fill-case! [values : (Array f32)] [case-id : i64] [count : i64]) : unit
+(define (loads-fill-case!
+  [values : (&mut values (Slice f32))]
+  [case-id : i64]
+  [count : i64]) : unit
   (let
     [i : i64 0]
     (while (< i count)
       (begin
         (set! (array-ref values i) (loads-case-value case-id i))
         (set! i (+ i 1))))))
+
+(define (loads-buffer [capacity : i64]) : f32v.Vec
+  (let
+    [out : f32v.Vec (f32v.with-capacity capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index capacity)
+        (begin
+          (f32v.push (&mut out) (cast 0.0 : f32))
+          (set! index (+ index 1))))
+      out)))
 
 (define (loads-case-expected-bits [case-id : i64]) : u32
   (cond
@@ -65,22 +80,29 @@
 
 (define (main) : i64
   (let
-    [values : (Array f32) (array.make-array f32 65536)]
+    [values : f32v.Vec (loads-buffer 65536)]
+    [values-view : (&mut values (Slice f32)) (f32v.view-mut (&mut values))]
+    ;; Keep the measured kernel out of line so static reports cover its body.
+    [kernel : (-> (&mut values (Slice f32)) i64 f32) loads]
     [case-id : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< case-id 7))
         (let
           [count : i64 (loads-case-count case-id)]
+          [result : f32 (cast 0.0 : f32)]
+          [repetition : i64 0]
           (begin
-            (loads-fill-case! values case-id count)
+            (loads-fill-case! values-view case-id count)
+            (while (< repetition 100)
+              (begin
+                (set! result (kernel values-view count))
+                (set! repetition (+ repetition 1))))
             (if (and
               (=
-                (io.float-f32-bits (loads-scalar values count))
+                (io.float-f32-bits (loads-scalar values-view count))
                 (loads-case-expected-bits case-id))
-              (=
-                (io.float-f32-bits (loads values count))
-                (loads-case-expected-bits case-id)))
+              (= (io.float-f32-bits result) (loads-case-expected-bits case-id)))
               unit
               (set! ok false))
             (set! case-id (+ case-id 1)))))

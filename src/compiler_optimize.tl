@@ -20179,12 +20179,185 @@
         body
         (ir.compiler-ir-block-seq-to-list seq))]))
 
+;; --- loop-scope global-cell operand promotion --------------------------------
+;;
+;; A `CompilerIrValue.Global g` OPERAND is a hidden rip-relative load of g's
+;; cell (see opt-licm-value-invariant?), re-executed on every iteration. LICM
+;; itself cannot move it: motion relocates whole INSTRUCTIONS, and there is no
+;; standalone load to relocate -- `globals-clean?` only lets an instruction
+;; whose OTHER operands are invariant leave the loop, which a `mul %varying,
+;; @g` or `lt %counter, @g` never is. The function-scope global_cell pass does
+;; materialize the load, but it refuses any function containing a returning
+;; call (a callee could `set!` the cell, so a function-ENTRY load would be
+;; stale) and any function that stores the cell itself, which is exactly why
+;; the hot loops that carry these operands are the ones it declines.
+;;
+;; A LOOP is the smaller scope where the same fact holds far more often. When
+;; `opt-licm-globals-clean?` holds, the body contains no call that may write
+;; and no header-or-unknown store, so nothing executing inside the loop can
+;; change ANY cell. Loading the cell once into a fresh var in the loop's
+;; PREHEADER and rewriting the body's `@g` operands to that var is then
+;; value-identical: the preheader load runs on every loop ENTRY, so a `set!`
+;; made elsewhere in the same function -- before the loop, or between two
+;; entries of it -- is observed exactly as the per-use loads observed it. That
+;; is the difference from the function-scope pass, whose entry load would go
+;; stale, and it is why this promotion is loop-scoped rather than a relaxation
+;; of that pass's condition.
+;;
+;; The preheader load is speculation-free even for a zero-trip loop: a global
+;; cell is statically allocated and always exists, so the load reads valid
+;; memory and its value is simply discarded. This argument does NOT extend to
+;; loads THROUGH pointers, where a zero-trip loop can leave the pointer
+;; unallocated -- LICM keeps its memory gates for those.
+;;
+;; The gate is the loop-wide `globals-clean?`, the same predicate the Load and
+;; Gep arms of opt-licm-candidate? already ask, so a body that writes any cell
+;; promotes nothing. Only single-word cells qualify, for the reason the
+;; function-scope pass gives (opt-global-cell-word-type?): the Mov's declared
+;; type drives the backend's load width, so a wider cell would silently load
+;; only its first word. Declared types come from the program-wide
+;; OptGlobalCellSummary, which is built at level 2 only; below that the summary
+;; is empty and promotion is a no-op, matching the function-scope pass's scope.
+;;
+;; The promoted var survives to the backend as a real load plus Var operands:
+;; copy propagation and GVN both refuse `Global` sources outright
+;; (opt-copy-safe-source?, opt-gvn-value-stable?), so nothing folds the cell
+;; read back into its uses. Nested loops converge upward instead of
+;; oscillating: an inner preheader's `Mov %v, @g` is itself a body instruction
+;; of the enclosing loop, so a clean outer loop promotes it one level further
+;; out and the inner body, now free of `Global` operands, promotes nothing on
+;; the next round.
+(defstruct OptLicmGlobalPromotion
+  (blocks ir.CompilerIrBlockList)
+  (loads ir.CompilerIrInstrList)
+  (changed? bool))
+
+;; Allocate one fresh var per promotable cell referenced by the body. Unlike
+;; the function-scope plan (opt-global-cell-plan-build) this filters on neither
+;; the program's address-taken set nor a store set: `globals-clean?` has
+;; already proven the body performs no store, no store through any pointer, and
+;; no call that may write, which covers every way a cell could be reached --
+;; including through a pointer derived from `GlobalAddr`, which the store
+;; summaries never classify as element-only.
+(define (opt-licm-global-promote-plan
+  [cells : OptGlobalCellSummary]
+  [refs : OptI64List]
+  [frame-cell : (__tl_dyn-array i64)]
+  [plan : opt_i64_i64_map.Map (:consume)]
+  [count : i64]) : OptGlobalCellPlan
+  (match refs
+    [(OptI64List.Nil) (OptGlobalCellPlan plan count)]
+    [(OptI64List.Cons name rest)
+      (match (opt-global-cell-type-lookup cells name)
+        [(OptMaybeAstType.No)
+          (opt-licm-global-promote-plan
+            cells
+            (box-get rest)
+            frame-cell
+            plan
+            count)]
+        [(OptMaybeAstType.Some ty)
+          (if (opt-global-cell-word-type? ty)
+            (let
+              [fresh : i64 (array-ref frame-cell 0)]
+              [next : opt_i64_i64_map.Map plan]
+              (begin
+                (array-set! frame-cell 0 (+ fresh 1))
+                (opt_i64_i64_map.insert-ref! (&mut next) name fresh)
+                (opt-licm-global-promote-plan
+                  cells
+                  (box-get rest)
+                  frame-cell
+                  next
+                  (+ count 1))))
+            (opt-licm-global-promote-plan
+              cells
+              (box-get rest)
+              frame-cell
+              plan
+              count))])]))
+
+;; Emit the preheader cell loads in the same ref-list order the plan allocated
+;; their fresh vars.
+(define (opt-licm-global-promote-loads
+  [plan : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [refs : OptI64List]) : ir.CompilerIrInstrList
+  (match refs
+    [(OptI64List.Nil) (ir.CompilerIrInstrList.Nil)]
+    [(OptI64List.Cons name rest)
+      (match (opt_i64_i64_map.get (& plan) name)
+        [(opt_i64_i64_map.LookupMissing)
+          (opt-licm-global-promote-loads plan cells (box-get rest))]
+        [(opt_i64_i64_map.LookupFound fresh)
+          (match (opt-global-cell-type-lookup cells name)
+            [(OptMaybeAstType.No)
+              (opt-licm-global-promote-loads plan cells (box-get rest))]
+            [(OptMaybeAstType.Some ty)
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  fresh
+                  (ir.CompilerIrValue.Global name)
+                  ty)
+                (opt-licm-global-promote-loads plan cells (box-get rest)))])])]))
+
+;; Promote every `Global` operand of a globals-clean loop body to a preheader
+;; load. `blocks` are the loop's body blocks AFTER the ordinary hoist filter
+;; has removed the instructions it moves, so a promotion never rewrites an
+;; operand that is about to leave the loop anyway.
+(define (opt-licm-global-promote
+  [cells : OptGlobalCellSummary]
+  [frame-cell : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : OptLicmGlobalPromotion
+  (if (= (struct-get cells word-cell) 0)
+    (OptLicmGlobalPromotion blocks (ir.CompilerIrInstrList.Nil) false)
+    (let
+      [scan : OptGlobalCellScan
+        (opt-global-cell-scan-blocks (opt-global-cell-scan-new) blocks false)]
+      [refs : OptI64List (struct-get scan ref-list)]
+      (match refs
+        [(OptI64List.Nil)
+          (OptLicmGlobalPromotion blocks (ir.CompilerIrInstrList.Nil) false)]
+        [_
+          (let
+            [planned : OptGlobalCellPlan
+              (opt-licm-global-promote-plan
+                cells
+                refs
+                frame-cell
+                (opt_i64_i64_map.with-capacity 8)
+                0)]
+            (if (= (struct-get planned count) 0)
+              (OptLicmGlobalPromotion blocks (ir.CompilerIrInstrList.Nil) false)
+              (OptLicmGlobalPromotion
+                (opt-global-cell-rewrite-nonentry-blocks
+                  (struct-get planned map)
+                  blocks)
+                (opt-licm-global-promote-loads
+                  (struct-get planned map)
+                  cells
+                  refs)
+                true)))]))))
+
+;; Preheader instruction list: the hoisted instructions followed by the
+;; promotion's cell loads. No promotion means the hoisted list is handed back
+;; unchanged rather than copied, keeping the no-promotion path allocation- and
+;; byte-identical.
+(define (opt-licm-preheader-instrs
+  [hoisted : ir.CompilerIrInstrList]
+  [loads : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+  (match loads
+    [(ir.CompilerIrInstrList.Nil) hoisted]
+    [_ (opt-aggregate-instr-list-append hoisted loads)]))
+
 (define (opt-licm-apply-loop
   [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [global-cells : OptGlobalCellSummary]
+  [frame-cell : (__tl_dyn-array i64)]
   [late? : bool]
   [blocks : ir.CompilerIrBlockList]
   [loop : OptNaturalLoop]) : OptBlockListPassResult
@@ -20295,35 +20468,57 @@
           globals-clean?
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
-            (if changed
-              ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
-              ;; occurrence (see opt-licm-dedup-env). An empty env means no
-              ;; duplicates -- skip the rewrite, byte-identical to pre-B1.
-              (let
-                [dedup-env : OptCopyEnv
-                  (opt-licm-dedup-env
-                    type-segment-bases
-                    hoisted
+            ;; Loop-scope global operand promotion runs on what the hoist
+            ;; filter LEFT in the loop, so it never rewrites an operand of an
+            ;; instruction that is leaving anyway, and the filter's own
+            ;; decisions still read the untouched body (nothing promotes when
+            ;; the gate is closed, which keeps this byte-identical there).
+            (let
+              [promotion : OptLicmGlobalPromotion
+                (if globals-clean?
+                  (opt-licm-global-promote
+                    global-cells
+                    frame-cell
+                    filtered-body)
+                  (OptLicmGlobalPromotion
+                    filtered-body
                     (ir.CompilerIrInstrList.Nil)
-                    (OptCopyEnv.Nil))]
-                (match dedup-env
-                  [(OptCopyEnv.Nil)
-                    (OptBlockListPassResult.Result
-                      (opt-licm-insert-preheader-blocks
-                        preheader
-                        hoisted
-                        (opt-licm-replace-body-blocks blocks filtered-body))
-                      true)]
-                  [_
-                    (OptBlockListPassResult.Result
-                      (opt-licm-insert-preheader-blocks
-                        preheader
-                        (opt-licm-subst-instr-list dedup-env hoisted)
-                        (opt-licm-replace-body-blocks
-                          blocks
-                          (opt-licm-subst-body-blocks dedup-env filtered-body)))
-                      true)]))
-              (OptBlockListPassResult.Result blocks false))]))]
+                    false))]
+              [promoted-body : ir.CompilerIrBlockList
+                (struct-get promotion blocks)]
+              [preheader-loads : ir.CompilerIrInstrList
+                (struct-get promotion loads)]
+              (if (or changed (struct-get promotion changed?))
+                ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
+                ;; occurrence (see opt-licm-dedup-env). An empty env means no
+                ;; duplicates -- skip the rewrite, byte-identical to pre-B1.
+                (let
+                  [dedup-env : OptCopyEnv
+                    (opt-licm-dedup-env
+                      type-segment-bases
+                      hoisted
+                      (ir.CompilerIrInstrList.Nil)
+                      (OptCopyEnv.Nil))]
+                  (match dedup-env
+                    [(OptCopyEnv.Nil)
+                      (OptBlockListPassResult.Result
+                        (opt-licm-insert-preheader-blocks
+                          preheader
+                          (opt-licm-preheader-instrs hoisted preheader-loads)
+                          (opt-licm-replace-body-blocks blocks promoted-body))
+                        true)]
+                    [_
+                      (OptBlockListPassResult.Result
+                        (opt-licm-insert-preheader-blocks
+                          preheader
+                          (opt-licm-preheader-instrs
+                            (opt-licm-subst-instr-list dedup-env hoisted)
+                            preheader-loads)
+                          (opt-licm-replace-body-blocks
+                            blocks
+                            (opt-licm-subst-body-blocks dedup-env promoted-body)))
+                        true)]))
+                (OptBlockListPassResult.Result blocks false)))]))]
     [(OptLoopPreheader.No) (OptBlockListPassResult.Result blocks false)]))
 
 (define (opt-licm-apply-loops
@@ -20332,6 +20527,8 @@
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [global-cells : OptGlobalCellSummary]
+  [frame-cell : (__tl_dyn-array i64)]
   [late? : bool]
   [loops : OptNaturalLoopList]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
@@ -20344,6 +20541,8 @@
         types
         provenance
         direct-call-clean
+        global-cells
+        frame-cell
         late?
         blocks
         loop)
@@ -20354,6 +20553,8 @@
             types
             provenance
             direct-call-clean
+            global-cells
+            frame-cell
             late?
             (box-get rest)
             loop-blocks)
@@ -20367,6 +20568,7 @@
   [context : OptCfgContext]
   [verified? : bool]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [global-cells : OptGlobalCellSummary]
   [late? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
@@ -20396,12 +20598,19 @@
                       params
                       types
                       blocks)]
+                  ;; Loop-scope global promotion mints fresh vars, so the pass
+                  ;; carries the frame counter in a cell and writes the final
+                  ;; value back into the rewritten function.
+                  [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+                  [_seed-frame : unit (array-set! frame-cell 0 frame)]
                   (match (opt-licm-apply-loops
                     type-segment-bases
                     sources
                     types
                     provenance
                     direct-call-clean
+                    global-cells
+                    frame-cell
                     late?
                     loops
                     blocks)
@@ -20419,7 +20628,7 @@
                               name
                               params
                               ret-ty
-                              frame
+                              (array-ref frame-cell 0)
                               hoisted-blocks)]
                           ;; LICM may hoist into a synthesized preheader edge, so build
                           ;; one fresh context for the rewritten CFG, reuse it for the
@@ -20449,6 +20658,7 @@
         (opt-cfg-context-build blocks)
         false
         direct-call-clean
+        (opt-global-cell-summary-empty)
         false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
@@ -20463,7 +20673,28 @@
         (opt-cfg-context-build blocks)
         false
         (opt_i64_i64_map.with-capacity 1)
+        (opt-global-cell-summary-empty)
         false
+        func)
+        [(OptFunctionCtxResult.Result next _) next])]))
+
+;; Test-only driver: LICM with the program's global-cell facts supplied, so a
+;; test can exercise loop-scope global operand promotion (which needs declared
+;; cell types) without building a whole program pipeline.
+(define (opt-licm-function-with-global-cells
+  [type-segment-bases : i64]
+  [global-cells : OptGlobalCellSummary]
+  [late? : bool]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (match (opt-licm-function-with-context-result-and-direct-call-clean
+        type-segment-bases
+        (opt-cfg-context-build blocks)
+        false
+        (opt_i64_i64_map.with-capacity 1)
+        global-cells
+        late?
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -64086,6 +64317,7 @@
                           dead-phi-context
                           loop-cluster-verified?
                           (struct-get summaries direct-call-clean)
+                          (struct-get summaries global-cell)
                           false
                           dead-phi)]
                       [licm : ir.CompilerIrFunction
@@ -64356,6 +64588,7 @@
                           lftr-context
                           loop-cluster-verified?
                           (struct-get summaries direct-call-clean)
+                          (struct-get summaries global-cell)
                           true
                           lftr)]
                       [post-lftr-licm : ir.CompilerIrFunction

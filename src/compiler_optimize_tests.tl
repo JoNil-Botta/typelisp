@@ -21377,6 +21377,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
@@ -21424,6 +21425,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
@@ -34408,6 +34410,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
@@ -44164,6 +44167,659 @@
       [(not (= (opt-gc-test-global-mov-blocks control-blocks 0) 0)) 7]
       [else 42])))
 
+;; --- loop-scope global operand promotion (LICM) ------------------------------
+;;
+;; `lp_g1`/`lp_g2` are i64 cells the `lp_writer` function stores, which keeps
+;; them out of the proven-constant global table (so they stay symbolic operands)
+;; while leaving them out of the address-taken set. `lp_agg` is a
+;; register-resident aggregate: never promoted, because the promoted Mov's
+;; declared type drives the backend's load width.
+(defstruct OptLpTestSymbols
+  (g1 i64)
+  (g2 i64)
+  (agg i64)
+  (writer i64)
+  (callee i64))
+
+(define (opt-lp-test-symbols) : OptLpTestSymbols
+  (OptLpTestSymbols
+    (opt-test-symbol "lp_g1")
+    (opt-test-symbol "lp_g2")
+    (opt-test-symbol "lp_agg")
+    (opt-test-symbol "lp_writer")
+    (opt-test-symbol "lp_callee")))
+
+(define (opt-lp-test-globals [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrGlobalList
+  (compiler_ir_types.compiler-ir-global-cons
+    (compiler_ir_types.CompilerIrGlobal.Global
+      (struct-get symbols g1)
+      (compiler_ast_types.AstType.I64)
+      (compiler_ir_types.CompilerIrValue.I64 7))
+    (compiler_ir_types.compiler-ir-global-cons
+      (compiler_ir_types.CompilerIrGlobal.Global
+        (struct-get symbols g2)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 9))
+      (compiler_ir_types.compiler-ir-global-cons
+        (compiler_ir_types.CompilerIrGlobal.Global
+          (struct-get symbols agg)
+          (compiler_ast_types.AstType.Struct (struct-get symbols agg))
+          (compiler_ir_types.CompilerIrValue.Unit))
+        compiler_ir_types.CompilerIrGlobalList.Nil))))
+
+(define (opt-lp-test-cells [symbols : OptLpTestSymbols]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-global-cell-summary-build
+    (opt-lp-test-globals symbols)
+    compiler_ir_types.CompilerIrFunctionList.Nil))
+
+;; A second program function whose `set!`s disqualify both cells from the
+;; proven-constant substitution the level-2 pipeline would otherwise apply.
+(define (opt-lp-test-writer-function [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (struct-get symbols writer)
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Store
+            (struct-get symbols g1)
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Store
+              (struct-get symbols g2)
+              (compiler_ir_types.CompilerIrValue.I64 4)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-lp-value-global? [v : compiler_ir_types.CompilerIrValue]) : bool
+  (match v
+    [(compiler_ir_types.CompilerIrValue.Global _) true]
+    [_ false]))
+
+;; Global operands in the instruction shapes these fixtures use.
+(define (opt-lp-instr-global-operands
+  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+      (if (opt-lp-value-global? src)
+        1
+        0)]
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (+
+        (if (opt-lp-value-global? lhs)
+          1
+          0)
+        (if (opt-lp-value-global? rhs)
+          1
+          0))]
+    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
+      (if (opt-lp-value-global? value)
+        1
+        0)]
+    [_ 0]))
+
+(define (opt-lp-count-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [movs? : bool]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-lp-count-seq
+      instrs
+      movs?
+      (+ index 1)
+      (+
+        acc
+        (let
+          [instr : compiler_ir_types.CompilerIrInstr
+            (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+          (if movs?
+            (match instr
+              [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+                (if (opt-lp-value-global? src)
+                  1
+                  0)]
+              [_ 0])
+            (opt-lp-instr-global-operands instr)))))))
+
+;; `movs?` counts `Mov dst @g` cell loads; otherwise every Global OPERAND.
+(define (opt-lp-count-label
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [movs? : bool]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
+          (if (= block-label label)
+            (opt-lp-count-seq instrs movs? 0 0)
+            (opt-lp-count-label (box-get rest) label movs?))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-lp-count-label
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        label
+        movs?)]))
+
+(define (opt-lp-binop-rhs-var-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [dst : i64]
+  [index : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    -1
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp instr-dst _ _ rhs _)
+        (if (= instr-dst dst)
+          (match rhs
+            [(compiler_ir_types.CompilerIrValue.Var v) v]
+            [_ -1])
+          (opt-lp-binop-rhs-var-seq instrs dst (+ index 1)))]
+      [_ (opt-lp-binop-rhs-var-seq instrs dst (+ index 1))])))
+
+(define (opt-lp-binop-rhs-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) -1]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [found : i64 (opt-lp-binop-rhs-var-seq instrs dst 0)]
+            (if (= found -1)
+              (opt-lp-binop-rhs-var (box-get rest) dst)
+              found))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-lp-binop-rhs-var
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+;; Loop body carrying two inline Global BinOp operands plus a non-word cell
+;; read. `store?` adds a `set!` of the first cell, which closes the loop-wide
+;; globals-clean gate.
+(define (opt-lp-test-blocks [symbols : OptLpTestSymbols] [store? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Global (struct-get symbols g1))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 8)
+          (compiler_ir_types.CompilerIrValue.Global (struct-get symbols g2))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            10
+            (compiler_ir_types.CompilerIrValue.Global (struct-get symbols agg))
+            (compiler_ast_types.AstType.Struct (struct-get symbols agg)))
+          (if store?
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Store
+                (struct-get symbols g1)
+                (compiler_ir_types.CompilerIrValue.I64 104)
+                (compiler_ast_types.AstType.I64))
+              (opt-licm-loop-finish-instrs))
+            (opt-licm-loop-finish-instrs)))))
+    9))
+
+;; A loop the guard can skip entirely. The preheader cell load still runs, which
+;; is safe because a global cell is statically allocated: the load reads valid
+;; memory and the value is discarded.
+(define (opt-lp-test-zero-trip-blocks [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "pre")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "pre")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "pre")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                8
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.Global
+                  (struct-get symbols g1))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "loop"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 1)))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; A RETURNING call in the entry block: the function-scope global_cell pass
+;; refuses this function outright (its condition (c)), because a callee could
+;; `set!` the cell between the entry load and a later use. The LOOP still
+;; qualifies -- the call is not in its body -- so the loop-scope promotion is
+;; the only thing that can turn `@lp_g1` into a value here.
+(define (opt-lp-test-call-blocks [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Call
+            11
+            (struct-get symbols callee)
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))
+            compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "body")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              8
+              (compiler_ir_types.CompilerIrBinOp.Mul)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Global (struct-get symbols g1))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "loop"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 8)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-lp-test-call-function [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "lp_call_fixture")
+    (opt-licm-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    (opt-lp-test-call-blocks symbols)))
+
+(define (opt-lp-version-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "arr"
+      (compiler_ast_types.AstType.DynArray 0)
+      0)
+    compiler_ir_types.CompilerIrParamList.Nil))
+
+;; A counted loop over a PARAMETER array whose only non-invariant guard operand
+;; is the global bound. The versioner accepts literals and vars defined outside
+;; the loop and rejects a `Global` operand outright, so the fast clone appears
+;; exactly when the bound has been promoted to a preheader value.
+(define (opt-lp-test-version-blocks [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            4
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Call
+              15
+              (struct-get symbols callee)
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Global (struct-get symbols g1))
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Gep
+              11
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Load
+                12
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.Var 12)
+                  (compiler_ir_types.compiler-ir-label "lp_while_ok"))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Gep
+                    13
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Load
+                      14
+                      (compiler_ir_types.CompilerIrValue.Var 13)
+                      (compiler_ast_types.AstType.U64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Gep
+                        6
+                        (compiler_ir_types.CompilerIrValue.Var 14)
+                        (compiler_ir_types.CompilerIrValue.Var 4)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Load
+                          7
+                          (compiler_ir_types.CompilerIrValue.Var 6)
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.BinOp
+                            8
+                            (compiler_ir_types.CompilerIrBinOp.Add)
+                            (compiler_ir_types.CompilerIrValue.Var 3)
+                            (compiler_ir_types.CompilerIrValue.Var 7)
+                            (compiler_ast_types.AstType.I64))
+                          (compiler_ir_types.compiler-ir-instr-cons
+                            (compiler_ir_types.CompilerIrInstr.Mov
+                              3
+                              (compiler_ir_types.CompilerIrValue.Var 8)
+                              (compiler_ast_types.AstType.I64))
+                            (compiler_ir_types.compiler-ir-instr-cons
+                              (compiler_ir_types.CompilerIrInstr.BinOp
+                                9
+                                (compiler_ir_types.CompilerIrBinOp.Add)
+                                (compiler_ir_types.CompilerIrValue.Var 4)
+                                (compiler_ir_types.CompilerIrValue.I64 1)
+                                (compiler_ast_types.AstType.I64))
+                              (compiler_ir_types.compiler-ir-instr-cons
+                                (compiler_ir_types.CompilerIrInstr.Mov
+                                  4
+                                  (compiler_ir_types.CompilerIrValue.Var 9)
+                                  (compiler_ast_types.AstType.I64))
+                                (compiler_ir_types.compiler-ir-instr-cons
+                                  (compiler_ir_types.CompilerIrInstr.Jump
+                                    (compiler_ir_types.compiler-ir-label
+                                      "header"))
+                                  compiler_ir_types.CompilerIrInstrList.Nil)))))))))))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-lp-test-version-function [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "lp_version_fixture")
+    (opt-lp-version-params)
+    (compiler_ast_types.AstType.I64)
+    20
+    (opt-lp-test-version-blocks symbols)))
+
+(define (opt-lp-promoted-blocks
+  [symbols : OptLpTestSymbols]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-licm-function-with-global-cells
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-lp-test-cells symbols)
+    false
+    (opt-licm-test-function blocks)))
+
+(define (opt-lp-has-block?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some _) true]))
+
+(define (compiler-optimize-licm-global-promote-self-test) : i64
+  (let
+    [symbols : OptLpTestSymbols (opt-lp-test-symbols)]
+    [type-segment-bases : i64
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [entry-label : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [loop-label : i64 (compiler_ir_types.compiler-ir-label "loop")]
+    [pre-label : i64 (compiler_ir_types.compiler-ir-label "pre")]
+    ;; (a) two inline Global BinOp operands promote; the aggregate cell does not
+    [plain-func : compiler_ir_types.CompilerIrFunction
+      (opt-lp-promoted-blocks symbols (opt-lp-test-blocks symbols false))]
+    [plain : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks plain-func)]
+    ;; (b) a `set!` of one cell closes the loop-wide gate: nothing promotes
+    [store-func : compiler_ir_types.CompilerIrFunction
+      (opt-lp-promoted-blocks symbols (opt-lp-test-blocks symbols true))]
+    [store-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks store-func)]
+    ;; (c) a loop the guard can skip entirely still promotes
+    [zero-trip-func : compiler_ir_types.CompilerIrFunction
+      (opt-lp-promoted-blocks symbols (opt-lp-test-zero-trip-blocks symbols))]
+    [zero-trip : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks zero-trip-func)]
+    ;; (e) the function-scope pass still refuses a function with a returning
+    ;; call, while the loop-scope promotion fires on the same function
+    [call-fixture : compiler_ir_types.CompilerIrFunction
+      (opt-lp-test-call-function symbols)]
+    [call-functions : compiler_ir_types.CompilerIrFunctionList
+      (opt-gc-test-functions2
+        call-fixture
+        (opt-lp-test-writer-function symbols))]
+    [call-summaries : compiler_optimize.OptLoopBceSummaries
+      (compiler_optimize.opt-loop-bce-summaries-set-global-cell
+        (compiler_optimize.opt-loop-bce-empty-summaries)
+        (compiler_optimize.opt-global-cell-summary-build
+          (opt-lp-test-globals symbols)
+          call-functions))]
+    [call-entry-hoisted : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-global-cell-function call-summaries call-fixture))]
+    [call-promoted : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-licm-function-with-global-cells
+          type-segment-bases
+          (compiler_optimize.opt-global-cell-summary-build
+            (opt-lp-test-globals symbols)
+            call-functions)
+          false
+          call-fixture))]
+    ;; (d) the versioning unlock: the promoted bound is an invariant Var, which
+    ;; is what `opt-bce-version-invariant-operand` accepts
+    [version-fixture : compiler_ir_types.CompilerIrFunction
+      (opt-lp-test-version-function symbols)]
+    [version-functions : compiler_ir_types.CompilerIrFunctionList
+      (opt-gc-test-functions2
+        version-fixture
+        (opt-lp-test-writer-function symbols))]
+    [version-summaries : compiler_optimize.OptLoopBceSummaries
+      (compiler_optimize.opt-build-program-summaries
+        type-segment-bases
+        (opt-lp-test-globals symbols)
+        version-functions
+        2)]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-reader-context-current)]
+    [versioned : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.optimize-function-with-level-and-summaries
+          pools
+          type-segment-bases
+          version-fixture
+          2
+          version-summaries))]
+    ;; control: the same pipeline with the cell facts removed, so no promotion
+    ;; happens and the bound stays a `Global` operand the versioner rejects
+    [version-control : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.optimize-function-with-level-and-summaries
+          pools
+          type-segment-bases
+          version-fixture
+          2
+          (compiler_optimize.opt-loop-bce-summaries-set-global-cell
+            version-summaries
+            (compiler_optimize.opt-global-cell-summary-empty))))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function plain-func)))
+        1]
+      ;; both word cells load once in the preheader, in ref-list order
+      [(not (= (opt-lp-count-label plain entry-label true) 2)) 2]
+      ;; the only Global operand left in the body is the aggregate read
+      [(not (= (opt-lp-count-label plain loop-label false) 1)) 3]
+      ;; `%8 = mul %4, @lp_g1` -> the second fresh var, `%9 = add %8, @lp_g2`
+      ;; -> the first: the plan allocates in ref-list order (g2 then g1)
+      [(not (= (opt-lp-binop-rhs-var plain 8) 17)) 4]
+      [(not (= (opt-lp-binop-rhs-var plain 9) 16)) 5]
+      [(not (= (compiler_optimize.opt-function-frame plain-func) 18)) 6]
+      ;; (b) the store closes the gate for the whole loop
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function store-func)))
+        7]
+      [(not (= (opt-lp-count-label store-blocks entry-label true) 0)) 8]
+      [(not (= (opt-lp-count-label store-blocks loop-label false) 3)) 9]
+      [(not (= (compiler_optimize.opt-function-frame store-func) 16)) 10]
+      ;; (c) zero-trip-capable loop still promotes into its preheader
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function zero-trip-func)))
+        11]
+      [(not (= (opt-lp-count-label zero-trip pre-label true) 1)) 12]
+      [(not (= (opt-lp-count-label zero-trip loop-label false) 0)) 13]
+      [(not (= (opt-lp-binop-rhs-var zero-trip 8) 16)) 14]
+      ;; (e) function scope stays refused; loop scope still fires
+      [(not (= (opt-lp-count-label call-entry-hoisted entry-label true) 0)) 15]
+      [(not (= (opt-lp-count-label call-promoted entry-label true) 1)) 16]
+      [(not (= (opt-lp-count-label call-promoted loop-label false) 0)) 17]
+      ;; (d) the promoted bound lets the multi-block versioner fire
+      [(not (opt-lp-has-block? versioned "body__bce_fast")) 18]
+      [(opt-lp-has-block? version-control "body__bce_fast") 19]
+      [else 42])))
+
 ;; --- dense LICM/induction insertion order witnesses -------------------------
 ;; These fixtures use the destination as a compact position marker.  A Jump is
 ;; encoded as -1, so the expected vectors pin both the inserted order and the
@@ -44435,6 +45091,13 @@
     (compiler-optimize-global-cell-pipeline-self-test)
     42
     "global-array loop versions once the descriptor loads become invariant SSA values"))
+
+(test
+  licm-global-operand-promotion
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-promote-self-test)
+    42
+    "loop-scope promotion loads both word cells in the preheader and rewrites the body operands; an in-loop set! refuses, a zero-trip-capable loop still promotes, the function-scope pass stays refused across a returning call, and the promoted bound unlocks bounds-check versioning"))
 
 (test
   dense-licm-insertion-order

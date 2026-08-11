@@ -95565,7 +95565,7 @@
   [capture-expr-types : bool]
   [call-expr : ast.AstExpr]) : ResultMacroCapturedOperands
   (let
-    [operand-count : i64 (struct-get (& params) len)]
+    [operand-count : i64 params.len]
     (macro-capture-params-direct-at
       ctx
       decls

@@ -19695,6 +19695,8 @@
     [(ast.AstType.U8) true]
     [(ast.AstType.Bool) true]
     [(ast.AstType.Char) true]
+    [(ast.AstType.Ptr _) true]
+    [(ast.AstType.MutPtr _) true]
     [(ast.AstType.Ref _ _) true]
     [(ast.AstType.MutRef _ _) true]
     [(ast.AstType.Func _ _) true]

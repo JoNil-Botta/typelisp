@@ -58062,7 +58062,8 @@
   [check-pos : i64]
   [phi-var : i64]
   [fast-labels : OptLabelSet]
-  [check-blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  [check-blocks : ir.CompilerIrBlockList]
+  [gen : i64]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -58080,7 +58081,8 @@
                     check-pos
                     phi-var
                     fast-labels
-                    exit-label))
+                    exit-label
+                    gen))
                 (box-get rest)))
             (ir.compiler-ir-block-cons
               block
@@ -58090,7 +58092,8 @@
                 check-pos
                 phi-var
                 fast-labels
-                check-blocks)))])]
+                check-blocks
+                gen)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-sink-exit-block-list
         (ir.compiler-ir-block-seq-to-list seq)
@@ -58098,7 +58101,8 @@
         check-pos
         phi-var
         fast-labels
-        check-blocks)]))
+        check-blocks
+        gen)]))
 
 ;; The exit block's instructions minus the check (and its now-unused
 ;; cast): every other instruction is preserved as-is.
@@ -58108,7 +58112,8 @@
   [check-pos : i64]
   [phi-var : i64]
   [fast-labels : OptLabelSet]
-  [exit-label : i64]) : ir.CompilerIrInstrList
+  [exit-label : i64]
+  [gen : i64]) : ir.CompilerIrInstrList
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     (ir.CompilerIrInstrList.Nil)
     (if (= index check-pos)
@@ -58118,7 +58123,8 @@
         check-pos
         phi-var
         fast-labels
-        exit-label)
+        exit-label
+        gen)
       (match (ir.compiler-ir-instr-seq-ref instrs index)
         [(ir.CompilerIrInstr.Phi dst inputs ty)
           (if (= dst phi-var)
@@ -58128,7 +58134,8 @@
                 (opt-bce-mb-sink-phi-relabel-inputs
                   inputs
                   fast-labels
-                  exit-label)
+                  exit-label
+                  gen)
                 ty)
               (opt-bce-mb-sink-exit-instrs
                 instrs
@@ -58136,7 +58143,8 @@
                 check-pos
                 phi-var
                 fast-labels
-                exit-label))
+                exit-label
+                gen))
             (ir.compiler-ir-instr-cons
               (ir.compiler-ir-instr-seq-ref instrs index)
               (opt-bce-mb-sink-exit-instrs
@@ -58145,7 +58153,8 @@
                 check-pos
                 phi-var
                 fast-labels
-                exit-label)))]
+                exit-label
+                gen)))]
         [(ir.CompilerIrInstr.Cast dst src _ _)
           (match src
             [(ir.CompilerIrValue.Var v)
@@ -58156,7 +58165,8 @@
                   check-pos
                   phi-var
                   fast-labels
-                  exit-label)
+                  exit-label
+                  gen)
                 (ir.compiler-ir-instr-cons
                   (ir.compiler-ir-instr-seq-ref instrs index)
                   (opt-bce-mb-sink-exit-instrs
@@ -58165,7 +58175,8 @@
                     check-pos
                     phi-var
                     fast-labels
-                    exit-label)))]
+                    exit-label
+                    gen)))]
             [_
               (ir.compiler-ir-instr-cons
                 (ir.compiler-ir-instr-seq-ref instrs index)
@@ -58175,7 +58186,8 @@
                   check-pos
                   phi-var
                   fast-labels
-                  exit-label))])]
+                  exit-label
+                  gen))])]
         [_
           (ir.compiler-ir-instr-cons
             (ir.compiler-ir-instr-seq-ref instrs index)
@@ -58185,34 +58197,113 @@
               check-pos
               phi-var
               fast-labels
-              exit-label))]))))
+              exit-label
+              gen))]))))
+
+;; The name of the check block the sink puts on the `exit-label <- pred-label`
+;; edge. Generation 0 is the historical spelling; the concatenation is not
+;; injective (a label text may itself contain the separator), so a split whose
+;; generation-0 names would land on an existing block moves to the next
+;; generation instead of emitting a duplicate assembly label.
+(define (opt-bce-mb-sink-check-label
+  [exit-label : i64]
+  [pred-label : i64]
+  [gen : i64]) : i64
+  (ir.compiler-ir-label
+    (if (= gen 0)
+      (str_cat.str-cat
+        (ir.compiler-ir-label-text exit-label)
+        "__xchk_"
+        (ir.compiler-ir-label-text pred-label))
+      (str_cat.str-cat
+        (ir.compiler-ir-label-text exit-label)
+        "__xchk"
+        (string.int->string gen)
+        "_"
+        (ir.compiler-ir-label-text pred-label)))))
+
+;; The in-range continuation the check block branches to.
+(define (opt-bce-mb-sink-check-ok-label [check-label : i64]) : i64
+  (ir.compiler-ir-label
+    (str_cat.str-cat (ir.compiler-ir-label-text check-label) ".0")))
+
+;; Does this generation name every check block (and its ok continuation) after
+;; a block that does not already exist in the function?
+(define (opt-bce-mb-sink-gen-free?
+  [blocks : ir.CompilerIrBlockList]
+  [inputs : ir.CompilerIrPhiInputList]
+  [fast-labels : OptLabelSet]
+  [exit-label : i64]
+  [gen : i64]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) true]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-sink-gen-free?
+        blocks
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        fast-labels
+        exit-label
+        gen)]
+    [(ir.CompilerIrPhiInputList.Cons _ label rest)
+      (if (opt-label-contains fast-labels label)
+        (opt-bce-mb-sink-gen-free?
+          blocks
+          (box-get rest)
+          fast-labels
+          exit-label
+          gen)
+        (let
+          [check-label : i64 (opt-bce-mb-sink-check-label exit-label label gen)]
+          (if (or
+            (opt-cfg-block-exists? blocks check-label)
+            (opt-cfg-block-exists?
+              blocks
+              (opt-bce-mb-sink-check-ok-label check-label)))
+            false
+            (opt-bce-mb-sink-gen-free?
+              blocks
+              (box-get rest)
+              fast-labels
+              exit-label
+              gen))))]))
+
+;; The lowest generation whose whole name set is free. Generation 0 answers on
+;; every shape the corpus produces today, so this costs one clean scan.
+(define (opt-bce-mb-sink-fresh-gen
+  [blocks : ir.CompilerIrBlockList]
+  [inputs : ir.CompilerIrPhiInputList]
+  [fast-labels : OptLabelSet]
+  [exit-label : i64]
+  [gen : i64]) : i64
+  (if (opt-bce-mb-sink-gen-free? blocks inputs fast-labels exit-label gen)
+    gen
+    (opt-bce-mb-sink-fresh-gen blocks inputs fast-labels exit-label (+ gen 1))))
 
 ;; Rewrite the exit phi's moved inputs to name their new check-block edges.
 (define (opt-bce-mb-sink-phi-relabel-inputs
   [inputs : ir.CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
-  [exit-label : i64]) : ir.CompilerIrPhiInputList
+  [exit-label : i64]
+  [gen : i64]) : ir.CompilerIrPhiInputList
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
     [(ir.CompilerIrPhiInputList.Array seq)
       (opt-bce-mb-sink-phi-relabel-inputs
         (ir.compiler-ir-phi-input-seq-to-list seq)
         fast-labels
-        exit-label)]
+        exit-label
+        gen)]
     [(ir.CompilerIrPhiInputList.Cons value label rest)
       (ir.compiler-ir-phi-input-cons
         value
         (if (opt-label-contains fast-labels label)
           label
-          (ir.compiler-ir-label
-            (str_cat.str-cat
-              (ir.compiler-ir-label-text exit-label)
-              "__xchk_"
-              (ir.compiler-ir-label-text label))))
+          (opt-bce-mb-sink-check-label exit-label label gen))
         (opt-bce-mb-sink-phi-relabel-inputs
           (box-get rest)
           fast-labels
-          exit-label))]))
+          exit-label
+          gen))]))
 
 ;; Retarget the terminators that land on the exit to the input's new check
 ;; block, walking every non-fast predecessor.
@@ -58220,7 +58311,8 @@
   [blocks : ir.CompilerIrBlockList]
   [inputs : ir.CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
-  [exit-label : i64]) : ir.CompilerIrBlockList
+  [exit-label : i64]
+  [gen : i64]) : ir.CompilerIrBlockList
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil) blocks]
     [(ir.CompilerIrPhiInputList.Array seq)
@@ -58228,27 +58320,26 @@
         blocks
         (ir.compiler-ir-phi-input-seq-to-list seq)
         fast-labels
-        exit-label)]
+        exit-label
+        gen)]
     [(ir.CompilerIrPhiInputList.Cons value label rest)
       (if (opt-label-contains fast-labels label)
         (opt-bce-mb-sink-retarget-all
           blocks
           (box-get rest)
           fast-labels
-          exit-label)
+          exit-label
+          gen)
         (opt-bce-mb-sink-retarget-all
           (opt-bce-mb-sink-retarget-preds
             blocks
             exit-label
-            (ir.compiler-ir-label
-              (str_cat.str-cat
-                (ir.compiler-ir-label-text exit-label)
-                "__xchk_"
-                (ir.compiler-ir-label-text label)))
+            (opt-bce-mb-sink-check-label exit-label label gen)
             label)
           (box-get rest)
           fast-labels
-          exit-label))]))
+          exit-label
+          gen))]))
 
 ;; The predecessor-block rewrite for the sink: retarget every terminator
 ;; that lands on `from-label` to `to-label`, but only in the block named
@@ -58289,13 +58380,18 @@
 
 ;; Build the tiny check blocks for the non-fast phi inputs and retarget the
 ;; predecessor edges. Each input gets: cast input to u64, check, jump exit.
+;; `emitted` carries the names already built for this split: one predecessor
+;; may hold two edges into the exit (a branch with both arms on it), and both
+;; phi inputs then relabel to the same check block, which must be emitted once.
 (define (opt-bce-mb-sink-check-blocks-from
   [inputs : ir.CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
   [exit-label : i64]
   [len : ir.CompilerIrValue]
   [blocks : ir.CompilerIrBlockList]
-  [cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  [cell : (__tl_dyn-array i64)]
+  [gen : i64]
+  [emitted : OptLabelSet]) : ir.CompilerIrBlockList
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil) blocks]
     [(ir.CompilerIrPhiInputList.Array seq)
@@ -58305,7 +58401,9 @@
         exit-label
         len
         blocks
-        cell)]
+        cell
+        gen
+        emitted)]
     [(ir.CompilerIrPhiInputList.Cons value label rest)
       (if (opt-label-contains fast-labels label)
         (opt-bce-mb-sink-check-blocks-from
@@ -58314,42 +58412,51 @@
           exit-label
           len
           blocks
-          cell)
+          cell
+          gen
+          emitted)
         (let
-          [check-label : i64
-            (ir.compiler-ir-label
-              (str_cat.str-cat
-                (ir.compiler-ir-label-text exit-label)
-                "__xchk_"
-                (ir.compiler-ir-label-text label)))]
-          [cast-var : i64 (opt-bce-version-alloc-var cell)]
-          [ok-label : i64
-            (ir.compiler-ir-label
-              (str_cat.str-cat (ir.compiler-ir-label-text check-label) ".0"))]
-          (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block
-              check-label
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Cast
-                  cast-var
-                  value
-                  (ast.AstType.I64)
-                  (ast.AstType.U64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.BoundsCheck
-                    (ir.CompilerIrValue.Var cast-var)
-                    len
-                    ok-label)
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Jump exit-label)
-                    (ir.CompilerIrInstrList.Nil)))))
+          [check-label : i64 (opt-bce-mb-sink-check-label exit-label label gen)]
+          (if (opt-label-contains emitted check-label)
             (opt-bce-mb-sink-check-blocks-from
               (box-get rest)
               fast-labels
               exit-label
               len
               blocks
-              cell))))]))
+              cell
+              gen
+              emitted)
+            (let
+              [cast-var : i64 (opt-bce-version-alloc-var cell)]
+              [ok-label : i64 (opt-bce-mb-sink-check-ok-label check-label)]
+              [seen : OptLabelSet (opt-label-cons check-label emitted)]
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  check-label
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Cast
+                      cast-var
+                      value
+                      (ast.AstType.I64)
+                      (ast.AstType.U64))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.BoundsCheck
+                        (ir.CompilerIrValue.Var cast-var)
+                        len
+                        ok-label)
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Jump exit-label)
+                        (ir.CompilerIrInstrList.Nil)))))
+                (opt-bce-mb-sink-check-blocks-from
+                  (box-get rest)
+                  fast-labels
+                  exit-label
+                  len
+                  blocks
+                  cell
+                  gen
+                  seen))))))]))
 
 ;; Sink the check out of a qualifying exit block: the fast arrivals are
 ;; provably in range, so the check moves to fresh per-input check blocks on
@@ -58378,6 +58485,10 @@
             (opt-bce-mb-find-block-seq blocks label)
             phi-var)]
         [clen : ir.CompilerIrValue (opt-bce-mb-canon-value blocks len)]
+        ;; One generation for the whole split: the phi relabel, the predecessor
+        ;; retarget, and the check blocks themselves must all agree on the name.
+        [gen : i64
+          (opt-bce-mb-sink-fresh-gen blocks inputs fast-labels label 0)]
         ;; The check blocks land immediately before the exit block: behind
         ;; every predecessor edge, never before the function entry.
         [sunk : ir.CompilerIrBlockList
@@ -58393,9 +58504,12 @@
               label
               clen
               (ir.CompilerIrBlockList.Nil)
-              cell))]
+              cell
+              gen
+              (OptLabelSet.Nil))
+            gen)]
         [step : ir.CompilerIrBlockList
-          (opt-bce-mb-sink-retarget-all sunk inputs fast-labels label)]
+          (opt-bce-mb-sink-retarget-all sunk inputs fast-labels label gen)]
         step)]))
 
 ;; Guard derivation + fast-clone emission + rewrite over a fully wired
@@ -71353,6 +71467,12 @@
 
 (define opt-inline-caller-has-bounds? : bool
   false)
+(define opt-inline-caller-name : i64
+  0)
+(define opt-inline-caller-recursion-known? : bool
+  false)
+(define opt-inline-caller-recursion? : bool
+  false)
 (define opt-inline-current-block-label : i64
   0)
 
@@ -71394,6 +71514,9 @@
     (set! opt-inline-caller-facts-ready? false)
     (array-set! opt-inline-caller-loop-labels 0 (OptLabelSet.Nil))
     (set! opt-inline-caller-has-bounds? false)
+    (set! opt-inline-caller-name name)
+    (set! opt-inline-caller-recursion-known? false)
+    (set! opt-inline-caller-recursion? false)
     (set! opt-inline-caller-hot-loop-blocks 0)
     (set! opt-inline-caller-chain-blocks 0)
     (set! opt-inline-caller-accessor-blocks 0)
@@ -71421,6 +71544,23 @@
     (opt-label-contains
       (opt-inline-caller-loop-labels-shared-view)
       opt-inline-current-block-label)))
+
+;; Does the caller call itself? Memoized on its own flag rather than folded into
+;; opt-inline-caller-facts-ensure! -- the natural-loop build and the bounds scan
+;; are forced by every small loop-bearing candidate, and this scan is forced
+;; only by the recursive-site tier below, which is the last clause it asks.
+(define (opt-inline-caller-recursive?) : bool
+  (begin
+    (if opt-inline-caller-recursion-known?
+      unit
+      (begin
+        (set!
+          opt-inline-caller-recursion?
+          (opt-loop-bce-direct-call-self-recursive-blocks?
+            opt-inline-caller-name
+            (opt-inline-caller-facts-blocks-shared-view)))
+        (set! opt-inline-caller-recursion-known? true)))
+    opt-inline-caller-recursion?))
 
 ;; The one measured way a hot-site, small, absorbable import still loses.
 ;; opt_quicksort's `qs-bench` is itself a single-reference function carrying no
@@ -71511,15 +71651,92 @@
     (opt-inline-bounds-loop-absorb-ok? true callee-instrs blocks)
     (opt-inline-blocks-call-free? blocks)))
 
+;; --- absorbing a leaf into a RECURSIVE caller -------------------------------
+;;
+;; opt-inline-bounds-loop-absorb-ok? prices a bounds-carrying loop-bearing
+;; callee by one question: does its call site lie in a natural loop of the
+;; caller? That is what makes the retired boundary repay per iteration instead
+;; of once per program. A natural loop is not the only construction that
+;; repeats a site. opt_quicksort's `qs-sort` reaches `qs-partition` from a body
+;; with no CFG loop at all when the inliner looks at it -- the site repeats by
+;; RECURSION, once per pivot, 4.1M times on the measured row -- and the
+;; loop-label test cannot see that. The tail-recursion-to-loop rewrite that
+;; would make it visible runs after this decision.
+;;
+;; So this tier asks the same question in the currency the shape actually
+;; carries: the CALLER calls itself, so its whole body, this site included, is
+;; re-entered per recursion node. Everything else the loop tier asks is asked
+;; here unchanged in spirit, and two clauses are tightened rather than relaxed:
+;;
+;;   1. the callee has exactly ONE static reference. This is absorption in the
+;;      strict sense -- the body moves, the original is retired, the program
+;;      does not grow -- so the two-reference duplication the loop tier allows
+;;      is not offered here. A recursive caller is the worst place to pay for a
+;;      copy that is not free;
+;;   2. the body is call-free. A clone is bounded by the callee's own size only
+;;      while nothing inside it brings another body along, the multiblock clone
+;;      path miscompiles call-carrying clones (#6307), and a call-free callee
+;;      absorbed into a recursive caller cannot deepen the recursion;
+;;   3. the cascade clause is unchanged: an import that would hand a
+;;      bounds-free single-reference caller its first bounds check costs that
+;;      caller its own inline, and that trade loses wherever it is made.
+;;
+;; The cost model is NOT bypassed. This predicate only supplies the bounds-loop
+;; disjunct; `inline?` still requires opt-inline-cost-inline? (with the
+;; single-reference absorb bonus) to admit the site, so the growth budgets and
+;; the heavy gate are exactly the ones every absorption already answers to.
+;;
+;; The band is set from the measured shape and the structure that makes it
+;; safe. `qs-partition` presents here as 105 instructions in 7 blocks: one
+;; scan loop, two swaps, no calls. 128 and 8 sit above it with room for the
+;; same shape carrying one more block, and far below anything that would bring
+;; a second working set into a recursive frame.
+;;
+;; The admitted population is what the clauses above predict it to be. Across
+;; the whole benchmark corpus this tier claims exactly one callee --
+;; `qs-partition` -- and across a full opt2 self-compile exactly two:
+;; `compiler-ir-function-seq-var-count` and `opt-bit-test-plans-slot`.
+;; Measured: opt_quicksort -5.369% on top of the divmod change (436,307,717 ->
+;; 409,002,574 with both), every other instruction-count row byte identical,
+;; opt1 self-compile -2,230 instructions. The prologue question the recursive
+;; caller raises answers the right way on the measured shape: absorbing
+;; `qs-partition` takes `qs-sort` from four callee-saved pushes and a
+;; 72-byte frame to three and 64, because the absorbed leaf held no live
+;; range across a call and the retired argument setup freed a register.
+(define (opt-inline-recursive-site-max-body) : i64
+  128)
+
+(define (opt-inline-recursive-site-max-blocks) : i64
+  8)
+
+;; Ordered cheapest-first: the reference class is an integer already in hand,
+;; the size clauses are counts, and only then are the caller's lazy facts
+;; forced -- the self-call scan last of all.
+(define (opt-inline-recursive-site-absorb-ok?
+  [absorb-class : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (= absorb-class 1)
+    (<= callee-instrs (opt-inline-recursive-site-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-recursive-site-max-blocks))
+    (opt-inline-blocks-call-free? blocks)
+    (opt-inline-bounds-loop-cascade-safe?)
+    (opt-inline-caller-recursive?)))
+
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
   [absorbable? : bool]
+  [absorb-class : i64]
   [callee-instrs : i64]
   [callee-name : i64]
   [blocks : ir.CompilerIrBlockList]) : bool
   (or
     (not has-bounds?)
     (opt-inline-bounds-loop-absorb-ok? absorbable? callee-instrs blocks)
+    (opt-inline-recursive-site-absorb-ok? absorb-class callee-instrs blocks)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
     (opt-inline-vm-run-bounds-loop-exception? callee-name)))
 
@@ -72528,6 +72745,7 @@
                     (opt-inline-multiblock-bounds-loop-ok?
                       has-bounds?
                       absorbable-here?
+                      absorb-class
                       callee-instrs
                       callee-name
                       cblocks)
@@ -73248,6 +73466,7 @@
                     (opt-inline-multiblock-bounds-loop-ok?
                       has-bounds?
                       absorbable-here?
+                      absorb-class
                       callee-instrs
                       callee-name
                       cblocks)

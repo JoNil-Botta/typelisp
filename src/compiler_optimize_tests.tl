@@ -48503,3 +48503,181 @@
     (when (opt-bit-test-changed? (opt-bit-test-short-blocks)) (return 4))
     (when (opt-bit-test-changed? (opt-bit-test-unsigned-blocks)) (return 5))
     42))
+
+;; --------------------------------------------------------------------------
+;; Exit-split sink label freshness
+;; --------------------------------------------------------------------------
+;; The BCE multi-block sink names each check block by concatenating the exit
+;; label, a separator, and the predecessor label. Concatenation is not
+;; injective and the same predecessor can hold two edges into one exit, so the
+;; sink has to prove its whole name set is unused before it commits to it.
+;; These fixtures pin both halves: the generation search that steps off an
+;; occupied name, and the one-block-per-predecessor rule.
+(define (opt-xchk-jump-block [label : i64] [target : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump target)
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-xchk-exit-label) : i64
+  (compiler_ir_types.compiler-ir-label "exit"))
+
+(define (opt-xchk-pred-label) : i64
+  (compiler_ir_types.compiler-ir-label "pa"))
+
+(define (opt-xchk-other-pred-label) : i64
+  (compiler_ir_types.compiler-ir-label "pb"))
+
+;; `pa -> exit`, plus an optional already-taken block so a fixture can occupy
+;; the name the sink would otherwise pick.
+(define (opt-xchk-blocks [taken : i64] [occupied? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-xchk-jump-block (opt-xchk-pred-label) (opt-xchk-exit-label))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-xchk-jump-block (opt-xchk-other-pred-label) (opt-xchk-exit-label))
+      (if occupied?
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-xchk-jump-block taken (opt-xchk-exit-label))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-xchk-jump-block (opt-xchk-exit-label) (opt-xchk-exit-label))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-xchk-jump-block (opt-xchk-exit-label) (opt-xchk-exit-label))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-xchk-inputs-single) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (opt-xchk-pred-label)
+    compiler_ir_types.CompilerIrPhiInputList.Nil))
+
+;; One predecessor, two edges: a branch whose arms both land on the exit gives
+;; the exit phi two inputs under the same label.
+(define (opt-xchk-inputs-duplicate) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (opt-xchk-pred-label)
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (opt-xchk-pred-label)
+      compiler_ir_types.CompilerIrPhiInputList.Nil)))
+
+(define (opt-xchk-inputs-distinct) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (opt-xchk-pred-label)
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (opt-xchk-other-pred-label)
+      compiler_ir_types.CompilerIrPhiInputList.Nil)))
+
+(define (opt-xchk-block-count [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons _ rest)
+      (+ 1 (opt-xchk-block-count (box-get rest)))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-xchk-block-count
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-xchk-gen-for
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [taken : i64]
+  [occupied? : bool]) : i64
+  (compiler_optimize.opt-bce-mb-sink-fresh-gen
+    (opt-xchk-blocks taken occupied?)
+    inputs
+    compiler_optimize.OptLabelSet.Nil
+    (opt-xchk-exit-label)
+    0))
+
+(define (opt-xchk-check-blocks
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [gen : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    (begin
+      (array-set! cell 0 900)
+      (compiler_optimize.opt-bce-mb-sink-check-blocks-from
+        inputs
+        compiler_optimize.OptLabelSet.Nil
+        (opt-xchk-exit-label)
+        (compiler_ir_types.CompilerIrValue.I64 8)
+        compiler_ir_types.CompilerIrBlockList.Nil
+        cell
+        gen
+        compiler_optimize.OptLabelSet.Nil))))
+
+;; Returns 42 only when the sink keeps its historical generation-0 spelling on
+;; a clear function, steps to a fresh generation when either the check block's
+;; own name or its in-range continuation is already taken, and emits exactly
+;; one check block per distinct predecessor.
+(define (compiler-optimize-exit-split-label-freshness-self-test) : i64
+  (let
+    [gen0 : i64
+      (compiler_optimize.opt-bce-mb-sink-check-label
+        (opt-xchk-exit-label)
+        (opt-xchk-pred-label)
+        0)]
+    [gen1 : i64
+      (compiler_optimize.opt-bce-mb-sink-check-label
+        (opt-xchk-exit-label)
+        (opt-xchk-pred-label)
+        1)]
+    (begin
+      (unless
+        (= gen0 (compiler_ir_types.compiler-ir-label "exit__xchk_pa"))
+        (return 1))
+      (when (= gen1 gen0) (return 2))
+      (unless
+        (=
+          (compiler_optimize.opt-bce-mb-sink-check-ok-label gen0)
+          (compiler_ir_types.compiler-ir-label "exit__xchk_pa.0"))
+        (return 3))
+      ;; Nothing in the way: generation 0, byte-for-byte the legacy name.
+      (unless
+        (= (opt-xchk-gen-for (opt-xchk-inputs-single) gen0 false) 0)
+        (return 4))
+      ;; The check block's own name is taken.
+      (unless
+        (= (opt-xchk-gen-for (opt-xchk-inputs-single) gen0 true) 1)
+        (return 5))
+      ;; The in-range continuation's name is taken.
+      (unless
+        (=
+          (opt-xchk-gen-for
+            (opt-xchk-inputs-single)
+            (compiler_optimize.opt-bce-mb-sink-check-ok-label gen0)
+            true)
+          1)
+        (return 6))
+      ;; Generation 1 clears the occupied function.
+      (unless
+        (= (opt-xchk-gen-for (opt-xchk-inputs-single) gen1 false) 0)
+        (return 7))
+      ;; Two edges from one predecessor share one check block.
+      (unless
+        (=
+          (opt-xchk-block-count
+            (opt-xchk-check-blocks (opt-xchk-inputs-duplicate) 0))
+          1)
+        (return 8))
+      ;; Two predecessors still get one block each.
+      (unless
+        (=
+          (opt-xchk-block-count
+            (opt-xchk-check-blocks (opt-xchk-inputs-distinct) 0))
+          2)
+        (return 9))
+      (unless
+        (opt-block-list-has-label?
+          (opt-xchk-check-blocks (opt-xchk-inputs-duplicate) 0)
+          gen0)
+        (return 10))
+      (unless
+        (opt-block-list-has-label?
+          (opt-xchk-check-blocks (opt-xchk-inputs-single) 1)
+          gen1)
+        (return 11))
+      42)))

@@ -32233,9 +32233,11 @@
 ;; makes the swap check's index underivable (store+1 used directly) -- which
 ;; PARTIALLY versions now (the counter check still derives, the swap check
 ;; stays in the fast clone) -- 2 puts a call in the swap block, 3 makes the
-;; counter step +2 -- the call must leave the function untouched, while the
-;; larger positive literal step versions like step 1 (the guard gains the
-;; step-k no-wrap condition). Variant
+;; counter step +2 -- the call must leave the function untouched (its two
+;; derived checks do not pay for a duplicated call site, see
+;; opt-bce-mb-call-clone-min-derived; the call-carrying shape that DOES pay is
+;; the opt-bce-mbcall fixture below), while the larger positive literal step
+;; versions like step 1 (the guard gains the step-k no-wrap condition). Variant
 ;; 4 gives the header a switch terminator so cloning exercises every switch
 ;; edge, including the compiler trap default. Variant 5 uses explicit pending
 ;; total-enum provenance and must remain unversioned by the profitability gate.
@@ -34714,6 +34716,9 @@
       [(not (= (opt-bce-mb-pair-test-block-casts cast-live-out) 1)) 34]
       [else 42])))
 
+;; Two rejections that leave the function byte-for-byte alone: a call-carrying
+;; body whose two derived checks are below the per-call floor, and a clone that
+;; overruns the instruction budget.
 (define (compiler-optimize-bce-version-mb-negative-self-test) : i64
   (let
     [with-call : compiler_ir_types.CompilerIrBlockList
@@ -38301,6 +38306,577 @@
         (opt-bce-mb-eq-runtime-slice-eq? buf 4 buf 4 0)
         true
         "empty window"))))
+
+;; --- call-carrying multiblock clone fixture -----------------------------------
+;;
+;; A counted do-while nest whose body holds a DIRECT CALL and three descriptor-
+;; length checks. Two of the lengths hang off parameter handles the loop never
+;; defines; the third hangs off a handle the loop RELOADS out of a module
+;; global's cell every iteration, which is the chain
+;; opt-bce-mb-descriptor-base has to rebuild in the guard.
+;;
+;; `variant` moves exactly one thing:
+;;   0  the call's callee is element-clean (bit 2)     -- VERSIONS
+;;   1  no call at all (a Mov in its place)            -- VERSIONS (the twin)
+;;   2  the callee writes through its parameters       -- REFUSED: bit 1 alone
+;;      (global-clean but NOT descriptor-safe)            cannot rule out a
+;;                                                        write to the caller's
+;;                                                        own descriptor
+;;   3  the call is INDIRECT                           -- REFUSED: the clone
+;;                                                        whitelist has no
+;;                                                        indirect call in it,
+;;                                                        so the shape scan
+;;                                                        rejects the block
+;;   4  element-clean callee, but the two parameter    -- REFUSED: one derived
+;;      checks are given an in-loop length so only        check against a
+;;      the global-rooted check derives                   duplicated call site
+;;   5  the callee is unresolved (absent from the      -- REFUSED: no bit
+;;      clean map)
+;;   6  the callee is memory-clean (bit 0)             -- VERSIONS (the other
+;;                                                        admitting bit)
+(define (opt-bce-mbcall-test-global) : i64
+  (opt-test-symbol "mbcall_workspace"))
+
+(define (opt-bce-mbcall-test-callee [variant : i64]) : i64
+  (cond
+    [(= variant 2) (opt-test-symbol "mbcall_param_callee")]
+    [(= variant 5) (opt-test-symbol "mbcall_unresolved_callee")]
+    [(= variant 6) (opt-test-symbol "mbcall_memory_callee")]
+    [else (opt-test-symbol "mbcall_clean_callee")]))
+
+;; The per-callee bits the loop-BCE summaries would have built for this
+;; fixture's callees, spelled through the same producer production uses
+;; (opt-loop-bce-direct-call-clean-bits) so the test cannot drift from it:
+;;
+;;   clean   summary = element bit only            -> global + element (2|4)
+;;   memory  summary = 0                           -> memory + global  (1|2)
+;;   param   summary = one parameter-write bit     -> global alone     (2)
+;;   unresolved                                    -> absent
+(define (opt-bce-mbcall-test-clean-map) : opt_i64_i64_map.Map
+  (let
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut out)
+        (opt-test-symbol "mbcall_clean_callee")
+        (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+          (compiler_optimize.opt-call-memory-summary-add-element 0)))
+      (opt_i64_i64_map.insert-ref!
+        (&mut out)
+        (opt-test-symbol "mbcall_memory_callee")
+        (compiler_optimize.opt-loop-bce-direct-call-clean-bits 0))
+      (opt_i64_i64_map.insert-ref!
+        (&mut out)
+        (opt-test-symbol "mbcall_param_callee")
+        (compiler_optimize.opt-loop-bce-direct-call-clean-bits 1))
+      out)))
+
+(define (opt-bce-mbcall-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "arr"
+      (compiler_ast_types.AstType.DynArray 0)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "arr2"
+        (compiler_ast_types.AstType.DynArray 0)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "len"
+          (compiler_ast_types.AstType.I64)
+          2)
+        compiler_ir_types.CompilerIrParamList.Nil))))
+
+;; One `gep handle, 1` + `load` + `cast` + `bounds_check` group.
+(define (opt-bce-mbcall-test-check
+  [handle : compiler_ir_types.CompilerIrValue]
+  [gep-var : i64]
+  [load-var : i64]
+  [cast-var : i64]
+  [length : compiler_ir_types.CompilerIrValue]
+  [ok-label : i64]
+  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      gep-var
+      handle
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        load-var
+        (compiler_ir_types.CompilerIrValue.Var gep-var)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Cast
+          cast-var
+          (compiler_ir_types.CompilerIrValue.Var load-var)
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            length
+            ok-label)
+          rest)))))
+
+(define (opt-bce-mbcall-test-body-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 30)
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Cast
+          7
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.AstType.U64))
+        (opt-bce-mbcall-test-check
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          5
+          6
+          ;; Variant 4 replaces the proven length with the counter itself: the
+          ;; check stays, but nothing about it derives.
+          (if (= variant 4)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.Var 6))
+          (compiler_ir_types.compiler-ir-label "mbcall_ok0")
+          (opt-bce-mbcall-test-check
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            8
+            9
+            10
+            (if (= variant 4)
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.CompilerIrValue.Var 10))
+            (compiler_ir_types.compiler-ir-label "mbcall_ok1")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                11
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 11)
+                  (compiler_ir_types.compiler-ir-label "then")
+                  (compiler_ir_types.compiler-ir-label "else"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
+;; The call itself, plus the global-rooted descriptor chain the guard has to
+;; rebuild: `gep @g, 0` / `load` recovers a handle the loop defines, so the old
+;; "base must not be a loop def" test refused the whole chain.
+(define (opt-bce-mbcall-test-then-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "then")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (cond
+        [(= variant 1)
+          (compiler_ir_types.CompilerIrInstr.Mov
+            12
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))]
+        [(= variant 3)
+          (compiler_ir_types.CompilerIrInstr.CallIndirect
+            12
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.Var 2))
+            (compiler_ast_types.AstType.I64))]
+        [else
+          (compiler_ir_types.CompilerIrInstr.Call
+            12
+            (opt-bce-mbcall-test-callee variant)
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.Var 2))
+            (compiler_ast_types.AstType.I64))])
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          13
+          (compiler_ir_types.CompilerIrValue.Global
+            (opt-bce-mbcall-test-global))
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            14
+            (compiler_ir_types.CompilerIrValue.Var 13)
+            (compiler_ast_types.AstType.DynArray 0))
+          (opt-bce-mbcall-test-check
+            (compiler_ir_types.CompilerIrValue.Var 14)
+            15
+            16
+            17
+            (compiler_ir_types.CompilerIrValue.Var 17)
+            (compiler_ir_types.compiler-ir-label "mbcall_ok2")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "merge"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))))))
+
+(define (opt-bce-mbcall-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "body"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-mbcall-test-body-block variant)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mbcall-test-then-block variant)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "else")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "merge"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "merge")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  30
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    31
+                    (compiler_ir_types.CompilerIrBinOp.Lt)
+                    (compiler_ir_types.CompilerIrValue.Var 30)
+                    (compiler_ir_types.CompilerIrValue.Var 2)
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var 31)
+                      (compiler_ir_types.compiler-ir-label "body")
+                      (compiler_ir_types.compiler-ir-label "exit"))
+                    (compiler_ir_types.CompilerIrInstrList.Nil)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-bce-mbcall-test-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mbcall_fixture")
+    (opt-bce-mbcall-test-params)
+    (compiler_ast_types.AstType.I64)
+    40
+    (opt-bce-mbcall-test-blocks variant)))
+
+(define (opt-bce-mbcall-test-run [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-bce-version-function-with-types-and-calls
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-bce-mbcall-test-clean-map)
+    (opt-bce-mbcall-test-function variant)))
+
+(define (opt-bce-mbcall-test-out [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks (opt-bce-mbcall-test-run variant)))
+
+;; The `Call` dsts of one block, newest-first, as a count of how many of them
+;; are >= `floor`. The clone's call must define a FRESH var (the fresh-id pass
+;; allocates from the frame size up), never the original's.
+(define (opt-bce-mbcall-test-call-dsts-above
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [floor : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [index : i64 0]
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            [seen : i64 0]
+            (begin
+              (while (< index count)
+                (begin
+                  (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                    instrs
+                    index)
+                    [(compiler_ir_types.CompilerIrInstr.Call dst _ _ _)
+                      (if (>= dst floor)
+                        (set! seen (+ seen 1))
+                        unit)]
+                    [_ unit])
+                  (set! index (+ index 1))))
+              seen))])]))
+
+;; How many `Call` instructions one block holds.
+(define (opt-bce-mbcall-test-block-calls
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [index : i64 0]
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            [seen : i64 0]
+            (begin
+              (while (< index count)
+                (begin
+                  (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                    instrs
+                    index)
+                    [(compiler_ir_types.CompilerIrInstr.Call _ _ _ _)
+                      (set! seen (+ seen 1))]
+                    [_ unit])
+                  (set! index (+ index 1))))
+              seen))])]))
+
+(define (opt-bce-mbcall-test-unversioned? [variant : i64]) : bool
+  (let
+    [out : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mbcall-test-out variant)]
+    (and
+      (= (compiler_ir_types.compiler-ir-block-list-count out) 6)
+      (match (compiler_optimize.opt-cfg-find-block
+        out
+        (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+        [(compiler_optimize.OptMaybeBlock.No) true]
+        [(compiler_optimize.OptMaybeBlock.Some _) false]))))
+
+(define (compiler-optimize-bce-version-mbcall-self-test) : i64
+  (let
+    [versioned : compiler_ir_types.CompilerIrFunction
+      (opt-bce-mbcall-test-run 0)]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks versioned)]
+    [twin-out : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mbcall-test-out 1)]
+    [memory-out : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mbcall-test-out 6)]
+    ;; Idempotence: the fast labels now exist, which
+    ;; opt-bce-mb-fast-labels-fresh? refuses on, so a second pass is a no-op.
+    [again-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function-with-types-and-calls
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-bce-mbcall-test-clean-map)
+          versioned))]
+    (cond
+      ;; (4) SSA validity of the cloned call: the pass's own verifier is what
+      ;; gates every application, and a clone that re-defined the original
+      ;; call's dst would fail it here.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function versioned)))
+        1]
+      ;; six originals + guard + five fast clones (body/then/else/merge and the
+      ;; entry stub is not cloned) -- entry and exit stay shared.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count out) 11)) 2]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        3]
+      ;; (1) all three checks left the fast clone; the slow loop keeps all
+      ;; three.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "body"))
+            2))
+        6]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "then"))
+            1))
+        7]
+      ;; The call is DUPLICATED, not moved: one in each copy.
+      [(not
+          (=
+            (opt-bce-mbcall-test-block-calls
+              out
+              (compiler_ir_types.compiler-ir-label "then"))
+            1))
+        8]
+      [(not
+          (=
+            (opt-bce-mbcall-test-block-calls
+              out
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            1))
+        9]
+      ;; ... and the clone's call defines a FRESH var: every id the fresh-id
+      ;; pass mints is at or above the fixture's frame size of 40, while the
+      ;; original's dst is 12.
+      [(not
+          (=
+            (opt-bce-mbcall-test-call-dsts-above
+              out
+              (compiler_ir_types.compiler-ir-label "then__bce_fast")
+              40)
+            1))
+        10]
+      [(not
+          (=
+            (opt-bce-mbcall-test-call-dsts-above
+              out
+              (compiler_ir_types.compiler-ir-label "then")
+              40)
+            0))
+        11]
+      ;; The guard REBUILDS the global-rooted descriptor chain: it holds a
+      ;; `gep @mbcall_workspace, 0`, which no other guard the pass emits does.
+      [(not
+          (opt-bce-mbcall-test-guard-has-global?
+            out
+            (compiler_ir_types.compiler-ir-label "body__bce_guard")))
+        12]
+      ;; (7) idempotent.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count again-out) 11))
+        13]
+      [(match (compiler_optimize.opt-cfg-find-block
+          again-out
+          (compiler_ir_types.compiler-ir-label "body__bce_fast__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) false]
+          [(compiler_optimize.OptMaybeBlock.Some _) true])
+        14]
+      ;; The call-free twin versions identically -- the call is priced, not
+      ;; structurally special.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count twin-out) 11))
+        15]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              twin-out
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        16]
+      ;; A MEMORY-clean callee is the other bit that admits the chain.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count memory-out) 11))
+        17]
+      ;; (2) A callee that could write a descriptor through a parameter is
+      ;; global-clean but NOT descriptor-safe: the chain stops deriving and the
+      ;; loop is refused outright.
+      [(not (opt-bce-mbcall-test-unversioned? 2)) 18]
+      ;; (3) An INDIRECT call is outside the clone whitelist.
+      [(not (opt-bce-mbcall-test-unversioned? 3)) 19]
+      ;; (6) One derived check does not pay for a duplicated call site.
+      [(not (opt-bce-mbcall-test-unversioned? 4)) 20]
+      ;; An unresolved callee earns no bit at all.
+      [(not (opt-bce-mbcall-test-unversioned? 5)) 21]
+      ;; (5) The summary bit itself: element-only earns bit 2, element PLUS a
+      ;; parameter write does not -- that callee's write may be the caller's
+      ;; own descriptor.
+      [(not
+          (=
+            (bit-and
+              (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+                (compiler_optimize.opt-call-memory-summary-add-element 0))
+              (compiler_optimize.opt-direct-call-clean-unconditional-global-bit))
+            (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)))
+        22]
+      [(not
+          (=
+            (bit-and
+              (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+                (compiler_optimize.opt-call-memory-summary-add-element 1))
+              (compiler_optimize.opt-direct-call-clean-unconditional-global-bit))
+            0))
+        23]
+      ;; ... while that same summary keeps bit 1, so nothing the global-operand
+      ;; readers already proved is lost.
+      [(not
+          (=
+            (bit-and
+              (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+                (compiler_optimize.opt-call-memory-summary-add-element 1))
+              (compiler_optimize.opt-direct-call-clean-global-bit))
+            (compiler_optimize.opt-direct-call-clean-global-bit)))
+        24]
+      ;; ... and a global-writing callee earns nothing.
+      [(not
+          (=
+            (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+              (compiler_optimize.opt-call-memory-summary-add-global
+                (compiler_optimize.opt-call-memory-summary-add-element 0)))
+            0))
+        25]
+      [else 42])))
+
+;; Does this guard block rebuild a module global's descriptor chain?
+(define (opt-bce-mbcall-test-guard-has-global?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [index : i64 0]
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            [seen : bool false]
+            (begin
+              (while (< index count)
+                (begin
+                  (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                    instrs
+                    index)
+                    [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+                      (match base
+                        [(compiler_ir_types.CompilerIrValue.Global sym)
+                          (if (= sym (opt-bce-mbcall-test-global))
+                            (set! seen true)
+                            unit)]
+                        [_ unit])]
+                    [_ unit])
+                  (set! index (+ index 1))))
+              seen))])]))
+
+(test
+  bce-version-mbcall-clone
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mbcall-self-test)
+    42
+    "a call-carrying counted loop versions when its callee cannot move a descriptor word"))
 
 ;; --- strided variable-base runtime boundary tests ---------------------------------
 ;;
@@ -51347,12 +51923,24 @@
         6]
       [(compiler_optimize.opt-call-memory-summary-global? element-bit) 7]
       [(compiler_optimize.opt-call-memory-summary-unknown? element-bit) 8]
-      ;; it earns the global-clean bit and never the memory-clean one
+      ;; It earns the global-clean bit and never the memory-clean one -- and,
+      ;; because the element bit stands ALONE here, the sharper descriptor bit
+      ;; too (opt-direct-call-clean-unconditional-global-bit): a callee whose every write
+      ;; lands in element storage cannot move a descriptor word either.
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits element-bit)
             (bit-or global-bit unconditional-bit)))
         9]
+      ;; The same summary with a PARAMETER write added keeps global-clean and
+      ;; loses the descriptor bit: that write may be the caller's own
+      ;; descriptor, which is exactly the pair of reasons bit 1 conflates.
+      [(not
+          (=
+            (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+              (bit-or element-bit 1))
+            global-bit))
+        26]
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits

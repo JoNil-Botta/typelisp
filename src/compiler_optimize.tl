@@ -19361,6 +19361,24 @@
 ;; hoists are all still refused, the budget the interlock prices is untouched,
 ;; and the only thing that moves is a cell read whose copy lands in the
 ;; preheader. peephole_lines takes 15.2M from that tier on its own.
+;;
+;; RE-MEASURED, because the clause reads like an inversion and keeps being
+;; re-proposed as one: a callee that writes NO memory is marked `global-write?`
+;; by the arm below, which is the opposite of what its proof says. Replacing
+;; the clause with the shape it "should" have --
+;;
+;;   (or (memory-clean? name)
+;;       (and (global-clean? name) (args-global-addr-free? args)))
+;;
+;; -- and rebuilding gives peephole_lines 667,587,443 -> 647,836,877 (-2.96%)
+;; and takes gvn_table 1,165,315,557 -> 1,174,025,601 (+0.75%), intern_table
+;; 611,002,492 -> 614,441,836 (+0.56%), cfg_domloops 768,935,005 ->
+;; 769,279,945 (+0.04%). Same verdict as the original measurement, with a
+;; bigger prize on the winning side than it recorded. The clause is therefore
+;; not a bug but an unpaid trade: the memory-clean tier's cell copies land in a
+;; preheader that is already holding the whole loop's hoists, and the two
+;; interners are where that shows up. Taking it needs the preheader pressure
+;; priced, not the proof relaxed.
 (define (opt-licm-direct-call-keeps-globals-clean?
   [direct-call-clean : opt_i64_i64_map.Map]
   [global-cells : OptGlobalCellSummary]
@@ -52840,6 +52858,106 @@
 (define (opt-bce-mb-region-block-max) : i64
   32)
 
+;; DERIVED CHECKS a call-carrying clone must remove, per duplicated call site.
+;;
+;; The instruction budgets above are the clone's whole price for a call-FREE
+;; body, and they are the right price there: the clone is an alternative path,
+;; so nothing it holds is ever executed in addition to the original -- the cost
+;; is code, and instructions are what code is measured in. A CALL breaks that
+;; equivalence in exactly the way #6307's retirement measured for the inliner's
+;; static bands: an instruction count cannot see that a call site makes every
+;; value live across it the register allocator's problem, and duplicating the
+;; site duplicates that pressure inside one function, where the allocator prices
+;; the union. The bands keep their call-free clauses for that reason; this pass
+;; cannot -- refusing calls outright is what kept whole measured regions
+;; unversioned -- so it charges for them instead.
+;;
+;; The charge is stated in the only currency the versioner earns: DERIVED
+;; CHECKS, the checks the guard proves and the clone therefore drops. A
+;; call-free body needs one (cloning to remove nothing is pure loss, which is
+;; the `derived = 0` rejection this generalizes). A call-carrying body needs
+;; this many per call site, so a shape pays for its duplicated pressure with
+;; removals that repay every iteration rather than with a promise.
+;;
+;; THREE, and the corpus pins it from both sides rather than taste doing so.
+;;
+;; Above: it is strictly more than the incidental loop that happens to hold a
+;; call and derives one or two checks. Those are the shapes the retired
+;; call-free clause was accidentally right about -- a clone bought with two
+;; removals, paying a call boundary's worth of duplicated pressure for them --
+;; and three keeps every one of them out.
+;;
+;; Below: three is the LARGEST value that still admits the measured region this
+;; whole capability exists for, cfg_domloops' `cfg-natural-loops` -- a
+;; region-sized descending nest holding two direct calls (its loop-body and
+;; loop-preheader walkers) and deriving six checks, one of them inside the inner
+;; loop where its removal repeats per inner iteration. Six over two calls is
+;; exactly three.
+;;
+;; And it separates: the same benchmark's nearest neighbour is an ascending
+;; two-call scan deriving FOUR, two per call, which stays refused. So the
+;; constant is not a threshold that happens to let everything through -- one
+;; measured shape of this class passes it and the adjacent one does not.
+;;
+;; Read as a ratio it says a duplicated call must be bought by three checks that
+;; are removed from every iteration, against a call boundary the inliner prices
+;; at 6 + one move per parameter (opt-inline-checked-boundary-cost) -- paid once
+;; in code, where the removals repay per trip.
+(define (opt-bce-mb-call-clone-checks-per-call) : i64
+  3)
+
+;; The derived-check floor for a body holding `calls` duplicated call sites.
+;; `calls = 0` gives the pass's original floor of one.
+(define (opt-bce-mb-call-clone-min-derived [calls : i64]) : i64
+  (if (< calls 1)
+    1
+    (* calls (opt-bce-mb-call-clone-checks-per-call))))
+
+;; The one call form this pass's fast clone duplicates: a DIRECT `Call`.
+;;
+;; The clone re-emits the instruction verbatim with its dst rebased and its
+;; arguments substituted, which is well defined only when the callee is named
+;; by a symbol and the argument list is an ordinary value list. The indirect
+;; forms (`CallIndirect`, `CallIndirectC`) carry a computed callee, the two
+;; C-ABI store-result forms and `SpmdCall` carry boxed payloads with their own
+;; result and span shapes, and `Syscall` is a raw ABI escape -- all stay out.
+;; `TailCall` cannot appear in a clonable block at all: the block rule below
+;; admits only Jump/Branch/Switch or a fallthrough as the last instruction, and
+;; a tail call is neither.
+(define (opt-bce-mb-direct-call? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ _ _ _) true]
+    [_ false]))
+
+;; The var this instruction defines FOR THIS PASS, or `fallback`.
+;;
+;; `ir.compiler-ir-instr-loop-dst-or` is shared with the unroller, whose body
+;; whitelist has no call in it, and it deliberately answers `fallback` for the
+;; whole call family. The multiblock clone does duplicate a direct call
+;; (opt-bce-mb-body-instr-ok?), so every def-keyed structure of this pass has to
+;; see that call's dst. Without it the clone would re-define the ORIGINAL var:
+;; the fresh-id pass would skip the dst (an SSA violation), the loop-def set
+;; would report the result loop-INVARIANT to opt-bce-mb-invariant-operand and to
+;; opt-bce-fold-invariant-operand (unsound -- a per-iteration value would be
+;; treated as a guard-provable constant), and the escape / exit-wiring scans
+;; would miss an outside use of it (the fast clone's remapped def would never
+;; reach that use). The shared accessor keeps its meaning for the unroller;
+;; every call site of it INSIDE this pass goes through here instead.
+;;
+;; A `Call` always carries a freshly allocated dst, even where the callee
+;; returns Unit (see lower-oob-abort, which allocates one for a trap helper), so
+;; rebasing it is always well-formed and never aliases another def.
+(define (opt-bce-mb-instr-dst-or [instr : ir.CompilerIrInstr] [fallback : i64]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Call dst _ _ _) dst]
+    [_ (ir.compiler-ir-instr-loop-dst-or instr fallback)]))
+
+(define (opt-bce-mb-instr-seq-dst-or
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [fallback : i64]) : i64
+  (opt-bce-mb-instr-dst-or (ir.compiler-ir-instr-seq-ref instrs index) fallback))
+
 ;; The (SSA single-def) instruction defining var anywhere in the loop.
 (define (opt-bce-mb-find-def-instrs
   [instrs : ir.CompilerIrInstrSeq]
@@ -52849,7 +52967,7 @@
     (OptBceMbMaybeInstr.No)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (if (= (ir.compiler-ir-instr-loop-dst-or instr (- 0 1)) var)
+      (if (= (opt-bce-mb-instr-dst-or instr (- 0 1)) var)
         (OptBceMbMaybeInstr.Some instr)
         (opt-bce-mb-find-def-instrs instrs (+ index 1) var)))))
 
@@ -52956,6 +53074,26 @@
                   [_ (OptBceCounterAffine.No)])]))))]
     [_ (OptBceCounterAffine.No)]))
 
+;; The unroller's `opt-unroll-block-defs` on this pass's def accessor: a direct
+;; call's result is a loop def like any other, and everything asking "does the
+;; loop define this?" -- invariance above all -- has to be told so.
+(define (opt-bce-mb-block-defs
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [acc : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= index count)
+    acc
+    (let
+      [dst : i64 (opt-bce-mb-instr-seq-dst-or instrs index (- 0 1))]
+      (opt-bce-mb-block-defs
+        instrs
+        (+ index 1)
+        count
+        (if (< dst 0)
+          acc
+          (opt-used-add acc dst))))))
+
 (define (opt-bce-mb-collect-defs
   [blocks : ir.CompilerIrBlockList]
   [acc : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
@@ -52966,8 +53104,8 @@
         (__tl-box-place rest)
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-unroll-block-defs
-              instrs.slots
+            (opt-bce-mb-block-defs
+              instrs
               0
               (ir.compiler-ir-instr-seq-count instrs)
               acc)]))]
@@ -53522,6 +53660,32 @@
           [(OptUnrollPhiSplit.No) false])]
       [_ false])))
 
+;; The MULTIBLOCK clone's body whitelist: everything the single-block versioner
+;; clones, plus a direct call.
+;;
+;; The single-block pass keeps its own list untouched. It clones ONE block whose
+;; whole point is a straight-line arithmetic kernel, and admitting a call there
+;; would buy nothing the multiblock scan does not already reach.
+;;
+;; Nothing about a call is special to the CLONE itself -- it is copied with its
+;; dst rebased and its arguments substituted like every other instruction, and
+;; the fast clone is an ALTERNATIVE path, so no executed call is added to any
+;; run. What a call is special for is PRICING, which
+;; opt-bce-mb-call-clone-min-derived states, and DESCRIPTOR INVARIANCE, which
+;; opt-bce-mb-stable-instr? states. Both are downstream of this predicate.
+(define (opt-bce-mb-body-instr-ok? [instr : ir.CompilerIrInstr]) : bool
+  (or (opt-bce-version-body-instr-ok? instr) (opt-bce-mb-direct-call? instr)))
+
+(define (opt-bce-mb-body-ok?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    true
+    (and
+      (opt-bce-mb-body-instr-ok? (ir.compiler-ir-instr-seq-ref instrs index))
+      (opt-bce-mb-body-ok? instrs (+ index 1) last))))
+
 ;; One loop block's BoundsCheck count, or -1 when the block is not clonable:
 ;; phis only as a prefix, whitelist body instructions, and either a
 ;; Jump/Branch/Switch terminator or a plain fallthrough (the fallthrough TARGET is
@@ -53537,7 +53701,7 @@
           (if (opt-cfg-instr-seq-can-fallthrough? instrs)
             (if (and
               (<= (- count phi-count) (opt-bce-version-body-max))
-              (opt-bce-version-body-ok? instrs phi-count count))
+              (opt-bce-mb-body-ok? instrs phi-count count))
               (opt-bce-version-check-count instrs phi-count count 0)
               (- 0 1))
             (let
@@ -53549,9 +53713,37 @@
                   [(ir.CompilerIrInstr.Branch _ _ _) true]
                   [(ir.CompilerIrInstr.Switch _ _ _ _) true]
                   [_ false])
-                (opt-bce-version-body-ok? instrs phi-count last))
+                (opt-bce-mb-body-ok? instrs phi-count last))
                 (opt-bce-version-check-count instrs phi-count last 0)
                 (- 0 1))))))]))
+
+;; Direct call sites across the loop: what the fast clone duplicates and what
+;; opt-bce-mb-call-clone-min-derived prices. Only the blocks the shape scan
+;; already admitted reach this, so every call it counts is a direct one.
+(define (opt-bce-mb-block-calls
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-mb-block-calls
+      instrs
+      (+ index 1)
+      (if (opt-bce-mb-direct-call? (ir.compiler-ir-instr-seq-ref instrs index))
+        (+ acc 1)
+        acc))))
+
+(define (opt-bce-mb-body-calls [blocks : ir.CompilerIrBlockList] [acc : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-body-calls
+            (__tl-box-place rest)
+            (opt-bce-mb-block-calls instrs 0 acc))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-body-calls (ir.compiler-ir-block-seq-to-list seq) acc)]))
 
 ;; Total BoundsCheck count across the loop, or -1 when any block is not
 ;; clonable (the caller treats < 1 as a rejection).
@@ -53988,7 +54180,7 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     false
     (let
-      [dst : i64 (ir.compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1))]
+      [dst : i64 (opt-bce-mb-instr-seq-dst-or instrs index (- 0 1))]
       (if (and (>= dst 0) (opt-used-contains outside dst))
         true
         (opt-bce-mb-defs-escape-instrs? instrs (+ index 1) outside)))))
@@ -54072,7 +54264,7 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     acc
     (let
-      [dst : i64 (ir.compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1))]
+      [dst : i64 (opt-bce-mb-instr-seq-dst-or instrs index (- 0 1))]
       (opt-bce-mb-wire-vars-instrs
         instrs
         (+ index 1)
@@ -54213,6 +54405,10 @@
     [(ir.CompilerIrInstr.Gep _ _ _ ty) (OptMaybeAstType.Some ty)]
     [(ir.CompilerIrInstr.Load _ _ ty) (OptMaybeAstType.Some ty)]
     [(ir.CompilerIrInstr.Phi _ _ ty) (OptMaybeAstType.Some ty)]
+    ;; A direct call's result type is its own carried type, and the clone
+    ;; duplicates the call (opt-bce-mb-body-instr-ok?), so a call result used
+    ;; outside the loop is exit-wireable exactly like a load's.
+    [(ir.CompilerIrInstr.Call _ _ _ ty) (OptMaybeAstType.Some ty)]
     [_ (OptMaybeAstType.No)]))
 
 ;; One input per predecessor edge, all carrying the same loop def.
@@ -56396,56 +56592,131 @@
                 [_ (OptBceVersionStridedCore.Some id k)])])))]
     [_ (OptBceVersionStridedCore.No)]))
 
-;; Descriptor-length recognition context: the type-pool segment bases and the
+;; Descriptor-length recognition context: the type-pool segment bases, the
 ;; per-function descriptor-handle set they classify (the load-GVN/LICM header
-;; classification). (No) disables the descriptor-length path entirely -- test
+;; classification), and the per-callee `direct-call-clean` bit map the loop-BCE
+;; summaries built. (No) disables the descriptor-length path entirely -- test
 ;; entries without type-pool access take it, and recognition then stays off
 ;; exactly as before.
 (defenum OptBceMbDescriptor
   (No)
-  (Some i64 OptLoadHeaderSet))
+  (Some i64 OptLoadHeaderSet opt_i64_i64_map.Map))
 
-;; Hoisted descriptor-length loads emitted into the guard, shared across
-;; checks: (base var, gep offset) -> the hoisted load's var.
+;; Hoisted descriptor loads emitted into the guard, shared across checks.
+;; `kind` distinguishes the two things a key names:
+;;
+;;   VAR   (opt-bce-mb-hoist-kind-var)   key = the descriptor handle's var
+;;   ROOT  (opt-bce-mb-hoist-kind-root)  key = a module global's symbol id
+;;
+;; A VAR entry is one hoisted `gep base, offset` + `load` pair reading a word
+;; out of a handle the loop did not define. A ROOT entry is the pair that
+;; RECOVERS such a handle out of a module global's cell, for the chains a loop
+;; reloads per iteration (`gep @g, k` / `load`). Both are keyed by
+;; (kind, key, offset) so a repeated chain is emitted into the guard once.
 (defenum OptBceMbHoists
   (Nil)
-  (Cons i64 i64 i64 (Box OptBceMbHoists)))
+  (Cons i64 i64 i64 i64 (Box OptBceMbHoists)))
+
+(define (opt-bce-mb-hoist-kind-var) : i64
+  0)
+
+(define (opt-bce-mb-hoist-kind-root) : i64
+  1)
 
 (define (opt-bce-mb-hoists-lookup
   [hoists : OptBceMbHoists]
-  [base : i64]
+  [kind : i64]
+  [key : i64]
   [offset : i64]) : i64
   (match hoists
     [(OptBceMbHoists.Nil) (- 0 1)]
-    [(OptBceMbHoists.Cons item-base item-offset load-var rest)
-      (if (and (= item-base base) (= item-offset offset))
+    [(OptBceMbHoists.Cons item-kind item-key item-offset load-var rest)
+      (if (and (= item-kind kind) (= item-key key) (= item-offset offset))
         load-var
-        (opt-bce-mb-hoists-lookup (__tl-box-place rest) base offset))]))
+        (opt-bce-mb-hoists-lookup (__tl-box-place rest) kind key offset))]))
 
-;; May any instruction of these loop blocks write memory? The load_combine
-;; classification: stores, calls, syscalls, vector/predicated stores. A
-;; write-free loop cannot change any loaded value mid-loop.
-(define (opt-bce-mb-write-free-instrs?
+;; Can any instruction of these loop blocks change a DESCRIPTOR word -- a
+;; descriptor header slot, or the global cell a handle lives in -- that a load
+;; outside the loop has already read? That is the one question the guard's
+;; hoisted length loads ask of the body.
+;;
+;; The old answer was the load_combine "writes memory at all" classification --
+;; stores, calls, syscalls, vector/predicated stores -- which is sound but
+;; answers a strictly bigger question, so a single cold call anywhere in the
+;; body refused every descriptor length in it. A DIRECT call has a per-callee
+;; answer to the REAL question, in the `direct-call-clean` bits the loop-BCE
+;; summaries already build:
+;;
+;;   memory-clean (bit 0)   writes nothing at all, so nothing of any class
+;;   element-only (bit 2)   every write it makes lands in the element storage a
+;;                          descriptor's data slot names -- a different
+;;                          allocation from the descriptor that names it, and
+;;                          never a symbol's own global cell (see
+;;                          opt-call-memory-element-bit for the layering
+;;                          argument, and opt-loop-bce-direct-call-clean-bits
+;;                          for why the bit needs `has-param-writes?` clear)
+;;
+;; Either bit makes the call unable to move a descriptor word, whatever the
+;; caller passed it: neither verdict depends on the argument list, so no
+;; GlobalAddr-style call-site gate is needed here. Everything else -- an
+;; unresolved or memory-writing direct callee, any indirect/C-ABI/SPMD call,
+;; every store, every vector write -- keeps the old blanket refusal. So this can
+;; only ADMIT loops the write-free test already refused; it can never admit a
+;; body the write-free test accepted and this one would not.
+;;
+;; This is an INVARIANCE fact only. It licenses reading a descriptor word once
+;; in the guard instead of once per iteration; it moves no store, no call, and
+;; no check.
+(define (opt-bce-mb-call-descriptor-stable?
+  [descriptor : OptBceMbDescriptor]
+  [name : i64]) : bool
+  (match descriptor
+    [(OptBceMbDescriptor.No) false]
+    [(OptBceMbDescriptor.Some _ _ direct-call-clean)
+      (opt-direct-call-clean-has-bit?
+        direct-call-clean
+        name
+        (bit-or
+          (opt-direct-call-clean-memory-bit)
+          (opt-direct-call-clean-unconditional-global-bit)))]))
+
+(define (opt-bce-mb-stable-instr?
+  [descriptor : OptBceMbDescriptor]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ name _ _)
+      (opt-bce-mb-call-descriptor-stable? descriptor name)]
+    [(ir.CompilerIrInstr.TailCall name _ _)
+      (opt-bce-mb-call-descriptor-stable? descriptor name)]
+    [_ (not (opt-load-combine-may-write? instr))]))
+
+(define (opt-bce-mb-stable-instrs?
+  [descriptor : OptBceMbDescriptor]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     true
-    (if (opt-load-combine-may-write?
+    (if (opt-bce-mb-stable-instr?
+      descriptor
       (ir.compiler-ir-instr-seq-ref instrs index))
-      false
-      (opt-bce-mb-write-free-instrs? instrs (+ index 1)))))
+      (opt-bce-mb-stable-instrs? descriptor instrs (+ index 1))
+      false)))
 
-(define (opt-bce-mb-write-free-blocks? [blocks : ir.CompilerIrBlockList]) : bool
+(define (opt-bce-mb-stable-blocks?
+  [descriptor : OptBceMbDescriptor]
+  [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) true]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
-          (if (opt-bce-mb-write-free-instrs? instrs 0)
-            (opt-bce-mb-write-free-blocks? (__tl-box-place rest))
+          (if (opt-bce-mb-stable-instrs? descriptor instrs 0)
+            (opt-bce-mb-stable-blocks? descriptor (__tl-box-place rest))
             false)])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-bce-mb-write-free-blocks? (ir.compiler-ir-block-seq-to-list seq))]))
+      (opt-bce-mb-stable-blocks?
+        descriptor
+        (ir.compiler-ir-block-seq-to-list seq))]))
 
 ;; The descriptor-length derivation result: the length value the guard
 ;; references (a hoisted load), the updated hoist set, and the guard
@@ -56454,19 +56725,146 @@
   (No)
   (Some ir.CompilerIrValue OptBceMbHoists OptBceVersionGuardAcc))
 
+;; Where the guard gets the descriptor HANDLE a length load reads through: the
+;; base var itself, or a hoisted recovery of it.
+(defenum OptBceMbMaybeBase
+  (No)
+  (Some i64 OptBceMbHoists OptBceVersionGuardAcc))
+
+;; The handle a length load's `Gep` is rooted at, made available in the guard.
+;;
+;; The easy case is a base the loop does NOT define: the guard block dominates
+;; the loop, so the var is already in scope there and nothing is emitted.
+;;
+;; The case this exists for is the one a workspace of module globals produces on
+;; every iteration:
+;;
+;;     %h  = gep @g, k      ;; the cell's address
+;;     %d  = load %h        ;; the descriptor handle living in that cell
+;;     %o  = gep %d, 1
+;;     %n  = load %o        ;; the length
+;;
+;; `%d` is a loop def, so the old test refused the whole chain and every check
+;; against `%n` stayed. But the loop defines `%d` only because it RELOADS it:
+;; the value is the global cell's content, and opt-bce-mb-stable-blocks? has
+;; already proved that nothing the loop executes can write a global cell (or a
+;; descriptor word). So the guard may recover the handle itself, once, with the
+;; same two instructions, and every iteration's `%d` equals it.
+;;
+;; SAFETY OF THE HOISTED RECOVERY. `gep @g, k` is a symbol address, and the load
+;; through it reads the global's own storage -- always mapped, whatever path
+;; through the loop would have been taken. The handle it yields is then a live
+;; descriptor for the same reason the second load's is: the type says so, and a
+;; dangling handle is already UB. This is the argument the LICM `Global` operand
+;; promotion makes for reading a cell in the preheader; the versioner makes it
+;; in the guard, which the fast clone alone is entered from.
+;;
+;; Only a GLOBAL-rooted chain is recovered. A base the loop computes any other
+;; way (an element read, an arithmetic address) is refused exactly as before:
+;; the recovery has to be a re-execution of instructions whose result cannot
+;; depend on where in the loop they run, and a symbol address plus a cell read
+;; that no body instruction can write is the one such chain.
+(define (opt-bce-mb-descriptor-base
+  [defs : opt_i64_i64_map.Map]
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [base-id : i64]
+  [hoists : OptBceMbHoists]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeBase
+  (if (not (opt-used-contains defs base-id))
+    (OptBceMbMaybeBase.Some base-id hoists acc)
+    (match (opt-bce-mb-find-def all-blocks base-id)
+      [(OptBceMbMaybeInstr.No) (OptBceMbMaybeBase.No)]
+      [(OptBceMbMaybeInstr.Some base-instr)
+        (match base-instr
+          [(ir.CompilerIrInstr.Load _ handle-src handle-ty)
+            (match handle-src
+              [(ir.CompilerIrValue.Var handle-raw)
+                (match (opt-bce-mb-find-def
+                  all-blocks
+                  (opt-bce-mb-resolve body-blocks handle-raw 16))
+                  [(OptBceMbMaybeInstr.No) (OptBceMbMaybeBase.No)]
+                  [(OptBceMbMaybeInstr.Some cell-instr)
+                    (match cell-instr
+                      [(ir.CompilerIrInstr.Gep _ cell-base cell-off cell-ty)
+                        (match cell-base
+                          [(ir.CompilerIrValue.Global sym)
+                            (match cell-off
+                              [(ir.CompilerIrValue.I64 off)
+                                (opt-bce-mb-descriptor-root-hoist
+                                  (ir.compiler-ir-symbol-id sym)
+                                  cell-base
+                                  cell-off
+                                  off
+                                  cell-ty
+                                  handle-ty
+                                  hoists
+                                  cell
+                                  acc)]
+                              [_ (OptBceMbMaybeBase.No)])]
+                          [_ (OptBceMbMaybeBase.No)])]
+                      [_ (OptBceMbMaybeBase.No)])])]
+              [_ (OptBceMbMaybeBase.No)])]
+          [_ (OptBceMbMaybeBase.No)])])))
+
+;; Emit (or reuse) the guard's `gep @g, k` + `load` pair recovering one
+;; global-held descriptor handle.
+(define (opt-bce-mb-descriptor-root-hoist
+  [sym-id : i64]
+  [cell-base : ir.CompilerIrValue]
+  [cell-off : ir.CompilerIrValue]
+  [off : i64]
+  [cell-ty : ast.AstType]
+  [handle-ty : ast.AstType]
+  [hoists : OptBceMbHoists]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeBase
+  (let
+    [shared : i64
+      (opt-bce-mb-hoists-lookup hoists (opt-bce-mb-hoist-kind-root) sym-id off)]
+    (if (>= shared 0)
+      (OptBceMbMaybeBase.Some shared hoists acc)
+      (match acc
+        [(OptBceVersionGuardAcc.No) (OptBceMbMaybeBase.No)]
+        [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+          (let
+            [gep-var : i64 (opt-bce-version-alloc-var cell)]
+            [load-var : i64 (opt-bce-version-alloc-var cell)]
+            (OptBceMbMaybeBase.Some
+              load-var
+              (OptBceMbHoists.Cons
+                (opt-bce-mb-hoist-kind-root)
+                sym-id
+                off
+                load-var
+                (box hoists))
+              (OptBceVersionGuardAcc.Some
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Load
+                    load-var
+                    (ir.CompilerIrValue.Var gep-var)
+                    handle-ty)
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Gep gep-var cell-base cell-off cell-ty)
+                    instrs))
+                values
+                counter-seen)))]))))
+
 ;; A non-invariant check length may still be a descriptor length-slot load:
-;; it resolves to `Load (Gep base, length-slot)` where base is an
-;; array/string descriptor handle defined outside the loop. When no loop
-;; block may write memory the loaded value cannot change mid-loop, so the
-;; guard may reference ONE hoisted gep+load pair per distinct (base, offset),
-;; emitted into the guard block: reading a live descriptor's length slot is
-;; always safe (a dangling handle is already UB), and the hoisted value
-;; equals every in-iteration load. The pair is consed onto the accumulator
-;; BEFORE the conditions that consume it so the final reversal emits it
-;; first.
+;; it resolves to `Load (Gep base, length-slot)` where base is an array/string
+;; descriptor handle the guard can name (see opt-bce-mb-descriptor-base). When
+;; no loop block can change a descriptor word the loaded value cannot change
+;; mid-loop, so the guard may reference ONE hoisted gep+load pair per distinct
+;; (base, offset), emitted into the guard block: reading a live descriptor's
+;; length slot is always safe (a dangling handle is already UB), and the hoisted
+;; value equals every in-iteration load. The pair is consed onto the accumulator
+;; BEFORE the conditions that consume it so the final reversal emits it first --
+;; and after any root recovery the base needed, which is consed first for the
+;; same reason.
 (define (opt-bce-mb-descriptor-length
   [descriptor : OptBceMbDescriptor]
-  [write-free? : bool]
+  [stable? : bool]
   [all-blocks : ir.CompilerIrBlockList]
   [body-blocks : ir.CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
@@ -56474,14 +56872,14 @@
   [hoists : OptBceMbHoists]
   [cell : (__tl_dyn-array i64)]
   [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeLength
-  (if (not write-free?)
+  (if (not stable?)
     (OptBceMbMaybeLength.No)
     (match acc
       [(OptBceVersionGuardAcc.No) (OptBceMbMaybeLength.No)]
       [(OptBceVersionGuardAcc.Some _ _ _)
         (match descriptor
           [(OptBceMbDescriptor.No) (OptBceMbMaybeLength.No)]
-          [(OptBceMbDescriptor.Some type-segment-bases header-set)
+          [(OptBceMbDescriptor.Some type-segment-bases header-set _)
             (match length-value
               [(ir.CompilerIrValue.Var raw)
                 (let
@@ -56524,9 +56922,6 @@
                                                           base-raw
                                                           16)]
                                                       (if (or
-                                                        (opt-used-contains
-                                                          defs
-                                                          base-id)
                                                         (not
                                                           (opt-load-header-var?
                                                             header-set
@@ -56537,26 +56932,41 @@
                                                             offset
                                                             gep-ty)))
                                                         (OptBceMbMaybeLength.No)
-                                                        (let
-                                                          [shared : i64
-                                                            (opt-bce-mb-hoists-lookup
-                                                              hoists
-                                                              base-id
-                                                              off)]
-                                                          (if (>= shared 0)
-                                                            (OptBceMbMaybeLength.Some
-                                                              (ir.CompilerIrValue.Var
-                                                                shared)
-                                                              hoists
-                                                              acc)
-                                                            (opt-bce-mb-descriptor-hoist
-                                                              base-id
-                                                              offset
-                                                              gep-ty
-                                                              load-ty
-                                                              hoists
-                                                              cell
-                                                              acc)))))]
+                                                        (match (opt-bce-mb-descriptor-base
+                                                          defs
+                                                          all-blocks
+                                                          body-blocks
+                                                          base-id
+                                                          hoists
+                                                          cell
+                                                          acc)
+                                                          [(OptBceMbMaybeBase.No)
+                                                            (OptBceMbMaybeLength.No)]
+                                                          [(OptBceMbMaybeBase.Some
+                                                              guard-base
+                                                              base-hoists
+                                                              base-acc)
+                                                            (let
+                                                              [shared : i64
+                                                                (opt-bce-mb-hoists-lookup
+                                                                  base-hoists
+                                                                  (opt-bce-mb-hoist-kind-var)
+                                                                  guard-base
+                                                                  off)]
+                                                              (if (>= shared 0)
+                                                                (OptBceMbMaybeLength.Some
+                                                                  (ir.CompilerIrValue.Var
+                                                                    shared)
+                                                                  base-hoists
+                                                                  base-acc)
+                                                                (opt-bce-mb-descriptor-hoist
+                                                                  guard-base
+                                                                  offset
+                                                                  gep-ty
+                                                                  load-ty
+                                                                  base-hoists
+                                                                  cell
+                                                                  base-acc)))])))]
                                                   [_ (OptBceMbMaybeLength.No)])]
                                               [_ (OptBceMbMaybeLength.No)])]
                                           [_ (OptBceMbMaybeLength.No)])]))]
@@ -56585,7 +56995,12 @@
           [(ir.CompilerIrValue.I64 off)
             (OptBceMbMaybeLength.Some
               (ir.CompilerIrValue.Var load-var)
-              (OptBceMbHoists.Cons base-id off load-var (box hoists))
+              (OptBceMbHoists.Cons
+                (opt-bce-mb-hoist-kind-var)
+                base-id
+                off
+                load-var
+                (box hoists))
               (OptBceVersionGuardAcc.Some
                 (ir.compiler-ir-instr-cons
                   (ir.CompilerIrInstr.Load
@@ -57142,7 +57557,7 @@
 (define (opt-bce-mb-derive-block
   [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
-  [write-free? : bool]
+  [stable? : bool]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -57162,7 +57577,7 @@
     (opt-bce-mb-derive-block
       doms
       descriptor
-      write-free?
+      stable?
       label
       instrs
       (+ index 1)
@@ -57202,7 +57617,7 @@
             [(ir.CompilerIrMaybeValue.No)
               (match (opt-bce-mb-descriptor-length
                 descriptor
-                write-free?
+                stable?
                 all-blocks
                 body-blocks
                 defs
@@ -57266,7 +57681,7 @@
 (define (opt-bce-mb-derive-blocks
   [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
-  [write-free? : bool]
+  [stable? : bool]
   [remaining : ir.CompilerIrBlockList]
   [all-blocks : ir.CompilerIrBlockList]
   [body-blocks : ir.CompilerIrBlockList]
@@ -57288,7 +57703,7 @@
           (opt-bce-mb-derive-blocks
             doms
             descriptor
-            write-free?
+            stable?
             (__tl-box-place rest)
             all-blocks
             body-blocks
@@ -57311,7 +57726,7 @@
               (opt-bce-mb-derive-block
                 doms
                 descriptor
-                write-free?
+                stable?
                 label
                 instrs
                 0
@@ -57330,7 +57745,7 @@
       (opt-bce-mb-derive-blocks
         doms
         descriptor
-        write-free?
+        stable?
         (ir.compiler-ir-block-seq-to-list seq)
         all-blocks
         body-blocks
@@ -57692,7 +58107,7 @@
 (define (opt-bce-mb-guard-conds
   [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
-  [write-free? : bool]
+  [stable? : bool]
   [all-blocks : ir.CompilerIrBlockList]
   [shape : OptBceMbShape]
   [defs : opt_i64_i64_map.Map]
@@ -57711,7 +58126,7 @@
       (opt-bce-mb-guard-conds-ranged
         doms
         descriptor
-        write-free?
+        stable?
         all-blocks
         shape
         defs
@@ -57724,7 +58139,7 @@
 (define (opt-bce-mb-guard-conds-ranged
   [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
-  [write-free? : bool]
+  [stable? : bool]
   [all-blocks : ir.CompilerIrBlockList]
   [shape : OptBceMbShape]
   [defs : opt_i64_i64_map.Map]
@@ -57739,7 +58154,7 @@
       (opt-bce-mb-derive-blocks
         doms
         descriptor
-        write-free?
+        stable?
         shape.body-blocks
         all-blocks
         shape.body-blocks
@@ -57759,9 +58174,16 @@
           (OptBceMbHoists.Nil)
           (OptBceMbFused.Nil)))]
     (if (or
-      (= dr.derived 0)
-      ;; No removable check: cloning the loop would only duplicate it. A
-      ;; region-sized clone additionally needs one of them inside an inner
+      ;; No removable check: cloning the loop would only duplicate it. A body
+      ;; that duplicates CALL SITES owes more than one -- see
+      ;; opt-bce-mb-call-clone-min-derived for the currency and the constant.
+      ;; The call census runs only here, after the derivation, so a shape the
+      ;; derivation was going to refuse anyway never pays for the walk.
+      (<
+        dr.derived
+        (opt-bce-mb-call-clone-min-derived
+          (opt-bce-mb-body-calls shape.body-blocks 0)))
+      ;; A region-sized clone additionally needs one of them inside an inner
       ;; loop, where the removal repeats per inner iteration.
       (and
         shape.region?
@@ -58169,7 +58591,7 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     unit
     (let
-      [dst : i64 (ir.compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1))]
+      [dst : i64 (opt-bce-mb-instr-seq-dst-or instrs index (- 0 1))]
       (begin
         (if (>= dst 0)
           (begin
@@ -58199,6 +58621,46 @@
   (match (opt-unroll-subst-value remap (ir.CompilerIrValue.Var dst))
     [(ir.CompilerIrValue.Var fresh) fresh]
     [_ dst]))
+
+;; Substitute a call's arguments through the clone's dense id REMAP.
+;;
+;; `opt-copy-subst-call-args` does the same shape of work but resolves through
+;; an `OptCopyEnv` association list, which this pass does not build: the clone's
+;; renaming lives in the remap array the fresh-id pass filled, and is read with
+;; `opt-unroll-subst-value` everywhere else in this cloner. An `Array` argument
+;; list is copied into a fresh array rather than mutated, because the original
+;; instruction stays live in the SLOW loop and shares that storage.
+(define (opt-bce-mb-subst-call-args-array
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [src : (__tl_dyn-array ir.CompilerIrValue)]
+  [out : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (set!
+        (array-ref out index)
+        (opt-unroll-subst-value remap (array-ref src index)))
+      (opt-bce-mb-subst-call-args-array remap src out (+ index 1)))))
+
+(define (opt-bce-mb-subst-call-args
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
+    [(ir.CompilerIrCallArgs.One value)
+      (ir.CompilerIrCallArgs.One (opt-unroll-subst-value remap value))]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (ir.CompilerIrCallArgs.Two
+        (opt-unroll-subst-value remap a)
+        (opt-unroll-subst-value remap b))]
+    [(ir.CompilerIrCallArgs.Array values)
+      (let
+        [out : (__tl_dyn-array ir.CompilerIrValue)
+          (array.make-array ir.CompilerIrValue (array-length values))]
+        (begin
+          (opt-bce-mb-subst-call-args-array remap values out 0)
+          (ir.CompilerIrCallArgs.Array out)))]))
 
 (define (opt-bce-mb-clone-switch-cases-acc
   [cases : ir.CompilerIrSwitchCaseList]
@@ -58316,6 +58778,17 @@
       (ir.CompilerIrInstr.StorePtr
         (opt-unroll-subst-value remap ptr)
         (opt-unroll-subst-value remap value)
+        ty)]
+    ;; A direct call: the callee name is a symbol and stays as it is, the
+    ;; arguments substitute through the remap, and the dst rebases like any
+    ;; other def -- the fresh-id pass allocated one for it, because
+    ;; opt-bce-mb-instr-dst-or reports it. Only `Call` reaches here; every other
+    ;; call form is outside opt-bce-mb-body-instr-ok?.
+    [(ir.CompilerIrInstr.Call dst name args ty)
+      (ir.CompilerIrInstr.Call
+        (opt-bce-mb-remap-dst remap dst)
+        name
+        (opt-bce-mb-subst-call-args remap args)
         ty)]
     [(ir.CompilerIrInstr.Phi dst inputs ty)
       (ir.CompilerIrInstr.Phi
@@ -59647,7 +60120,7 @@
 (define (opt-bce-mb-apply-wired
   [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
-  [write-free? : bool]
+  [stable? : bool]
   [blocks : ir.CompilerIrBlockList]
   [shape : OptBceMbShape]
   [defs : opt_i64_i64_map.Map]
@@ -59659,7 +60132,7 @@
     (match (opt-bce-mb-guard-conds
       doms
       descriptor
-      write-free?
+      stable?
       blocks
       shape
       defs
@@ -59745,7 +60218,7 @@
 (define (opt-bce-mb-apply-group
   [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
-  [write-free? : bool]
+  [stable? : bool]
   [wired-blocks : ir.CompilerIrBlockList]
   [shape : OptBceMbShape]
   [clone-labels : OptLabelSet]
@@ -59755,7 +60228,7 @@
   (opt-bce-mb-apply-wired
     doms
     descriptor
-    write-free?
+    stable?
     wired-blocks
     (OptBceMbShape
       shape.header
@@ -59801,7 +60274,7 @@
       (opt-bce-mb-apply-wired
         doms
         descriptor
-        (opt-bce-mb-write-free-blocks? body-blocks)
+        (opt-bce-mb-stable-blocks? descriptor body-blocks)
         blocks
         shape
         defs
@@ -59837,7 +60310,7 @@
               (opt-bce-mb-apply-group
                 doms
                 descriptor
-                (opt-bce-mb-write-free-blocks? body-blocks)
+                (opt-bce-mb-stable-blocks? descriptor body-blocks)
                 wired-blocks
                 shape
                 clone-labels
@@ -59877,7 +60350,7 @@
                         (opt-bce-mb-apply-group
                           doms
                           descriptor
-                          (opt-bce-mb-write-free-blocks? body-blocks)
+                          (opt-bce-mb-stable-blocks? descriptor body-blocks)
                           wired-blocks
                           shape
                           wide-labels
@@ -60098,6 +60571,7 @@
 ;; both scans, so later rounds never re-process it.
 (define (opt-bce-version-function-budget-result
   [type-segment-bases : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]
   [single-budget : i64]
@@ -60134,6 +60608,7 @@
                   [(ResultCompilerOptimizeVerify.Ok)
                     (opt-bce-version-function-budget-result
                       type-segment-bases
+                      direct-call-clean
                       next-context
                       next
                       (- single-budget 1)
@@ -60146,6 +60621,7 @@
                     ;; candidate against the same budget.
                     (opt-bce-version-function-budget-result
                       type-segment-bases
+                      direct-call-clean
                       context
                       func
                       single-budget
@@ -60156,6 +60632,7 @@
               ;; loops over the natural-loop back edges.
               (opt-bce-mb-function-budget-result
                 type-segment-bases
+                direct-call-clean
                 context
                 func
                 single-budget
@@ -60164,6 +60641,7 @@
                 reject-probe))])
         (opt-bce-mb-function-budget-result
           type-segment-bases
+          direct-call-clean
           context
           func
           single-budget
@@ -60173,6 +60651,7 @@
 
 (define (opt-bce-mb-function-budget-result
   [type-segment-bases : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]
   [single-budget : i64]
@@ -60197,7 +60676,8 @@
                 (opt-load-header-set-from-function
                   type-segment-bases
                   params
-                  blocks)))]
+                  blocks)
+                direct-call-clean))]
           (match (opt-bce-mb-loops-scan-phased
             descriptor
             context.pred-map
@@ -60229,6 +60709,7 @@
                       ;; like the next pipeline iteration would.
                       (opt-bce-version-function-budget-result
                         type-segment-bases
+                        direct-call-clean
                         next-context
                         next
                         single-budget
@@ -60242,6 +60723,7 @@
                       ;; retry stays in the multi-block phase.
                       (opt-bce-mb-function-budget-result
                         type-segment-bases
+                        direct-call-clean
                         context
                         func
                         single-budget
@@ -60252,6 +60734,7 @@
 
 (define (opt-bce-version-function-verified-with-context-result
   [type-segment-bases : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
@@ -60259,6 +60742,7 @@
     [(ResultCompilerOptimizeVerify.Ok)
       (opt-bce-version-function-budget-result
         type-segment-bases
+        direct-call-clean
         context
         func
         (opt-loop-apply-budget)
@@ -60270,6 +60754,7 @@
 
 (define (opt-bce-version-function-with-context-result
   [type-segment-bases : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
@@ -60281,6 +60766,7 @@
         (opt-bce-mb-blocks-have-candidate? prescan-blocks))
         (opt-bce-version-function-verified-with-context-result
           type-segment-bases
+          direct-call-clean
           context
           verified?
           func)
@@ -60293,6 +60779,7 @@
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-bce-version-function-with-context-result
         (- 0 1)
+        (opt_i64_i64_map.with-capacity 1)
         (opt-cfg-context-build blocks)
         false
         func)
@@ -60315,6 +60802,7 @@
           [(ResultCompilerOptimizeVerify.Ok)
             (match (opt-bce-version-function-budget-result
               (- 0 1)
+              (opt_i64_i64_map.with-capacity 1)
               context
               func
               (opt-loop-apply-budget)
@@ -60325,13 +60813,28 @@
           [(ResultCompilerOptimizeVerify.Err _) func]))]))
 
 ;; Test entry with type-pool access: descriptor-length recognition is live.
+;; No callee is proven clean, so a call in the loop body refuses every
+;; descriptor length exactly as the write-free test did.
 (define (opt-bce-version-function-with-types
   [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (opt-bce-version-function-with-types-and-calls
+    type-segment-bases
+    (opt_i64_i64_map.with-capacity 1)
+    func))
+
+;; Test entry with type-pool access AND per-callee clean bits: the descriptor
+;; chains of a loop whose only calls are proven descriptor-stable stay derivable
+;; (opt-bce-mb-stable-blocks?).
+(define (opt-bce-version-function-with-types-and-calls
+  [type-segment-bases : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-bce-version-function-with-context-result
         type-segment-bases
+        direct-call-clean
         (opt-cfg-context-build blocks)
         false
         func)
@@ -68489,6 +68992,7 @@
                       [bce-version-result : OptFunctionCtxResult
                         (opt-bce-version-function-with-context-result
                           type-segment-bases
+                          summaries.direct-call-clean
                           flag-exit-context
                           loop-cluster-verified?
                           flag-exit)]
@@ -81974,6 +82478,20 @@
 ;; all the global-operand invariance question asks (opt-licm-globals-clean?).
 ;; Membership is therefore never a sound test on its own; every reader asks for
 ;; the bit it needs.
+;;
+;; Bit 2 is bit 1 SHARPENED, and it is the fact a DESCRIPTOR word needs. Bit 1
+;; holds for two different reasons -- "every write goes through a parameter's
+;; own object" and "every write goes into element storage" -- which are the same
+;; verdict about global cells and OPPOSITE verdicts about the descriptor header
+;; words a caller can reach: a parameter-rooted write may land on the very
+;; descriptor the caller handed over, while an element write provably cannot
+;; (the buffer a data slot names is a different allocation from the descriptor
+;; that names it -- see opt-call-memory-element-bit for that layering argument).
+;; Bit 2 is set only for the second reason, so a reader asking "can this callee
+;; change a descriptor word I already loaded?" has a bit that answers it. It
+;; implies bit 1 and is implied by nothing; bit 0 is a STRONGER fact but a
+;; different one, and it answers the same question (a callee writing no memory
+;; writes no element storage either), so the descriptor readers take either.
 (define (opt-direct-call-clean-memory-bit) : i64
   1)
 

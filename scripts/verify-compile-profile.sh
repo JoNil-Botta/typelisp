@@ -1494,11 +1494,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # the intentional exact selfhost allocation boundary.
     # The public-place migration removes the expanded legacy accessor calls;
     # the merged path-sensitive checker remains one segment above main alone.
-    # The seven-packet optimizer/backend series plus current main land this
-    # boundary at 48 segments: the final current-main review probe measured
-    # 3,081,607 used nodes, 3,145,728 capacity, and 100,663,296 physical
-    # payload bytes. Earlier 47/48 measurements came from different PR merge
-    # bases (db8e822 versus 2298cbe), not identical-source nondeterminism.
+    # The explicit job-owned macro carrier threads state through the former
+    # global helper surface. Together with the seven-packet optimizer/backend
+    # series, that checked source lands this exact combined boundary at 48
+    # segments; keep all four ownership boundaries measured independently.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -1509,10 +1508,10 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool typecheck 33 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

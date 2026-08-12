@@ -1991,7 +1991,9 @@
       (tc_core.tc-agg-regwords-cache-storage-ensure!)
       (tc_core.tc-lazy-import-stub-storage-ensure!)
       (tc_core.tc-agg-layout-cache-table-storage-ensure!)
-      (tc_core.macro-unqualified-import-cache-storage-ensure!))))
+      (tc_core.macro-unqualified-import-cache-storage-ensure!
+        (tc_core.tc-job-state-macro-state
+          (compiler_driver_core.compiler-driver-state-typecheck state))))))
 
 (define (compile-cli-run-batch-entries
   [state : compiler_driver_core.CompilerDriverState]

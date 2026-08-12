@@ -181,6 +181,52 @@
   (Found LspCallContext)
   (Missing))
 
+;; Syntax-only completion context. Dotted import paths deliberately remain
+;; ambiguous between a module and a selected item until the semantic provider
+;; resolves the receiver. `token` is the whole token written before the cursor;
+;; `prefix` is its replaceable suffix after the final dot, and replacement ends
+;; at the cursor. All offsets are exact UTF-8 byte offsets.
+(defenum LspCompletionContextKind
+  (Value)
+  (CallHead)
+  (Type)
+  (ImportPathOrItem)
+  (ImportAlias)
+  (DottedMember)
+  (Field)
+  (Suppressed))
+
+(defstruct LspCompletionContext
+  (kind LspCompletionContextKind)
+  (cursor-byte i64)
+  (replace-start i64)
+  (replace-end i64)
+  (token-start i64)
+  (token String)
+  (prefix String)
+  (receiver String)
+  (head String)
+  (form-start i64)
+  (head-start i64)
+  (head-end i64)
+  (active-argument i64))
+
+(defenum LspCompletionContextLookup
+  (Found LspCompletionContext)
+  (Missing))
+
+(defstruct LspCursorContextScan
+  (call LspCallContextLookup)
+  (completion LspCompletionContextLookup))
+
+(defstruct LspCompletionTokenScan
+  (end i64)
+  (last-dot i64))
+
+(defenum LspOffsetLookup
+  (Found i64)
+  (Missing))
+
 ;; Folding-range scan position: 1-based line, 1-based negotiated column, and
 ;; whether anything other than whitespace has been seen on the current line.
 (defstruct LspFoldCursor
@@ -4398,16 +4444,78 @@
           (set! i (+ i 1))))
       i)))
 
+;; Exact position conversion for cursor-sensitive requests. Unlike the older
+;; clamping helper, this rejects missing lines, columns beyond the line, and a
+;; UTF-16 character position in the middle of a surrogate pair.
+(define (lsp-offset-at-position-checked
+  [text : String]
+  [line0 : i64]
+  [char0 : i64]) : LspOffsetLookup
+  (if (or (< line0 0) (< char0 0))
+    LspOffsetLookup.Missing
+    (let
+      [n : i64 (string.string-length text)]
+      [i : i64 0]
+      [ln : i64 0]
+      [col : i64 0]
+      (begin
+        (while (and (< i n) (< ln line0))
+          (begin
+            (if (= (string.string-ref text i) '\n')
+              (set! ln (+ ln 1))
+              unit)
+            (set! i (+ i 1))))
+        (if (not (= ln line0))
+          LspOffsetLookup.Missing
+          (begin
+            (while (and
+              (< i n)
+              (< col char0)
+              (not (= (string.string-ref text i) '\n'))
+              (not
+                (and
+                  (= (string.string-ref text i) '\r')
+                  (< (+ i 1) n)
+                  (= (string.string-ref text (+ i 1)) '\n'))))
+              (begin
+                (set!
+                  col
+                  (+
+                    col
+                    (lsp-position-units-for-byte (string.string-ref text i))))
+                (set! i (+ i 1))))
+            (if (not (= col char0))
+              LspOffsetLookup.Missing
+              (begin
+                (if (lsp-using-utf16-positions?)
+                  (while (and
+                    (< i n)
+                    (lsp-utf8-continuation-byte? (string.string-ref text i)))
+                    (set! i (+ i 1)))
+                  unit)
+                (LspOffsetLookup.Found i)))))))))
+
 ;; --------------------------------------------------------------------------
-;; Signature-help call context.
+;; Shared signature-help and completion cursor context.
 ;;
 ;; This scanner intentionally stops at the cursor. It recognizes only enough
 ;; reader structure to find the innermost open call and count its direct
-;; arguments; symbol resolution and signature selection belong to the later
-;; provider layer.
+;; arguments, classify the syntactic completion position, and retain exact
+;; token spans. Symbol resolution and candidate selection belong to providers.
 ;; --------------------------------------------------------------------------
 (define (lsp-call-frame-fallback) : lsp_vector_families.LspCallFrame
-  (lsp_vector_families.LspCallFrame 0 -1 -1 -1 2 0 false false))
+  (lsp_vector_families.LspCallFrame
+    0
+    -1
+    -1
+    -1
+    2
+    0
+    false
+    false
+    false
+    false
+    false))
 
 (define (lsp-call-token-delimiter? [c : char]) : bool
   (or
@@ -4431,6 +4539,21 @@
         (not (lsp-call-token-delimiter? (string.string-ref text i))))
         (set! i (+ i 1)))
       i)))
+
+(define (lsp-completion-scan-token [text : String] [start : i64] [limit : i64]) : LspCompletionTokenScan
+  (let
+    [i : i64 start]
+    [last-dot : i64 -1]
+    (begin
+      (while (and
+        (< i limit)
+        (not (lsp-call-token-delimiter? (string.string-ref text i))))
+        (begin
+          (if (= (string.string-ref text i) '.')
+            (set! last-dot i)
+            unit)
+          (set! i (+ i 1))))
+      (LspCompletionTokenScan i last-dot))))
 
 (define (lsp-call-clamp [offset : i64] [limit : i64]) : i64
   (if (> offset limit)
@@ -4558,17 +4681,180 @@
             (set! index (- index 1)))))
       result)))
 
+(define (lsp-completion-field-head? [head : String]) : bool
+  (or
+    (string.eq head "struct-get")
+    (string.eq head "struct-set")
+    (string.eq head "struct-set!")
+    (string.eq head "__tl_struct-get")
+    (string.eq head "__tl_struct-set")))
+
+(define (lsp-completion-context-from-scan
+  [text : String]
+  [limit : i64]
+  [frames : (& frames lsp_vector_families.LspCallFrames)]
+  [has-token : bool]
+  [scan-token-start : i64]
+  [scan-token-end : i64]
+  [scan-last-dot : i64]
+  [token-suppressed : bool]
+  [cursor-suppressed : bool]
+  [token-type : bool]
+  [quote-pending : bool]) : LspCompletionContextLookup
+  (let
+    [frame-count : i64 (lsp_vector_families.lsp-call-frames-len frames)]
+    [top-index : i64 (- frame-count 1)]
+    [top-frame : lsp_vector_families.LspCallFrame
+      (lsp_vector_families.lsp-call-frames-get
+        frames
+        top-index
+        (lsp-call-frame-fallback))]
+    [call-index : i64 top-index]
+    [call-frame : lsp_vector_families.LspCallFrame (lsp-call-frame-fallback)]
+    [call-found : bool false]
+    [token-start : i64 scan-token-start]
+    [written-token-start : i64 scan-token-start]
+    [token-end : i64 scan-token-end]
+    [last-dot : i64 scan-last-dot]
+    [token : String ""]
+    [prefix : String ""]
+    [receiver : String ""]
+    [head : String ""]
+    [form-start : i64 -1]
+    [head-start : i64 -1]
+    [head-end : i64 -1]
+    [active-argument : i64 -1]
+    [call-head-position : bool false]
+    [type-position : bool token-type]
+    [suppressed : bool
+      (or
+        cursor-suppressed
+        token-suppressed
+        quote-pending
+        (and (>= top-index 0) top-frame.literal))]
+    (begin
+      (while (and (>= call-index 0) (not call-found))
+        (begin
+          (set!
+            call-frame
+            (lsp_vector_families.lsp-call-frames-get
+              frames
+              call-index
+              (lsp-call-frame-fallback)))
+          (if (= call-frame.kind 0)
+            (set! call-found true)
+            (set! call-index (- call-index 1)))))
+      (if has-token
+        (set!
+          token
+          (string.substring text token-start (- token-end token-start)))
+        (begin
+          (set! token-start limit)
+          (set! written-token-start limit)
+          (set! token-end limit)
+          (set! last-dot -1)))
+      (if call-found
+        (begin
+          (set! form-start call-frame.form-start)
+          (set! active-argument call-frame.argument-index)
+          (if (= call-frame.head-state 1)
+            (begin
+              (set! head-start call-frame.head-start)
+              (set! head-end call-frame.head-end)
+              (set!
+                head
+                (string.substring text head-start (- head-end head-start)))
+              (if (and
+                (= call-index top-index)
+                has-token
+                (= scan-token-start head-start)
+                (= scan-token-end head-end))
+                (set! call-head-position true)
+                unit))
+            (if (and (= call-frame.head-state 0) (= call-index top-index))
+              (begin
+                (set! call-head-position true)
+                (set! head-start token-start)
+                (set! head-end token-end)
+                (set! head (string.copy (& token))))
+              unit)))
+        unit)
+      (if (and
+        (>= top-index 0)
+        (or top-frame.type-context top-frame.expect-type))
+        (set! type-position true)
+        unit)
+      ;; `:` introduces a type but is not itself part of the replaceable token.
+      (if (and type-position (string.eq token ":"))
+        (begin
+          (set! type-position true)
+          (set! token "")
+          (set! token-start limit)
+          (set! written-token-start limit)
+          (set! token-end limit)
+          (set! last-dot -1))
+        unit)
+      (if (>= last-dot token-start)
+        (begin
+          (set!
+            receiver
+            (string.substring text token-start (- last-dot token-start)))
+          (set!
+            prefix
+            (string.substring text (+ last-dot 1) (- token-end (+ last-dot 1))))
+          (set! token-start (+ last-dot 1)))
+        (set! prefix (string.copy (& token))))
+      (LspCompletionContextLookup.Found
+        (LspCompletionContext
+          (cond
+            [suppressed LspCompletionContextKind.Suppressed]
+            [(string.eq head "import")
+              (if (>= active-argument 2)
+                LspCompletionContextKind.ImportAlias
+                LspCompletionContextKind.ImportPathOrItem)]
+            [(and (= active-argument 1) (lsp-completion-field-head? head))
+              LspCompletionContextKind.Field]
+            [type-position LspCompletionContextKind.Type]
+            [(>= last-dot 0) LspCompletionContextKind.DottedMember]
+            [call-head-position LspCompletionContextKind.CallHead]
+            [else LspCompletionContextKind.Value])
+          limit
+          token-start
+          limit
+          written-token-start
+          token
+          prefix
+          receiver
+          head
+          form-start
+          head-start
+          head-end
+          active-argument)))))
+
 ;; Scan bytes [0, limit). A cursor immediately before a closer therefore still
 ;; belongs to that call, while one immediately after it does not.
-(define (lsp-call-context-at-offset [text : String] [limit : i64]) : LspCallContextLookup
+(define (lsp-cursor-context-at-offset
+  [text : String]
+  [limit : i64]
+  [include-completion : bool]) : LspCursorContextScan
   (let
     [n : i64 (string.string-length text)]
     (if (or (< limit 0) (> limit n))
-      LspCallContextLookup.Missing
+      (LspCursorContextScan
+        LspCallContextLookup.Missing
+        LspCompletionContextLookup.Missing)
       (let
         [frames : lsp_vector_families.LspCallFrames
           (lsp_vector_families.lsp-call-frames-new)]
         [i : i64 0]
+        [has-token : bool false]
+        [token-start : i64 limit]
+        [token-end : i64 limit]
+        [last-dot : i64 -1]
+        [token-suppressed : bool false]
+        [cursor-suppressed : bool false]
+        [token-type : bool false]
+        [quote-pending : bool false]
         (begin
           (while (< i limit)
             (let
@@ -4579,9 +4865,18 @@
                     (lsp-call-frames-separate-top! (&mut frames))
                     (set! i (lsp-skip-space text i limit)))]
                 [(= c ';')
-                  (begin
-                    (lsp-call-frames-separate-top! (&mut frames))
-                    (set! i (lsp-call-clamp (lsp-skip-line text i limit) limit)))]
+                  (let
+                    [past : i64
+                      (lsp-call-clamp (lsp-skip-line text i limit) limit)]
+                    (begin
+                      (lsp-call-frames-separate-top! (&mut frames))
+                      (if (and
+                        (= past limit)
+                        (> past i)
+                        (not (= (string.string-ref text (- past 1)) '\n')))
+                        (set! cursor-suppressed true)
+                        unit)
+                      (set! i past)))]
                 [(= c '"')
                   (let
                     [raw-past : i64 (lsp-skip-string text i limit)]
@@ -4593,6 +4888,9 @@
                         (= (string.string-ref text (- raw-past 1)) '"'))]
                     (begin
                       (lsp-call-frames-update-top-datum! (&mut frames) complete)
+                      (if complete
+                        (set! quote-pending false)
+                        (set! cursor-suppressed true))
                       (set! i past)))]
                 [(= c '\'')
                   (let
@@ -4603,13 +4901,16 @@
                     (if (> past (+ i 1))
                       (begin
                         (lsp-call-frames-update-top-datum! (&mut frames) true)
+                        (set! quote-pending false)
                         (set! i past))
                       (begin
                         (lsp-call-frames-update-top-datum! (&mut frames) false)
+                        (set! quote-pending true)
                         (set! i (+ i 1)))))]
                 [(or (= c '`') (= c ','))
                   (begin
                     (lsp-call-frames-update-top-datum! (&mut frames) false)
+                    (set! quote-pending true)
                     (if (and
                       (= c ',')
                       (< (+ i 1) limit)
@@ -4617,24 +4918,50 @@
                       (set! i (+ i 2))
                       (set! i (+ i 1))))]
                 [(or (= c '(') (= c '['))
-                  (begin
-                    (lsp-call-frames-update-top-datum! (&mut frames) false)
-                    (lsp_vector_families.lsp-call-frames-push!
-                      (&mut frames)
-                      (lsp_vector_families.LspCallFrame
-                        (if (= c '(')
+                  (let
+                    [top-index : i64
+                      (- (lsp_vector_families.lsp-call-frames-len (& frames)) 1)]
+                    [parent : lsp_vector_families.LspCallFrame
+                      (lsp_vector_families.lsp-call-frames-get
+                        (& frames)
+                        top-index
+                        (lsp-call-frame-fallback))]
+                    [child-literal : bool
+                      (or quote-pending (and (>= top-index 0) parent.literal))]
+                    [child-type : bool
+                      (and
+                        (>= top-index 0)
+                        (or parent.type-context parent.expect-type))]
+                    (begin
+                      (if (and (>= top-index 0) parent.expect-type)
+                        (begin
+                          (set! parent.expect-type false)
+                          (lsp_vector_families.lsp-call-frames-set!
+                            (&mut frames)
+                            top-index
+                            parent))
+                        unit)
+                      (lsp-call-frames-update-top-datum! (&mut frames) false)
+                      (lsp_vector_families.lsp-call-frames-push!
+                        (&mut frames)
+                        (lsp_vector_families.LspCallFrame
+                          (if (= c '(')
+                            0
+                            1)
+                          i
+                          -1
+                          -1
+                          (if (= c '(')
+                            0
+                            2)
                           0
-                          1)
-                        i
-                        -1
-                        -1
-                        (if (= c '(')
-                          0
-                          2)
-                        0
-                        false
-                        false))
-                    (set! i (+ i 1)))]
+                          false
+                          false
+                          child-literal
+                          child-type
+                          false))
+                      (set! quote-pending false)
+                      (set! i (+ i 1))))]
                 [(or (= c ')') (= c ']'))
                   (let
                     [top-index : i64
@@ -4660,11 +4987,14 @@
                                 (&mut frames)))
                             (lsp_vector_families.lsp-call-frames-clear!
                               (&mut frames)))
+                          (set! quote-pending false)
                           (set! i (+ i 1))))))]
                 [else
                   (let
                     [start : i64 i]
-                    [past : i64 (lsp-call-scan-token text i limit)]
+                    [token-scan : LspCompletionTokenScan
+                      (lsp-completion-scan-token text i limit)]
+                    [past : i64 token-scan.end]
                     [exact : bool
                       (or
                         (< past limit)
@@ -4675,34 +5005,99 @@
                             (string.string-ref text limit))))]
                     [top-index : i64
                       (- (lsp_vector_families.lsp-call-frames-len (& frames)) 1)]
+                    [frame : lsp_vector_families.LspCallFrame
+                      (lsp_vector_families.lsp-call-frames-get
+                        (& frames)
+                        top-index
+                        (lsp-call-frame-fallback))]
+                    [head-token : bool
+                      (and
+                        (>= top-index 0)
+                        (= frame.kind 0)
+                        (= frame.head-state 0))]
+                    [in-literal : bool
+                      (or quote-pending (and (>= top-index 0) frame.literal))]
+                    [in-type : bool
+                      (and
+                        (>= top-index 0)
+                        (or frame.type-context frame.expect-type))]
+                    [colon-token : bool
+                      (and
+                        (not head-token)
+                        (= (- past start) 1)
+                        (= (string.string-ref text start) ':'))]
                     (begin
-                      (if (>= top-index 0)
-                        (let
-                          [frame : lsp_vector_families.LspCallFrame
-                            (lsp_vector_families.lsp-call-frames-get
-                              (& frames)
-                              top-index
-                              (lsp-call-frame-fallback))]
-                          (begin
-                            (if (and (= frame.kind 0) (= frame.head-state 0))
-                              (if exact
-                                (begin
-                                  (set! frame.head-start start)
-                                  (set! frame.head-end past)
-                                  (set! frame.head-state 1))
-                                unit)
-                              (begin
-                                (lsp-call-frame-start-datum! (&mut frame))
-                                (if exact
-                                  (lsp-call-frame-complete-datum! (&mut frame))
-                                  unit)))
-                            (lsp_vector_families.lsp-call-frames-set!
-                              (&mut frames)
-                              top-index
-                              frame)))
+                      (if (= past limit)
+                        (begin
+                          (set! has-token true)
+                          (set! token-start start)
+                          (set! token-end past)
+                          (set! last-dot token-scan.last-dot)
+                          (set! token-suppressed in-literal)
+                          (set! token-type (or in-type colon-token)))
                         unit)
+                      (if (>= top-index 0)
+                        (begin
+                          (if head-token
+                            (if exact
+                              (begin
+                                (set! frame.head-start start)
+                                (set! frame.head-end past)
+                                (set! frame.head-state 1))
+                              unit)
+                            (begin
+                              (lsp-call-frame-start-datum! (&mut frame))
+                              (if exact
+                                (lsp-call-frame-complete-datum! (&mut frame))
+                                unit)
+                              (if colon-token
+                                (set! frame.expect-type true)
+                                (if frame.expect-type
+                                  (set! frame.expect-type false)
+                                  unit))))
+                          (lsp_vector_families.lsp-call-frames-set!
+                            (&mut frames)
+                            top-index
+                            frame))
+                        unit)
+                      (set! quote-pending false)
                       (set! i past)))])))
-          (lsp-call-context-from-frames (& frames)))))))
+          (LspCursorContextScan
+            (lsp-call-context-from-frames (& frames))
+            (if include-completion
+              (lsp-completion-context-from-scan
+                text
+                limit
+                (& frames)
+                has-token
+                token-start
+                token-end
+                last-dot
+                token-suppressed
+                cursor-suppressed
+                token-type
+                quote-pending)
+              LspCompletionContextLookup.Missing)))))))
+
+(define (lsp-call-context-at-offset [text : String] [limit : i64]) : LspCallContextLookup
+  (let
+    [scan : LspCursorContextScan
+      (lsp-cursor-context-at-offset text limit false)]
+    scan.call))
+
+(define (lsp-completion-context-at-offset [text : String] [limit : i64]) : LspCompletionContextLookup
+  (let
+    [scan : LspCursorContextScan (lsp-cursor-context-at-offset text limit true)]
+    scan.completion))
+
+(define (lsp-completion-context-at-position
+  [text : String]
+  [line0 : i64]
+  [char0 : i64]) : LspCompletionContextLookup
+  (match (lsp-offset-at-position-checked text line0 char0)
+    [(LspOffsetLookup.Found offset)
+      (lsp-completion-context-at-offset text offset)]
+    [(LspOffsetLookup.Missing) LspCompletionContextLookup.Missing]))
 
 (define (lsp-call-context-at-position
   [text : String]
@@ -4732,6 +5127,449 @@
     [(LspCallContextLookup.Found _) false]
     [(LspCallContextLookup.Missing) true]))
 
+(define (lsp-completion-context-kind-code [kind : LspCompletionContextKind]) : i64
+  (match kind
+    [(LspCompletionContextKind.Value) 0]
+    [(LspCompletionContextKind.CallHead) 1]
+    [(LspCompletionContextKind.Type) 2]
+    [(LspCompletionContextKind.ImportPathOrItem) 3]
+    [(LspCompletionContextKind.ImportAlias) 4]
+    [(LspCompletionContextKind.DottedMember) 5]
+    [(LspCompletionContextKind.Field) 6]
+    [(LspCompletionContextKind.Suppressed) 7]))
+
+(define (lsp-completion-context-is?
+  [lookup : LspCompletionContextLookup]
+  [kind : i64]
+  [cursor-byte : i64]
+  [replace-start : i64]
+  [token-start : i64]
+  [token : String]
+  [prefix : String]
+  [receiver : String]
+  [head : String]
+  [form-start : i64]
+  [active-argument : i64]) : bool
+  (match lookup
+    [(LspCompletionContextLookup.Found context)
+      (and
+        (= (lsp-completion-context-kind-code context.kind) kind)
+        (= context.cursor-byte cursor-byte)
+        (= context.replace-start replace-start)
+        (= context.replace-end cursor-byte)
+        (= context.token-start token-start)
+        (string.eq context.token token)
+        (string.eq context.prefix prefix)
+        (string.eq context.receiver receiver)
+        (string.eq context.head head)
+        (= context.form-start form-start)
+        (= context.active-argument active-argument))]
+    [(LspCompletionContextLookup.Missing) false]))
+
+(define (lsp-completion-context-at-end-is?
+  [text : String]
+  [kind : i64]
+  [replace-start : i64]
+  [token-start : i64]
+  [token : String]
+  [prefix : String]
+  [receiver : String]
+  [head : String]
+  [form-start : i64]
+  [active-argument : i64]) : bool
+  (let
+    [cursor-byte : i64 (string.string-length text)]
+    (lsp-completion-context-is?
+      (lsp-completion-context-at-offset text cursor-byte)
+      kind
+      cursor-byte
+      replace-start
+      token-start
+      token
+      prefix
+      receiver
+      head
+      form-start
+      active-argument)))
+
+(define (lsp-completion-context-missing? [lookup : LspCompletionContextLookup]) : bool
+  (match lookup
+    [(LspCompletionContextLookup.Found _) false]
+    [(LspCompletionContextLookup.Missing) true]))
+
+(define (lsp-completion-context-basic-ok?) : bool
+  (and
+    (lsp-completion-context-at-end-is? "" 0 0 0 "" "" "" "" -1 -1)
+    (lsp-completion-context-at-end-is?
+      "alpha"
+      0
+      0
+      0
+      "alpha"
+      "alpha"
+      ""
+      ""
+      -1
+      -1)
+    (lsp-completion-context-at-end-is? "(pri" 1 1 1 "pri" "pri" "" "pri" 0 0)
+    (lsp-completion-context-at-end-is? "(:" 1 1 1 ":" ":" "" ":" 0 0)
+    (lsp-completion-context-at-end-is? "(print " 0 7 7 "" "" "" "print" 0 0)
+    (lsp-completion-context-at-end-is?
+      "(outer [x y"
+      0
+      10
+      10
+      "y"
+      "y"
+      ""
+      "outer"
+      0
+      0)
+    (lsp-completion-context-at-end-is? ")))(sa" 1 4 4 "sa" "sa" "" "sa" 3 0)
+    (lsp-completion-context-missing?
+      (lsp-completion-context-at-offset "alpha" -1))
+    (lsp-completion-context-missing?
+      (lsp-completion-context-at-offset "alpha" 6))))
+
+(define (lsp-completion-context-syntax-ok?) : bool
+  (and
+    (lsp-completion-context-at-end-is?
+      "(outer [x : i6"
+      2
+      12
+      12
+      "i6"
+      "i6"
+      ""
+      "outer"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(define (f) : i6"
+      2
+      14
+      14
+      "i6"
+      "i6"
+      ""
+      "define"
+      0
+      2)
+    (lsp-completion-context-at-end-is?
+      "(define (f) : "
+      2
+      14
+      14
+      ""
+      ""
+      ""
+      "define"
+      0
+      2)
+    (lsp-completion-context-at-end-is?
+      "(define (f) : (Pt"
+      2
+      15
+      15
+      "Pt"
+      "Pt"
+      ""
+      "Pt"
+      14
+      0)
+    (lsp-completion-context-at-end-is?
+      "(import stdlib.io"
+      3
+      15
+      8
+      "stdlib.io"
+      "io"
+      "stdlib"
+      "import"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(import stdlib.io.*"
+      3
+      18
+      8
+      "stdlib.io.*"
+      "*"
+      "stdlib.io"
+      "import"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(import stdlib.io as al"
+      4
+      21
+      21
+      "al"
+      "al"
+      ""
+      "import"
+      0
+      2)
+    (lsp-completion-context-at-end-is? "(import " 3 8 8 "" "" "" "import" 0 0)
+    (lsp-completion-context-at-end-is?
+      "(use data.va"
+      5
+      10
+      5
+      "data.va"
+      "va"
+      "data"
+      "use"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(__tl_struct-get value fi"
+      6
+      23
+      23
+      "fi"
+      "fi"
+      ""
+      "__tl_struct-get"
+      0
+      1)
+    (lsp-completion-context-at-end-is?
+      "(struct-set value fi"
+      6
+      18
+      18
+      "fi"
+      "fi"
+      ""
+      "struct-set"
+      0
+      1)))
+
+(define (lsp-completion-context-literals-ok?) : bool
+  (and
+    (lsp-completion-context-at-end-is?
+      "(outer ; tail"
+      7
+      13
+      13
+      ""
+      ""
+      ""
+      "outer"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(outer ; tail\n"
+      0
+      14
+      14
+      ""
+      ""
+      ""
+      "outer"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(outer \"ta"
+      7
+      10
+      10
+      ""
+      ""
+      ""
+      "outer"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(outer \"ta\" "
+      0
+      12
+      12
+      ""
+      ""
+      ""
+      "outer"
+      0
+      1)
+    (lsp-completion-context-at-end-is?
+      "(outer \"x \\\" y"
+      7
+      14
+      14
+      ""
+      ""
+      ""
+      "outer"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(outer \"x \\\" y\" "
+      0
+      16
+      16
+      ""
+      ""
+      ""
+      "outer"
+      0
+      1)
+    (lsp-completion-context-at-end-is?
+      "(outer \"tail\\"
+      7
+      13
+      13
+      ""
+      ""
+      ""
+      "outer"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(outer 'sym"
+      7
+      8
+      8
+      "sym"
+      "sym"
+      ""
+      "outer"
+      0
+      0)
+    (lsp-completion-context-at-end-is?
+      "(outer '(sym"
+      7
+      9
+      9
+      "sym"
+      "sym"
+      ""
+      "sym"
+      8
+      0)
+    (lsp-completion-context-at-end-is?
+      "(outer '(sym) "
+      0
+      14
+      14
+      ""
+      ""
+      ""
+      "outer"
+      0
+      1)
+    (lsp-completion-context-at-end-is?
+      "(outer ')' "
+      0
+      11
+      11
+      ""
+      ""
+      ""
+      "outer"
+      0
+      1)
+    (lsp-completion-context-at-end-is?
+      "(outer `(sym ,value"
+      7
+      14
+      14
+      "value"
+      "value"
+      ""
+      "sym"
+      8
+      0)
+    (lsp-completion-context-at-end-is? "(outer [x ))" 0 12 12 "" "" "" "" -1 -1)))
+
+(define (lsp-completion-context-position-ok?) : bool
+  (let
+    [unicode : String "😀 (fo"]
+    [crlf : String "x\r\n(fo"]
+    [utf16-ok : bool false]
+    [utf8-ok : bool false]
+    [middle-missing : bool false]
+    [crlf-ok : bool false]
+    (begin
+      (lsp-position-encoding-use-utf16!)
+      (set!
+        utf16-ok
+        (lsp-completion-context-is?
+          (lsp-completion-context-at-position unicode 0 6)
+          1
+          8
+          6
+          6
+          "fo"
+          "fo"
+          ""
+          "fo"
+          5
+          0))
+      (set!
+        middle-missing
+        (and
+          (lsp-completion-context-missing?
+            (lsp-completion-context-at-position unicode 0 1))
+          (lsp-completion-context-missing?
+            (lsp-completion-context-at-position unicode 0 7))
+          (lsp-completion-context-missing?
+            (lsp-completion-context-at-position unicode 1 0))))
+      (set!
+        crlf-ok
+        (lsp-completion-context-is?
+          (lsp-completion-context-at-position crlf 1 3)
+          1
+          6
+          4
+          4
+          "fo"
+          "fo"
+          ""
+          "fo"
+          3
+          0))
+      (lsp-position-encoding-use-utf8!)
+      (set!
+        utf8-ok
+        (lsp-completion-context-is?
+          (lsp-completion-context-at-position unicode 0 8)
+          1
+          8
+          6
+          6
+          "fo"
+          "fo"
+          ""
+          "fo"
+          5
+          0))
+      (lsp-position-encoding-use-utf16!)
+      (and utf16-ok utf8-ok middle-missing crlf-ok))))
+
+(test
+  lsp-completion-context-basic
+  (unless
+    (lsp-completion-context-basic-ok?)
+    (io.panic "lsp-completion-context-basic failed")))
+
+(test
+  lsp-completion-context-syntax
+  (unless
+    (lsp-completion-context-syntax-ok?)
+    (io.panic "lsp-completion-context-syntax failed")))
+
+(test
+  lsp-completion-context-literals
+  (unless
+    (lsp-completion-context-literals-ok?)
+    (io.panic "lsp-completion-context-literals failed")))
+
+(test
+  lsp-completion-context-position
+  (unless
+    (lsp-completion-context-position-ok?)
+    (io.panic "lsp-completion-context-position failed")))
+
 (define (lsp-call-context-boundaries-ok?) : bool
   (and
     (lsp-call-context-is? (lsp-call-context-at-offset "(zero)" 5) 0 1 5 0)
@@ -4753,6 +5591,12 @@
       0
       1
       5
+      3)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(define (f) : (Ptr i64) " 24)
+      0
+      1
+      7
       3)
     (lsp-call-context-is? (lsp-call-context-at-offset "(head tail)" 5) 0 1 5 0)
     (lsp-call-context-is? (lsp-call-context-at-offset "(head tail)" 6) 0 1 5 0)

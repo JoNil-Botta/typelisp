@@ -38,10 +38,12 @@
 ;; process argument count before it is read, because a global that is never
 ;; stored is a CONSTANT -- the const-global pass folds it into its uses and
 ;; there is no cell left to promote.
-
-(define gcell-a : i64 3)
-(define gcell-b : i64 5)
-(define gcell-c : i64 7)
+(define gcell-a : i64
+  3)
+(define gcell-b : i64
+  5)
+(define gcell-c : i64
+  7)
 
 ;; MEMORY-CLEAN callee: touches no memory at all -- no array, no cell, no
 ;; parameter it could write through, so the call-memory fixpoint gives it the
@@ -52,27 +54,27 @@
 (define (mix [seed : i64] [rounds : i64]) : i64
   (if (< rounds -999999)
     (mix (- seed 1) (- rounds 1))
-  (let
-    [i : i64 0]
-    [acc : i64 seed]
-    [spin : i64 0]
-    [guard : i64 0]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! acc (+ (* acc 3) 1))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i rounds)
-        (begin
-          (set! spin (+ spin acc))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i rounds)
-        (begin
-          (set! guard (+ guard 1))
-          (set! i (+ i 1))))
-      (+ acc (- spin spin))))))
+    (let
+      [i : i64 0]
+      [acc : i64 seed]
+      [spin : i64 0]
+      [guard : i64 0]
+      (begin
+        (while (< i rounds)
+          (begin
+            (set! acc (+ (* acc 3) 1))
+            (set! i (+ i 1))))
+        (set! i 0)
+        (while (< i rounds)
+          (begin
+            (set! spin (+ spin acc))
+            (set! i (+ i 1))))
+        (set! i 0)
+        (while (< i rounds)
+          (begin
+            (set! guard (+ guard 1))
+            (set! i (+ i 1))))
+        (+ acc (- spin spin))))))
 
 ;; The same shape as `mix`, but it WRITES a global cell. Its call-memory summary
 ;; therefore carries neither the memory bit nor the global bit, so
@@ -107,17 +109,17 @@
 (define (promoted-scan [n : i64] [rounds : i64]) : i64
   (if (< n -999999)
     (promoted-scan (- n 1) rounds)
-  (let
-    [i : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc gcell-a))
-          (set! acc (+ acc (mix i rounds)))
-          (set! acc (+ acc gcell-a))
-          (set! i (+ i 1))))
-      acc))))
+    (let
+      [i : i64 0]
+      [acc : i64 0]
+      (begin
+        (while (< i n)
+          (begin
+            (set! acc (+ acc gcell-a))
+            (set! acc (+ acc (mix i rounds)))
+            (set! acc (+ acc gcell-a))
+            (set! i (+ i 1))))
+        acc))))
 
 ;; REFUSED on pressure. Identical call and cell shape; the extra parameters are
 ;; all live across the loop, pushing the body's live-in count past the budget,
@@ -137,48 +139,48 @@
   [p9 : i64]) : i64
   (if (< n -999999)
     (pressured-scan (- n 1) rounds p0 p1 p2 p3 p4 p5 p6 p7 p8 p9)
-  (let
-    [i : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc gcell-b))
-          (set! acc (+ acc (mix i rounds)))
-          (set! acc (+ acc gcell-b))
-          ;; Each parameter is XORed with the loop counter, so none of them
-          ;; is a loop-invariant sub-expression LICM could fold into one
-          ;; hoisted value: all ten stay live ACROSS the loop and the body's
-          ;; live-in count is what the budget refuses.
-          (set! acc (+ acc (bit-xor p0 i)))
-          (set! acc (+ acc (bit-xor p1 i)))
-          (set! acc (+ acc (bit-xor p2 i)))
-          (set! acc (+ acc (bit-xor p3 i)))
-          (set! acc (+ acc (bit-xor p4 i)))
-          (set! acc (+ acc (bit-xor p5 i)))
-          (set! acc (+ acc (bit-xor p6 i)))
-          (set! acc (+ acc (bit-xor p7 i)))
-          (set! acc (+ acc (bit-xor p8 i)))
-          (set! acc (+ acc (bit-xor p9 i)))
-          (set! i (+ i 1))))
-      acc))))
+    (let
+      [i : i64 0]
+      [acc : i64 0]
+      (begin
+        (while (< i n)
+          (begin
+            (set! acc (+ acc gcell-b))
+            (set! acc (+ acc (mix i rounds)))
+            (set! acc (+ acc gcell-b))
+            ;; Each parameter is XORed with the loop counter, so none of them
+            ;; is a loop-invariant sub-expression LICM could fold into one
+            ;; hoisted value: all ten stay live ACROSS the loop and the body's
+            ;; live-in count is what the budget refuses.
+            (set! acc (+ acc (bit-xor p0 i)))
+            (set! acc (+ acc (bit-xor p1 i)))
+            (set! acc (+ acc (bit-xor p2 i)))
+            (set! acc (+ acc (bit-xor p3 i)))
+            (set! acc (+ acc (bit-xor p4 i)))
+            (set! acc (+ acc (bit-xor p5 i)))
+            (set! acc (+ acc (bit-xor p6 i)))
+            (set! acc (+ acc (bit-xor p7 i)))
+            (set! acc (+ acc (bit-xor p8 i)))
+            (set! acc (+ acc (bit-xor p9 i)))
+            (set! i (+ i 1))))
+        acc))))
 
 ;; REFUSED on the proof. `mix-writing` writes the cell, so every iteration must
 ;; observe the value the previous call left behind.
 (define (writer-scan [n : i64] [rounds : i64]) : i64
   (if (< n -999999)
     (writer-scan (- n 1) rounds)
-  (let
-    [i : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc gcell-c))
-          (set! acc (+ acc (mix-writing i rounds)))
-          (set! acc (+ acc gcell-c))
-          (set! i (+ i 1))))
-      acc))))
+    (let
+      [i : i64 0]
+      [acc : i64 0]
+      (begin
+        (while (< i n)
+          (begin
+            (set! acc (+ acc gcell-c))
+            (set! acc (+ acc (mix-writing i rounds)))
+            (set! acc (+ acc gcell-c))
+            (set! i (+ i 1))))
+        acc))))
 
 ;; Hand-spelled twin for `writer-scan`: the cell reads are written out around
 ;; the call in the same order, so it is only equal to `writer-scan` if the cell

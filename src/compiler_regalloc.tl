@@ -11074,6 +11074,173 @@
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
 
+;; ============================================================================
+;; MEMORY-OPERAND FOLDABILITY REBATE.
+;;
+;; The ladder above prices every mention at its block's loop-depth weight, on
+;; the model that a spilled value costs one reload per use. That model is wrong
+;; for a use the backend spells as a MEMORY OPERAND: the reload it is pricing
+;; does not exist, so the value costs the same in a register as on the stack.
+;;
+;; Pricing such a use at 16x inside a depth-4 loop is what inverts the
+;; allocator's spill choice. cfg-idom-iterate's versioned fast clone is the
+;; measured case: four array lengths, each mentioned only as the LENGTH of a
+;; bounds check but deep in the loop nest, outranked the outer loop counter --
+;; read, incremented and compared every iteration -- and took its register,
+;; leaving the counter to pay a reload, an add, a store and a reload-for-index
+;; per trip while the lengths' "reloads" were compare operands that were never
+;; emitted.
+;;
+;; The rebate returns a foldable mention to a flat 1 rather than 0: a value the
+;; IR mentions must still outrank one it does not, the density tie-break in
+;; compiler-reg-greedy-combine-spill-weights keeps meaning something among
+;; fold-only values, and a register home is still marginally the better
+;; encoding. Rebates are clamped by compiler-reg-foldable-rebate-floor, so an
+;; over-count can never drive a mentioned var to zero.
+(define (compiler-reg-foldable-mention-weight) : i64
+  1)
+
+(define (compiler-reg-foldable-rebate-floor [weight : i64]) : i64
+  (if (< weight (compiler-reg-foldable-mention-weight))
+    (compiler-reg-foldable-mention-weight)
+    weight))
+
+;; Credit one foldable mention of `value` at `weight`: the ladder already added
+;; `weight` there, and the mention is worth
+;; `compiler-reg-foldable-mention-weight`, so the rebate is the difference.
+(define (compiler-reg-foldable-rebate-add-value!
+  [rebates : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]
+  [weight : i64]) : unit
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (and
+        (>= var 0)
+        (< var (array-length rebates))
+        (> weight (compiler-reg-foldable-mention-weight)))
+        (set!
+          (array-ref rebates var)
+          (+
+            (array-ref rebates var)
+            (- weight (compiler-reg-foldable-mention-weight))))
+        unit)]
+    [_ unit]))
+
+;; The one use position whose spilled operand the backend folds
+;; UNCONDITIONALLY, on every arm, at every width: a bounds check's LENGTH.
+;; compiler-backend-emit-bounds-check reads it through
+;; compiler-backend-bounds-length-operand, which spells a spilled length as its
+;; own stack slot -- `cmpq LEN(%rsp), %idx` on the register-index arm and
+;; `cmpq $K, LEN(%rsp)` on the constant-index arm (GAP6d) -- and the abort tail
+;; pushes that same operand. No home-dependent veto sits between: the index is
+;; a register or an imm32 on both arms, so the compare's other side is never
+;; memory and the single-memory-operand rule is never in play.
+;;
+;; The INDEX is deliberately NOT rebated. Both arms load a non-constant index
+;; into a register (a constant index folds as an immediate, which the ladder
+;; never scored in the first place), so that mention is a genuine reload; and
+;; the abort tail's second `pushq` reads it after `%rsp` has already moved,
+;; which is exactly why the emitter refuses a memory index there.
+;;
+;; Mirroring discipline, as for compiler-reg-alu-mem-fold-commutative? above:
+;; the structural half of the backend's gate is restated here because regalloc
+;; runs before homes exist. Every other fold the backend performs (a binop's
+;; RHS, either side of a compare branch, a select's on-true) carries a
+;; home-dependent veto -- `rhs-reg == dst-home`, "never both sides memory",
+;; bit-test-in-branch -- that regalloc cannot decide, so those positions stay
+;; priced at the ladder's full rate.
+(define (compiler-reg-foldable-rebate-add-instr!
+  [rebates : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]
+  [weight : i64]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.BoundsCheck _ length _)
+      (compiler-reg-foldable-rebate-add-value! rebates length weight)]
+    [_ unit]))
+
+(define (compiler-reg-foldable-rebate-seq!
+  [rebates : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [weight : i64]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-foldable-rebate-add-instr!
+          rebates
+          (array-ref slots index)
+          weight)
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-foldable-rebate-blocks!
+  [rebates : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [depths : (__tl_dyn-array i64)]
+  [block-index : i64]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (compiler-reg-foldable-rebate-seq!
+              rebates
+              instrs
+              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+        (compiler-reg-foldable-rebate-blocks!
+          rebates
+          (__tl-box-place rest)
+          depths
+          (+ block-index 1)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [index : i64 block-index]
+        (while (< i count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (compiler-reg-foldable-rebate-seq!
+                  rebates
+                  instrs
+                  (compiler-reg-loop-depth-weight (array-ref depths index)))])
+            (set! index (+ index 1))
+            (set! i (+ i 1)))))]))
+
+;; Subtract the accumulated rebates. A var the ladder never scored keeps its
+;; zero, so the "does this variable appear at all" consumers see no change.
+(define (compiler-reg-apply-foldable-rebates!
+  [weights : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64
+      (if (< (array-length rebates) (array-length weights))
+        (array-length rebates)
+        (array-length weights))]
+    [var : i64 0]
+    (while (< var count)
+      (begin
+        (if (and (> (array-ref rebates var) 0) (> (array-ref weights var) 0))
+          (set!
+            (array-ref weights var)
+            (compiler-reg-foldable-rebate-floor
+              (- (array-ref weights var) (array-ref rebates var))))
+          unit)
+        (set! var (+ var 1))))))
+
+(define (compiler-reg-function-foldable-rebates
+  [blocks : ir.CompilerIrBlockList]
+  [depths : (__tl_dyn-array i64)]
+  [vars : i64]) : (__tl_dyn-array i64)
+  (let
+    [rebates : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    (begin
+      (compiler-reg-foldable-rebate-blocks! rebates blocks depths 0)
+      rebates)))
+
 (define (compiler-reg-function-spill-weights [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match func
@@ -11111,6 +11278,14 @@
             [discounted : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
             (begin
               (compiler-reg-copy-i64-array! discounted raw 0)
+              ;; Rebate the memory-operand-foldable mentions before the remat
+              ;; discount and the coalesce merge: the rebate is a per-VAR
+              ;; correction to what the ladder walk just charged that var, and
+              ;; the merge collapses a class to its hottest member, which must
+              ;; be read off corrected weights.
+              (compiler-reg-apply-foldable-rebates!
+                discounted
+                (compiler-reg-function-foldable-rebates blocks depths fn-vars))
               (compiler-reg-remat-discount-single-def-spill-weights!
                 discounted
                 def-status

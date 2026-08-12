@@ -2523,6 +2523,315 @@
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 5)))]))))
 
+;; ---------------------------------------------------------------------------
+;; Memory-operand foldability rebate (compiler-reg-function-foldable-rebates).
+;;
+;; The fixture below is a three-level loop nest under call-spanning pressure.
+;; The counter (var 0) is read and written once per trip of the OUTER loop
+;; (ladder depth 1, weight 2 per mention); the five candidates (vars 1-5) are
+;; each mentioned exactly ONCE, in the innermost block (ladder depth 3, weight
+;; 8). The raw ladder therefore ranks every candidate above the counter and
+;; makes the counter the eviction victim -- the inversion this rebate exists to
+;; fix.
+;;
+;; `fold?` selects the position of that single mention:
+;;   true  -> the candidate is the bounds check's LENGTH, which the backend
+;;            spells straight out of the home slot (`cmpq $0, LEN(%rsp)`), so
+;;            the spilled form costs no instruction and the rebate applies;
+;;   false -> the candidate is the bounds check's INDEX, which both arms of
+;;            compiler-backend-emit-bounds-check load into a register, so the
+;;            mention is a genuine reload and must NOT be rebated.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-checks
+    [var : i64]
+    [fold? : bool]
+    [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+    (if (< var 1)
+      tail
+      (compiler-reg-foldable-rebate-checks
+        (- var 1)
+        fold?
+        (ir.compiler-ir-instr-cons
+          (if fold?
+            (ir.CompilerIrInstr.BoundsCheck
+              (ir.CompilerIrValue.I64 0)
+              (ir.CompilerIrValue.Var var)
+              (ir.compiler-ir-label "ok"))
+            (ir.CompilerIrInstr.BoundsCheck
+              (ir.CompilerIrValue.Var var)
+              (ir.CompilerIrValue.I64 64)
+              (ir.compiler-ir-label "ok")))
+          tail)))))
+
+;; Each candidate gets TWO definitions. A single-def Mov of a constant is a
+;; remat candidate and would have its weight halved by
+;; compiler-reg-remat-discount-single-def-spill-weights!, which would confound
+;; the comparison: the test must measure the foldability rebate and nothing
+;; else. The counter is already multi-def (its Mov plus the loop's BinOp).
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-defs
+    [var : i64]
+    [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+    (if (< var 0)
+      tail
+      (compiler-reg-foldable-rebate-defs
+        (- var 1)
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            var
+            (ir.CompilerIrValue.I64 (+ var 1))
+            (compiler-reg-i64-ty))
+          (if (< var 1)
+            tail
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                var
+                (ir.CompilerIrValue.I64 (+ var 100))
+                (compiler-reg-i64-ty))
+              tail)))))))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-function [fold? : bool]) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "foldable_rebate_pressure")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.Unit)
+      7
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-foldable-rebate-defs
+            5
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Syscall
+                6
+                (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 39)))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l1"))
+                ir.CompilerIrInstrList.Nil))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "l1")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                0
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Bool false)
+                  (ir.compiler-ir-label "l2")
+                  (ir.compiler-ir-label "exit"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "l2")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Bool false)
+                  (ir.compiler-ir-label "l3")
+                  (ir.compiler-ir-label "l1latch"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "l3")
+                (compiler-reg-foldable-rebate-checks
+                  5
+                  fold?
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Bool false)
+                      (ir.compiler-ir-label "l3latch")
+                      (ir.compiler-ir-label "l2latch"))
+                    ir.CompilerIrInstrList.Nil)))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "l3latch")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l3"))
+                    ir.CompilerIrInstrList.Nil))
+                (ir.compiler-ir-block-cons
+                  (ir.compiler-ir-block
+                    (ir.compiler-ir-label "l2latch")
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l2"))
+                      ir.CompilerIrInstrList.Nil))
+                  (ir.compiler-ir-block-cons
+                    (ir.compiler-ir-block
+                      (ir.compiler-ir-label "l1latch")
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l1"))
+                        ir.CompilerIrInstrList.Nil))
+                    (ir.compiler-ir-block-cons
+                      (ir.compiler-ir-block
+                        (ir.compiler-ir-label "exit")
+                        (ir.compiler-ir-instr-cons
+                          (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                          ir.CompilerIrInstrList.Nil))
+                      ir.CompilerIrBlockList.Nil)))))))))))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-array [func : ir.CompilerIrFunction]) : (__tl_dyn-array
+      i64)
+    (match func
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        (reg.compiler-reg-function-foldable-rebates
+          blocks
+          (reg.compiler-reg-function-loop-depths blocks)
+          vars)])))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-combined [func : ir.CompilerIrFunction]) : (__tl_dyn-array
+      i64)
+    (match func
+      [(ir.CompilerIrFunction.Function _ _ _ vars _)
+        (reg.compiler-reg-function-spill-weights-combined
+          func
+          (reg.CompilerRegCoalesceMap (array.make-array i64 0))
+          vars)])))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-any-spilled?
+    [assignments : reg.CompilerRegAssignmentTable]
+    [var : i64]) : bool
+    (if (< var 1)
+      false
+      (if (compiler-reg-location-spill-offset?
+        (reg.compiler-reg-assignment-lookup assignments var)
+        (reg.compiler-reg-stack-slot-offset var))
+        true
+        (compiler-reg-foldable-rebate-any-spilled? assignments (- var 1))))))
+
+;; (c) Classification against the backend's fold table: only the LENGTH operand
+;; of a bounds check is credited, and it is credited exactly the difference
+;; between the block's ladder weight (depth 3 -> 8) and the flat foldable rate
+;; (1). Constant operands are never credited (they were never scored), and the
+;; counter, whose mentions are a BinOp def and use, is never credited.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-classification-ok?) : bool
+    (let
+      [fold-rebates : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-array
+          (compiler-reg-foldable-rebate-function true))]
+      [index-rebates : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-array
+          (compiler-reg-foldable-rebate-function false))]
+      [raw : (__tl_dyn-array i64)
+        (reg.compiler-reg-function-spill-weights
+          (compiler-reg-foldable-rebate-function true))]
+      [combined : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-combined
+          (compiler-reg-foldable-rebate-function true))]
+      [index-combined : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-combined
+          (compiler-reg-foldable-rebate-function false))]
+      (and
+        ;; The ladder ranks a single depth-3 foldable mention above the
+        ;; counter's per-trip def+use at depth 1.
+        (= (array-ref raw 0) 5)
+        (= (array-ref raw 1) 10)
+        (= (array-ref raw 5) 10)
+        ;; Only the length position is credited, and only by weight - 1.
+        (= (array-ref fold-rebates 0) 0)
+        (= (array-ref fold-rebates 1) 7)
+        (= (array-ref fold-rebates 5) 7)
+        (= (array-ref fold-rebates 6) 0)
+        ;; The index position is a genuine reload: nothing is credited.
+        (= (array-ref index-rebates 0) 0)
+        (= (array-ref index-rebates 1) 0)
+        (= (array-ref index-rebates 5) 0)
+        ;; ... and the rebate flips the greedy's priority order, while the
+        ;; index fixture keeps the raw order exactly.
+        (> (array-ref combined 0) (array-ref combined 1))
+        (> (array-ref combined 0) (array-ref combined 5))
+        (< (array-ref index-combined 0) (array-ref index-combined 1))
+        (< (array-ref index-combined 0) (array-ref index-combined 5))))))
+
+;; (a) The forcing fixture: under call-spanning pressure exactly one of the six
+;; values must give up its register. With the fold-only candidates repriced the
+;; counter keeps one and a candidate spills.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-keeps-counter-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-foldable-rebate-function true)]
+      (match (reg.compiler-reg-plan-function-scalar func)
+        [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (and
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 0))
+            (compiler-reg-foldable-rebate-any-spilled? assignments 5))]))))
+
+;; (b) The negative: the same shape with the candidates in the non-foldable
+;; INDEX position is left exactly as the ladder priced it -- the hot-by-depth
+;; candidates keep the registers and the counter is the victim. A rebate that
+;; leaked into non-foldable positions would flip this too.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-index-not-discounted-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-foldable-rebate-function false)]
+      (match (reg.compiler-reg-plan-function-scalar func)
+        [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (and
+            (compiler-reg-location-spill-offset?
+              (reg.compiler-reg-assignment-lookup assignments 0)
+              (reg.compiler-reg-stack-slot-offset 0))
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 1))
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 5)))]))))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-arrays-equal?
+    [left : (__tl_dyn-array i64)]
+    [right : (__tl_dyn-array i64)]
+    [index : i64]) : bool
+    (if (< index 0)
+      true
+      (if (= (array-ref left index) (array-ref right index))
+        (compiler-reg-foldable-rebate-arrays-equal? left right (- index 1))
+        false))))
+
+;; (d) Idempotence: the rebate is a pure function of the IR, so recomputing the
+;; weights (and replanning) yields identical results -- the walk must not
+;; accumulate into, or otherwise mutate, anything the next call reads.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-idempotent-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-foldable-rebate-function true)]
+      [first-rebates : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-array func)]
+      [second-rebates : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-array func)]
+      [first-combined : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-combined func)]
+      [second-combined : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-combined func)]
+      (and
+        (compiler-reg-foldable-rebate-arrays-equal?
+          first-rebates
+          second-rebates
+          6)
+        (compiler-reg-foldable-rebate-arrays-equal?
+          first-combined
+          second-combined
+          6)))))
+
 (cfg
   test
   (define (compiler-reg-instr-list-has-mov-i64?
@@ -13351,6 +13660,18 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-spill-weight-eviction-ok?"
       (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-foldable-rebate-classification-ok?"
+      (cfg test (compiler-reg-foldable-rebate-classification-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-foldable-rebate-keeps-counter-ok?"
+      (cfg test (compiler-reg-foldable-rebate-keeps-counter-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-foldable-rebate-index-not-discounted-ok?"
+      (cfg test (compiler-reg-foldable-rebate-index-not-discounted-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-foldable-rebate-idempotent-ok?"
+      (cfg test (compiler-reg-foldable-rebate-idempotent-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-call-span-counts-ok?"
       (cfg test (compiler-reg-call-span-counts-ok?) true))

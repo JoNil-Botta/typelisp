@@ -1,5 +1,12 @@
 (module spmd_fixture)
 
+;; The consumer package exercises dependency-catalog selection after its
+;; ordinary qualified import resolves this source declaration. #2755 still
+;; owns native dependency dispatch, so the selected catalog must fall back to
+;; this interpreted transformer without changing the result.
+(defmacro (package-answer) : i64
+  `42)
+
 (define (helper [x : i64] [scale : i64])
   (:spmd-callable
     (specialization

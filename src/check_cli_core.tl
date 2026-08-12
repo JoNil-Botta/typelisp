@@ -306,10 +306,14 @@
           [owned-path : String
             (string.substring path 0 (string.string-length path))]
           (begin
-            (ast.ast-decl-path-list-push-with-owner-id
+            (ast.ast-decl-path-list-push-with-owner-and-provenance-id
               (&mut out)
               owned-path
-              cbi.compiler-builtin-id-fix-empty)
+              cbi.compiler-builtin-id-fix-empty
+              (ast.ast-decl-path-list-provenance-id
+                (& paths)
+                index
+                cbi.compiler-builtin-id-fix-empty))
             (set! index (+ index 1)))))
       out)))
 

@@ -24,6 +24,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
 (import tlci_core as tlci)
+(import tlci_loader as tlci_loader_support)
 
 (defmacro (compiler-load-global-shared-view [place : Expr]) : Expr
   (cfg
@@ -455,6 +456,89 @@
   (member-sets (__tl_dyn-array sym_i64_env.SymI64Env))
   (stack (__tl_dyn-array CompilerLoadLazyQualifiedObserverStack)))
 
+;; A dependency catalog is admitted once for the load job and then selected by
+;; the defining declaration's physical source provenance. The stable key keeps
+;; reuse conservative across package builds, source edits, artifact rewrites,
+;; hosts, callback ABIs, and producer compilers.
+(defstruct CompilerLoadDependencyCatalogKey
+  (canonical-root String)
+  (package-name String)
+  (package-version String)
+  (artifact-path String)
+  (source-digest i64)
+  (image-content-hash i64)
+  (host-platform i64)
+  (callback-abi-version i64)
+  (compiler-identity String))
+
+(defenum CompilerLoadDependencyCatalogFailure
+  (Missing String)
+  (StaleSource i64 i64)
+  (PackageMismatch String String String String)
+  (WrongPlatform i64 i64)
+  (Unsupported String)
+  (Malformed String)
+  (MappingFailure String))
+
+(defenum CompilerLoadDependencyCatalogImage
+  (None)
+  (Some tlci.TlciImage))
+
+(defenum CompilerLoadDependencyCatalogStatus
+  (Unavailable CompilerLoadDependencyCatalogFailure)
+  (TrustedMetadataOnly)
+  (TrustedCode tlci_loader_support.TlciLoadedImage))
+
+(defstruct CompilerLoadDependencyCatalogEntry
+  (key CompilerLoadDependencyCatalogKey)
+  (image CompilerLoadDependencyCatalogImage)
+  (status CompilerLoadDependencyCatalogStatus))
+
+(defstruct CompilerLoadDependencyCatalogList
+  (slots (__tl_dyn-array CompilerLoadDependencyCatalogEntry))
+  (len i64))
+
+(defstruct CompilerLoadDependencyCatalogRegistry
+  ;; The registry owns parsed image/key storage. Native mappings must be
+  ;; released before this arena is destroyed.
+  (owner-arena (__tl_dyn-array i64))
+  (entries (__tl_dyn-array CompilerLoadDependencyCatalogList))
+  (generation (__tl_dyn-array i64)))
+
+(defenum CompilerLoadDependencyCatalogLookup
+  (NoCatalog)
+  (MetadataOnly)
+  (Resolved tlci_loader_support.TlciResolvedMacroEntry)
+  (Shell tlci_loader_support.TlciResolvedMacroEntry)
+  (Missing)
+  (Unavailable CompilerLoadDependencyCatalogFailure))
+
+(defenum CompilerLoadDependencyCatalogAdmittedImage
+  (NoCatalog)
+  (Unavailable CompilerLoadDependencyCatalogFailure)
+  (TrustedMetadataOnly tlci.TlciImage)
+  (TrustedCode tlci.TlciImage tlci_loader_support.TlciLoadedImage))
+
+(defenum ResultCompilerLoadDependencyCatalogUnit
+  (Ok)
+  (Err String))
+
+(define compiler-load-dependency-catalog-empty-slots : (__tl_dyn-array
+    CompilerLoadDependencyCatalogEntry)
+  (array.make-array CompilerLoadDependencyCatalogEntry 0))
+
+(define (compiler-load-dependency-catalog-empty-list) : CompilerLoadDependencyCatalogList
+  (CompilerLoadDependencyCatalogList
+    (compiler-load-global-shared-view
+      compiler-load-dependency-catalog-empty-slots)
+    0))
+
+(define (compiler-load-dependency-catalog-registry-new) : CompilerLoadDependencyCatalogRegistry
+  (CompilerLoadDependencyCatalogRegistry
+    (make-array 0)
+    (make-array (compiler-load-dependency-catalog-empty-list))
+    (make-array 0)))
+
 ;; Loader cache and traversal data is owned by an explicit session state. The
 ;; no-argument compatibility helpers below are serial/test-only adapters over
 ;; the active state pointer. State-owned driver reset paths use the explicit
@@ -482,6 +566,7 @@
   (surface-summary-load-depth (__tl_dyn-array i64))
   (lazy-import-skip-record-count (__tl_dyn-array i64))
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState)
+  (dependency-catalog CompilerLoadDependencyCatalogRegistry)
   ;; Intern table this session's floor bookkeeping is bound to once
   ;; `compiler-load-session-state-use-with-intern-state!` installs it; the
   ;; ready flag keeps legacy sessions on the compatibility-global floor path.
@@ -610,6 +695,7 @@
       surface-summary-load-depth
       lazy-import-skip-record-count
       lazy-qualified-observer
+      (compiler-load-dependency-catalog-registry-new)
       (array.make-array ci.InternCompatState 1)
       (compiler-load-session-state-bool-cell false)
       (compiler-load-session-state-bool-cell standalone-reset-safe))))
@@ -619,6 +705,295 @@
 
 (define (compiler-load-standalone-session-state-new) : CompilerLoadSessionState
   (compiler-load-session-state-new-with-standalone-reset-safety true))
+
+(define (compiler-load-session-state-dependency-catalog
+  [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogRegistry
+  state.dependency-catalog)
+
+(define (compiler-load-dependency-catalog-owner-arena
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref state.dependency-catalog.owner-arena 0))
+
+(define (compiler-load-dependency-catalog-owner-arena-ensure!
+  [state : CompilerLoadSessionState]) : i64
+  (let
+    [owner : i64 (compiler-load-dependency-catalog-owner-arena state)]
+    (if (> owner 0)
+      owner
+      (let
+        [next : i64 (arena.tl_arena_make_small)]
+        (begin
+          (set! (array-ref state.dependency-catalog.owner-arena 0) next)
+          next)))))
+
+(define (compiler-load-dependency-catalog-key-eq?
+  [left : CompilerLoadDependencyCatalogKey]
+  [right : CompilerLoadDependencyCatalogKey]) : bool
+  (and
+    (string.eq left.canonical-root right.canonical-root)
+    (string.eq left.package-name right.package-name)
+    (string.eq left.package-version right.package-version)
+    (string.eq left.artifact-path right.artifact-path)
+    (= left.source-digest right.source-digest)
+    (= left.image-content-hash right.image-content-hash)
+    (= left.host-platform right.host-platform)
+    (= left.callback-abi-version right.callback-abi-version)
+    (string.eq left.compiler-identity right.compiler-identity)))
+
+(define (compiler-load-dependency-catalog-entry-release-mapping!
+  [entry : CompilerLoadDependencyCatalogEntry]) : ResultCompilerLoadDependencyCatalogUnit
+  (match entry.status
+    [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+      (match (tlci_loader_support.tlci-loader-release loaded)
+        [(tlci_loader_support.ResultTlciLoaderUnit.Ok)
+          ResultCompilerLoadDependencyCatalogUnit.Ok]
+        [(tlci_loader_support.ResultTlciLoaderUnit.Err message)
+          (ResultCompilerLoadDependencyCatalogUnit.Err message)])]
+    [_ ResultCompilerLoadDependencyCatalogUnit.Ok]))
+
+(define (compiler-load-dependency-catalog-find-root-slot
+  [items : CompilerLoadDependencyCatalogList]
+  [canonical-root : String]) : i64
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index items.len)
+        (if (string.eq
+          (array-ref items.slots index).key.canonical-root
+          canonical-root)
+          (return index)
+          (set! index (+ index 1))))
+      -1)))
+
+(define (compiler-load-dependency-catalog-find-key-slot
+  [state : CompilerLoadSessionState]
+  [key : CompilerLoadDependencyCatalogKey]) : i64
+  (let
+    [items : CompilerLoadDependencyCatalogList
+      (array-ref state.dependency-catalog.entries 0)]
+    [slot : i64
+      (compiler-load-dependency-catalog-find-root-slot items key.canonical-root)]
+    (if (and
+      (>= slot 0)
+      (compiler-load-dependency-catalog-key-eq?
+        (array-ref items.slots slot).key
+        key))
+      slot
+      -1)))
+
+(define (compiler-load-dependency-catalog-grow
+  [owner : i64]
+  [items : CompilerLoadDependencyCatalogList]) : CompilerLoadDependencyCatalogList
+  (let
+    [old-capacity : i64 (array-length items.slots)]
+    [capacity : i64
+      (if (< old-capacity 4)
+        4
+        (* old-capacity 2))]
+    [slots : (__tl_dyn-array CompilerLoadDependencyCatalogEntry)
+      (in-arena
+        (arena.Arena owner)
+        (array.make-array CompilerLoadDependencyCatalogEntry capacity))]
+    [index : i64 0]
+    (begin
+      (while (< index items.len)
+        (begin
+          (set! (array-ref slots index) (array-ref items.slots index))
+          (set! index (+ index 1))))
+      (CompilerLoadDependencyCatalogList slots items.len))))
+
+;; `entry` and everything reachable from it must be allocated in the owner
+;; arena returned by `compiler-load-dependency-catalog-owner-arena-ensure!`.
+;; Exact stable-key matches reuse an existing mapping. A changed artifact for
+;; the same package root replaces it only after releasing the old mapping.
+(define (compiler-load-dependency-catalog-record-owned!
+  [state : CompilerLoadSessionState]
+  [entry : CompilerLoadDependencyCatalogEntry]) : i64
+  (let
+    [registry : CompilerLoadDependencyCatalogRegistry state.dependency-catalog]
+    [items : CompilerLoadDependencyCatalogList (array-ref registry.entries 0)]
+    [slot : i64
+      (compiler-load-dependency-catalog-find-root-slot
+        items
+        entry.key.canonical-root)]
+    (if (>= slot 0)
+      (let
+        [old : CompilerLoadDependencyCatalogEntry (array-ref items.slots slot)]
+        (if (compiler-load-dependency-catalog-key-eq? old.key entry.key)
+          slot
+          (begin
+            (match (compiler-load-dependency-catalog-entry-release-mapping! old)
+              [(ResultCompilerLoadDependencyCatalogUnit.Ok) unit]
+              [(ResultCompilerLoadDependencyCatalogUnit.Err _) unit])
+            (set! (array-ref items.slots slot) entry)
+            (set!
+              (array-ref registry.generation 0)
+              (+ (array-ref registry.generation 0) 1))
+            slot)))
+      (let
+        [owner : i64
+          (compiler-load-dependency-catalog-owner-arena-ensure! state)]
+        [ready : CompilerLoadDependencyCatalogList
+          (if (< items.len (array-length items.slots))
+            items
+            (compiler-load-dependency-catalog-grow owner items))]
+        [next-slot : i64 ready.len]
+        (begin
+          (set! (array-ref ready.slots next-slot) entry)
+          (set! ready.len (+ ready.len 1))
+          (set! (array-ref registry.entries 0) ready)
+          (set!
+            (array-ref registry.generation 0)
+            (+ (array-ref registry.generation 0) 1))
+          next-slot)))))
+
+(define (compiler-load-dependency-catalog-release-from!
+  [items : CompilerLoadDependencyCatalogList]
+  [index : i64]
+  [first-error : String]) : String
+  (if (>= index items.len)
+    first-error
+    (match (compiler-load-dependency-catalog-entry-release-mapping!
+      (array-ref items.slots index))
+      [(ResultCompilerLoadDependencyCatalogUnit.Ok)
+        (compiler-load-dependency-catalog-release-from!
+          items
+          (+ index 1)
+          first-error)]
+      [(ResultCompilerLoadDependencyCatalogUnit.Err message)
+        (compiler-load-dependency-catalog-release-from!
+          items
+          (+ index 1)
+          (if (= (string.string-length first-error) 0)
+            message
+            first-error))])))
+
+(define (compiler-load-session-state-dependency-catalog-release!
+  [state : CompilerLoadSessionState]) : ResultCompilerLoadDependencyCatalogUnit
+  (let
+    [registry : CompilerLoadDependencyCatalogRegistry state.dependency-catalog]
+    [items : CompilerLoadDependencyCatalogList (array-ref registry.entries 0)]
+    [owner : i64 (array-ref registry.owner-arena 0)]
+    [error : String (compiler-load-dependency-catalog-release-from! items 0 "")]
+    (begin
+      (if (> owner 0)
+        (unsafe
+          (arena.tl_arena_destroy owner))
+        unit)
+      (set! (array-ref registry.owner-arena 0) 0)
+      (set!
+        (array-ref registry.entries 0)
+        (compiler-load-dependency-catalog-empty-list))
+      (set!
+        (array-ref registry.generation 0)
+        (+ (array-ref registry.generation 0) 1))
+      (if (= (string.string-length error) 0)
+        ResultCompilerLoadDependencyCatalogUnit.Ok
+        (ResultCompilerLoadDependencyCatalogUnit.Err error)))))
+
+(define (compiler-load-canonical-path [path : String]) : String
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (if (fs.path-absolute? (& normalized))
+      normalized
+      (compiler-load-normalize-path
+        (compiler-load-join-root-path (fs.current-dir) normalized)))))
+
+(define (compiler-load-dependency-catalog-slot-for-provenance-id
+  [state : CompilerLoadSessionState]
+  [provenance-id : i64]) : i64
+  (if (< provenance-id 0)
+    -1
+    (let
+      [path : String
+        (compiler-load-canonical-path (ci.intern-str provenance-id))]
+      [items : CompilerLoadDependencyCatalogList
+        (array-ref state.dependency-catalog.entries 0)]
+      [index : i64 0]
+      [best : i64 -1]
+      [best-len : i64 -1]
+      (begin
+        (while (< index items.len)
+          (let
+            [root : String (array-ref items.slots index).key.canonical-root]
+            [root-len : i64 (string.string-length root)]
+            (begin
+              (if (and
+                (> root-len best-len)
+                (or
+                  (string.eq path root)
+                  (compiler-load-path-under-root? path root)))
+                (begin
+                  (set! best index)
+                  (set! best-len root-len))
+                unit)
+              (set! index (+ index 1)))))
+        best))))
+
+(define (compiler-load-dependency-catalog-lookup-macro
+  [state : CompilerLoadSessionState]
+  [slot : i64]
+  [identity : String]) : CompilerLoadDependencyCatalogLookup
+  (let
+    [items : CompilerLoadDependencyCatalogList
+      (array-ref state.dependency-catalog.entries 0)]
+    (if (or (< slot 0) (>= slot items.len))
+      CompilerLoadDependencyCatalogLookup.NoCatalog
+      (let
+        [entry : CompilerLoadDependencyCatalogEntry
+          (array-ref items.slots slot)]
+        (match entry.status
+          [(CompilerLoadDependencyCatalogStatus.Unavailable failure)
+            (CompilerLoadDependencyCatalogLookup.Unavailable failure)]
+          [(CompilerLoadDependencyCatalogStatus.TrustedMetadataOnly)
+            CompilerLoadDependencyCatalogLookup.MetadataOnly]
+          [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+            (match (tlci_loader_support.tlci-loader-resolve-macro-entry
+              (& loaded)
+              identity)
+              [(tlci_loader_support.TlciMacroEntryLookup.Resolved resolved)
+                (CompilerLoadDependencyCatalogLookup.Resolved resolved)]
+              [(tlci_loader_support.TlciMacroEntryLookup.Shell resolved)
+                (CompilerLoadDependencyCatalogLookup.Shell resolved)]
+              [(tlci_loader_support.TlciMacroEntryLookup.Missing)
+                CompilerLoadDependencyCatalogLookup.Missing]
+              [(tlci_loader_support.TlciMacroEntryLookup.Err message)
+                (CompilerLoadDependencyCatalogLookup.Unavailable
+                  (CompilerLoadDependencyCatalogFailure.MappingFailure message))])])))))
+
+(define (compiler-load-dependency-catalog-admitted-image
+  [state : CompilerLoadSessionState]
+  [slot : i64]) : CompilerLoadDependencyCatalogAdmittedImage
+  (let
+    [items : CompilerLoadDependencyCatalogList
+      (array-ref state.dependency-catalog.entries 0)]
+    (if (or (< slot 0) (>= slot items.len))
+      CompilerLoadDependencyCatalogAdmittedImage.NoCatalog
+      (let
+        [entry : CompilerLoadDependencyCatalogEntry
+          (array-ref items.slots slot)]
+        (match entry.status
+          [(CompilerLoadDependencyCatalogStatus.Unavailable failure)
+            (CompilerLoadDependencyCatalogAdmittedImage.Unavailable failure)]
+          [(CompilerLoadDependencyCatalogStatus.TrustedMetadataOnly)
+            (match entry.image
+              [(CompilerLoadDependencyCatalogImage.Some image)
+                (CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
+                  image)]
+              [(CompilerLoadDependencyCatalogImage.None)
+                (CompilerLoadDependencyCatalogAdmittedImage.Unavailable
+                  (CompilerLoadDependencyCatalogFailure.Malformed
+                    "dependency catalog: trusted metadata entry has no image"))])]
+          [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+            (match entry.image
+              [(CompilerLoadDependencyCatalogImage.Some image)
+                (CompilerLoadDependencyCatalogAdmittedImage.TrustedCode
+                  image
+                  loaded)]
+              [(CompilerLoadDependencyCatalogImage.None)
+                (CompilerLoadDependencyCatalogAdmittedImage.Unavailable
+                  (CompilerLoadDependencyCatalogFailure.Malformed
+                    "dependency catalog: trusted code entry has no image"))])])))))
 
 (define compiler-load-default-session-state : (__tl_dyn-array
     CompilerLoadSessionState)
@@ -3066,6 +3441,7 @@
     [right-len : i64 (ast.ast-decl-path-list-len (& right))]
     [right-slots : (__tl_dyn-array String) right.slots]
     [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
+    [right-provenance-ids : (__tl_dyn-array i64) right.provenance-ids]
     (if (and
       (<= left-len right.offset)
       right.prependable
@@ -3091,9 +3467,17 @@
             new-offset
             0
             left-len)
+          (ast.ast-decl-module-list-copy-to
+            (&mut right-provenance-ids)
+            (& left.provenance-ids)
+            left.offset
+            new-offset
+            0
+            left-len)
           (ast.AstDeclPathList
             right-slots
             right-owner-ids
+            right-provenance-ids
             new-offset
             (+ left-len right-len)
             true)))
@@ -7564,14 +7948,16 @@
 
 (define (compiler-load-alias-path-list
   [importer-path : String]
+  [importer-path-id : i64]
   [importer-decl-owner-id : i64]
   [alias : ast.AstMaybeImportAlias]
   [rest : ast.AstDeclPathList]) : ast.AstDeclPathList
   (match alias
     [(ast.AstMaybeImportAlias.Some _)
-      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
         importer-path
         importer-decl-owner-id
+        importer-path-id
         rest)]
     [(ast.AstMaybeImportAlias.No) rest]))
 
@@ -7611,6 +7997,7 @@
 
 (define (compiler-load-paths-after-import
   [importer-path : String]
+  [importer-path-id : i64]
   [importer-decl-owner-id : i64]
   [alias : ast.AstMaybeImportAlias]
   [imported-decls : ast.AstDeclList]
@@ -7619,13 +8006,15 @@
     [after-alias : ast.AstDeclPathList
       (compiler-load-alias-path-list
         importer-path
+        importer-path-id
         importer-decl-owner-id
         alias
         rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
-      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
         importer-path
         importer-decl-owner-id
+        importer-path-id
         after-alias)
       after-alias)))
 
@@ -7727,14 +8116,16 @@
                                 (ast.ast-decl-module-id
                                   importer-source-module-id)
                                 rest-decls)))
-                          (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                          (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                             importer-path
                             target-module-id
+                            traversal.importer-path-id
                             (compiler-load-decl-path-list-append-onto
                               body-paths
-                              (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                              (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                                 importer-path
                                 traversal.importer-decl-owner-id
+                                traversal.importer-path-id
                                 rest-paths)))
                           (ast.ast-decl-module-list-prepend-builder-id
                             target-module-id
@@ -7780,9 +8171,10 @@
                       decl
                       decls
                       rest-decls)
-                    (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                    (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                       importer-path
                       traversal.importer-decl-owner-id
+                      traversal.importer-path-id
                       rest-paths)
                     (ast.ast-decl-module-list-prepend-builder-id
                       importer-source-module-id
@@ -7927,6 +8319,7 @@
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
+                                        traversal.importer-path-id
                                         traversal.importer-decl-owner-id
                                         after-import-alias
                                         (ast.ast-decl-list-new)
@@ -7953,6 +8346,7 @@
                                       imported-paths
                                       (compiler-load-paths-after-import
                                         importer-path
+                                        traversal.importer-path-id
                                         traversal.importer-decl-owner-id
                                         after-import-alias
                                         imported-decls
@@ -8004,9 +8398,10 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                         importer-path
                         traversal.importer-decl-owner-id
+                        traversal.importer-path-id
                         rest-paths)
                       (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -8047,9 +8442,10 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                         importer-path
                         traversal.importer-decl-owner-id
+                        traversal.importer-path-id
                         rest-paths)
                       (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -8087,9 +8483,10 @@
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
                       (ast.ast-decl-list-prepend-builder expanded rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                         importer-path
                         traversal.importer-decl-owner-id
+                        traversal.importer-path-id
                         rest-paths)
                       (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -8130,9 +8527,10 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                         importer-path
                         traversal.importer-decl-owner-id
+                        traversal.importer-path-id
                         rest-paths)
                       (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -8166,9 +8564,10 @@
                     decl
                     decls
                     rest-decls)
-                  (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                  (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                     importer-path
                     traversal.importer-decl-owner-id
+                    traversal.importer-path-id
                     rest-paths)
                   (ast.ast-decl-module-list-prepend-builder-id
                     importer-source-module-id
@@ -10206,6 +10605,11 @@
                   (& path-cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
+              [decl-provenance-id : i64
+                (ast.ast-decl-path-list-provenance-id
+                  (& path-cursor)
+                  0
+                  cbi.compiler-builtin-id-fix-empty)]
               [owned-path-id : i64
                 (if (compiler-load-package-owned-decl-entry-main?
                   entry-path
@@ -10222,10 +10626,11 @@
                     decl-path-id))]
               [owned-path : String (ci.intern-str owned-path-id)]
               (begin
-                (ast.ast-decl-path-list-push-with-owner-id
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                   (&mut out)
                   owned-path
-                  owned-path-id)
+                  owned-path-id
+                  decl-provenance-id)
                 (match decl
                   [(ast.AstDecl.Module name)
                     (set! current-module (ci.intern-str name))]
@@ -10277,6 +10682,11 @@
             (& paths)
             0
             cbi.compiler-builtin-id-fix-empty)]
+        [decl-provenance-id : i64
+          (ast.ast-decl-path-list-provenance-id
+            (& paths)
+            0
+            cbi.compiler-builtin-id-fix-empty)]
         [owned-decl-path : String
           (compiler-load-package-owned-path
             package-owner
@@ -10321,9 +10731,10 @@
                     transformed
                     decls
                     rest-decls)
-                  (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                  (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                     owned-decl-path
                     decl-path-id
+                    decl-provenance-id
                     rest-decl-paths)
                   (ast.ast-decl-module-list-prepend-builder-id
                     module-id
@@ -10744,6 +11155,7 @@
                                       (compiler-load-paths-after-import
                                         importer-path
                                         importer-path-id
+                                        importer-path-id
                                         after-import-alias
                                         (ast.ast-decl-list-new)
                                         rest-paths)
@@ -10769,6 +11181,7 @@
                                       imported-paths
                                       (compiler-load-paths-after-import
                                         importer-path
+                                        importer-path-id
                                         importer-path-id
                                         after-import-alias
                                         imported-decls
@@ -16647,8 +17060,128 @@
               [_ false]))]
         (and before-ok after-remove-ok reload-ok isolation-ok)))))
 
+(define (compiler-load-dependency-catalog-registry-ok?) : bool
+  (let
+    [state : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [other-state : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [owner : i64 (compiler-load-dependency-catalog-owner-arena-ensure! state)]
+    [checks : (__tl_dyn-array bool) (make-array false)]
+    (begin
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [outer-root : String
+            (compiler-load-canonical-path
+              (compiler-load-join-root-path
+                (fs.current-dir)
+                "__dependency_catalog_test"))]
+          [nested-root : String
+            (compiler-load-join-root-path outer-root "nested")]
+          [outer-key : CompilerLoadDependencyCatalogKey
+            (CompilerLoadDependencyCatalogKey
+              outer-root
+              "outer"
+              "1.0.0"
+              (compiler-load-join-root-path outer-root "target/outer.tlci")
+              11
+              12
+              13
+              14
+              "compiler-a")]
+          [nested-key : CompilerLoadDependencyCatalogKey
+            (CompilerLoadDependencyCatalogKey
+              nested-root
+              "nested"
+              "2.0.0"
+              (compiler-load-join-root-path nested-root "target/nested.tlci")
+              21
+              22
+              23
+              24
+              "compiler-b")]
+          [outer-entry : CompilerLoadDependencyCatalogEntry
+            (CompilerLoadDependencyCatalogEntry
+              outer-key
+              CompilerLoadDependencyCatalogImage.None
+              (CompilerLoadDependencyCatalogStatus.Unavailable
+                (CompilerLoadDependencyCatalogFailure.Missing "outer missing")))]
+          [nested-entry : CompilerLoadDependencyCatalogEntry
+            (CompilerLoadDependencyCatalogEntry
+              nested-key
+              CompilerLoadDependencyCatalogImage.None
+              (CompilerLoadDependencyCatalogStatus.Unavailable
+                (CompilerLoadDependencyCatalogFailure.Missing "nested missing")))]
+          [outer-slot : i64
+            (compiler-load-dependency-catalog-record-owned! state outer-entry)]
+          [nested-slot : i64
+            (compiler-load-dependency-catalog-record-owned! state nested-entry)]
+          [nested-provenance : i64
+            (ci.intern (compiler-load-join-root-path nested-root "src/lib.tl"))]
+          [outer-provenance : i64
+            (ci.intern (compiler-load-join-root-path outer-root "src/lib.tl"))]
+          [sibling-provenance : i64
+            (ci.intern
+              (compiler-load-join-root-path
+                (fs.current-dir)
+                "__dependency_catalog_test-other/src/lib.tl"))]
+          [same-slot : i64
+            (compiler-load-dependency-catalog-record-owned! state nested-entry)]
+          (set!
+            (array-ref checks 0)
+            (and
+              (= outer-slot 0)
+              (= nested-slot 1)
+              (= same-slot nested-slot)
+              (=
+                (compiler-load-dependency-catalog-find-key-slot
+                  state
+                  nested-key)
+                nested-slot)
+              (=
+                (compiler-load-dependency-catalog-slot-for-provenance-id
+                  state
+                  nested-provenance)
+                nested-slot)
+              (=
+                (compiler-load-dependency-catalog-slot-for-provenance-id
+                  state
+                  outer-provenance)
+                outer-slot)
+              (=
+                (compiler-load-dependency-catalog-slot-for-provenance-id
+                  state
+                  sibling-provenance)
+                -1)
+              (=
+                (compiler-load-dependency-catalog-slot-for-provenance-id
+                  other-state
+                  nested-provenance)
+                -1)
+              (match (compiler-load-dependency-catalog-lookup-macro
+                state
+                nested-slot
+                "nested/macro")
+                [(CompilerLoadDependencyCatalogLookup.Unavailable
+                    (CompilerLoadDependencyCatalogFailure.Missing message))
+                  (string.eq message "nested missing")]
+                [_ false])
+              (= (array-ref state.dependency-catalog.entries 0).len 2)))))
+      (let
+        [release-ok : bool
+          (match (compiler-load-session-state-dependency-catalog-release! state)
+            [(ResultCompilerLoadDependencyCatalogUnit.Ok) true]
+            [(ResultCompilerLoadDependencyCatalogUnit.Err _) false])]
+        (and
+          (array-ref checks 0)
+          release-ok
+          (= (compiler-load-dependency-catalog-owner-arena state) 0)
+          (= (array-ref state.dependency-catalog.entries 0).len 0))))))
+
 (define (compiler-load-self-test) : i64
   (begin
+    (unless
+      (compiler-load-dependency-catalog-registry-ok?)
+      (return (io.panic "compiler-load: dependency catalog registry mismatch")))
     (unless
       (compiler-load-embedded-provenance-observer-ok?)
       (return (io.panic "compiler-load: embedded provenance observer mismatch")))

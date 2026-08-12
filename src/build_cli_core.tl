@@ -41,6 +41,7 @@
 (import compiler_diagnostic)
 (import compiler_parse_core)
 (import compiler_driver_core)
+(import compiler_dependency_tlci)
 (import tlci_core as tlci)
 (import compiler_tlci_native_producer)
 (import sym_i64_env)
@@ -5799,6 +5800,11 @@
         (& paths)
         0
         cbi.compiler-builtin-id-fix-empty)]
+    [provenance-id : i64
+      (ast.ast-decl-path-list-provenance-id
+        (& paths)
+        0
+        cbi.compiler-builtin-id-fix-empty)]
     (match (ast.ast-decl-path-list-step paths)
       [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)]
       [(ast.AstDeclPathListStep.Cons path rest)
@@ -5806,9 +5812,10 @@
           [tail : ast.AstDeclPathList (build-package-doctest-paths owner rest)]
           (if (build-package-tlci-stdlib-path? owner path)
             tail
-            (ast.ast-decl-path-list-prepend-builder-with-owner-id
+            (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
               path
               owner-id
+              provenance-id
               tail)))])))
 
 (define (build-package-closure-doctest-status
@@ -5906,6 +5913,11 @@
     [tlci-path : String (build-package-host-tlci-artifact-path artifact-paths)]
     [_reset-file-state : unit
       (compiler_driver_core.compiler-driver-reset-file-state!)]
+    [_dependency-catalogs : unit
+      (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
+        (load.compiler-load-serial-test-session-state)
+        manifest-dir
+        manifest.deps)]
     (if (or
       (> (string.string-length compile-context.error) 0)
       (not (build-ensure-package-output-dirs manifest-dir name profile)))
@@ -6053,6 +6065,20 @@
                             announce))]))])
               pre-emit-doctest-status))
           inline-test-status)))))
+
+(define (build-package-dependency-catalog-finish [status : i64]) : i64
+  (match (load.compiler-load-session-state-dependency-catalog-release!
+    (load.compiler-load-serial-test-session-state))
+    [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) status]
+    [(load.ResultCompilerLoadDependencyCatalogUnit.Err message)
+      (begin
+        (io.print-error
+          (str_cat.str-cat
+            "build: failed to release dependency catalog mapping: "
+            message))
+        (if (= status 0)
+          1
+          status))]))
 
 (define (build-package-worker-unified-cli?) : bool
   (and
@@ -6352,18 +6378,19 @@
                     1)]
                 [(ResultBuildManifest.Ok resolved-manifest)
                   (if (build-package-kind-lib? resolved-manifest.kind)
-                    (build-package-emit-one
-                      normalized-path
-                      resolved-manifest
-                      config.target
-                      config.opt-level
-                      config.profile
-                      config.mode
-                      config.lock-policy
-                      config.stdlib-roots
-                      (process.args-empty)
-                      producer-identity
-                      true)
+                    (build-package-dependency-catalog-finish
+                      (build-package-emit-one
+                        normalized-path
+                        resolved-manifest
+                        config.target
+                        config.opt-level
+                        config.profile
+                        config.mode
+                        config.lock-policy
+                        config.stdlib-roots
+                        (process.args-empty)
+                        producer-identity
+                        true))
                     (begin
                       (io.print-error
                         "build: package worker can only build staticlib packages")
@@ -6969,7 +6996,7 @@
           inline-test-status))
       doctest-status)))
 
-(define (build-package-emit
+(define (build-package-emit-owned
   [manifest-path : String]
   [manifest : load.CompilerPkgManifest]
   [target-text : String]
@@ -7035,6 +7062,32 @@
                       producer-identity
                       announce)
                     dep-status))])]))]))
+
+(define (build-package-emit
+  [manifest-path : String]
+  [manifest : load.CompilerPkgManifest]
+  [target-text : String]
+  [has-target : bool]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : backend.CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [stdlib-roots : cli_svec.Vec]
+  [producer-identity : String]
+  [announce : bool]) : i64
+  (build-package-dependency-catalog-finish
+    (build-package-emit-owned
+      manifest-path
+      manifest
+      target-text
+      has-target
+      opt-level
+      profile
+      mode
+      lock-policy
+      stdlib-roots
+      producer-identity
+      announce)))
 
 (define (build-package-from-path-announce
   [manifest-path : String]

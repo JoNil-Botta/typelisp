@@ -133,6 +133,7 @@
       (fill-f64 f64-input f64-out n)
       (fill-f32 f32-input f32-out n)
       (if (and
+        (= (fixture.package-answer) 42)
         (= (fixture.helper 2 3) 5)
         (= (array-ref out 0) 3)
         (= (array-ref out 12) 15)

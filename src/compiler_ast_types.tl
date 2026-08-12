@@ -3385,7 +3385,12 @@
 
 (defstruct AstDeclPathList
   (slots (__tl_dyn-array String))
+  ;; The effective owner is allowed to become the lexical module id during
+  ;; `ast-decl-path-list-with-modules`.  Keep the source/package provenance in
+  ;; a parallel lane so two packages that define the same module text remain
+  ;; distinguishable after ordinary module resolution.  Refs #5482.
   (owner-ids (__tl_dyn-array i64))
+  (provenance-ids (__tl_dyn-array i64))
   (offset i64)
   (len i64)
   (prependable bool))
@@ -6817,6 +6822,7 @@
     (AstDeclPathList
       (array.make-array String cap)
       (array.make-array i64 cap)
+      (array.make-array i64 cap)
       0
       0
       true)))
@@ -6841,6 +6847,14 @@
   [fallback : i64]) : i64
   (if (and (>= index 0) (< index (ast-decl-path-list-len v)))
     (array-ref v.owner-ids (+ v.offset index))
+    fallback))
+
+(define (ast-decl-path-list-provenance-id
+  [v : (& v AstDeclPathList)]
+  [index : i64]
+  [fallback : i64]) : i64
+  (if (and (>= index 0) (< index (ast-decl-path-list-len v)))
+    (array-ref v.provenance-ids (+ v.offset index))
     fallback))
 
 (define (ast-decl-path-list-copy-range
@@ -6886,6 +6900,8 @@
         (* old-cap 2))]
     [bigger : (__tl_dyn-array String) (array.make-array String new-cap)]
     [bigger-owner-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+    [bigger-provenance-ids : (__tl_dyn-array i64)
+      (array.make-array i64 new-cap)]
     (begin
       (ast-decl-path-list-copy-range (&mut bigger) (& v.slots) v.offset 0 n)
       (ast-decl-module-list-copy-to
@@ -6895,15 +6911,24 @@
         0
         0
         n)
+      (ast-decl-module-list-copy-to
+        (&mut bigger-provenance-ids)
+        (& v.provenance-ids)
+        v.offset
+        0
+        0
+        n)
       (set! v.slots bigger)
       (set! v.owner-ids bigger-owner-ids)
+      (set! v.provenance-ids bigger-provenance-ids)
       (set! v.offset 0)
       (set! v.prependable true))))
 
-(define (ast-decl-path-list-push-with-owner-id
+(define (ast-decl-path-list-push-with-owner-and-provenance-id
   [v : (&mut v AstDeclPathList)]
   [value : String]
-  [owner-id : i64]) : unit
+  [owner-id : i64]
+  [provenance-id : i64]) : unit
   (begin
     (if (< v.len (- (array-length v.slots) v.offset))
       unit
@@ -6913,7 +6938,18 @@
       (begin
         (set! (array-ref v.slots index) value)
         (set! (array-ref v.owner-ids index) owner-id)
+        (set! (array-ref v.provenance-ids index) provenance-id)
         (set! v.len (+ v.len 1))))))
+
+(define (ast-decl-path-list-push-with-owner-id
+  [v : (&mut v AstDeclPathList)]
+  [value : String]
+  [owner-id : i64]) : unit
+  (ast-decl-path-list-push-with-owner-and-provenance-id
+    v
+    value
+    owner-id
+    owner-id))
 
 (define (ast-decl-path-list-tail [items : AstDeclPathList]) : AstDeclPathList
   (if (<= (ast-decl-path-list-len (& items)) 0)
@@ -6921,6 +6957,7 @@
     (AstDeclPathList
       items.slots
       items.owner-ids
+      items.provenance-ids
       (+ items.offset 1)
       (- items.len 1)
       false)))
@@ -6936,6 +6973,7 @@
         (AstDeclPathList
           items.slots
           items.owner-ids
+          items.provenance-ids
           (+ offset 1)
           (- len 1)
           false)))))
@@ -6947,18 +6985,23 @@
   (if (>= index (ast-decl-path-list-len items))
     unit
     (begin
-      (ast-decl-path-list-push-with-owner-id
+      (ast-decl-path-list-push-with-owner-and-provenance-id
         out
         (ast-decl-path-list-get items index "")
         (ast-decl-path-list-owner-id
           items
           index
+          cbi.compiler-builtin-id-fix-empty)
+        (ast-decl-path-list-provenance-id
+          items
+          index
           cbi.compiler-builtin-id-fix-empty))
       (ast-decl-path-list-append-from out items (+ index 1)))))
 
-(define (ast-decl-path-list-prepend-builder-with-owner-id
+(define (ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
   [head : String]
   [owner-id : i64]
+  [provenance-id : i64]
   [rest : AstDeclPathList]) : AstDeclPathList
   (if (and (> rest.offset 0) rest.prependable)
     (let
@@ -6966,9 +7009,11 @@
       (begin
         (set! (array-ref rest.slots new-offset) head)
         (set! (array-ref rest.owner-ids new-offset) owner-id)
+        (set! (array-ref rest.provenance-ids new-offset) provenance-id)
         (AstDeclPathList
           rest.slots
           rest.owner-ids
+          rest.provenance-ids
           new-offset
           (+ rest.len 1)
           true)))
@@ -6982,9 +7027,11 @@
       [new-offset : i64 (- new-cap new-len)]
       [slots : (__tl_dyn-array String) (array.make-array String new-cap)]
       [owner-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+      [provenance-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
       (begin
         (set! (array-ref slots new-offset) head)
         (set! (array-ref owner-ids new-offset) owner-id)
+        (set! (array-ref provenance-ids new-offset) provenance-id)
         (ast-decl-path-list-copy-to
           (&mut slots)
           (& rest.slots)
@@ -6999,7 +7046,24 @@
           (+ new-offset 1)
           0
           rest-len)
-        (AstDeclPathList slots owner-ids new-offset new-len true)))))
+        (ast-decl-module-list-copy-to
+          (&mut provenance-ids)
+          (& rest.provenance-ids)
+          rest.offset
+          (+ new-offset 1)
+          0
+          rest-len)
+        (AstDeclPathList slots owner-ids provenance-ids new-offset new-len true)))))
+
+(define (ast-decl-path-list-prepend-builder-with-owner-id
+  [head : String]
+  [owner-id : i64]
+  [rest : AstDeclPathList]) : AstDeclPathList
+  (ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
+    head
+    owner-id
+    owner-id
+    rest))
 
 (define (ast-decl-path-cons-with-owner-id
   [head : String]
@@ -7182,6 +7246,7 @@
       (AstDeclPathList
         paths.slots
         owner-ids
+        paths.provenance-ids
         paths.offset
         paths.len
         paths.prependable))))

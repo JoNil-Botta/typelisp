@@ -94,12 +94,13 @@ select_single_release_id() {
 }
 
 # Retry a release-discovery command inside the propagation budget and print the
-# ids it found. Only a command that both succeeds and prints something is
-# promoted: a command that fails never leaves its output behind as a release id
-# (an API error body would otherwise satisfy the single-id check and be spliced
-# into the next request path), and its own diagnostic is surfaced instead of
-# being reported as an absent release. A clean empty result is the real "not
-# visible yet" case and prints nothing, so the caller reports it as absent.
+# ids it found. Only a command that both succeeds and prints exactly one id is
+# stable enough to promote. The staged replacement protocol can briefly leave
+# the authenticated list showing both the deleted predecessor and promoted
+# candidate, even after the public tag endpoint has switched. A command that
+# fails never leaves its output behind as a release id (an API error body would
+# otherwise satisfy the single-id check and be spliced into the next request
+# path), and its own diagnostic is surfaced instead of being reported absent.
 retry_release_discovery() {
     discovery_tag=$1
     shift
@@ -111,15 +112,20 @@ retry_release_discovery() {
     while [ "$discovery_attempt" -le "$ATTEMPTS" ]; do
         discovery_failed=0
         if discovery_candidate=$("$@" 2>"$discovery_err"); then
+            discovery_found=$discovery_candidate
             if [ -n "$discovery_candidate" ]; then
-                discovery_found=$discovery_candidate
-                break
+                discovery_count=$(printf '%s\n' "$discovery_candidate" |
+                    wc -l | tr -d ' ')
+                if [ "$discovery_count" -eq 1 ]; then
+                    break
+                fi
             fi
         else
             discovery_failed=1
+            discovery_found=
         fi
         if [ "$discovery_attempt" -lt "$ATTEMPTS" ]; then
-            echo "[stage0-release] authenticated release list not ready for tag $discovery_tag (attempt $discovery_attempt/$ATTEMPTS); retrying in ${DELAY}s" >&2
+            echo "[stage0-release] authenticated release list not stable for tag $discovery_tag (attempt $discovery_attempt/$ATTEMPTS); retrying in ${DELAY}s" >&2
             sleep "$DELAY"
         fi
         discovery_attempt=$((discovery_attempt + 1))
@@ -176,6 +182,17 @@ self_test_absent_discovery() {
     printf '%s\n' "$((count + 1))" > "$SELF_TEST_DISCOVERY_COUNTER"
 }
 
+self_test_duplicate_discovery() {
+    count=$(cat "$SELF_TEST_DISCOVERY_COUNTER")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$SELF_TEST_DISCOVERY_COUNTER"
+    if [ "$count" -lt 3 ]; then
+        printf '90\n100\n'
+    else
+        echo 100
+    fi
+}
+
 self_test_failing_discovery() {
     # Mirrors `gh api` on an auth failure: an error body on stdout, the
     # actionable message on stderr, and a non-zero status.
@@ -230,6 +247,20 @@ self_test() {
     }
     [ "$(cat "$SELF_TEST_DISCOVERY_COUNTER")" = 3 ] || {
         echo "self-test lagging discovery attempt count mismatch:" \
+            "$(cat "$SELF_TEST_DISCOVERY_COUNTER")" >&2
+        rm -f "$SELF_TEST_DISCOVERY_COUNTER"
+        return 1
+    }
+    printf '0\n' > "$SELF_TEST_DISCOVERY_COUNTER"
+    discovered=$(retry_release_discovery stage0-latest \
+        self_test_duplicate_discovery 2>/dev/null)
+    [ "$discovered" = 100 ] || {
+        echo "self-test duplicate discovery did not converge: $discovered" >&2
+        rm -f "$SELF_TEST_DISCOVERY_COUNTER"
+        return 1
+    }
+    [ "$(cat "$SELF_TEST_DISCOVERY_COUNTER")" = 3 ] || {
+        echo "self-test duplicate discovery attempt count mismatch:" \
             "$(cat "$SELF_TEST_DISCOVERY_COUNTER")" >&2
         rm -f "$SELF_TEST_DISCOVERY_COUNTER"
         return 1
@@ -326,7 +357,7 @@ done
 # newly created release can take a few seconds to appear in this list, so bound
 # the discovery race with the same propagation retry budget used below.
 list_release_ids() {
-    gh api "repos/$REPO/releases?per_page=100" \
+    gh api --paginate "repos/$REPO/releases?per_page=100" \
         --jq ".[] | select(.tag_name == \"$TAG\") | .id"
 }
 

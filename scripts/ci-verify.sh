@@ -246,6 +246,13 @@ run_gate \
     scripts/verify-stage0-release.sh \
     --self-test
 run_gate \
+    "stage0 latest staged publication self-tests" \
+    scripts/publish-stage0-latest.sh \
+    --self-test
+run_gate \
+    "stage0 publication workflow policy" \
+    scripts/verify-stage0-workflow-policy.sh
+run_gate \
     "docs publication workflow policy" \
     scripts/verify-docs-workflow-policy.sh
 if [ "$HOST_OS" = windows ]; then

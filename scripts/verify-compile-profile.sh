@@ -1496,7 +1496,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # the merged path-sensitive checker remains one segment above main alone.
     # The seven-packet optimizer/backend series plus current main land this
     # boundary at 48 segments: the final current-main review probe measured
-    # 3,081,290 used nodes, 3,145,728 capacity, and 100,663,296 physical
+    # 3,081,607 used nodes, 3,145,728 capacity, and 100,663,296 physical
     # payload bytes. Earlier 47/48 measurements came from different PR merge
     # bases (db8e822 versus 2298cbe), not identical-source nondeterminism.
     assert_selfhost_pool_family \

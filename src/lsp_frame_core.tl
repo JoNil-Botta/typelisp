@@ -428,15 +428,11 @@
   [input : (& input str)]
   [transport-arena : i64]) : unit
   (begin
-    (let
-      [active-arena : i64 (arena.tl_arena_current)]
+    (in-arena
+      (arena.Arena transport-arena)
       (begin
-        (unsafe
-          (arena.tl_arena_set transport-arena))
         (set! lsp-frame-memory-input (string.copy input))
-        (set! lsp-frame-memory-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set active-arena))))
+        (set! lsp-frame-memory-arena transport-arena)))
     (set! lsp-frame-memory-input-offset 0)
     (set! lsp-frame-memory-eof false)
     (set! lsp-frame-memory-stdout "")
@@ -444,30 +440,18 @@
     (set! lsp-frame-memory-active true)))
 
 (define (lsp-frame-memory-stdout-append! [text : String]) : unit
-  (let
-    [active-arena : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set lsp-frame-memory-arena))
-      (set!
-        lsp-frame-memory-stdout
-        (str_cat.str-cat-scoped lsp-frame-memory-stdout text))
-      (set! lsp-frame-memory-arena (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set active-arena)))))
+  (in-arena
+    (arena.Arena lsp-frame-memory-arena)
+    (set!
+      lsp-frame-memory-stdout
+      (str_cat.str-cat-scoped lsp-frame-memory-stdout text))))
 
 (define (lsp-frame-memory-stderr-append! [text : String]) : unit
-  (let
-    [active-arena : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set lsp-frame-memory-arena))
-      (set!
-        lsp-frame-memory-stderr
-        (str_cat.str-cat-scoped lsp-frame-memory-stderr text))
-      (set! lsp-frame-memory-arena (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set active-arena)))))
+  (in-arena
+    (arena.Arena lsp-frame-memory-arena)
+    (set!
+      lsp-frame-memory-stderr
+      (str_cat.str-cat-scoped lsp-frame-memory-stderr text))))
 
 (define (lsp-frame-memory-read-line) : io.StdinRead
   (let
@@ -1403,28 +1387,18 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-        [source-path : String doc.path]
-        [source-text : String doc.text]
-        [previous-arena : i64 (arena.tl_arena_current)]
-        [snapshot-owner : i64 semantic-index.owner-arena]
-        [_install-owner : unit
-          (unsafe
-            (arena.tl_arena_set snapshot-owner))]
-        [snapshot-path : String (string.copy (& source-path))]
-        [snapshot-text : String (string.copy (& source-text))]
-        [_restore-arena : unit
-          (unsafe
-            (arena.tl_arena_set previous-arena))]
-        (begin
-          (lsp-semantic-snapshot-release! (&mut doc.semantic))
-          (set!
-            doc.semantic
+        [snapshot : lsp_vector_families.LspSemanticSnapshot
+          (in-arena
+            (arena.Arena semantic-index.owner-arena)
             (lsp_vector_families.LspSemanticSnapshot
               semantic-index
               version
-              snapshot-path
-              snapshot-text
-              true))
+              (string.copy (& doc.path))
+              (string.copy (& doc.text))
+              true))]
+        (begin
+          (lsp-semantic-snapshot-release! (&mut doc.semantic))
+          (set! doc.semantic snapshot)
           (lsp_document_vec.set (&mut docs) index doc)
           docs))
       (begin

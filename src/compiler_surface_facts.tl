@@ -240,22 +240,15 @@
       (>= surface-typecheck-facts-recording-decl-key 0)
       (>= surface-typecheck-facts-recording-current-call 0)
       (>= root-key 0))
-      (let
-        [previous-arena : i64 (arena.tl_arena_current)]
+      (in-arena
+        (arena.Arena surface-typecheck-facts-recording-arena)
         (begin
-          (unsafe
-            (arena.tl_arena_set surface-typecheck-facts-recording-arena))
           (surface-clone-observation-seq-push!
             (&mut surface-typecheck-facts-recording-observations)
             (SurfaceCloneObservation
               surface-typecheck-facts-recording-decl-key
               root-key
-              surface-typecheck-facts-recording-current-call))
-          (set!
-            surface-typecheck-facts-recording-arena
-            (arena.tl_arena_current))
-          (unsafe
-            (arena.tl_arena_set previous-arena))))
+              surface-typecheck-facts-recording-current-call))))
       unit)))
 
 (cfg

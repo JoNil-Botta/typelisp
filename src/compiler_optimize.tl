@@ -24237,10 +24237,107 @@
 ;; slot the dead Casts that removed BoundsChecks strand are still in the IR --
 ;; the pipeline DCE is far below -- and counting them would reject loops whose
 ;; only outside reader is already retired.
+(defenum OptFlagExitEdge
+  ;; the clearing predecessor, then the phi block its edge flows into.
+  (Edge i64 i64))
+
 (defenum OptFlagExitEdgeList
   (Nil)
-  ;; the clearing predecessor, then the phi block its edge flows into.
-  (Cons i64 i64 (Box OptFlagExitEdgeList)))
+  ;; Physical append is logical Cons/prepend. Consumers read from the live end
+  ;; so the old newest-first traversal order is unchanged.
+  (Dense (__tl_dyn-array OptFlagExitEdge) i64))
+
+(define (opt-flag-exit-edge-ref [edges : OptFlagExitEdgeList] [index : i64]) : OptFlagExitEdge
+  (match edges
+    [(OptFlagExitEdgeList.Nil) (OptFlagExitEdge.Edge -1 -1)]
+    [(OptFlagExitEdgeList.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-flag-exit-edge-tail [edges : OptFlagExitEdgeList]) : OptFlagExitEdgeList
+  (match edges
+    [(OptFlagExitEdgeList.Nil) (OptFlagExitEdgeList.Nil)]
+    [(OptFlagExitEdgeList.Dense items len)
+      (if (<= len 1)
+        (OptFlagExitEdgeList.Nil)
+        (OptFlagExitEdgeList.Dense items (- len 1)))]))
+
+(define (opt-flag-exit-edge-cons
+  [pred : i64]
+  [target : i64]
+  [edges : OptFlagExitEdgeList]) : OptFlagExitEdgeList
+  (let
+    [edge : OptFlagExitEdge (OptFlagExitEdge.Edge pred target)]
+    (match edges
+      [(OptFlagExitEdgeList.Nil)
+        (let
+          [items : (__tl_dyn-array OptFlagExitEdge)
+            (array.make-array OptFlagExitEdge 4)]
+          (begin
+            (set! (array-ref items 0) edge)
+            (OptFlagExitEdgeList.Dense items 1)))]
+      [(OptFlagExitEdgeList.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (set! (array-ref items len) edge)
+            (OptFlagExitEdgeList.Dense items (+ len 1)))
+          (let
+            [bigger : (__tl_dyn-array OptFlagExitEdge)
+              (array.make-array OptFlagExitEdge (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set! (array-ref bigger index) (array-ref items index))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger len) edge)
+              (OptFlagExitEdgeList.Dense bigger (+ len 1)))))])))
+
+(cfg
+  test
+  (test
+    optimizer-flag-exit-edge-dense-storage-grows
+    (let
+      [edges : OptFlagExitEdgeList (OptFlagExitEdgeList.Nil)]
+      [index : i64 0]
+      (begin
+        (while (< index 9)
+          (begin
+            (set! edges (opt-flag-exit-edge-cons index (+ index 100) edges))
+            (set! index (+ index 1))))
+        (match edges
+          [(OptFlagExitEdgeList.Nil)
+            (test.assert-true false "flag-exit edge storage is non-empty")]
+          [(OptFlagExitEdgeList.Dense items len)
+            (begin
+              (test.assert-i64-eq
+                len
+                9
+                "flag-exit edge storage grows past four")
+              (test.assert-true
+                (>= (array-length items) 9)
+                "flag-exit edge storage expands capacity"))])
+        (match (opt-flag-exit-edge-ref edges 0)
+          [(OptFlagExitEdge.Edge pred target)
+            (begin
+              (test.assert-i64-eq
+                pred
+                8
+                "flag-exit newest predecessor stays first")
+              (test.assert-i64-eq
+                target
+                108
+                "flag-exit newest target stays first"))])
+        (match (opt-flag-exit-edge-ref edges 8)
+          [(OptFlagExitEdge.Edge pred target)
+            (begin
+              (test.assert-i64-eq
+                pred
+                0
+                "flag-exit oldest predecessor stays last")
+              (test.assert-i64-eq
+                target
+                100
+                "flag-exit oldest target stays last"))])))))
 
 (defenum OptFlagExitMaybeInstr
   (No)
@@ -24470,7 +24567,7 @@
         closure
         bad
         (if (opt-flag-exit-value-is-bool? value clear-const)
-          (OptFlagExitEdgeList.Cons input-label at-label (box acc))
+          (opt-flag-exit-edge-cons input-label at-label acc)
           (match value
             [(ir.CompilerIrValue.Var var)
               (opt-flag-exit-walk
@@ -24564,25 +24661,31 @@
 (define (opt-flag-exit-edges-empty? [edges : OptFlagExitEdgeList]) : bool
   (match edges
     [(OptFlagExitEdgeList.Nil) true]
-    [(OptFlagExitEdgeList.Cons _ _ _) false]))
+    [(OptFlagExitEdgeList.Dense _ _) false]))
 
 (define (opt-flag-exit-edge-preds
   [edges : OptFlagExitEdgeList]
   [acc : OptLabelSet]) : OptLabelSet
   (match edges
     [(OptFlagExitEdgeList.Nil) acc]
-    [(OptFlagExitEdgeList.Cons pred _ rest)
-      (opt-flag-exit-edge-preds (__tl-box-place rest) (opt-label-add acc pred))]))
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge pred _)
+          (opt-flag-exit-edge-preds
+            (opt-flag-exit-edge-tail edges)
+            (opt-label-add acc pred))])]))
 
 (define (opt-flag-exit-edge-targets
   [edges : OptFlagExitEdgeList]
   [acc : OptLabelSet]) : OptLabelSet
   (match edges
     [(OptFlagExitEdgeList.Nil) acc]
-    [(OptFlagExitEdgeList.Cons _ target rest)
-      (opt-flag-exit-edge-targets
-        (__tl-box-place rest)
-        (opt-label-add acc target))]))
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge _ target)
+          (opt-flag-exit-edge-targets
+            (opt-flag-exit-edge-tail edges)
+            (opt-label-add acc target))])]))
 
 ;; --- C3: the gate -------------------------------------------------------------
 (define (opt-flag-exit-block-gate
@@ -24772,17 +24875,19 @@
   [alt : (__tl_dyn-array i64)]) : unit
   (match edges
     [(OptFlagExitEdgeList.Nil) unit]
-    [(OptFlagExitEdgeList.Cons _ target rest)
-      (begin
-        (opt-flag-exit-mark-path! body index pred-map gate target seen alt)
-        (opt-flag-exit-mark-clears!
-          body
-          index
-          pred-map
-          gate
-          (__tl-box-place rest)
-          seen
-          alt))]))
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge _ target)
+          (begin
+            (opt-flag-exit-mark-path! body index pred-map gate target seen alt)
+            (opt-flag-exit-mark-clears!
+              body
+              index
+              pred-map
+              gate
+              (opt-flag-exit-edge-tail edges)
+              seen
+              alt))])]))
 
 (define (opt-flag-exit-marked-pure?
   [blocks : ir.CompilerIrBlockList]
@@ -25369,18 +25474,20 @@
   [edges : OptFlagExitEdgeList]) : bool
   (match edges
     [(OptFlagExitEdgeList.Nil) true]
-    [(OptFlagExitEdgeList.Cons pred target rest)
-      (and
-        (opt-loop-body-label-member? body index pred)
-        (opt-flag-exit-block-jumps-to? blocks pred target)
-        (opt-dom-dominates? doms gate pred)
-        (opt-flag-exit-clear-edges-ok?
-          blocks
-          body
-          index
-          doms
-          gate
-          (__tl-box-place rest)))]))
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge pred target)
+          (and
+            (opt-loop-body-label-member? body index pred)
+            (opt-flag-exit-block-jumps-to? blocks pred target)
+            (opt-dom-dominates? doms gate pred)
+            (opt-flag-exit-clear-edges-ok?
+              blocks
+              body
+              index
+              doms
+              gate
+              (opt-flag-exit-edge-tail edges)))])]))
 
 (define (opt-flag-exit-preds-survive?
   [pred-map : OptPredMap]
@@ -46539,9 +46646,92 @@
 ;; Outside-used body defs merge at the exit through fresh phis; the records
 ;; carry (def dst, phi type). Def kinds outside the scalar set below have no
 ;; unambiguous phi type and reject the guarded form.
+(defenum OptUceExitRec
+  (Rec i64 ast.AstType))
+
 (defenum OptUceExitRecs
   (Nil)
-  (Cons i64 ast.AstType (Box OptUceExitRecs)))
+  (Dense (__tl_dyn-array OptUceExitRec) i64))
+
+(define (opt-uce-exit-rec-ref [recs : OptUceExitRecs] [index : i64]) : OptUceExitRec
+  (match recs
+    [(OptUceExitRecs.Nil) (OptUceExitRec.Rec -1 (ast.AstType.I64))]
+    [(OptUceExitRecs.Dense items len) (array-ref items (- (- len 1) index))]))
+
+(define (opt-uce-exit-rec-tail [recs : OptUceExitRecs]) : OptUceExitRecs
+  (match recs
+    [(OptUceExitRecs.Nil) (OptUceExitRecs.Nil)]
+    [(OptUceExitRecs.Dense items len)
+      (if (<= len 1)
+        (OptUceExitRecs.Nil)
+        (OptUceExitRecs.Dense items (- len 1)))]))
+
+(define (opt-uce-exit-rec-cons
+  [dst : i64]
+  [ty : ast.AstType]
+  [recs : OptUceExitRecs]) : OptUceExitRecs
+  (let
+    [rec : OptUceExitRec (OptUceExitRec.Rec dst ty)]
+    (match recs
+      [(OptUceExitRecs.Nil)
+        (let
+          [items : (__tl_dyn-array OptUceExitRec)
+            (array.make-array OptUceExitRec 4)]
+          (begin
+            (set! (array-ref items 0) rec)
+            (OptUceExitRecs.Dense items 1)))]
+      [(OptUceExitRecs.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (set! (array-ref items len) rec)
+            (OptUceExitRecs.Dense items (+ len 1)))
+          (let
+            [bigger : (__tl_dyn-array OptUceExitRec)
+              (array.make-array OptUceExitRec (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set! (array-ref bigger index) (array-ref items index))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger len) rec)
+              (OptUceExitRecs.Dense bigger (+ len 1)))))])))
+
+(cfg
+  test
+  (test
+    optimizer-uce-exit-record-dense-storage-grows
+    (let
+      [recs : OptUceExitRecs (OptUceExitRecs.Nil)]
+      [index : i64 0]
+      (begin
+        (while (< index 9)
+          (begin
+            (set! recs (opt-uce-exit-rec-cons index (ast.AstType.I64) recs))
+            (set! index (+ index 1))))
+        (match recs
+          [(OptUceExitRecs.Nil)
+            (test.assert-true false "UCE exit record storage is non-empty")]
+          [(OptUceExitRecs.Dense items len)
+            (begin
+              (test.assert-i64-eq
+                len
+                9
+                "UCE exit record storage grows past four")
+              (test.assert-true
+                (>= (array-length items) 9)
+                "UCE exit record storage expands capacity"))])
+        (match (opt-uce-exit-rec-ref recs 0)
+          [(OptUceExitRec.Rec dst ty)
+            (begin
+              (test.assert-i64-eq dst 8 "UCE newest exit record stays first")
+              (match ty
+                [(ast.AstType.I64) unit]
+                [_
+                  (test.assert-true false "UCE exit record preserves its type")]))])
+        (match (opt-uce-exit-rec-ref recs 8)
+          [(OptUceExitRec.Rec dst _)
+            (test.assert-i64-eq dst 0 "UCE oldest exit record stays last")])))))
 
 (defenum OptUceDefTy
   (No)
@@ -46628,7 +46818,7 @@
               last
               exit-uses
               (+ index 1)
-              (OptUceExitRecs.Cons dst ty (box acc)))])
+              (opt-uce-exit-rec-cons dst ty acc))])
         (opt-unroll-const-guard-exit-recs
           instrs
           phi-count
@@ -46964,30 +47154,32 @@
   [env : OptCopyEnv]) : OptUceExitBuild
   (match recs
     [(OptUceExitRecs.Nil) (OptUceExitBuild.Result acc env)]
-    [(OptUceExitRecs.Cons dst ty rest)
-      (let
-        [merged : i64 (opt-unroll-alloc-var cell)]
-        [fast-value : ir.CompilerIrValue
-          (opt-unroll-subst-value remap (ir.CompilerIrValue.Var dst))]
-        (opt-unroll-const-guard-exit-phis
-          (__tl-box-place rest)
-          remap
-          loop-label
-          fast-label
-          cell
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Phi
-              merged
-              (ir.compiler-ir-phi-input-cons
-                fast-value
-                fast-label
-                (ir.compiler-ir-phi-input-cons
-                  (ir.CompilerIrValue.Var dst)
-                  loop-label
-                  (ir.CompilerIrPhiInputList.Nil)))
-              ty)
-            acc)
-          (OptCopyEnv.Cons dst (ir.CompilerIrValue.Var merged) (box env))))]))
+    [(OptUceExitRecs.Dense _ _)
+      (match (opt-uce-exit-rec-ref recs 0)
+        [(OptUceExitRec.Rec dst ty)
+          (let
+            [merged : i64 (opt-unroll-alloc-var cell)]
+            [fast-value : ir.CompilerIrValue
+              (opt-unroll-subst-value remap (ir.CompilerIrValue.Var dst))]
+            (opt-unroll-const-guard-exit-phis
+              (opt-uce-exit-rec-tail recs)
+              remap
+              loop-label
+              fast-label
+              cell
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Phi
+                  merged
+                  (ir.compiler-ir-phi-input-cons
+                    fast-value
+                    fast-label
+                    (ir.compiler-ir-phi-input-cons
+                      (ir.CompilerIrValue.Var dst)
+                      loop-label
+                      (ir.CompilerIrPhiInputList.Nil)))
+                  ty)
+                acc)
+              (OptCopyEnv.Cons dst (ir.CompilerIrValue.Var merged) (box env))))])]))
 
 (define (opt-unroll-const-guard-subst-seq
   [env : OptCopyEnv]
@@ -60540,7 +60732,110 @@
 
 (defenum OptGepOffsetDerivedList
   (Nil)
-  (Cons OptGepOffsetDerived (Box OptGepOffsetDerivedList)))
+  (Dense (__tl_dyn-array OptGepOffsetDerived) i64))
+
+(define (opt-gep-offset-derived-ref
+  [derived : OptGepOffsetDerivedList]
+  [index : i64]) : OptGepOffsetDerived
+  (match derived
+    [(OptGepOffsetDerivedList.Nil)
+      (OptGepOffsetDerived.Derived
+        -1
+        -1
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.I64 0)
+        (ast.AstType.I64))]
+    [(OptGepOffsetDerivedList.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-gep-offset-derived-tail [derived : OptGepOffsetDerivedList]) : OptGepOffsetDerivedList
+  (match derived
+    [(OptGepOffsetDerivedList.Nil) (OptGepOffsetDerivedList.Nil)]
+    [(OptGepOffsetDerivedList.Dense items len)
+      (if (<= len 1)
+        (OptGepOffsetDerivedList.Nil)
+        (OptGepOffsetDerivedList.Dense items (- len 1)))]))
+
+(define (opt-gep-offset-derived-cons
+  [record : OptGepOffsetDerived]
+  [derived : OptGepOffsetDerivedList]) : OptGepOffsetDerivedList
+  (match derived
+    [(OptGepOffsetDerivedList.Nil)
+      (let
+        [items : (__tl_dyn-array OptGepOffsetDerived)
+          (array.make-array OptGepOffsetDerived 4)]
+        (begin
+          (set! (array-ref items 0) record)
+          (OptGepOffsetDerivedList.Dense items 1)))]
+    [(OptGepOffsetDerivedList.Dense items len)
+      (if (< len (array-length items))
+        (begin
+          (set! (array-ref items len) record)
+          (OptGepOffsetDerivedList.Dense items (+ len 1)))
+        (let
+          [bigger : (__tl_dyn-array OptGepOffsetDerived)
+            (array.make-array OptGepOffsetDerived (opt-dense-next-capacity len))]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (set! (array-ref bigger index) (array-ref items index))
+                (set! index (+ index 1))))
+            (set! (array-ref bigger len) record)
+            (OptGepOffsetDerivedList.Dense bigger (+ len 1)))))]))
+
+(cfg
+  test
+  (test
+    optimizer-gep-derived-dense-storage-grows
+    (let
+      [derived : OptGepOffsetDerivedList (OptGepOffsetDerivedList.Nil)]
+      [index : i64 0]
+      (begin
+        (while (< index 9)
+          (begin
+            (set!
+              derived
+              (opt-gep-offset-derived-cons
+                (OptGepOffsetDerived.Derived
+                  index
+                  (+ index 10)
+                  (ir.CompilerIrValue.Var (+ index 20))
+                  (ir.CompilerIrValue.Var (+ index 30))
+                  (ast.AstType.I64))
+                derived))
+            (set! index (+ index 1))))
+        (match derived
+          [(OptGepOffsetDerivedList.Nil)
+            (test.assert-true false "GEP derived storage is non-empty")]
+          [(OptGepOffsetDerivedList.Dense items len)
+            (begin
+              (test.assert-i64-eq len 9 "GEP derived storage grows past four")
+              (test.assert-true
+                (>= (array-length items) 9)
+                "GEP derived storage expands capacity"))])
+        (match (opt-gep-offset-derived-ref derived 0)
+          [(OptGepOffsetDerived.Derived label dst base offset ty)
+            (begin
+              (test.assert-i64-eq
+                label
+                8
+                "GEP newest derived record stays first")
+              (test.assert-i64-eq dst 18 "GEP derived destination is preserved")
+              (match base
+                [(ir.CompilerIrValue.Var var)
+                  (test.assert-i64-eq var 28 "GEP derived base is preserved")]
+                [_ (test.assert-true false "GEP derived base stays a var")])
+              (match offset
+                [(ir.CompilerIrValue.Var var)
+                  (test.assert-i64-eq var 38 "GEP derived offset is preserved")]
+                [_ (test.assert-true false "GEP derived offset stays a var")])
+              (match ty
+                [(ast.AstType.I64) unit]
+                [_ (test.assert-true false "GEP derived type is preserved")]))])
+        (match (opt-gep-offset-derived-ref derived 8)
+          [(OptGepOffsetDerived.Derived label _ _ _ _)
+            (test.assert-i64-eq label 0 "GEP oldest derived record stays last")])))))
 
 ;; The invariant addend and the loop-variant addend of an admissible Add.
 (defenum OptGepOffsetSplit
@@ -61461,7 +61756,7 @@
                                   unit)
                                 (set!
                                   out
-                                  (OptGepOffsetDerivedList.Cons
+                                  (opt-gep-offset-derived-cons
                                     (OptGepOffsetDerived.Derived
                                       preheader
                                       derived
@@ -61469,7 +61764,7 @@
                                       (ir.CompilerIrValue.Var
                                         (array-ref cand-inv idx))
                                       elem-ty)
-                                    (box out)))))
+                                    out))))
                             (set! (array-ref gep-mark dst) 1)
                             (set! (array-ref gep-base dst) derived)
                             (set!
@@ -61738,14 +62033,18 @@
   [label : i64]) : ir.CompilerIrInstrList
   (match derived
     [(OptGepOffsetDerivedList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(OptGepOffsetDerivedList.Cons record rest)
-      (match record
+    [(OptGepOffsetDerivedList.Dense _ _)
+      (match (opt-gep-offset-derived-ref derived 0)
         [(OptGepOffsetDerived.Derived record-label dst base index elem-ty)
           (if (= record-label label)
             (ir.compiler-ir-instr-cons
               (ir.CompilerIrInstr.Gep dst base index elem-ty)
-              (opt-gep-offset-hoisted-for-label (__tl-box-place rest) label))
-            (opt-gep-offset-hoisted-for-label (__tl-box-place rest) label))])]))
+              (opt-gep-offset-hoisted-for-label
+                (opt-gep-offset-derived-tail derived)
+                label))
+            (opt-gep-offset-hoisted-for-label
+              (opt-gep-offset-derived-tail derived)
+              label))])]))
 
 (define (opt-gep-offset-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -61785,7 +62084,7 @@
 (define (opt-gep-offset-derived-empty? [derived : OptGepOffsetDerivedList]) : bool
   (match derived
     [(OptGepOffsetDerivedList.Nil) true]
-    [(OptGepOffsetDerivedList.Cons _ _) false]))
+    [(OptGepOffsetDerivedList.Dense _ _) false]))
 
 ;; --- entry --------------------------------------------------------------------
 (define (opt-gep-offset-blocks-result

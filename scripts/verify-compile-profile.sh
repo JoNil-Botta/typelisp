@@ -1510,10 +1510,16 @@ if [ "$NL_HOST_OS" = windows ]; then
     # and on the pre-#6526 tree walk_hygiene_nodes_copied fell from 786,701 to
     # 232,422 (463,234 fewer pool nodes; reverting only the span carriage
     # restored every boundary exactly, and the route never flipped: 100 native
-    # entries, 7 shells, 0 interpreted arms either way). The authoritative
-    # Windows probe on the combined tree measured the value pinned below.
+    # entries, 7 shells, 0 interpreted arms either way). #6526's semantic index
+    # then adds its own nodes on top, so the combined tree lands one segment
+    # above the arithmetic on the two changes alone: the authoritative Windows
+    # probe measured 2,690,790 used nodes, 2,752,512 capacity, and 88,080,384
+    # physical payload bytes, which is 3,814 nodes past the 41-segment line
+    # (walk_hygiene_nodes_copied 233,130 here). Do not reconstruct this
+    # boundary by adding published deltas; it is close enough to a step that
+    # only a direct Windows measurement decides it.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 41 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1525,8 +1531,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # macro-expand boundary above raises this one, which is why the two are
     # pinned independently. walk_decl_fire_survivor_expr_nodes rises from
     # 403,079 to 453,835 (+50,756) and the checked graph gains 50,828 nodes:
-    # the authoritative Windows probe measured 2,183,339 used nodes, 2,228,224
-    # capacity, and 71,303,168 physical payload bytes.
+    # the pre-#6526 Windows probe measured 2,183,339 used nodes. #6526's
+    # semantic index adds a further 10,890 checked nodes (survivor expr nodes
+    # 455,537) and holds the same segment count: the authoritative Windows
+    # probe on the combined tree measured 2,194,229 used nodes, 2,228,224
+    # capacity, and 71,303,168 physical payload bytes, leaving 33,995 nodes of
+    # headroom below the 35-segment line.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 34 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

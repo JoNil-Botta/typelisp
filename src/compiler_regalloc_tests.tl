@@ -7098,6 +7098,14 @@
 (cfg
   test
   (test
+    regalloc-alu-load-lhs-tie
+    (test.assert-true
+      (compiler-reg-alu-load-lhs-tie-ok?)
+      "a commutative binop with a single-use fused load on the lhs ties its dst to the rhs, and double-use/non-commutative/pair shapes keep the lhs tie")))
+
+(cfg
+  test
+  (test
     regalloc-scalar-web-merge
     (test.assert-true
       (compiler-reg-color-web-merge-ok?)
@@ -9230,7 +9238,8 @@
         (reg.compiler-reg-function-moves-with-destructive-and-casts-eligible
           straight
           false
-          clobber-eligible))]
+          clobber-eligible
+          (reg.compiler-reg-function-alu-prefer-rhs straight)))]
     [noncomm : ir.CompilerIrFunction
       (compiler-reg-destructive-noncommutative-function)]
     [noncomm-moves : reg.CompilerRegMoveSeq
@@ -9262,6 +9271,244 @@
             1
             2)
           (not (reg.compiler-reg-move-list-contains-undirected? div-moves 0 1)))])))
+
+;; GAP8-C fixtures. The word-loop shape the backend's commuted ALU fold wants:
+;;
+;;     %3 = add %2, 1        ; the accumulator (a destructive result)
+;;     %4 = gep %0, %1
+;;     %5 = load %4          ; the fused load, single use
+;;     %6 = <op> %5, %3      ; the load on the LHS
+;;     %7 = add %6, 1        ; %6 feeds another destructive op
+;;
+;; `op` selects commutative (flip expected) vs Sub (no flip). `double-use-load?`
+;; adds a second reader of the load, which retires the fold and so must retire
+;; the flip with it. The trailing `add` is what makes the BinOp destination an
+;; eligible chain candidate at all, matching the loop-carried shape.
+(define (compiler-reg-alu-load-lhs-function
+  [op : ir.CompilerIrBinOp]
+  [double-use-load? : bool]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "alu_load_lhs")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    9
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.I64 40)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              1
+              (ir.CompilerIrValue.I64 0)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                2
+                (ir.CompilerIrValue.I64 7)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  3
+                  ir.CompilerIrBinOp.Add
+                  (ir.CompilerIrValue.Var 2)
+                  (ir.CompilerIrValue.I64 1)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Gep
+                    4
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 1)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Load
+                      5
+                      (ir.CompilerIrValue.Var 4)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.BinOp
+                        6
+                        op
+                        (ir.CompilerIrValue.Var 5)
+                        (ir.CompilerIrValue.Var 3)
+                        (compiler-reg-i64-ty))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.BinOp
+                          7
+                          ir.CompilerIrBinOp.Add
+                          (ir.CompilerIrValue.Var 6)
+                          (ir.CompilerIrValue.I64 1)
+                          (compiler-reg-i64-ty))
+                        (if double-use-load?
+                          (ir.compiler-ir-instr-cons
+                            (ir.CompilerIrInstr.BinOp
+                              8
+                              ir.CompilerIrBinOp.Add
+                              (ir.CompilerIrValue.Var 7)
+                              (ir.CompilerIrValue.Var 5)
+                              (compiler-reg-i64-ty))
+                            (ir.compiler-ir-instr-cons
+                              (ir.CompilerIrInstr.Return
+                                (ir.CompilerIrMaybeValue.Some
+                                  (ir.CompilerIrValue.Var 8)))
+                              ir.CompilerIrInstrList.Nil))
+                          (ir.compiler-ir-instr-cons
+                            (ir.CompilerIrInstr.Return
+                              (ir.CompilerIrMaybeValue.Some
+                                (ir.CompilerIrValue.Var 7)))
+                            ir.CompilerIrInstrList.Nil)))))))))))
+      ir.CompilerIrBlockList.Nil)))
+
+;; Both operands loaded is the backend's PAIR fold, which needs no operand tie:
+;;
+;;     %4 = gep ... ; %5 = load %4
+;;     %6 = gep ... ; %7 = load %6
+;;     %8 = bit_and %7, %5
+;;
+;; The rhs-defining load sits three slots back, which is exactly the shape the
+;; preference declines.
+(define (compiler-reg-alu-load-pair-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "alu_load_pair")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.I64)
+    10
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            0
+            (ir.CompilerIrValue.I64 40)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              1
+              (ir.CompilerIrValue.I64 0)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                2
+                (ir.CompilerIrValue.I64 2)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  3
+                  ir.CompilerIrBinOp.Add
+                  (ir.CompilerIrValue.Var 2)
+                  (ir.CompilerIrValue.I64 1)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Gep
+                    4
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 1)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Load
+                      5
+                      (ir.CompilerIrValue.Var 4)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Gep
+                        6
+                        (ir.CompilerIrValue.Var 0)
+                        (ir.CompilerIrValue.Var 3)
+                        (compiler-reg-i64-ty))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Load
+                          7
+                          (ir.CompilerIrValue.Var 6)
+                          (compiler-reg-i64-ty))
+                        (ir.compiler-ir-instr-cons
+                          (ir.CompilerIrInstr.BinOp
+                            8
+                            ir.CompilerIrBinOp.BitAnd
+                            (ir.CompilerIrValue.Var 7)
+                            (ir.CompilerIrValue.Var 5)
+                            (compiler-reg-i64-ty))
+                          (ir.compiler-ir-instr-cons
+                            (ir.CompilerIrInstr.BinOp
+                              9
+                              ir.CompilerIrBinOp.Add
+                              (ir.CompilerIrValue.Var 8)
+                              (ir.CompilerIrValue.I64 1)
+                              (compiler-reg-i64-ty))
+                            (ir.compiler-ir-instr-cons
+                              (ir.CompilerIrInstr.Return
+                                (ir.CompilerIrMaybeValue.Some
+                                  (ir.CompilerIrValue.Var 9)))
+                              ir.CompilerIrInstrList.Nil))))))))))))
+      ir.CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-alu-load-lhs-moves
+  [op : ir.CompilerIrBinOp]
+  [double-use-load? : bool]) : reg.CompilerRegMoveSeq
+  (reg.compiler-reg-function-moves-with-destructive-and-casts
+    (compiler-reg-alu-load-lhs-function op double-use-load?)
+    false))
+
+;; The copy-hint half of the same preference, exercised directly: the hint list
+;; is first-wins, so a flipped destination must land on the RHS root and an
+;; unflipped one on the LHS root.
+(define (compiler-reg-alu-copy-hint-for [flip? : bool]) : i64
+  (let
+    [hints : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [parents : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [flags : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [index : i64 0]
+    (begin
+      (reg.compiler-reg-fill-i64-array hints -1)
+      (while (< index 8)
+        (begin
+          (set! (array-ref parents index) index)
+          (set! index (+ index 1))))
+      (if flip?
+        (set! (array-ref flags 6) 1)
+        unit)
+      (reg.compiler-reg-copy-hints-from-binops-instr!
+        (ir.CompilerIrInstr.BinOp
+          6
+          ir.CompilerIrBinOp.BitAnd
+          (ir.CompilerIrValue.Var 5)
+          (ir.CompilerIrValue.Var 3)
+          (compiler-reg-i64-ty))
+        hints
+        parents
+        flags)
+      (array-ref hints 6))))
+
+(define (compiler-reg-alu-load-lhs-tie-ok?) : bool
+  (let
+    ;; (a) commutative, single-use fused load on the lhs: the destination ties
+    ;; to the ACCUMULATOR (%3), not to the load (%5).
+    [flipped : reg.CompilerRegMoveSeq
+      (compiler-reg-alu-load-lhs-moves ir.CompilerIrBinOp.BitAnd false)]
+    ;; (b) the same shape with a twice-read load: no fold, so no flip.
+    [double-use : reg.CompilerRegMoveSeq
+      (compiler-reg-alu-load-lhs-moves ir.CompilerIrBinOp.BitAnd true)]
+    ;; (c) Sub is not commutative -- `MEM - x` is not `x - MEM`.
+    [noncommutative : reg.CompilerRegMoveSeq
+      (compiler-reg-alu-load-lhs-moves ir.CompilerIrBinOp.Sub false)]
+    ;; (d) both operands loaded is the pair fold's shape; ties stay put.
+    [pair : reg.CompilerRegMoveSeq
+      (reg.compiler-reg-function-moves-with-destructive-and-casts
+        (compiler-reg-alu-load-pair-function)
+        false)]
+    (and
+      (reg.compiler-reg-move-list-contains-undirected? flipped 3 6)
+      (not (reg.compiler-reg-move-list-contains-undirected? flipped 5 6))
+      (reg.compiler-reg-move-list-contains-undirected? double-use 5 6)
+      (not (reg.compiler-reg-move-list-contains-undirected? double-use 3 6))
+      (reg.compiler-reg-move-list-contains-undirected? noncommutative 5 6)
+      (not (reg.compiler-reg-move-list-contains-undirected? noncommutative 3 6))
+      (reg.compiler-reg-move-list-contains-undirected? pair 7 8)
+      (not (reg.compiler-reg-move-list-contains-undirected? pair 5 8))
+      (= (compiler-reg-alu-copy-hint-for true) 3)
+      (= (compiler-reg-alu-copy-hint-for false) 5))))
 
 (define (compiler-reg-same-value-clobber-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function

@@ -6743,6 +6743,323 @@
                 [_ 5])])]
         [_ 6])]))
 
+;; --- single-use load sinking -----------------------------------------------
+;;
+;; Fixtures use vars 0/1/2 as array bases, 3 as the shared index, 5 as a spare
+;; scalar and 6 as a spare length. Pairs are `gep 1x; load 1x+1`.
+(define (opt-load-sink-gep [dst : i64] [base : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Gep
+    dst
+    (compiler_ir_types.CompilerIrValue.Var base)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-load-sink-load [dst : i64] [address : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Load
+    dst
+    (compiler_ir_types.CompilerIrValue.Var address)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-load-sink-binop
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    lhs
+    rhs
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-load-sink-var [var : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var var))
+
+(define (opt-load-sink-return [var : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Return
+    (compiler_ir_types.CompilerIrMaybeValue.Some (opt-load-sink-var var))))
+
+(define (opt-load-sink-block-of
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "loop")
+      instrs)
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; benchmarks/liveness_scan's flagship body: three element reads lowered first,
+;; then the `xor`/`and`/`or` chain that consumes them in reverse order. Every
+;; load must end up immediately before ITS consumer.
+(define (opt-load-sink-chain-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-sink-gep 12 1)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-load 13 12)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-gep 14 2)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-sink-load 15 14)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-load-sink-binop
+                    16
+                    (compiler_ir_types.CompilerIrBinOp.BitXor)
+                    (opt-load-sink-var 15)
+                    (compiler_ir_types.CompilerIrValue.I64 (- 0 1)))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (opt-load-sink-binop
+                      17
+                      (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                      (opt-load-sink-var 13)
+                      (opt-load-sink-var 16))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (opt-load-sink-binop
+                        18
+                        (compiler_ir_types.CompilerIrBinOp.BitOr)
+                        (opt-load-sink-var 11)
+                        (opt-load-sink-var 17))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (opt-load-sink-return 18)
+                        compiler_ir_types.CompilerIrInstrList.Nil))))))))))))
+
+;; A StorePtr between the load and its consumer may alias the loaded cell.
+(define (opt-load-sink-store-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-sink-gep 12 1)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (opt-load-sink-var 12)
+              (opt-load-sink-var 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-binop
+                18
+                (compiler_ir_types.CompilerIrBinOp.BitOr)
+                (opt-load-sink-var 11)
+                (opt-load-sink-var 5))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-sink-return 18)
+                compiler_ir_types.CompilerIrInstrList.Nil))))))))
+
+;; A call between the load and its consumer may store anywhere.
+(define (opt-load-sink-call-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Call
+            21
+            (opt-test-symbol "load_sink_callee")
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-binop
+              18
+              (compiler_ir_types.CompilerIrBinOp.BitOr)
+              (opt-load-sink-var 11)
+              (opt-load-sink-var 21))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-return 18)
+              compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; The gep's base is redefined before the consumer. SSA forbids this, so the
+;; guard is belt and braces -- but it is the guard that makes the pass safe
+;; without a dominance query, so it gets a fixture.
+(define (opt-load-sink-rebase-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-binop
+              18
+              (compiler_ir_types.CompilerIrBinOp.BitOr)
+              (opt-load-sink-var 11)
+              (opt-load-sink-var 0))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-return 18)
+              compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; The first load has a second reader, so the backend fold could never fire on
+;; it and the pair must not move.
+(define (opt-load-sink-double-use-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-sink-gep 12 1)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-load 13 12)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-binop
+                17
+                (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                (opt-load-sink-var 13)
+                (opt-load-sink-var 5))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-sink-binop
+                  18
+                  (compiler_ir_types.CompilerIrBinOp.BitOr)
+                  (opt-load-sink-var 11)
+                  (opt-load-sink-var 17))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    19
+                    (opt-load-sink-var 11)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (opt-load-sink-return 18)
+                    compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+
+;; An UNRELATED bounds check sits between the first load and its consumer.
+;; Crossing it is allowed: the check only aborts, and a load that no longer
+;; runs on the aborting path has no observable effect (see the pass note).
+(define (opt-load-sink-bounds-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (opt-load-sink-var 3)
+            (opt-load-sink-var 6)
+            (compiler_ir_types.compiler-ir-label "bounds_ok"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-gep 12 1)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-load 13 12)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-sink-binop
+                  18
+                  (compiler_ir_types.CompilerIrBinOp.BitOr)
+                  (opt-load-sink-var 11)
+                  (opt-load-sink-var 13))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-load-sink-return 18)
+                  compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
+(define (opt-load-sink-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-load-sink-blocks 32 blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Cons block _) block]
+    [_
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "empty")
+        compiler_ir_types.CompilerIrInstrList.Nil)]))
+
+(define (opt-load-sink-instr-dst?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]) : bool
+  (= (compiler_optimize.opt-gvn-instr-dst instr) dst))
+
+;; `dsts` names the expected definition at each index, using -1 for the
+;; terminator.
+(define (opt-load-sink-order?
+  [block : compiler_ir_types.CompilerIrBlock]
+  [dsts : (__tl_dyn-array i64)]) : bool
+  (let
+    [count : i64 (array-length dsts)]
+    [index : i64 0]
+    [ok : bool (= (opt-block-instr-count block) count)]
+    (begin
+      (while (and ok (< index count))
+        (begin
+          (unless
+            (opt-load-sink-instr-dst?
+              (opt-block-instr-at block index)
+              (array-ref dsts index))
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
+;; A refused pair is still the block's first two instructions; a sunk one is
+;; not, because whatever followed it takes index 0.
+(define (opt-load-sink-pair-stayed?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-load-sink-run blocks)]
+    (and
+      (opt-load-sink-instr-dst? (opt-block-instr-at block 0) 10)
+      (opt-load-sink-instr-dst? (opt-block-instr-at block 1) 11))))
+
+;; Returns 42 only when the flagship chain re-orders into three adjacent
+;; `gep; load; binop` triples, every refusal fixture stays byte-identical, the
+;; bounds-check fixture sinks, and a second run is a no-op.
+(define (compiler-optimize-load-sink-self-test) : i64
+  (let
+    [chain : compiler_ir_types.CompilerIrBlock
+      (opt-load-sink-run (opt-load-sink-chain-blocks))]
+    [expected : (__tl_dyn-array i64) (array.make-array i64 10)]
+    [bounds-expected : (__tl_dyn-array i64) (array.make-array i64 7)]
+    (begin
+      (set! (array-ref expected 0) 14)
+      (set! (array-ref expected 1) 15)
+      (set! (array-ref expected 2) 16)
+      (set! (array-ref expected 3) 12)
+      (set! (array-ref expected 4) 13)
+      (set! (array-ref expected 5) 17)
+      (set! (array-ref expected 6) 10)
+      (set! (array-ref expected 7) 11)
+      (set! (array-ref expected 8) 18)
+      (set! (array-ref expected 9) (- 0 1))
+      (unless (opt-load-sink-order? chain expected) (return 1))
+      ;; Idempotence: the sunk block is already at its fixpoint.
+      (unless
+        (opt-load-sink-order?
+          (opt-load-sink-run
+            (compiler_ir_types.compiler-ir-block-cons
+              chain
+              compiler_ir_types.CompilerIrBlockList.Nil))
+          expected)
+        (return 2))
+      ;; Refusals: an aliasing store, a call, a redefined base, a second use.
+      (unless
+        (opt-load-sink-pair-stayed? (opt-load-sink-store-blocks))
+        (return 3))
+      (unless
+        (opt-load-sink-pair-stayed? (opt-load-sink-call-blocks))
+        (return 4))
+      (unless
+        (opt-load-sink-pair-stayed? (opt-load-sink-rebase-blocks))
+        (return 5))
+      (unless
+        (opt-load-sink-pair-stayed? (opt-load-sink-double-use-blocks))
+        (return 6))
+      ;; The bounds check is not a barrier: the pair lands past it, ahead of
+      ;; the second pair, so both reach the consumer adjacent.
+      (set! (array-ref bounds-expected 0) (- 0 1))
+      (set! (array-ref bounds-expected 1) 10)
+      (set! (array-ref bounds-expected 2) 11)
+      (set! (array-ref bounds-expected 3) 12)
+      (set! (array-ref bounds-expected 4) 13)
+      (set! (array-ref bounds-expected 5) 18)
+      (set! (array-ref bounds-expected 6) (- 0 1))
+      (unless
+        (opt-load-sink-order?
+          (opt-load-sink-run (opt-load-sink-bounds-blocks))
+          bounds-expected)
+        (return 7))
+      42)))
+
 ;; --- late compare duplication ----------------------------------------------
 ;;
 ;; Fixtures share two i64 parameters (vars 0 and 1) plus a spare var 2 that
@@ -14850,6 +15167,546 @@
           "inline_switch")
         1))))
 
+;; --- single-site absorption at any size (wide boundary, cold site) ----------
+;;
+;; The callee under test is the cyclic bounds-carrying Switch leaf above,
+;; widened to ten parameters and padded past two hundred instructions. Every
+;; band that could otherwise take it refuses it on size or on shape: the loop
+;; tier caps the body at 32 instructions, the recursive-site tier at 128 and
+;; wants a self-recursive caller, and no cost-model path reaches it at all
+;; because a cyclic bounds-carrying body fails
+;; opt-inline-multiblock-bounds-loop-ok?. So whatever these fixtures admit was
+;; admitted by opt-inline-single-site-absorb-ok? and by nothing else, and only
+;; the CALLER or the callee's reference count varies across them.
+(define (opt-inline-wide-param-count) : i64
+  10)
+
+(define (opt-inline-wide-pad-count) : i64
+  220)
+
+(define (opt-inline-instrs-append
+  [head : compiler_ir_types.CompilerIrInstrList]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (match head
+    [(compiler_ir_types.CompilerIrInstrList.Nil) tail]
+    [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
+      (compiler_ir_types.compiler-ir-instr-cons
+        instr
+        (opt-inline-instrs-append (__tl-box-place rest) tail))]))
+
+(define (opt-inline-wide-params-from [index : i64] [count : i64]) : compiler_ir_types.CompilerIrParamList
+  (if (>= index count)
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "wide"
+        (compiler_ast_types.AstType.I64)
+        index)
+      (opt-inline-wide-params-from (+ index 1) count))))
+
+(define (opt-inline-wide-params [count : i64]) : compiler_ir_types.CompilerIrParamList
+  (opt-inline-wide-params-from 0 count))
+
+;; Straight-line adds, each defining a fresh var, in front of `tail`. This
+;; padding is the only thing standing between the fixture and the size ceilings
+;; this band exists to remove.
+(define (opt-inline-wide-pad-instrs
+  [remaining : i64]
+  [dst : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if (<= remaining 0)
+    tail
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        dst
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-wide-pad-instrs (- remaining 1) (+ dst 1) tail))))
+
+;; The join phi sits just past the padding, so a fixture's var count is
+;; params + padding + 1.
+(define (opt-inline-wide-phi-var [params : i64]) : i64
+  (+ params (opt-inline-wide-pad-count)))
+
+(define (opt-inline-wide-loop-phi-instr [params : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    (opt-inline-wide-phi-var params)
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.I64 10)
+      (compiler_ir_types.compiler-ir-label "zero")
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 20)
+        (compiler_ir_types.compiler-ir-label "one")
+        compiler_ir_types.CompilerIrPhiInputList.Nil))
+    (compiler_ast_types.AstType.I64)))
+
+;; entry -> loop -> {zero, one} -> join, with the loop's default edge back to
+;; `loop`. Cyclic and bounds-carrying, so every size-capped band refuses it.
+(define (opt-inline-wide-callee-blocks
+  [params : i64]
+  [extra-loop-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))
+        compiler_ir_types.CompilerIrInstrList.Nil))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-inline-switch-loop-bounds-instr
+            (compiler_ir_types.compiler-ir-label "switch_bounds_ok"))
+          (opt-inline-wide-pad-instrs
+            (opt-inline-wide-pad-count)
+            params
+            (opt-inline-instrs-append
+              extra-loop-instrs
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Switch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  0
+                  (opt-inline-switch-cases
+                    (compiler_ir_types.compiler-ir-label "zero")
+                    (compiler_ir_types.compiler-ir-label "one"))
+                  (compiler_ir_types.compiler-ir-label "loop"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "zero")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "one")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "join")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-inline-wide-loop-phi-instr params)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var
+                        (opt-inline-wide-phi-var params))))
+                  compiler_ir_types.CompilerIrInstrList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-inline-wide-callee-arity [callee-name : i64] [params : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-wide-params params)
+    (compiler_ast_types.AstType.I64)
+    (+ (opt-inline-wide-phi-var params) 1)
+    (opt-inline-wide-callee-blocks
+      params
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-inline-wide-callee [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-wide-callee-arity callee-name (opt-inline-wide-param-count)))
+
+;; Argument slots cycle over the caller's three live vars, so no
+;; all-constant-argument path can admit a site behind the band's back.
+(define (opt-inline-wide-fill-args!
+  [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
+  [index : i64]
+  [count : i64]
+  [slot : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (set! (array-ref args index) (compiler_ir_types.CompilerIrValue.Var slot))
+      (opt-inline-wide-fill-args!
+        args
+        (+ index 1)
+        count
+        (if (>= (+ slot 1) 3)
+          0
+          (+ slot 1))))))
+
+(define (opt-inline-wide-call [callee-name : i64] [params : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (array.make-array compiler_ir_types.CompilerIrValue params)]
+    (begin
+      (opt-inline-wide-fill-args! args 0 params 0)
+      (compiler_ir_types.CompilerIrInstr.Call
+        dst
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
+;; The same wide callee with one call inside its loop, for the call-free clause.
+(define (opt-inline-wide-callee-calling [callee-name : i64] [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [params : i64 (opt-inline-wide-param-count)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      callee-name
+      (opt-inline-wide-params params)
+      (compiler_ast_types.AstType.I64)
+      (+ (opt-inline-wide-phi-var params) 2)
+      (opt-inline-wide-callee-blocks
+        params
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-inline-wide-call
+            helper-name
+            params
+            (+ (opt-inline-wide-phi-var params) 1))
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; A straight-line caller: the site is in no natural loop, which is what this
+;; band requires and what the loop tier forbids.
+(define (opt-inline-wide-cold-caller
+  [func-name : i64]
+  [callee-name : i64]
+  [params : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-inline-wide-call callee-name params 3)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 3)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The same straight-line caller with the callee's address taken first. Nothing
+;; else differs from the headline fixture.
+(define (opt-inline-wide-address-taken-caller
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    5
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            4
+            (compiler_ir_types.CompilerIrValue.Function callee-name)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-wide-call callee-name (opt-inline-wide-param-count) 3)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The same caller with the wide call inside a natural loop. entry -> header ->
+;; {body -> latch -> header, exit}, with the call in `body`; the back edge
+;; leaves from `latch` so the call block is not a phi predecessor.
+(define (opt-inline-wide-loop-caller-blocks [callee-name : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-inline-loop-site-entry-instrs))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "latch")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-wide-call callee-name (opt-inline-wide-param-count) 5)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 4)))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-inline-wide-loop-caller [func-name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (opt-inline-wide-loop-caller-blocks callee-name)))
+
+;; The middle link of the cascade: wide, single-site, straight-line, multiblock,
+;; and itself calling the wide leaf. It carries a bounds check of its own so
+;; that the separately-tested cascade clause -- which refuses an import that
+;; would hand a bounds-FREE single-site caller its first bounds check -- is not
+;; what this fixture ends up measuring.
+(define (opt-inline-wide-cascade-middle [func-name : i64] [leaf-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [params : i64 (opt-inline-wide-param-count)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      func-name
+      (opt-inline-wide-params params)
+      (compiler_ast_types.AstType.I64)
+      (+ params 1)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "mid_bounds_ok"))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-inline-wide-call leaf-name params params)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var params)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-inline-wide-optimized
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_optimize.opt-inline-program-functions
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    functions
+    2))
+
+(define (opt-inline-wide-two-function-optimized
+  [caller : compiler_ir_types.CompilerIrFunction]
+  [callee : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (opt-inline-wide-optimized
+    (compiler_ir_types.compiler-ir-function-cons
+      caller
+      (compiler_ir_types.compiler-ir-function-cons
+        callee
+        compiler_ir_types.CompilerIrFunctionList.Nil))))
+
+(define (opt-inline-wide-remaining-calls
+  [optimized : compiler_ir_types.CompilerIrFunctionList]) : i64
+  (opt-count-direct-call-name-function-list optimized "main" "inline_switch"))
+
+;; The headline case: a 220-instruction, ten-parameter, single-site callee is
+;; absorbed whole at its one straight-line site. The call disappears, the body
+;; lands, and the bounds check the callee owned is now the caller's.
+(define (compiler-optimize-inline-single-site-wide-absorb-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-wide-two-function-optimized
+        (opt-inline-wide-cold-caller
+          symbols.main
+          callee-name
+          (opt-inline-wide-param-count))
+        (opt-inline-wide-callee callee-name))]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 0)
+            (= (compiler_optimize.opt-count-bounds-blocks blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; The identical callee at an IN-LOOP site stays out of line. An unbounded body
+;; may be moved next to a loop, not inside one: absorbing it into the loop is
+;; the shape that measured liveness_scan +17.10%.
+(define (compiler-optimize-inline-single-site-wide-loop-site-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-loop-caller symbols.main callee-name)
+          (opt-inline-wide-callee callee-name)))
+      1)))
+
+;; The identical body below the arity floor stays out of line. What this band
+;; retires is argument marshalling, so a boundary with nothing to marshal is
+;; left to the site-conditioned tiers, which cap the body at 32.
+(define (compiler-optimize-inline-single-site-narrow-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [narrow : i64 3]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-cold-caller symbols.main callee-name narrow)
+          (opt-inline-wide-callee-arity callee-name narrow)))
+      1)))
+
+;; Two references is not absorption. The identical callee reached from two cold
+;; sites keeps its body at both: this band moves, it never copies, and the
+;; duplication tier that does copy caps the body at 32.
+(define (compiler-optimize-inline-single-site-two-reference-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-wide-optimized
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-wide-cold-caller
+            symbols.main
+            callee-name
+            (opt-inline-wide-param-count))
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-wide-cold-caller
+              symbols.inline-loop
+              callee-name
+              (opt-inline-wide-param-count))
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-inline-wide-callee callee-name)
+              compiler_ir_types.CompilerIrFunctionList.Nil))))]
+    (and
+      (= (opt-inline-wide-remaining-calls optimized) 1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        1))))
+
+;; A callee that calls itself is refused, and refused by the reference count
+;; rather than by a clause of its own: the census counts the self-call, so one
+;; external caller plus one self-call is two references, not one. (The
+;; call-free clause refuses it a second time; the fixture below isolates that
+;; clause on a callee that is not recursive.)
+(define (compiler-optimize-inline-single-site-self-recursive-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-cold-caller
+            symbols.main
+            callee-name
+            (opt-inline-wide-param-count))
+          (opt-inline-wide-callee-calling callee-name callee-name)))
+      1)))
+
+;; The same wide callee with one call to an external helper in its body stays
+;; out of line: a body that can bring another body along is not bounded by its
+;; own size (#6307).
+(define (compiler-optimize-inline-single-site-call-bearing-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-cold-caller
+            symbols.main
+            callee-name
+            (opt-inline-wide-param-count))
+          (opt-inline-wide-callee-calling callee-name symbols.external-helper)))
+      1)))
+
+;; An address-taken callee is refused even at one call site: the address is a
+;; second way in, so the body cannot move.
+(define (compiler-optimize-inline-single-site-address-taken-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-wide-address-taken-caller symbols.main callee-name)
+          (opt-inline-wide-callee callee-name)))
+      1)))
+
+;; The cascade. `main` calls a wide single-site middle function, which calls the
+;; wide single-site leaf. SCC order absorbs the leaf into the middle function
+;; first, which makes the middle function call-free in time to be absorbed into
+;; `main` in the SAME pass, so both boundaries are gone after one run.
+;;
+;; Reported as one number so the achieved depth is visible when it changes:
+;; ten times the calls to the middle function still in `main`, plus the calls
+;; to the leaf still anywhere. 0 is the full two-level cascade; 10 would be the
+;; leaf absorbed but the middle function left standing.
+(define (compiler-optimize-inline-single-site-cascade-depth-code) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [leaf-name : i64 symbols.inline-switch]
+    [mid-name : i64 symbols.inline-nonleaf]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-wide-optimized
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-wide-cold-caller
+            symbols.main
+            mid-name
+            (opt-inline-wide-param-count))
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-wide-cascade-middle mid-name leaf-name)
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-inline-wide-callee leaf-name)
+              compiler_ir_types.CompilerIrFunctionList.Nil))))]
+    (+
+      (*
+        10
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_nonleaf"))
+      (+
+        (opt-inline-wide-remaining-calls optimized)
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")))))
+
 ;; --- shared acyclic accessor admission --------------------------------------
 ;;
 ;; The callee under test is an ACYCLIC bounds-carrying Switch leaf reached from
@@ -15439,8 +16296,9 @@
     (opt-inline-depth-leaf-switch-instrs)
     3))
 
-;; The identical leaf plus one bounds check: the clause that keeps the weighted
-;; entrance off the class where a wrong frequency estimate is expensive.
+;; The identical leaf plus one bounds check. The weighted entrance was once
+;; closed to this class and is now open to it; the leaf pins that the bounds
+;; check is not what decides the verdict -- the weight is.
 (define (opt-inline-depth-bounds-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
   (opt-inline-depth-leaf-named
     callee-name
@@ -15611,19 +16469,30 @@
         (opt-inline-depth-oversize-leaf callee-name))]
     (= (opt-inline-dominant-remaining-calls refused 0 2) 2)))
 
-;; The identical leaf carrying one bounds check stays out of line at the same
-;; two nested-loop sites: a weighted count is an estimate, and the tier accepts
-;; an estimate only where a wrong one is cheap.
-(define (compiler-optimize-inline-accessor-depth-bounds-refusal-ok?) : bool
+;; The identical leaf carrying one bounds check is admitted at the same two
+;; nested-loop sites, and refused one loop shallower. The weighted entrance used
+;; to demand a bounds-free callee, because an imported guard de-fused, its check
+;; survived, and the base and length spilled; all three are fixed, and dropping
+;; the clause is measured as gvn_table -19,205,435 and cfg_domloops -6,354,925.
+;; What still holds the line for this leaf is the floor itself: two sites one
+;; loop shallower weigh 16, not 128, and keep both calls.
+(define (compiler-optimize-inline-accessor-depth-bounds-admission-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [admitted : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-depth-optimized
         callee-name
         true
         (opt-inline-depth-bounds-leaf callee-name))]
-    (= (opt-inline-dominant-remaining-calls refused 0 2) 2)))
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-depth-optimized
+        callee-name
+        false
+        (opt-inline-depth-bounds-leaf callee-name))]
+    (and
+      (= (opt-inline-dominant-remaining-calls admitted 0 2) 0)
+      (= (opt-inline-dominant-remaining-calls refused 0 2) 2))))
 
 ;; Multiple latches targeting one header are alternative backedges of the same
 ;; loop, not nested loops. The old difference marker added one level per edge,
@@ -43004,6 +43873,102 @@
         summary)
       map)))
 
+;; Two header-typed descriptor params, so a `gep var0, k` load keys as
+;; `Field 0 k*8 I64 header?=true` -- the class an element-only callee provably
+;; cannot reach.
+(define (opt-load-cse-descriptor-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "xs"
+      (compiler_ast_types.AstType.DynArray 0)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "ys"
+        (compiler_ast_types.AstType.DynArray 0)
+        1)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+;; Descriptor-field load, a call, then the same descriptor-field load. Only the
+;; callee's summary decides whether the second load survives.
+(define (opt-load-cse-descriptor-call-instrs [name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          name
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 1))
+          (compiler_ast_types.AstType.Unit))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            5
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; The other side of the layer split: an ELEMENT load (through the descriptor's
+;; data slot) must NOT survive an element-only callee, because that is exactly
+;; the storage such a callee writes.
+(define (opt-load-cse-element-call-instrs [name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            5
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Call
+              6
+              name
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.Var 1))
+              (compiler_ast_types.AstType.Unit))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                7
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 2)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Load
+                  8
+                  (compiler_ir_types.CompilerIrValue.Var 7)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
 (define (opt-call-memory-test-call-instrs
   [name : i64]
   [arg : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstrList
@@ -43186,6 +44151,36 @@
         (opt-call-memory-test-call-instrs
           call-touch
           (compiler_ir_types.CompilerIrValue.Var 1)))]
+    ;; An element-only callee keeps the DESCRIPTOR layer alive across the call
+    ;; (the header-typed Field entry) but not the ELEMENT layer it writes.
+    [call-element-only : opt_i64_i64_map.Map
+      (opt-call-memory-test-map
+        call-touch
+        (compiler_optimize.opt-call-memory-element-bit))]
+    [call-descriptor-element : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-descriptor-params)
+        call-element-only
+        (opt-load-cse-descriptor-call-instrs call-touch))]
+    [call-descriptor-unknown : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-descriptor-params)
+        (opt-call-memory-test-map
+          call-touch
+          (compiler_optimize.opt-call-memory-unknown-bit))
+        (opt-load-cse-descriptor-call-instrs call-touch))]
+    [call-descriptor-global : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-descriptor-params)
+        (opt-call-memory-test-map
+          call-touch
+          (compiler_optimize.opt-call-memory-global-bit))
+        (opt-load-cse-descriptor-call-instrs call-touch))]
+    [call-element-layer : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-descriptor-params)
+        call-element-only
+        (opt-load-cse-element-call-instrs call-touch))]
     [summary-wrapper : i64 (opt-test-symbol "call_memory_wrapper")]
     [summary-leaf : i64 (opt-test-symbol "call_memory_leaf")]
     [summary-global : i64 (opt-test-symbol "call_memory_global_writer")]
@@ -43514,6 +44509,22 @@
       [(not (= (opt-count-mov-dst-instrs call-same-root 5) 0)) 63]
       [(not (= (opt-count-load-instrs call-global) 2)) 64]
       [(not (= (opt-count-load-instrs call-unknown) 2)) 65]
+      ;; Element-only callee: the descriptor-field reload becomes a copy.
+      [(not (= (opt-count-load-instrs call-descriptor-element) 1)) 200]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              call-descriptor-element
+              6
+              3
+              (compiler_ast_types.AstType.I64))
+            1))
+        201]
+      ;; Unknown and global-writing callees still clear the descriptor entry.
+      [(not (= (opt-count-load-instrs call-descriptor-unknown) 2)) 202]
+      [(not (= (opt-count-load-instrs call-descriptor-global) 2)) 203]
+      ;; ...and an element load is exactly what an element-only callee writes.
+      [(not (= (opt-count-load-instrs call-element-layer) 3)) 204]
       [(not (opt-call-memory-summary-is? call-summaries summary-leaf 1)) 66]
       [(not (opt-call-memory-summary-is? call-summaries summary-wrapper 2)) 67]
       [(not
@@ -48247,21 +49258,18 @@
     [header : i64
       (compiler_ir_types.compiler-ir-label "dense.induction.header")]
     [exit : i64 (compiler_ir_types.compiler-ir-label "dense.induction.exit")]
-    [seed-instrs : compiler_ir_types.CompilerIrInstrList
-      (compiler_ir_types.compiler-ir-instr-cons
-        (opt-dense-insertion-test-mov 20)
-        compiler_ir_types.CompilerIrInstrList.Nil)]
-    [phi-instrs : compiler_ir_types.CompilerIrInstrList
-      (compiler_ir_types.compiler-ir-instr-cons
+    [seed-instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq1
+        (opt-dense-insertion-test-mov 20))]
+    [phi-instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq1
         (compiler_ir_types.CompilerIrInstr.Phi
           30
           compiler_ir_types.CompilerIrPhiInputList.Nil
-          (compiler_ast_types.AstType.I64))
-        compiler_ir_types.CompilerIrInstrList.Nil)]
-    [next-instrs : compiler_ir_types.CompilerIrInstrList
-      (compiler_ir_types.compiler-ir-instr-cons
-        (opt-dense-insertion-test-mov 40)
-        compiler_ir_types.CompilerIrInstrList.Nil)]
+          (compiler_ast_types.AstType.I64)))]
+    [next-instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq1
+        (opt-dense-insertion-test-mov 40))]
     [cons-result : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-induction-insert-support-blocks
         header

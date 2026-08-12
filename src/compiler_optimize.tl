@@ -23222,36 +23222,6 @@
       [(option_i64.None) instr])
     instr))
 
-(define (opt-induction-rewrite-instr-seq-from
-  [type-segment-bases : i64]
-  [fact : OptInductionFact]
-  [offsets : opt_i64_i64_map.Map]
-  [scaled : opt_i64_i64_map.Map]
-  [derived : OptInductionDerived]
-  [derived-phi : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    ir.CompilerIrInstrList.Nil
-    (ir.compiler-ir-instr-cons
-      (opt-induction-rewrite-instr
-        type-segment-bases
-        fact
-        offsets
-        scaled
-        derived
-        derived-phi
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (opt-induction-rewrite-instr-seq-from
-        type-segment-bases
-        fact
-        offsets
-        scaled
-        derived
-        derived-phi
-        instrs
-        (+ index 1)))))
-
 (define (opt-induction-rewrite-instr-seq
   [type-segment-bases : i64]
   [fact : OptInductionFact]
@@ -23259,16 +23229,27 @@
   [scaled : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
-  (opt-induction-rewrite-instr-seq-from
-    type-segment-bases
-    fact
-    offsets
-    scaled
-    derived
-    derived-phi
-    instrs
-    0))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-induction-rewrite-instr
+              type-segment-bases
+              fact
+              offsets
+              scaled
+              derived
+              derived-phi
+              (ir.compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-induction-rewrite-blocks
   [type-segment-bases : i64]
@@ -23290,7 +23271,7 @@
             (if (and
               (opt-loop-body-label-member? body index label)
               (not (opt-induction-switch-arm? index all-blocks label instrs)))
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 label
                 (opt-induction-rewrite-instr-seq
                   type-segment-bases
@@ -23445,22 +23426,6 @@
         (ir.CompilerIrValue.Var (- seed-var 1))
         ty)]))
 
-(define (opt-induction-seed-instrs-for-derived
-  [fact : OptInductionFact]
-  [derived : OptInductionDerived]
-  [frame : i64]) : ir.CompilerIrInstrList
-  (let
-    [seed-var : i64 (opt-induction-derived-seed-var derived frame)]
-    (if (= (opt-induction-derived-offset derived) 0)
-      (ir.compiler-ir-instr-cons
-        (opt-induction-final-seed-instr fact derived seed-var)
-        ir.CompilerIrInstrList.Nil)
-      (ir.compiler-ir-instr-cons
-        (opt-induction-offset-seed-instr fact derived frame)
-        (ir.compiler-ir-instr-cons
-          (opt-induction-final-seed-instr fact derived seed-var)
-          ir.CompilerIrInstrList.Nil)))))
-
 (define (opt-induction-next-instr
   [fact : OptInductionFact]
   [derived : OptInductionDerived]
@@ -23516,67 +23481,101 @@
         (ir.CompilerIrPhiInputList.Nil)))
     (opt-induction-derived-phi-type derived)))
 
-(define (opt-induction-seed-instrs
-  [fact : OptInductionFact]
-  [deriveds : OptInductionDerivedList]
-  [frame : i64]) : ir.CompilerIrInstrList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) ir.CompilerIrInstrList.Nil]
-    [(OptInductionDerivedList.Cons derived rest)
-      (opt-aggregate-instr-list-append
-        (opt-induction-seed-instrs-for-derived fact derived frame)
-        (opt-induction-seed-instrs
-          fact
-          (__tl-box-place rest)
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+(defstruct OptInductionSupportInstrs
+  (seed-instrs ir.CompilerIrInstrSeq)
+  (phi-instrs ir.CompilerIrInstrSeq)
+  (next-instrs ir.CompilerIrInstrSeq))
 
-(define (opt-induction-phi-instrs
+;; Build the three support streams in one derived-value walk. The former shape
+;; built and appended three cons chains, then immediately counted and copied
+;; them into the destination block builders. refs #5726
+(define (opt-induction-push-support-instrs!
+  [fact : OptInductionFact]
   [deriveds : OptInductionDerivedList]
   [preheader : i64]
   [latch : i64]
-  [frame : i64]) : ir.CompilerIrInstrList
+  [frame : i64]
+  [seed-builder : (&mut seed-builder ir.CompilerIrInstrBuilder)]
+  [phi-builder : (&mut phi-builder ir.CompilerIrInstrBuilder)]
+  [next-builder : (&mut next-builder ir.CompilerIrInstrBuilder)]) : unit
   (match deriveds
-    [(OptInductionDerivedList.Nil) ir.CompilerIrInstrList.Nil]
+    [(OptInductionDerivedList.Nil) unit]
     [(OptInductionDerivedList.Cons derived rest)
-      (ir.compiler-ir-instr-cons
-        (opt-induction-phi-instr
-          derived
-          preheader
-          latch
-          (opt-induction-derived-seed-var derived frame)
-          (opt-induction-derived-phi-var derived frame)
-          (opt-induction-derived-next-var derived frame))
-        (opt-induction-phi-instrs
-          (__tl-box-place rest)
-          preheader
-          latch
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+      (let
+        [seed-var : i64 (opt-induction-derived-seed-var derived frame)]
+        (begin
+          (if (= (opt-induction-derived-offset derived) 0)
+            unit
+            (ir.compiler-ir-instr-builder-push!
+              (&mut seed-builder)
+              (opt-induction-offset-seed-instr fact derived frame)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut seed-builder)
+            (opt-induction-final-seed-instr fact derived seed-var))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut phi-builder)
+            (opt-induction-phi-instr
+              derived
+              preheader
+              latch
+              seed-var
+              (opt-induction-derived-phi-var derived frame)
+              (opt-induction-derived-next-var derived frame)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut next-builder)
+            (opt-induction-next-instr
+              fact
+              derived
+              (opt-induction-derived-phi-var derived frame)
+              (opt-induction-derived-next-var derived frame)))
+          (opt-induction-push-support-instrs!
+            fact
+            (__tl-box-place rest)
+            preheader
+            latch
+            (+ frame (opt-induction-derived-slot-count derived))
+            (&mut seed-builder)
+            (&mut phi-builder)
+            (&mut next-builder))))]))
 
-(define (opt-induction-next-instrs
+(define (opt-induction-support-instrs
   [fact : OptInductionFact]
   [deriveds : OptInductionDerivedList]
-  [frame : i64]) : ir.CompilerIrInstrList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) ir.CompilerIrInstrList.Nil]
-    [(OptInductionDerivedList.Cons derived rest)
-      (ir.compiler-ir-instr-cons
-        (opt-induction-next-instr
-          fact
-          derived
-          (opt-induction-derived-phi-var derived frame)
-          (opt-induction-derived-next-var derived frame))
-        (opt-induction-next-instrs
-          fact
-          (__tl-box-place rest)
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+  [preheader : i64]
+  [latch : i64]
+  [frame : i64]
+  [derived-count : i64]
+  [derived-slot-count : i64]) : OptInductionSupportInstrs
+  (let
+    [seed-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (- derived-slot-count (* 2 derived-count)))]
+    [phi-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity derived-count)]
+    [next-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity derived-count)]
+    (begin
+      (opt-induction-push-support-instrs!
+        fact
+        deriveds
+        preheader
+        latch
+        frame
+        (&mut seed-builder)
+        (&mut phi-builder)
+        (&mut next-builder))
+      (OptInductionSupportInstrs
+        (ir.compiler-ir-instr-builder-to-seq seed-builder)
+        (ir.compiler-ir-instr-builder-to-seq phi-builder)
+        (ir.compiler-ir-instr-builder-to-seq next-builder)))))
 
 (define (opt-induction-insert-support-blocks
   [header : i64]
   [preheader : i64]
   [latch : i64]
-  [seed-instrs : ir.CompilerIrInstrList]
-  [phi-instrs : ir.CompilerIrInstrList]
-  [next-instrs : ir.CompilerIrInstrList]
+  [seed-instrs : ir.CompilerIrInstrSeq]
+  [phi-instrs : ir.CompilerIrInstrSeq]
+  [next-instrs : ir.CompilerIrInstrSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
@@ -23604,22 +23603,26 @@
                   (opt-licm-first-terminator-index instrs 0 original-count)]
                 [phi-count : i64
                   (if is-header
-                    (ir.compiler-ir-instr-list-count phi-instrs)
+                    (ir.compiler-ir-instr-seq-count phi-instrs)
                     0)]
                 [seed-count : i64
                   (if is-preheader
-                    (ir.compiler-ir-instr-list-count seed-instrs)
+                    (ir.compiler-ir-instr-seq-count seed-instrs)
                     0)]
                 [next-count : i64
                   (if is-latch
-                    (ir.compiler-ir-instr-list-count next-instrs)
+                    (ir.compiler-ir-instr-seq-count next-instrs)
                     0)]
                 [builder : ir.CompilerIrInstrBuilder
                   (ir.compiler-ir-instr-builder-with-capacity
                     (+ original-count (+ phi-count (+ seed-count next-count))))]
                 (begin
                   (if is-header
-                    (opt-instr-builder-append-list! (&mut builder) phi-instrs)
+                    (ir.compiler-ir-instr-builder-append-seq-range!
+                      (&mut builder)
+                      phi-instrs
+                      0
+                      phi-count)
                     unit)
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut builder)
@@ -23627,10 +23630,18 @@
                     0
                     terminator-index)
                   (if is-preheader
-                    (opt-instr-builder-append-list! (&mut builder) seed-instrs)
+                    (ir.compiler-ir-instr-builder-append-seq-range!
+                      (&mut builder)
+                      seed-instrs
+                      0
+                      seed-count)
                     unit)
                   (if is-latch
-                    (opt-instr-builder-append-list! (&mut builder) next-instrs)
+                    (ir.compiler-ir-instr-builder-append-seq-range!
+                      (&mut builder)
+                      next-instrs
+                      0
+                      next-count)
                     unit)
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut builder)
@@ -23702,6 +23713,8 @@
                     (OptInductionDerivedList.Nil))]
                 [derived-count : i64
                   (opt-induction-derived-list-count deriveds)]
+                [derived-slot-count : i64
+                  (opt-induction-derived-list-slot-count deriveds)]
                 (if (= derived-count 0)
                   (OptInductionApplyResult.Result blocks frame false)
                   (let
@@ -23716,26 +23729,25 @@
                         deriveds
                         frame
                         blocks)]
-                    [seed-instrs : ir.CompilerIrInstrList
-                      (opt-induction-seed-instrs fact deriveds frame)]
-                    [phi-instrs : ir.CompilerIrInstrList
-                      (opt-induction-phi-instrs
+                    [support : OptInductionSupportInstrs
+                      (opt-induction-support-instrs
+                        fact
                         deriveds
                         preheader
                         (opt-natural-loop-latch loop)
-                        frame)]
-                    [next-instrs : ir.CompilerIrInstrList
-                      (opt-induction-next-instrs fact deriveds frame)]
+                        frame
+                        derived-count
+                        derived-slot-count)]
                     (OptInductionApplyResult.Result
                       (opt-induction-insert-support-blocks
                         (opt-natural-loop-header loop)
                         preheader
                         (opt-natural-loop-latch loop)
-                        seed-instrs
-                        phi-instrs
-                        next-instrs
+                        support.seed-instrs
+                        support.phi-instrs
+                        support.next-instrs
                         rewritten)
-                      (+ frame (opt-induction-derived-list-slot-count deriveds))
+                      (+ frame derived-slot-count)
                       true))))]
             [(OptMaybeInductionFact.No)
               (OptInductionApplyResult.Result blocks frame false)])))]
@@ -62887,6 +62899,388 @@
   (match (opt-cmp-sink-blocks-pass blocks)
     [(OptBlockListPassResult.Result next _) next]))
 
+;; --- single-use load sinking -----------------------------------------------
+;;
+;; Sink a single-use `gep; load` pair down to the slot immediately before its
+;; unique consumer in the same block. The backend folds a fused `gep; load`
+;; straight into the consuming ALU op's memory operand -- `movq (b,i,8), %t;
+;; andq %t, %acc` becomes `andq (b,i,8), %acc`, one instruction and one
+;; register shorter -- but every probe in that family reads the instruction at
+;; `load index + 1`: the fold requires ADJACENCY, and source evaluation order
+;; does not supply it. `(bit-or (ln-ref uses k) (bit-and (ln-ref scratch-out i)
+;; (bit-xor (ln-ref defs k) -1)))` -- benchmarks/liveness_scan's flagship loop,
+;; 11.8M iterations -- lowers its three element reads first and its three ALU
+;; ops after, so the `and`'s load sits four slots back and the `or`'s eight.
+;; Only the innermost `xor` is adjacent, and only the `xor` folds; the loop
+;; pays ten instructions where eight would do.
+;;
+;; The move is pure scheduling. It fires when the load's dst and the gep's dst
+;; are each single-use across the whole function, the unique use is a BinOp
+;; later in the SAME block, nothing between the load and that BinOp writes
+;; memory or calls, and nothing between them redefines the gep's base or index
+;; (SSA already forbids the last one; the check is belt and braces). Pairs are
+;; planned bottom-up and flushed at their consumer in ascending original order,
+;; so a chain of loads feeding a chain of ALU ops cascades -- each load lands
+;; next to ITS consumer -- while a pair that was already in place, including
+;; the `gep; load; gep; load; binop` shape the two-operand fold wants, keeps
+;; its exact position and the block is returned untouched.
+;;
+;; ORDERING SAFETY. Two motions happen here and both are sound:
+;;
+;;   * A load passes another load. Reads commute; neither has an effect.
+;;
+;;   * A load moves LATER past a non-memory instruction. The only thing in
+;;     that window that can do anything observable is one that ABORTS -- a
+;;     BoundsCheck, or a checked divide. Moving a load from before an abort
+;;     point to after it means that, on the aborting path, the load no longer
+;;     runs. A load has no observable effect and its result is dead on that
+;;     path, so the two programs produce identical output and identical exit
+;;     status. The unsound direction is the mirror image (a load hoisted ABOVE
+;;     its guard can fault); this pass never moves a load earlier, and a
+;;     load's own guarding check already dominates it, so that check is never
+;;     inside the window. Anything that writes memory -- Store, StorePtr,
+;;     CopyBytes, the vector stores -- or that can write memory indirectly --
+;;     any call form -- is a hard barrier, as is any shape not on the
+;;     crossable list below.
+;; Instructions a sunk load may cross: pure value producers plus BoundsCheck,
+;; which only aborts (see the ORDERING SAFETY note). Everything else, memory
+;; writers and calls included, is a barrier.
+(define (opt-load-sink-crossable? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ _ _ _) true]
+    [(ir.CompilerIrInstr.Load _ _ _) true]
+    [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(ir.CompilerIrInstr.Mov _ _ _) true]
+    [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [_ false]))
+
+;; Operand-position use test over exactly the shapes `opt-load-sink-crossable?`
+;; admits; anything else is a barrier and never reaches here, so the catch-all
+;; answers conservatively.
+(define (opt-load-sink-instr-uses-var? [instr : ir.CompilerIrInstr] [var : i64]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (or (opt-value-is-var? base var) (opt-value-is-var? offset var))]
+    [(ir.CompilerIrInstr.Load _ src _) (opt-value-is-var? src var)]
+    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]
+    [(ir.CompilerIrInstr.BoundsCheck index length _)
+      (or (opt-value-is-var? index var) (opt-value-is-var? length var))]
+    [(ir.CompilerIrInstr.Mov _ src _) (opt-value-is-var? src var)]
+    [(ir.CompilerIrInstr.UnOp _ _ src _) (opt-value-is-var? src var)]
+    [(ir.CompilerIrInstr.Cast _ src _ _) (opt-value-is-var? src var)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _) (opt-value-is-var? src var)]
+    [_ true]))
+
+(define (opt-load-sink-single-use?
+  [use-counts : (__tl_dyn-array i64)]
+  [var : i64]) : bool
+  (if (< var 0)
+    false
+    (if (>= var (array-length use-counts))
+      false
+      (= (array-ref use-counts var) 1))))
+
+;; Index of the BinOp that consumes `load-dst`, or -1 when the pair may not
+;; sink. `load-dst` is single-use by the caller's test, so the first crossable
+;; instruction that reads it IS the unique consumer: either it is a BinOp
+;; reading it as an operand (the fold's shape) or the pair stays put.
+(define (opt-load-sink-find-consumer
+  [instrs : ir.CompilerIrInstrSeq]
+  [start : i64]
+  [count : i64]
+  [load-dst : i64]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]) : i64
+  (let
+    [index : i64 start]
+    [answer : i64 (- 0 1)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          (if (not (opt-load-sink-crossable? instr))
+            (set! done true)
+            (if (opt-load-sink-instr-uses-var? instr load-dst)
+              (begin
+                (match instr
+                  [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+                    (if (or
+                      (opt-value-is-var? lhs load-dst)
+                      (opt-value-is-var? rhs load-dst))
+                      (set! answer index)
+                      unit)]
+                  [_ unit])
+                (set! done true))
+              (let
+                [dst : i64 (opt-gvn-instr-dst instr)]
+                (if (or
+                  (opt-value-is-var? base dst)
+                  (opt-value-is-var? offset dst))
+                  (set! done true)
+                  (set! index (+ index 1))))))))
+      answer)))
+
+;; The sink target for the `gep; load` pair ending at `index`, or -1 when the
+;; pair does not qualify. Both dsts must be single-use: the gep's because the
+;; pair moves as a unit, the load's because the fold consumes the value.
+(define (opt-load-sink-pair-target
+  [use-counts : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]) : i64
+  (match (array-ref slots index)
+    [(ir.CompilerIrInstr.Load load-dst (ir.CompilerIrValue.Var gep-dst) _)
+      (match (array-ref slots (- index 1))
+        [(ir.CompilerIrInstr.Gep gep base offset _)
+          (if (and
+            (= gep gep-dst)
+            (opt-load-sink-single-use? use-counts gep-dst)
+            (opt-load-sink-single-use? use-counts load-dst))
+            (opt-load-sink-find-consumer
+              instrs
+              (+ index 1)
+              count
+              load-dst
+              base
+              offset)
+            (- 0 1))]
+        [_ (- 0 1)])]
+    [_ (- 0 1)]))
+
+;; Cheap first look: is there a qualifying pair whose consumer is not already
+;; the next instruction? Only then does the block pay for the plan arrays. A
+;; pair that is merely part of an already-contiguous run still answers yes
+;; here; the plan below then reproduces the original order exactly and the
+;; block is returned untouched.
+(define (opt-load-sink-block-moves?
+  [use-counts : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [count : i64]) : bool
+  (let
+    [index : i64 1]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index (- count 1)))
+        (begin
+          (if (>
+            (opt-load-sink-pair-target use-counts instrs slots index count)
+            (+ index 1))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (opt-load-sink-reorder
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [order : (__tl_dyn-array i64)]
+  [count : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [out : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref out index) (array-ref slots (array-ref order index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq out count))))
+
+;; `head`/`link` are zero-initialised, so both encodings bias by one to keep
+;; zero meaning "absent": `head[target] = first + 1` names the first pair
+;; instruction flushed at `target`, and `link[i] = next + 2` names the pair
+;; instruction after `i` in that chain (1 = end of chain, 0 = `i` does not
+;; move). Planning walks BOTTOM-UP and pushes each pair onto the front of its
+;; consumer's chain, so the chain comes out in ascending original order and a
+;; run of pairs that already sits against its consumer is reproduced verbatim.
+(define (opt-load-sink-block
+  [use-counts : (__tl_dyn-array i64)]
+  [block : ir.CompilerIrBlock]) : OptBlockPassResult
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 instrs.len]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+        (if (or
+          (< count 4)
+          (not (opt-load-sink-block-moves? use-counts instrs slots count)))
+          (OptBlockPassResult.Result block false)
+          (let
+            [head : (__tl_dyn-array i64) (array.make-array i64 count)]
+            [link : (__tl_dyn-array i64) (array.make-array i64 count)]
+            [order : (__tl_dyn-array i64) (array.make-array i64 count)]
+            [index : i64 (- count 2)]
+            [write : i64 0]
+            [changed : bool false]
+            (begin
+              (while (>= index 1)
+                (begin
+                  (let
+                    [target : i64
+                      (opt-load-sink-pair-target
+                        use-counts
+                        instrs
+                        slots
+                        index
+                        count)]
+                    (if (>= target 0)
+                      (begin
+                        (set!
+                          (array-ref link index)
+                          (+ (array-ref head target) 1))
+                        (set! (array-ref head target) (+ index 1))
+                        (set!
+                          (array-ref link (- index 1))
+                          (+ (array-ref head target) 1))
+                        (set! (array-ref head target) index))
+                      unit))
+                  (set! index (- index 1))))
+              (set! index 0)
+              (while (< index count)
+                (begin
+                  (if (= (array-ref link index) 0)
+                    (let
+                      [cursor : i64 (- (array-ref head index) 1)]
+                      (begin
+                        (while (>= cursor 0)
+                          (begin
+                            (set! (array-ref order write) cursor)
+                            (if (!= cursor write)
+                              (set! changed true)
+                              unit)
+                            (set! write (+ write 1))
+                            (set! cursor (- (array-ref link cursor) 2))))
+                        (set! (array-ref order write) index)
+                        (if (!= index write)
+                          (set! changed true)
+                          unit)
+                        (set! write (+ write 1))))
+                    unit)
+                  (set! index (+ index 1))))
+              (if changed
+                (OptBlockPassResult.Result
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-load-sink-reorder slots order count))
+                  true)
+                (OptBlockPassResult.Result block false))))))]))
+
+(define (opt-load-sink-blocks-pass
+  [use-counts : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptBlockListPassResult.Result blocks false)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (opt-load-sink-block use-counts block)
+        [(OptBlockPassResult.Result next-block block-changed)
+          (match (opt-load-sink-blocks-pass use-counts (__tl-box-place rest))
+            [(OptBlockListPassResult.Result next-rest rest-changed)
+              (if (or block-changed rest-changed)
+                (OptBlockListPassResult.Result
+                  (ir.compiler-ir-block-cons next-block next-rest)
+                  true)
+                (OptBlockListPassResult.Result blocks false))])])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 seq.len]
+        [source : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+        [out : (__tl_dyn-array ir.CompilerIrBlock)
+          (array.make-array ir.CompilerIrBlock count)]
+        [index : i64 0]
+        [changed : bool false]
+        (begin
+          (while (< index count)
+            (begin
+              (match (opt-load-sink-block use-counts (array-ref source index))
+                [(OptBlockPassResult.Result next-block block-changed)
+                  (begin
+                    (set! (array-ref out index) next-block)
+                    (if block-changed
+                      (set! changed true)
+                      unit))])
+              (set! index (+ index 1))))
+          (if changed
+            (OptBlockListPassResult.Result
+              (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq out count))
+              true)
+            (OptBlockListPassResult.Result blocks false))))]))
+
+;; Structural pre-gate, cheaper than the use-count table the plan needs: a
+;; `gep; load` pair whose NEXT instruction is crossable and does not consume
+;; the load. Every pair that can actually move satisfies this (its consumer is
+;; at least two slots away, so the slot between is in the crossable window and
+;; is not the use), so the gate has no false negatives; it merely spares the
+;; overwhelming majority of functions the whole-function use tally.
+(define (opt-load-sink-block-wants-pass? [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 instrs.len]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+        [index : i64 1]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< index (- count 1)))
+            (begin
+              (match (array-ref slots index)
+                [(ir.CompilerIrInstr.Load
+                    load-dst
+                    (ir.CompilerIrValue.Var gep-dst)
+                    _)
+                  (match (array-ref slots (- index 1))
+                    [(ir.CompilerIrInstr.Gep gep _ _ _)
+                      (if (= gep gep-dst)
+                        (let
+                          [next : ir.CompilerIrInstr
+                            (array-ref slots (+ index 1))]
+                          (if (and
+                            (opt-load-sink-crossable? next)
+                            (not (opt-load-sink-instr-uses-var? next load-dst)))
+                            (set! found true)
+                            unit))
+                        unit)]
+                    [_ unit])]
+                [_ unit])
+              (set! index (+ index 1))))
+          found))]))
+
+(define (opt-load-sink-blocks-want-pass? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-load-sink-block-wants-pass? block)
+        true
+        (opt-load-sink-blocks-want-pass? (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 seq.len]
+        [slots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< index count))
+            (begin
+              (if (opt-load-sink-block-wants-pass? (array-ref slots index))
+                (set! found true)
+                unit)
+              (set! index (+ index 1))))
+          found))]))
+
+(define (opt-load-sink-blocks [frame : i64] [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (if (not (opt-load-sink-blocks-want-pass? blocks))
+    blocks
+    (match (opt-load-sink-blocks-pass
+      (opt-collect-blocks-uses-array frame blocks)
+      blocks)
+      [(OptBlockListPassResult.Result next _) next])))
+
 ;; --- late compare duplication ----------------------------------------------
 ;;
 ;; GVN unifies textually identical comparisons, so one compare can end up
@@ -67988,12 +68382,39 @@
                             name
                             _t-dce)
                           unit)]
+                      ;; Pure scheduling, and last on purpose: it exists only
+                      ;; to satisfy the backend's ADJACENCY requirement for the
+                      ;; gep-load memory-operand folds, so nothing may run
+                      ;; below it that could separate a pair again. Running it
+                      ;; under `dce` also means the use tally it needs sees no
+                      ;; dead readers, so a load whose only surviving consumer
+                      ;; is the fold's BinOp is recognised as single-use.
+                      [_t-load-sink : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [load-sink : ir.CompilerIrBlockList
+                        (compiler-opt-debug-observe-blocks
+                          type-segment-bases
+                          "load_sink"
+                          name
+                          params
+                          ret-ty
+                          cmp-dup-frame
+                          (opt-load-sink-blocks cmp-dup-frame dced))]
+                      [_p-load-sink : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            summaries.profile-state
+                            "load_sink"
+                            name
+                            _t-load-sink)
+                          unit)]
                       (ir.CompilerIrFunction.Function
                         name
                         params
                         ret-ty
                         cmp-dup-frame
-                        dced))]))]))])))
+                        load-sink))]))]))])))
 
 (define (optimize-function-once
   [pools : ast.AstNodePoolContext]
@@ -72853,6 +73274,121 @@
     (opt-inline-bounds-loop-cascade-safe?)
     (opt-inline-caller-recursive?)))
 
+;; --- absorbing a SINGLE-SITE callee at any size -----------------------------
+;;
+;; Every band above prices a body against a size ceiling, because every band
+;; above can be asked to COPY one. The ceilings are growth budgets: 32
+;; instructions for the loop tier, 128 for the recursive-site tier, and the cost
+;; model's shared block fuel of 32 on top of both. A callee with exactly one
+;; static reference is the one shape none of that arithmetic applies to. Its
+;; body does not get copied, it MOVES: the site takes it, the original is left
+;; unreferenced, and the program's total instruction count after the rewrite is
+;; what it was before, minus the call sequence and the prologue that no longer
+;; run. There is no growth to bound, so a growth budget is the wrong instrument,
+;; and the ceilings it imposes refuse the one class of absorption that is free.
+;;
+;; What the ceilings were costing is a whole benchmark row. liveness_scan's
+;; `ln-recompute!` and `ln-live-out-into!` have exactly one call site each, and
+;; clang absorbs both into the fixpoint loop. This compiler kept them out of
+;; line, because both carry bounds checks inside loops and are far past the
+;; loop tier's 32 and the recursive tier's 128 -- 368 and 217 instructions. They
+;; are 14- and 10-parameter functions, so what the boundary costs is not one
+;; call: it is 88 instructions of prologue per entry over 140,905 entries, plus
+;; the argument marshalling, plus every value in the trio living in a frame slot
+;; because it crosses a call boundary that the absorbed form does not have.
+;;
+;; The size ceiling comes off. Two other clauses go on in its place, and both
+;; were put there by measurement, not by symmetry -- the first version of this
+;; band asked the reference count and nothing else, and it LOST:
+;; liveness_scan 620,776,020 -> 726,936,390, +17.10%, with both target callees
+;; confirmed absorbed. The prologue arithmetic that motivated the band is real
+;; and it is not the whole account. What it leaves out is that a body absorbed
+;; into a LOOP puts its entire working set inside that loop, where the
+;; allocator must now keep the loop's own live values across it. Absorbing
+;; `ln-recompute!` into the fixpoint worklist loop cost far more in spills
+;; inside that loop than the 14-argument boundary ever cost in marshalling.
+;;
+;; That is the trade this band makes explicit. The loop tier bounds the body
+;; and demands an in-loop site: a small body is safe inside a loop, and only an
+;; in-loop site repays a boundary worth little. This tier is its exact
+;; complement -- it lifts the size bound and demands the opposite site:
+;;
+;;   1. absorb-class 1 -- exactly one static reference, not address-taken, not
+;;      `main`, not a self-call from this caller. This is what makes the move
+;;      free. Note that a self-RECURSIVE callee is already excluded by this
+;;      number rather than by a separate test: the census counts the callee's
+;;      own `Call`/`TailCall` as a reference, so a function with one external
+;;      caller and one self-call counts 2 and lands in the duplication class.
+;;      Mutual recursion is excluded one level up, where a callee in the
+;;      caller's own SCC is refused before any of these predicates run;
+;;   2. the boundary is WIDE -- opt-inline-single-site-min-params or more. This
+;;      is the band's actual subject. What no size budget prices, and what
+;;      absorption retires outright, is argument marshalling, and marshalling
+;;      cost scales with ARITY, not with body size. Below the arity where the
+;;      ABI runs out of argument registers there is no marshalling to retire,
+;;      the boundary is a call and a cheap prologue, and the site-conditioned
+;;      tiers above already price it correctly -- including their measured
+;;      refusal of once-per-program `init`/`fill` helpers, whose absorption
+;;      into a hot-loop-holding caller costs that caller its allocation. This
+;;      clause is what keeps those refusals intact;
+;;   3. the site is NOT in a natural loop of the caller. An unbounded body may
+;;      be moved next to a loop; it may not be moved inside one. This is the
+;;      clause the first version lacked, and the 17.10% above is what it costs
+;;      to lack it;
+;;   4. the heavy gate is kept. It is not a growth budget -- it is the block
+;;      count past which the whole-function passes downstream stop running --
+;;      so a merged function that would cross it is refused here for the same
+;;      reason every other band refuses it. The shared block fuel is NOT kept:
+;;      that budget exists to stop a caller from ballooning on copies, and this
+;;      band makes no copies. Its blocks are still charged to the shared
+;;      accumulator, so the bands that DO grow the caller see the real size;
+;;   5. the body is call-free, the same clause the duplication and
+;;      recursive-site tiers carry, for the same reason: the multiblock clone
+;;      path miscompiles call-carrying bodies (#6307). Here it is conservatism
+;;      rather than a mechanism requirement -- a move makes one copy, not two --
+;;      and it costs less than it reads, because SCC order processes callees
+;;      before callers, so a chain of single-site functions is absorbed
+;;      bottom-up in ONE pass;
+;;   6. the cascade clause, asked only when the callee actually carries bounds
+;;      checks, because that is the only thing it protects against: handing a
+;;      bounds-free single-reference CALLER its first bounds check used to cost
+;;      that caller its own inline at the loop tier.
+;;
+;; Ordered cheapest-first: two integer compares, then arithmetic, then the
+;; memoized caller facts, and the scan over the callee's blocks last.
+;;
+;; On the arity floor below: x86-64 SysV passes six integer arguments in
+;; registers and Windows x64 passes four, so at eight parameters BOTH ABIs store
+;; surplus arguments to the stack at the call and reload them in the callee --
+;; traffic that exists only because the boundary exists, that no body-size
+;; budget can see, and that absorption retires completely. Below the floor the
+;; boundary is cheap enough that the site-conditioned tiers own the decision.
+;; The measured population starts above it: the liveness callees this band was
+;; built for present at 10 and 14 parameters, and the only compiler function it
+;; claims across a whole self-compile has exactly 8.
+(define (opt-inline-single-site-min-params) : i64
+  8)
+
+(define (opt-inline-single-site-absorb-ok?
+  [absorb-class : i64]
+  [has-bounds? : bool]
+  [param-count : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (= absorb-class 1)
+    (>= param-count (opt-inline-single-site-min-params))
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        added-so-far
+        added-blocks))
+    (not (opt-inline-bounds-loop-site-in-loop?))
+    (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
+    (opt-inline-blocks-call-free? blocks)))
+
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
   [absorbable? : bool]
@@ -72975,7 +73511,7 @@
 ;; below the raw one, so every callee that used to enter this tier still enters
 ;; it on the raw count alone and nothing that was admitted becomes refused.
 ;;
-;; Three clauses keep the new entrance inside the class it was measured on:
+;; Two clauses keep the new entrance inside the class it was measured on:
 ;;
 ;;   - the size ceilings above are untouched. This tier only ever admits a body
 ;;     of at most opt-inline-shared-accessor-max-body instructions in
@@ -72990,37 +73526,91 @@
 ;;     letting one deeply nested site claim a tier whose argument is "many sites
 ;;     are hot" would claim something false and would spend this tier's fuel on
 ;;     a case the absorb band already owns.
-;;   - the callee must carry NO bounds check. This is the clause the corpus
-;;     insisted on, and the reason is the difference between the two counts. A
-;;     raw reference count is a COUNTED FACT; a depth weight is an ESTIMATE, and
-;;     its error is unbounded in one direction -- a loop that runs once weighs
-;;     the same as a loop that runs a million times. So the weighted entrance is
-;;     granted only where a wrong estimate is cheap, and an imported bounds
-;;     check is the opposite of cheap: it adds a length load, a compare, a
-;;     branch and a trap edge inside the caller's hottest loop, and it lengthens
-;;     the live ranges there. Measured on the corpus, both accessors that reach
-;;     this tier on weight alone while carrying a bounds check regress their
-;;     rows even though every one of their sites is inside a loop --
-;;     `gvn-byte-at` (4 references, weight 200) costs gvn_table +1.329% and
-;;     `cfg-byte-at` (the identical shape) costs cfg_domloops +0.733%, because
-;;     the imported guard is CSE'd with the caller's own loop test and the
-;;     shared boolean stops fusing into either branch, while the length load
-;;     spills. `pl-byte-at` carries a bounds check too and wins -12.3%, but it
-;;     enters on 146 counted references, not on an estimate. Every other row in
-;;     both corpora is byte-identical either way.
+;;
+;; A THIRD CLAUSE STOOD HERE AND IS NOW GONE: the estimated entrance used to
+;; additionally require the callee to carry NO bounds check. The argument was
+;; the difference between the two counts. A raw reference count is a COUNTED
+;; FACT; a depth weight is an ESTIMATE, and its error is unbounded in one
+;; direction -- a loop that runs once weighs the same as a loop that runs a
+;; million times. So the estimated entrance was granted only where a wrong
+;; estimate is cheap, and an imported bounds check was the opposite of cheap:
+;; it adds a length load, a compare, a branch and a trap edge inside the
+;; caller's hottest loop, and it lengthens the live ranges there. That was not
+;; taste, it was measured (#6461): both accessors that reach this tier on
+;; weight alone while carrying a bounds check REGRESSED their rows even though
+;; every one of their sites is inside a loop -- `gvn-byte-at` (4 references,
+;; weight 200) cost gvn_table +1.329% and `cfg-byte-at` (the identical shape)
+;; cost cfg_domloops +0.733%. `pl-byte-at` carries a bounds check too and won
+;; -12.3% there, but it enters on 146 COUNTED references, not on an estimate,
+;; which is exactly why the clause was written against the estimate alone.
+;;
+;; That autopsy named three mechanisms, and every one of them has since been
+;; repaired by work with no connection to this gate:
+;;
+;;   1. THE IMPORTED GUARD DE-FUSED. The copy's bounds compare was CSE'd with
+;;      the caller's own loop test; the shared boolean then had two readers, and
+;;      a compare with two readers could not fold into either branch, so the
+;;      caller materialised a byte and tested it where it used to branch on
+;;      flags. The compare-duplication and flags-reuse branch-emission packets
+;;      rematerialise the compare at each branch and emit the branch off the
+;;      live flags (compiler-backend-emit-flags-reuse-branch-rest and the
+;;      window rule above it), so a second reader no longer costs the first one
+;;      its fusion.
+;;   2. THE IMPORTED CHECK SURVIVED. The copy landed among checks that already
+;;      proved its condition, but the eliminator could only retire a check
+;;      against a syntactically identical one. The guard-fact implication
+;;      algebra (#6480) folds a dominated compare whose true-set a dominating
+;;      fact narrows into, so an equal-or-stronger dominating check now retires
+;;      a dominated one; cross-array check-domain fusion (#6485, the section
+;;      below) then transfers one array's proven index fact to a second array
+;;      under a single loop-entry `Lj <=u Lk`, which is precisely the shape a
+;;      byte-at import produces inside a scan loop.
+;;   3. THE BASE AND LENGTH SPILLED. The live ranges the import opened across
+;;      the loop pushed the caller past its register budget -- cfg-scan-ints
+;;      went from six frame operations to twenty-three. The caller-saved rescue
+;;      now generalises to whole natural-loop regions (#6485) and the
+;;      loop-region eviction machinery extends it to loops whose pool is fully
+;;      held, so a loop-carried base or length is split and rescued instead of
+;;      left spilled; segment-precise live intervals keep the rescued homes
+;;      from being handed out under a hole that is not really dead.
+;;
+;; With all three repaired the sign flips, and the two callees that the clause
+;; was written to exclude are what pay it back. Re-measured on this tree,
+;; dropping the clause buys
+;;
+;;     gvn_table    1,204,946,707 -> 1,185,741,272  (-19,205,435, -1.594%)
+;;     cfg_domloops   812,522,536 ->   806,167,611  ( -6,354,925, -0.782%)
+;;
+;; with the other 20 rows of the corpus byte-identical. The admitted population
+;; is exactly the two callees the clause was written against and nothing else:
+;; `gvn-byte-at` and `cfg-byte-at`, four sites each, all four taken, and with
+;; the last reference gone both leaves are deleted outright. Their callers are
+;; the two scan loops the old autopsy indicted, and both now come out AHEAD on
+;; allocation -- `cfg-scan-ints` and `gvn-scan-ints` each go from six
+;; callee-saved push/pop pairs to five while absorbing four bounds checks, with
+;; no stack-slot traffic on either side of the change. No other benchmark in
+;; the corpus moves a single call site.
+;;
+;; Across a full opt2 self-compile the same tier claims four more leaves, all of
+;; them one guarded element read: `compiler-reg-remap-id` (20 of its 41 sites),
+;; `compiler-live-label-set-ref` (all 11), `ast-decl-list-module-id-at` (all 8)
+;; and `opt-scc-set-low-min!` (both). Three of the four lose their last
+;; reference and are deleted.
+;;
+;; The estimate is still an estimate; what changed is that being wrong about one
+;; no longer costs anything, because the three mechanisms that made a wrong
+;; estimate expensive are gone. The clauses that remain are the ones that bound
+;; what a WRONG estimate can drag in -- body size, block count, and genuine
+;; sharing -- and those are counted facts, not estimates.
 (define (opt-inline-shared-accessor-dominant-min-refs) : i64
   2)
 
 ;; The tier verdict, asked identically by the gate and by the caller's fuel
 ;; accounting so a site admitted here always spends the fuel this tier owns.
-(define (opt-inline-shared-accessor-dominant?
-  [refs : i64]
-  [hot-refs : i64]
-  [has-bounds? : bool]) : bool
+(define (opt-inline-shared-accessor-dominant? [refs : i64] [hot-refs : i64]) : bool
   (or
     (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
     (and
-      (not has-bounds?)
       (>= refs (opt-inline-shared-accessor-dominant-min-refs))
       (>= hot-refs (opt-inline-shared-accessor-dominant-min-refcount)))))
 
@@ -73051,7 +73641,6 @@
 (define (opt-inline-shared-accessor-ok?
   [refs : i64]
   [hot-refs : i64]
-  [has-bounds? : bool]
   [callee-instrs : i64]
   [blocks : ir.CompilerIrBlockList]
   [added-blocks : i64]
@@ -73064,12 +73653,12 @@
     ;; be admitted is refused, because the weighted count is never smaller.
     (or
       (>= refs (opt-inline-shared-accessor-min-refcount))
-      (opt-inline-shared-accessor-dominant? refs hot-refs has-bounds?))
+      (opt-inline-shared-accessor-dominant? refs hot-refs))
     (<= callee-instrs (opt-inline-shared-accessor-max-body))
     (<=
       (ir.compiler-ir-block-list-count blocks)
       (opt-inline-shared-accessor-max-blocks))
-    (if (opt-inline-shared-accessor-dominant? refs hot-refs has-bounds?)
+    (if (opt-inline-shared-accessor-dominant? refs hot-refs)
       (and
         (not
           (opt-inline-cost-crosses-heavy-gate?
@@ -73855,7 +74444,6 @@
                   (opt-inline-shared-accessor-ok?
                     refs
                     hot-refs
-                    has-bounds?
                     callee-instrs
                     cblocks
                     added-blocks
@@ -73872,6 +74460,18 @@
                     callee-name
                     refs
                     callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
+                ;; A callee with exactly one static reference absorbs at any
+                ;; size: the body moves rather than being copied, so no growth
+                ;; budget applies to it.
+                [single-site-absorb? : bool
+                  (opt-inline-single-site-absorb-ok?
+                    absorb-class
+                    has-bounds?
+                    np
                     cblocks
                     added-blocks
                     caller-blocks
@@ -73894,7 +74494,8 @@
                       callee-instrs
                       callee-name
                       cblocks)
-                    hot-loop-leaf?)]
+                    hot-loop-leaf?
+                    single-site-absorb?)]
                 [budget-cost-ok? : bool
                   (or
                     (opt-inline-cost-inline?
@@ -73920,10 +74521,7 @@
                 [accessor-import? : bool
                   (and
                     shared-accessor?
-                    (opt-inline-shared-accessor-dominant?
-                      refs
-                      hot-refs
-                      has-bounds?)
+                    (opt-inline-shared-accessor-dominant? refs hot-refs)
                     (not budget-cost-ok?))]
                 ;; A bounds-free acyclic branch chain is admitted on its own
                 ;; terms: the census still claims it, but the cost model's
@@ -73941,7 +74539,11 @@
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or legacy-cost-ok? hot-loop-leaf? branch-chain?))]
+                    (or
+                      legacy-cost-ok?
+                      hot-loop-leaf?
+                      branch-chain?
+                      single-site-absorb?))]
                 ;; True only when the hot-loop-leaf gate is what admits this
                 ;; site: its blocks spend the gate's own fuel, not the shared
                 ;; accumulator the caller's banked absorptions draw on.
@@ -74641,7 +75243,6 @@
                   (opt-inline-shared-accessor-ok?
                     refs
                     hot-refs
-                    has-bounds?
                     callee-instrs
                     cblocks
                     added-blocks
@@ -74655,6 +75256,16 @@
                     callee-name
                     refs
                     callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
+                ;; Same single-site absorption verdict as the non-span path.
+                [single-site-absorb? : bool
+                  (opt-inline-single-site-absorb-ok?
+                    absorb-class
+                    has-bounds?
+                    np
                     cblocks
                     added-blocks
                     caller-blocks
@@ -74677,7 +75288,8 @@
                       callee-instrs
                       callee-name
                       cblocks)
-                    hot-loop-leaf?)]
+                    hot-loop-leaf?
+                    single-site-absorb?)]
                 [budget-cost-ok? : bool
                   (or
                     (opt-inline-cost-inline?
@@ -74703,10 +75315,7 @@
                 [accessor-import? : bool
                   (and
                     shared-accessor?
-                    (opt-inline-shared-accessor-dominant?
-                      refs
-                      hot-refs
-                      has-bounds?)
+                    (opt-inline-shared-accessor-dominant? refs hot-refs)
                     (not budget-cost-ok?))]
                 ;; Same branch-chain decision as the non-span path.
                 [branch-chain? : bool
@@ -74722,7 +75331,11 @@
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or legacy-cost-ok? hot-loop-leaf? branch-chain?))]
+                    (or
+                      legacy-cost-ok?
+                      hot-loop-leaf?
+                      branch-chain?
+                      single-site-absorb?))]
                 ;; Same hot-import accounting as the non-span path.
                 [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
                 ;; Same chain-import accounting as the non-span path.
@@ -78286,6 +78899,12 @@
             (OptCallMemoryCandidate.Unresolved)
             (match (ir.compiler-ir-direct-call-effect-id name)
               [(ir.CompilerIrEffect.MemoryRead) candidate]
+              ;; The runtime control-flow family is the nonreturning abort set;
+              ;; it writes no memory the caller can observe afterwards because
+              ;; there is no afterwards. The non-call arm below already gives
+              ;; ControlFlow this verdict, so a callee whose only "effect" is a
+              ;; bounds/divide abort no longer summarizes as unknown.
+              [(ir.CompilerIrEffect.ControlFlow) candidate]
               [_
                 (OptCallMemoryCandidate.Known
                   (opt-call-memory-summary-add-unknown summary))]))])]))
@@ -86668,6 +87287,40 @@
             summary
             (+ index 1))]))))
 
+;; An ELEMENT-ONLY callee's writes, as a table filter.
+;;
+;; The element bit means every write the callee performs (transitively) goes
+;; through a pointer classified as `buffer`: an address INSIDE the heap storage
+;; some descriptor's data slot names (see opt-call-memory-element-bit). That is
+;; exactly the class this pass already calls `OptLoadStoreElement` for an
+;; in-function store, so the callee's whole write set is summarized by ONE
+;; element store at an unknown root -- and the location rule already written for
+;; that class (opt-load-entry-survives-store-location?) is the whole verdict:
+;; only `Field` entries on a header-typed base survive, because a descriptor
+;; handle addresses a descriptor allocation and a descriptor allocation is
+;; provably outside every data buffer. `opt-load-classify-store` makes the same
+;; call for a scaled element store, and opt-load-table-filter-descriptor-stable
+;; carries exactly these entries across a loop body proven to write only element
+;; memory; this is the per-callee form of the same layer split.
+;;
+;; NoRoot is the right store root: the element bit deliberately does not name
+;; WHICH caller object owns the written buffer, so no root-disjointness or
+;; fresh-allocation-epoch claim may be made on its behalf, and
+;; opt-alias-store-root-disjoint? proves nothing against NoRoot. Raw addresses,
+;; ScaledField element addresses, non-header Field entries and every
+;; GlobalField entry are dropped: each of those can name storage a data buffer
+;; covers (a global's own storage can be the buffer of a slice built over it).
+(define (opt-load-table-filter-element-call
+  [type-segment-bases : i64]
+  [table : OptLoadTable]
+  [facts : OptAliasFacts]) : OptLoadTable
+  (opt-load-table-filter-store
+    type-segment-bases
+    table
+    facts
+    (OptAliasRoot.NoRoot)
+    (OptLoadStoreElement)))
+
 (define (opt-load-cse-state-direct-call
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -86698,21 +87351,25 @@
             (& call-memory)
             (ir.compiler-ir-symbol-id name))
             [(opt_i64_i64_map.LookupFound summary)
-              ;; The element bit clears exactly like `unknown`. It names a
-              ;; write into a descriptor's element storage without naming
-              ;; WHICH caller object owns that descriptor, and the filter below
-              ;; is root-keyed -- it has no root to key on, so there is nothing
-              ;; weaker than an empty table to say. (This is the same verdict
-              ;; those callees got before the bit existed, so no cached load
-              ;; survives a call today that did not survive one before.)
+              ;; Unknown effects and global writes still empty the table: an
+              ;; unknown write can land anywhere, and a global write can rewrite
+              ;; a descriptor-valued global cell, which is the base a descriptor
+              ;; entry was keyed on. The element bit is the one verdict that
+              ;; names a LAYER instead of an object, so it filters to the
+              ;; descriptor layer rather than clearing (the parameter bits, if
+              ;; any, then filter that result by root as before).
               (if (or
-                (opt-call-memory-summary-element? summary)
                 (opt-call-memory-summary-global? summary)
                 (opt-call-memory-summary-unknown? summary))
                 (OptLoadTable.Nil)
                 (opt-load-table-filter-call-writes
                   type-segment-bases
-                  table
+                  (if (opt-call-memory-summary-element? summary)
+                    (opt-load-table-filter-element-call
+                      type-segment-bases
+                      table
+                      facts)
+                    table)
                   facts
                   args
                   summary
@@ -86720,6 +87377,13 @@
             [(opt_i64_i64_map.LookupMissing)
               (match (ir.compiler-ir-direct-call-effect-id name)
                 [(ir.CompilerIrEffect.MemoryRead) table]
+                ;; The runtime control-flow family is the nonreturning abort
+                ;; set (tl_abort_label / tl_oob_abort / tl_div_abort /
+                ;; tl_shift_abort). No instruction after such a call ever runs,
+                ;; so no cached load it could invalidate is ever consulted;
+                ;; opt-call-memory-candidate-instr already gives ControlFlow
+                ;; this verdict for the non-call instruction forms.
+                [(ir.CompilerIrEffect.ControlFlow) table]
                 [_ (OptLoadTable.Nil)])])]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -87451,6 +88115,21 @@
 
 ;; Scan one instruction for loop-carry safety: calls and clear-alls are out,
 ;; stores must be element-based.
+;;
+;; A CALL is rejected even when the per-callee summary proves it writes no
+;; descriptor field (element-only or write-free), which
+;; opt-load-table-filter-element-call is happy to act on at an ordinary call
+;; site. Measurement is why. Carrying a descriptor entry across a loop back edge
+;; does not DELETE the loop body's load, it rewrites it to a copy of a var
+;; defined outside the loop -- and that copy's source stays live around the back
+;; edge, so register allocation cannot coalesce the copy away. LICM already
+;; hoists the un-rewritten load into the preheader, where it runs once per loop
+;; ENTRY; the rewrite trades that for one move per ITERATION. Measured on
+;; benchmarks/gvn_table (gvn-scan-ints, whose outer loop's only call is the
+;; element-only vector setter): descriptor-field loads fell 5,369,431 ->
+;; 2,684,716 Ir per round and the function still grew 80,342,627 -> 82,683,001,
+;; because the digit-scan inner loop gained `mov %r12,%r9` at 2,064,917
+;; executions in exchange for a preheader load at 1,275,750.
 (define (opt-load-gvn-loop-safe-instr?
   [hs : OptLoadHeaderSet]
   [blocks : ir.CompilerIrBlockList]

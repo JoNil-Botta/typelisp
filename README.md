@@ -117,7 +117,8 @@ The following parts are implemented and actively tested:
 - The full compiler pipeline from lexer to x86-64 assembly, with Linux and
   Windows object/link targets.
 - Structs, enums, exhaustive `match`, tuples, fixed arrays, borrowed `Slice`
-  views, strings, closures, FFI, raw pointers, and atomics.
+  views with checked range-disjoint splitting, strings, closures, FFI, raw
+  pointers, and atomics.
 - Move and borrow checking, scoped and first-class arenas, safe recursive data
   through `(Box T)`, and safe task threading.
 - Comptime macros with type reflection, package manifests and lockfiles,

@@ -114,6 +114,35 @@
           (set! i (+ i 1))))
       ok)))
 
+(define (fill-split-halves!
+  [left : (&mut left (Slice i64))]
+  [right : (&mut right (Slice i64))]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (begin
+      (set! (array-ref left i) (+ i 1))
+      (set! (array-ref right i) (+ i 20)))))
+
+(define (split-spmd-case) : bool
+  (let
+    [items : (Array i64 14) (array 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
+    [score : i64
+      (let
+        [view : (&mut items (Slice i64)) (slice-mut-view items 0 14)]
+        [halves : (Tuple (&mut items (Slice i64)) (&mut items (Slice i64)))
+          (slice-split-at-mut view 7)]
+        [left : (&mut items (Slice i64)) (tuple-ref halves 0)]
+        [right : (&mut items (Slice i64)) (tuple-ref halves 1)]
+        (begin
+          (fill-split-halves! left right 7)
+          (+ (array-ref left 6) (array-ref right 6))))]
+    (and
+      (= score 33)
+      (and
+        (= (array-ref items 0) 1)
+        (and (= (array-ref items 7) 20) (= (array-ref items 13) 26))))))
+
 (define (fixed-slice-case) : bool
   (let
     [a : (Array i64 20)
@@ -206,6 +235,7 @@
         ok
         (= (i64v.get (& out) 0 0) 3)
         (= (i64v.get (& out) 39 0) -777)
-        (fixed-slice-case))
+        (fixed-slice-case)
+        (split-spmd-case))
         42
         1))))

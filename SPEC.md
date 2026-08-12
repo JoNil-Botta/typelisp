@@ -1634,6 +1634,28 @@ source length, and `len` must fit in the remaining range without signed
 overflow; invalid ranges call `tl_oob_abort`. Zero-length views and views of
 zero-sized elements are valid, and zero-sized elements have a zero data stride.
 
+**Range-disjoint Slice splitting.** `slice-split-at view mid` accepts a shared
+or mutable borrowed `Slice` and returns a two-element tuple of shared Slice
+references for `[0, mid)` and `[mid, length)`. `slice-split-at-mut view mid`
+requires a mutable borrowed `Slice` and returns the corresponding two mutable
+references. Both results retain the input lifetime and originating owner.
+`view` and `mid` evaluate exactly once from left to right. `mid` must be
+non-negative and at most the input length; zero and the input length are valid,
+and an invalid midpoint calls `tl_oob_abort` before pointer arithmetic. The
+operation copies no elements and performs no heap or arena allocation; a
+zero-sized element type retains the original data pointer for both halves.
+
+Mutable splitting is a compiler-trusted range proof. Its two results are
+distinct sibling borrow paths, so both may remain live and be mutated
+concurrently. They remain descendants of the input provenance: the input view,
+originating array or vector, and operations that may replace its storage remain
+blocked while either half is live. Splitting one half again creates another
+pair of siblings below that half and composes with the untouched sibling.
+Ordinary `slice-mut-view` calls do not manufacture this proof; independently
+computed mutable subviews of one source still conflict even when their runtime
+ranges appear disjoint. Source declarations or macros that shadow the public
+spellings are ordinary calls and cannot create split provenance.
+
 **Borrowable places.** The checker accepts borrows of places whose
 owner/provenance is statically known:
 
@@ -5998,6 +6020,8 @@ borrowed Slice reference forms described in section 3.2:
 | `array-take!` | `(Array T N) i64 → T` / `(&mut r (Array T N)) i64 → T` | Bounds-check, return the old fixed-array element, and immediately replace its slot with `(init : T)`; requires an owned storage place or mutable reference and an `init`-eligible, non-cleanup-owning `T` |
 | `slice-view` | `source i64 i64 → (& r (Slice T))` | Checked, allocation-free view over a fixed array, compatibility dynamic array, suitable reference, or borrowed Slice; source and indices evaluate once left-to-right |
 | `slice-mut-view` | `source i64 i64 → (&mut r (Slice T))` | Checked, allocation-free exclusive view over a mutable fixed/dynamic array, suitable mutable reference, or mutable Slice; no shared-to-mutable strengthening |
+| `slice-split-at` | `(& r (Slice T)) i64 → (Tuple (& r (Slice T)) (& r (Slice T)))` | Checked, allocation-free shared split into `[0, mid)` and `[mid, len)`; a mutable Slice input may be shared for this operation |
+| `slice-split-at-mut` | `(&mut r (Slice T)) i64 → (Tuple (&mut r (Slice T)) (&mut r (Slice T)))` | Checked compiler-trusted disjoint split; both mutable halves may remain live while the parent and originating owner remain borrowed |
 
 An `array-ref` element borrowed from a Slice retains that Slice's lifetime and
 provenance. A subview likewise remains tied to the originating owner; creating
@@ -6024,8 +6048,10 @@ runtime bounds checks. An out-of-bounds access calls the `tl_oob_abort`
 runtime trap, which writes to stderr and exits with code 134. Slice views also
 reject a negative `start` or `len`, `start` greater than the source length, and
 `len` greater than the remaining range; the checks are ordered to avoid signed
-overflow. Zero-length and zero-sized-element views are valid. Every invalid
-Slice range takes the same `tl_oob_abort` path.
+overflow. Slice splits reject a negative midpoint or one past the input length,
+using one unsigned comparison before subtraction or pointer arithmetic.
+Zero-length and zero-sized-element views are valid. Every invalid Slice range
+takes the same `tl_oob_abort` path.
 
 **String inspection (`stdlib.string`).** Public string inspection and
 parsing helpers are stdlib definitions, unbound until the module is
@@ -7064,7 +7090,8 @@ in documentation passes.
   `ByteBuf` with borrowed `bytes` views, `(Box T)`, references, and
   lifetime-parameterized aggregates.
 - Borrowed `Slice` references with checked shared/mutable `slice-view` and
-  `slice-mut-view` subviews, explicit fixed-array whole-view unsizing at typed
+  `slice-mut-view` subviews, range-disjoint `slice-split-at` /
+  `slice-split-at-mut`, explicit fixed-array whole-view unsizing at typed
   call boundaries, and allocation-free pointer/length handling; reflection
   (`TypeInfo.Slice`, `type-kind`, and `type-key`) plus the internal two-word
   ABI and 16/8 layout are covered. C externs continue to use explicit raw

@@ -5,7 +5,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.string)
-(import stdlib.sort as sort)
+(import stdlib.sort)
 (import stdlib.vector)
 (import stdlib.option)
 (import sym_i64_env)
@@ -1203,18 +1203,19 @@
         (array-ref index.modules cursor.query.module-index)]
       [top-end : i64 (+ module-info.candidate-offset module-info.candidate-len)]
       (begin
-        (if (or
-          (< next.stage 0)
-          (> next.stage 2)
-          (< next.binding-cursor -1)
-          (>= next.binding-cursor index.binding-len)
-          (and
-            (= next.stage 1)
-            (or
-              (< next.top-cursor module-info.candidate-offset)
-              (> next.top-cursor top-end))))
-          (return CompilerSemanticVisibleBindingStep.Done)
-          unit)
+        (cond
+          [(or
+              (< next.stage 0)
+              (> next.stage 2)
+              (< next.binding-cursor -1)
+              (>= next.binding-cursor index.binding-len)
+              (and
+                (= next.stage 1)
+                (or
+                  (< next.top-cursor module-info.candidate-offset)
+                  (> next.top-cursor top-end))))
+            (return CompilerSemanticVisibleBindingStep.Done)]
+          [else unit])
         (while (= next.stage 0)
           (if (< next.binding-cursor 0)
             (begin
@@ -1226,49 +1227,51 @@
                 (array-ref index.bindings binding-index)]
               (begin
                 (set! next.binding-cursor binding.parent)
-                (if (and
-                  (compiler-semantic-binding-namespace-selected?
-                    next.namespace-mask
-                    (compiler-semantic-binding-namespace-value-mask))
-                  (not
-                    (compiler-semantic-binding-shadowed-before?
-                      index
-                      next.scope-head
-                      binding-index
-                      binding.name-id)))
-                  (return
-                    (CompilerSemanticVisibleBindingStep.Some
-                      (compiler-semantic-source-index-local-visible-binding-get
-                        index
-                        binding-index)
-                      next))
-                  unit)))))
+                (cond
+                  [(and
+                      (compiler-semantic-binding-namespace-selected?
+                        next.namespace-mask
+                        (compiler-semantic-binding-namespace-value-mask))
+                      (not
+                        (compiler-semantic-binding-shadowed-before?
+                          index
+                          next.scope-head
+                          binding-index
+                          binding.name-id)))
+                    (return
+                      (CompilerSemanticVisibleBindingStep.Some
+                        (compiler-semantic-source-index-local-visible-binding-get
+                          index
+                          binding-index)
+                        next))]
+                  [else unit])))))
         (while (and (= next.stage 1) (< next.top-cursor top-end))
           (let
             [candidate : CompilerSemanticTopCandidateRef
               (array-ref index.top-candidates next.top-cursor)]
             (begin
               (set! next.top-cursor (+ next.top-cursor 1))
-              (if (and
-                (compiler-semantic-binding-namespace-selected?
-                  next.namespace-mask
-                  candidate.namespace-tag)
-                (not
-                  (and
-                    (=
-                      candidate.namespace-tag
-                      (compiler-semantic-binding-namespace-value-mask))
-                    (compiler-semantic-scope-has-name?
-                      index
-                      next.scope-head
-                      candidate.name-id))))
-                (return
-                  (CompilerSemanticVisibleBindingStep.Some
-                    (compiler-semantic-source-index-top-visible-binding-get
-                      index
-                      (- next.top-cursor 1))
-                    next))
-                unit))))
+              (cond
+                [(and
+                    (compiler-semantic-binding-namespace-selected?
+                      next.namespace-mask
+                      candidate.namespace-tag)
+                    (not
+                      (and
+                        (=
+                          candidate.namespace-tag
+                          (compiler-semantic-binding-namespace-value-mask))
+                        (compiler-semantic-scope-has-name?
+                          index
+                          next.scope-head
+                          candidate.name-id))))
+                  (return
+                    (CompilerSemanticVisibleBindingStep.Some
+                      (compiler-semantic-source-index-top-visible-binding-get
+                        index
+                        (- next.top-cursor 1))
+                      next))]
+                [else unit]))))
         (set! next.stage 2)
         CompilerSemanticVisibleBindingStep.Done))))
 
@@ -4528,7 +4531,6 @@
   [symbols : csym.CompilerSymbols]
   [macros : csym.CompilerSymbolMap]
   [module-id : i64]
-  [core-module-id : i64]
   [name-id : i64]) : bool
   (let
     [handle : i64
@@ -4591,7 +4593,6 @@
                           symbols
                           macros
                           module-id
-                          core-module-id
                           name-id)
                           unit
                           (if count-only
@@ -6945,76 +6946,75 @@
           (compiler-semantic-source-index-get index outer-callback-index)]
         [inner-callback : CompilerSemanticRecord
           (compiler-semantic-source-index-get index inner-callback-index)]
-        (begin
-          (and
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                lambda-query
-                1
-                "x")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                lambda-query
-                1
-                "scalar")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                lambda-query
-                1
-                "closure")
-              0)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                alias-init-query
-                1
-                "x")
-              0)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                alias-init-query
-                1
-                "closure")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                alias-init-query
-                1
-                "alias")
-              0)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                inner-lambda-query
-                1
-                "flag")
-              1)
+        (and
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              lambda-query
+              1
+              "x")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              lambda-query
+              1
+              "scalar")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              lambda-query
+              1
+              "closure")
+            0)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              alias-init-query
+              1
+              "x")
+            0)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              alias-init-query
+              1
+              "closure")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              alias-init-query
+              1
+              "alias")
+            0)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              inner-lambda-query
+              1
+              "flag")
+            1)
+          (compiler-semantic-test-visible-symbol?
+            index
+            inner-lambda-query
+            1
+            "callback"
+            outer-callback.symbol)
+          (not
             (compiler-semantic-test-visible-symbol?
               index
               inner-lambda-query
               1
               "callback"
-              outer-callback.symbol)
-            (not
-              (compiler-semantic-test-visible-symbol?
-                index
-                inner-lambda-query
-                1
-                "callback"
-                inner-callback.symbol))
-            (compiler-semantic-test-visible-symbol?
-              index
-              inner-call-query
-              1
-              "callback"
-              inner-callback.symbol)))))))
+              inner-callback.symbol))
+          (compiler-semantic-test-visible-symbol?
+            index
+            inner-call-query
+            1
+            "callback"
+            inner-callback.symbol))))))
 
 (define (compiler-check-semantic-index-inferred-locals-ok?) : bool
   (let
@@ -7363,105 +7363,104 @@
               (string.string-length "[shadow : i64 (+ shadow 20)] ")))]
         [inner-shadow-record : CompilerSemanticRecord
           (compiler-semantic-source-index-get index shadow-definition-index)]
-        (begin
-          (and
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                resource-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "item")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                resource-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "resource")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                resource-init-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "resource")
-              0)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                resource-sibling-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "item")
-              0)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                resource-sibling-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "resource")
-              0)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                foreach-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "i")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                scan-value-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "k")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                scan-value-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "prefix")
-              0)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                scan-body-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "k")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                scan-body-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "prefix")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                reduce-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "j")
-              1)
+        (and
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              resource-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "item")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              resource-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "resource")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              resource-init-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "resource")
+            0)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              resource-sibling-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "item")
+            0)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              resource-sibling-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "resource")
+            0)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              foreach-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "i")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              scan-value-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "k")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              scan-value-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "prefix")
+            0)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              scan-body-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "k")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              scan-body-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "prefix")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              reduce-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "j")
+            1)
+          (compiler-semantic-test-visible-symbol?
+            index
+            inner-query
+            (compiler-semantic-binding-namespace-value-mask)
+            "shadow"
+            inner-shadow-record.symbol)
+          (not
             (compiler-semantic-test-visible-symbol?
               index
-              inner-query
+              sibling-init-query
               (compiler-semantic-binding-namespace-value-mask)
               "shadow"
-              inner-shadow-record.symbol)
-            (not
-              (compiler-semantic-test-visible-symbol?
-                index
-                sibling-init-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "shadow"
-                inner-shadow-record.symbol))
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                sibling-body-query
-                (compiler-semantic-binding-namespace-value-mask)
-                "shadow")
-              1)))))))
+              inner-shadow-record.symbol))
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              sibling-body-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "shadow")
+            1))))))
 
 (define (compiler-check-semantic-index-dense-scopes-ok?) : bool
   (let

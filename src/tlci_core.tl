@@ -551,11 +551,7 @@
 ;; expression list, list-append pops an element then a list and pushes the
 ;; appended list, push-operand pushes the macro operand named by immediate
 ;; `a`, expr-call pops an argument list then a callee and pushes the call
-;; expression. For a quasiquote template call, expr-call's immediates carry the
-;; callee's start line/column and packed end line/column; the host retains that
-;; span when the callee is another visible macro so nested diagnostics match
-;; interpreted expansion. commit-result pops the stack top into the session
-;; result.
+;; expression. commit-result pops the stack top into the session result.
 ;; The embedded image and its consumer are always the same source-bound binary.
 ;; Refs #5212.
 (define tlci-host-callback-name-expr-list-empty : String
@@ -570,6 +566,24 @@
   "expr-call")
 (define tlci-host-callback-name-commit-result : String
   "commit-result")
+
+;; Template source spans. The parser wraps every expression it reads in an
+;; `AstExpr.Spanned`, and the interpreted quasiquote reconstructs that wrapper
+;; around every template node it rebuilds, so a natively produced expansion
+;; only matches the interpreted one when it rebuilds the wrappers too. Both ops
+;; re-wrap the stack top and take the span in their immediates: `a` is the
+;; start line, `b` the start column, `c` the end line and column packed
+;; `(line << 32) | column`. expr-span is the template-origin form and always
+;; wraps. expr-span-unquoted covers a template position that was an unquote:
+;; the substituted value is already spanned at its own call site, so the
+;; template span applies only when it is not, matching the interpreted quote's
+;; unquoted-origin rule. Neither op disturbs a stack top that carries no
+;; expression node (a type or a comptime scalar), which the interpreted route
+;; never spans either. Refs #5212.
+(define tlci-host-callback-name-expr-span : String
+  "expr-span")
+(define tlci-host-callback-name-expr-span-unquoted : String
+  "expr-span-unquoted")
 
 ;; Intrinsic array-node construction: pop two operand expressions and push the
 ;; array-ref / array-push expression node the parser produces for these forms

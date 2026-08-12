@@ -59,17 +59,40 @@
           (embedded-verify-global-shared-view embedded-verify-raw-image)
           expanded)))))
 
+;; The expansion carries the template's `Spanned` wrappers, the way the
+;; interpreted quote leaves them, so the shape probe reads through them.
+(define (embedded-verify-expr-get
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [node : i64]) : compiler_ast_types.AstExpr
+  (let
+    [expr : compiler_ast_types.AstExpr
+      (compiler_ast_types.ast-node-pool-context-expr-get pools node)]
+    (match expr
+      [(compiler_ast_types.AstExpr.Spanned inner _)
+        (embedded-verify-expr-get pools inner)]
+      [_ expr])))
+
+;; The operand is the node a parsed call site would hand over, so it carries
+;; its own span: substitution into the template's unquote position keeps that
+;; origin and the argument stays the very node passed in.
+(define (embedded-verify-operand-node
+  [pools : compiler_ast_types.AstNodePoolContext]) : i64
+  (compiler_ast_types.ast-expr-spanned-with-pools
+    pools
+    (compiler_ast_types.ast-node-pool-context-expr-push
+      pools
+      (compiler_ast_types.AstExpr.Var (ci.intern "xs")))
+    (compiler_ast_types.ast-source-span 900 7 900 9)))
+
 (define (embedded-verify-result-shape-ok?
   [pools : compiler_ast_types.AstNodePoolContext]
   [operand-node : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (compiler_ast_types.ast-node-pool-context-expr-get pools node)
+      (match (embedded-verify-expr-get pools node)
         [(compiler_ast_types.AstExpr.Call callee-id args)
           (and
-            (match (compiler_ast_types.ast-node-pool-context-expr-get
-              pools
-              callee-id)
+            (match (embedded-verify-expr-get pools callee-id)
               [(compiler_ast_types.AstExpr.Var name-id)
                 (=
                   name-id
@@ -92,10 +115,7 @@
       (let
         [pools : compiler_ast_types.AstNodePoolContext
           (compiler_ast_types.ast-node-pool-context-capture-active)]
-        [operand-node : i64
-          (compiler_ast_types.ast-node-pool-context-expr-push
-            pools
-            (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
+        [operand-node : i64 (embedded-verify-operand-node pools)]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
@@ -144,10 +164,7 @@
       (let
         [pools : compiler_ast_types.AstNodePoolContext
           (compiler_ast_types.ast-node-pool-context-capture-active)]
-        [operand-node : i64
-          (compiler_ast_types.ast-node-pool-context-expr-push
-            pools
-            (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
+        [operand-node : i64 (embedded-verify-operand-node pools)]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin

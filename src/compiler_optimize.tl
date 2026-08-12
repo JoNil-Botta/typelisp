@@ -43827,6 +43827,86 @@
       (opt-unroll-body-fill-instr-ok? (array-ref slots index))
       (opt-unroll-body-fill-ok? slots (+ index 1) last))))
 
+;; The third body class: a SCALAR counted loop that BOTH loads and stores.
+;; Neither whitelist above admits one -- opt-unroll-body-instr-ok? excludes
+;; StorePtr and the fill exception excludes Load -- so the merge/copy/update
+;; shape `dst[i] = f(dst[i], src[i])` has never been unrolled at any factor.
+;;
+;; BoundsCheck is REFUSED here even though the store-free whitelist admits it,
+;; and that refusal is what confines this class to a versioner fast clone
+;; without naming one. A copy duplicates every check in the body, so a checked
+;; merge loop would pay twice the check code to save 1.5 of its 3 overhead
+;; instructions -- but the measured damage was worse than that trade, because
+;; unrolling a still-checked body PRE-EMPTS the versioner. On spmd_map's
+;; `foreach_body.13` the checked merge loop unrolled on the pipeline iteration
+;; before versioning, so the hot path became a CHECKED unrolled body with a
+;; second versioned-and-unrolled nest hanging off its remainder: spmd_map
+;; +14.3% and spmd_short_tail +14.4%. Requiring a check-free body is the
+;; IR-level spelling of "the fast clone only" -- `__bce_fast` is exactly the
+;; check-free form, and it is where the saving is.
+;;
+;; A body holding ANY vector instruction is likewise not this class. The
+;; store-free SIMD admission above and the gang unroller below
+;; (opt-unroll-simd-*) own that family: the gang loop's counter steps by the
+;; lane count, its memory bases are grouped by opt-unroll-simd-memory-*, and
+;; its recurrences are cloned mutably. A scalar StorePtr is the only thing
+;; keeping a gang body out of the whitelist above, so without this the class
+;; would be a back door onto the scalar rewrite for exactly those bodies.
+(define (opt-unroll-body-load-store-instr-ok? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.StorePtr _ _ _) true]
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) false]
+    [_
+      (and
+        (not (opt-unroll-simd-vector-instr? instr))
+        (opt-unroll-body-instr-ok? instr))]))
+
+(define (opt-unroll-body-load-store-ok?
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    true
+    (and
+      (opt-unroll-body-load-store-instr-ok? (array-ref slots index))
+      (opt-unroll-body-load-store-ok? slots (+ index 1) last))))
+
+;; A counted self-loop pays the SAME three instructions per trip whatever its
+;; body does -- the counter add, the bound compare and the latch branch -- so
+;; unrolling by K leaves 3/K of that and recovers 3 - 3/K. K=16 recovers 2.81
+;; of the 3; K=2 recovers 1.50, half the total, for ONE extra body copy.
+(define (opt-unroll-group-copies) : i64
+  16)
+
+;; Why the load-and-store class gets K=2 rather than the K above. The refusal
+;; recorded on opt-unroll-body-instr-ok? is not about unrolling stores as such;
+;; it is about the SIXTEEN-copy clone of a body that keeps a container pointer
+;; and a loaded value live across every store, on loops whose trip counts are
+;; unknowable statically and were measured short (hashmap grow/insert -1..2%,
+;; self-compile +1.4%). Both terms of that cost are per EXTRA copy: at K=2 the
+;; clone doubles instead of sixteen-folding, each copy's loaded value still
+;; dies at its own store one copy later, and the entry guard (which admits only
+;; `seed < bound - K`) breaks even at ~4 trips instead of ~19. Loads without
+;; stores and stores without loads keep K=16: their measured shapes are the
+;; long-trip reductions and fills the larger factor was tuned for.
+(define (opt-unroll-load-store-group-copies) : i64
+  2)
+
+;; Body copies the rewrite emits, or 0 for a body no class admits. The shape
+;; scan refuses a 0 and the rewrite sizes both its copy loop and its guard's
+;; `bound - K` from the same answer, so admission and factor can never diverge.
+(define (opt-unroll-body-copies
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [last : i64]) : i64
+  (if (or
+    (opt-unroll-body-ok? slots index last)
+    (opt-unroll-body-fill-ok? slots index last))
+    (opt-unroll-group-copies)
+    (if (opt-unroll-body-load-store-ok? slots index last)
+      (opt-unroll-load-store-group-copies)
+      0)))
+
 (define (opt-unroll-shape-scan
   [blocks : ir.CompilerIrBlockList]
   [label : i64]
@@ -43841,10 +43921,7 @@
       (< (- last phi-count) 2)
       (> (- last phi-count) 16)
       (not (opt-unroll-no-phi-from? instrs phi-count))
-      (not
-        (or
-          (opt-unroll-body-ok? instrs.slots phi-count last)
-          (opt-unroll-body-fill-ok? instrs.slots phi-count last)))
+      (< (opt-unroll-body-copies instrs.slots phi-count last) 2)
       ;; the c-def is dropped from the clones, so the final branch must be c's
       ;; only use inside B.
       (opt-used-contains
@@ -44209,8 +44286,9 @@
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (__tl_dyn-array i64)]
   [iu : i64]
+  [copies : i64]
   [copy : i64]) : ir.CompilerIrInstrList
-  (if (>= copy 16)
+  (if (>= copy copies)
     (ir.CompilerIrInstrList.Nil)
     (let
       ;; Copy 0 reads the fresh U phis; later copies read the previous copy's
@@ -44244,6 +44322,7 @@
           remap
           cell
           iu
+          copies
           (+ copy 1))))))
 
 (define (opt-unroll-unrolled-phis
@@ -44536,6 +44615,9 @@
               1
               other-count))]
         [_ku : unit (opt-unroll-alloc-ku-ids ku-ids 0 other-count cell)]
+        ;; One answer sizes the clone and the guard: the shape scan admitted
+        ;; this body only because the same call returned at least two.
+        [copy-count : i64 (opt-unroll-body-copies instrs.slots phi-count last)]
         [copies : ir.CompilerIrInstrList
           (opt-unroll-copies
             instrs
@@ -44550,8 +44632,9 @@
             remap
             cell
             iu
+            copy-count
             0)]
-        ;; End-of-copy-15 state: the counter and chain values the next group
+        ;; End-of-last-copy state: the counter and chain values the next group
         ;; iteration (and the remainder loop's phis) receive.
         [inext3 : ir.CompilerIrValue
           (opt-unroll-subst-value remap (ir.CompilerIrValue.Var inext))]
@@ -44570,10 +44653,10 @@
                 ngroup
                 (ir.CompilerIrBinOp.Sub)
                 bound
-                (ir.CompilerIrValue.I64 16)
+                (ir.CompilerIrValue.I64 copy-count)
                 ity)
               (ir.compiler-ir-instr-cons
-                ;; false iff bound - 4 wrapped past bound.
+                ;; false iff bound - copy-count wrapped past bound.
                 (ir.CompilerIrInstr.BinOp
                   gwrap
                   (ir.CompilerIrBinOp.Le)

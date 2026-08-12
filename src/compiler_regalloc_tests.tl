@@ -151,6 +151,7 @@
       (let
         [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [def-status : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [rebates : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [depths : (__tl_dyn-array i64)
           (reg.compiler-reg-function-loop-depths blocks)]
         [allow-invariant-loads : bool
@@ -158,9 +159,11 @@
         (begin
           (reg.compiler-reg-fill-i64-array counts 0)
           (reg.compiler-reg-fill-i64-array def-status 0)
+          (reg.compiler-reg-fill-i64-array rebates 0)
           (reg.compiler-reg-ref-counts-blocks-weighted-remat!
             counts
             def-status
+            rebates
             blocks
             depths
             0

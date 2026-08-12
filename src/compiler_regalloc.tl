@@ -10983,6 +10983,7 @@
 (define (compiler-reg-ref-counts-add-instr-weighted-remat!
   [counts : (__tl_dyn-array i64)]
   [def-status : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]
   [weight : i64]
   [allow-invariant-loads : bool]) : unit
@@ -11006,11 +11007,16 @@
       (compiler-reg-remat-status-candidate-add-instr!
         def-status
         instr
-        allow-invariant-loads))))
+        allow-invariant-loads)
+      ;; Same instruction, same block weight: the foldability rebate rides the
+      ;; walk that already visited this mention rather than paying for a second
+      ;; pass over every function's IR.
+      (compiler-reg-foldable-rebate-add-instr! rebates instr weight))))
 
 (define (compiler-reg-ref-counts-seq-weighted-remat!
   [counts : (__tl_dyn-array i64)]
   [def-status : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]
   [weight : i64]
   [allow-invariant-loads : bool]) : unit
@@ -11024,6 +11030,7 @@
           (compiler-reg-ref-counts-add-instr-weighted-remat!
             counts
             def-status
+            rebates
             (array-ref slots index)
             weight
             allow-invariant-loads)
@@ -11033,6 +11040,7 @@
 (define (compiler-reg-ref-counts-blocks-weighted-remat!
   [counts : (__tl_dyn-array i64)]
   [def-status : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
   [depths : (__tl_dyn-array i64)]
   [block-index : i64]
@@ -11046,12 +11054,14 @@
             (compiler-reg-ref-counts-seq-weighted-remat!
               counts
               def-status
+              rebates
               instrs
               (compiler-reg-loop-depth-weight (array-ref depths block-index))
               allow-invariant-loads)])
         (compiler-reg-ref-counts-blocks-weighted-remat!
           counts
           def-status
+          rebates
           (__tl-box-place rest)
           depths
           (+ block-index 1)
@@ -11068,6 +11078,7 @@
                 (compiler-reg-ref-counts-seq-weighted-remat!
                   counts
                   def-status
+                  rebates
                   instrs
                   (compiler-reg-loop-depth-weight (array-ref depths index))
                   allow-invariant-loads)])
@@ -11262,6 +11273,7 @@
       (let
         [raw : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
         [def-status : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
+        [rebates : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
         [depths : (__tl_dyn-array i64)
           (compiler-reg-function-loop-depths blocks)]
         [allow-invariant-loads : bool
@@ -11270,6 +11282,7 @@
           (compiler-reg-ref-counts-blocks-weighted-remat!
             raw
             def-status
+            rebates
             blocks
             depths
             0
@@ -11283,9 +11296,7 @@
               ;; correction to what the ladder walk just charged that var, and
               ;; the merge collapses a class to its hottest member, which must
               ;; be read off corrected weights.
-              (compiler-reg-apply-foldable-rebates!
-                discounted
-                (compiler-reg-function-foldable-rebates blocks depths fn-vars))
+              (compiler-reg-apply-foldable-rebates! discounted rebates)
               (compiler-reg-remat-discount-single-def-spill-weights!
                 discounted
                 def-status

@@ -30425,6 +30425,349 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (opt-unroll-test-count-add-instr-seq instrs 0 0)])]))
 
+(define (opt-unroll-load-store-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "n"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "dst"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "src"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+;; The merge shape neither older whitelist admits: a counted self-loop that
+;; both loads and stores (`dst[i] = dst[i] | src[i]`).
+;;   mode 0  the admitted merge loop
+;;   mode 1  the nearest refusal: the same loop plus one CopyBytes, a memory
+;;           operation outside every body whitelist
+;;   mode 2  the fill twin (`dst[i] = 0`): stores, no load, so it keeps the
+;;           sixteen-copy factor and pins the other side of the table
+;;   mode 3  the same merge loop with a BoundsCheck: still checked, so it is
+;;           not a versioner fast clone and stays refused
+(define (opt-unroll-load-store-test-head
+  [mode : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if (= mode 3)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.compiler-ir-label "body__bounds_ok.0"))
+      tail)
+    tail))
+
+(define (opt-unroll-load-store-test-body [mode : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      3
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 9)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (opt-unroll-load-store-test-head
+      mode
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (if (= mode 2)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (opt-unroll-load-store-test-latch))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              5
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                6
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Load
+                  7
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    8
+                    (compiler_ir_types.CompilerIrBinOp.Or)
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.StorePtr
+                      (compiler_ir_types.CompilerIrValue.Var 4)
+                      (compiler_ir_types.CompilerIrValue.Var 8)
+                      (compiler_ast_types.AstType.I64))
+                    (if (= mode 1)
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.CopyBytes
+                          (compiler_ir_types.CompilerIrValue.Var 4)
+                          (compiler_ir_types.CompilerIrValue.Var 6)
+                          8)
+                        (opt-unroll-load-store-test-latch))
+                      (opt-unroll-load-store-test-latch))))))))))))
+
+(define (opt-unroll-load-store-test-latch) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      9
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        10
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-label "exit"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-unroll-load-store-test-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "body"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "body")
+        (opt-unroll-load-store-test-body mode))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 0)))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-unroll-load-store-test-function [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "unroll_load_store_fixture")
+    (opt-unroll-load-store-test-params)
+    (compiler_ast_types.AstType.I64)
+    11
+    (opt-unroll-load-store-test-blocks mode)))
+
+(define (opt-unroll-test-count-store-ptr-instr-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-test-count-store-ptr-instr-seq
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-unroll-test-count-load-instr-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-test-count-load-instr-seq
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.Load _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-unroll-test-count-store-ptr-in-block
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-unroll-test-count-store-ptr-instr-seq instrs 0 0)])]))
+
+(define (opt-unroll-test-count-load-in-block
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-unroll-test-count-load-instr-seq instrs 0 0)])]))
+
+;; The load-AND-store body class and its own copy factor.
+(define (compiler-optimize-unroll-load-store-self-test) : i64
+  (let
+    [merge-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-load-store-test-function 0))]
+    [merge : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks merge-func)]
+    ;; Second pass over the already-rewritten function: the generated labels
+    ;; and the dropped self-edge make the result ineligible to its own scan.
+    [idempotent-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        merge-func)]
+    [idempotent : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks idempotent-func)]
+    [refused-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-load-store-test-function 1))]
+    [refused : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks refused-func)]
+    [fill-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-load-store-test-function 2))]
+    [fill : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks fill-func)]
+    [checked-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-load-store-test-function 3))]
+    [checked : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks checked-func)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function merge-func)))
+        1]
+      ;; entry, guard, unrolled body, remainder loop, exit.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count merge) 5)) 2]
+      ;; TWO copies, not sixteen: the load-and-store factor.
+      [(not
+          (=
+            (opt-unroll-test-count-store-ptr-in-block
+              merge
+              (compiler_ir_types.compiler-ir-label "body__unroll_body"))
+            2))
+        3]
+      [(not
+          (=
+            (opt-unroll-test-count-load-in-block
+              merge
+              (compiler_ir_types.compiler-ir-label "body__unroll_body"))
+            4))
+        4]
+      ;; The original block stays in place as the remainder loop, one copy
+      ;; wide, so an odd trip count still executes every index exactly once.
+      [(not
+          (=
+            (opt-unroll-test-count-store-ptr-in-block
+              merge
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        5]
+      ;; Idempotent: a second pass finds nothing left to rewrite.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count idempotent) 5))
+        6]
+      [(not
+          (=
+            (opt-unroll-test-count-store-ptr-in-block
+              idempotent
+              (compiler_ir_types.compiler-ir-label "body__unroll_body"))
+            2))
+        7]
+      ;; Nearest refusal: one memory operation outside every body whitelist.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count refused) 3)) 8]
+      [(compiler_optimize.opt-unroll-body-load-store-instr-ok?
+          (compiler_ir_types.CompilerIrInstr.CopyBytes
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            8))
+        9]
+      ;; The other boundary of the class: a vector instruction keeps its body
+      ;; on the store-free SIMD admission and the gang unroller, never here,
+      ;; even though the scalar whitelist admits it store-free.
+      [(compiler_optimize.opt-unroll-body-load-store-instr-ok?
+          (compiler_ir_types.CompilerIrInstr.VectorLoad
+            5
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            4
+            (compiler_ast_types.AstType.I64)))
+        15]
+      [(not
+          (compiler_optimize.opt-unroll-body-instr-ok?
+            (compiler_ir_types.CompilerIrInstr.VectorLoad
+              5
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              4
+              (compiler_ast_types.AstType.I64))))
+        16]
+      ;; The other side of the factor table: a store-only body keeps sixteen.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function fill-func)))
+        10]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count fill) 5)) 11]
+      [(not
+          (=
+            (opt-unroll-test-count-store-ptr-in-block
+              fill
+              (compiler_ir_types.compiler-ir-label "body__unroll_body"))
+            16))
+        12]
+      [(not (= (compiler_optimize.opt-unroll-group-copies) 16)) 13]
+      [(not (= (compiler_optimize.opt-unroll-load-store-group-copies) 2)) 14]
+      ;; A still-checked merge body is not a fast clone: unrolling it would
+      ;; duplicate the check AND pre-empt the versioner that removes it.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count checked) 3)) 17]
+      [(compiler_optimize.opt-unroll-body-load-store-instr-ok?
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "body__bounds_ok.0")))
+        18]
+      ;; ... while the store-free class still admits exactly that check.
+      [(not
+          (compiler_optimize.opt-unroll-body-instr-ok?
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body__bounds_ok.0"))))
+        19]
+      [else 42])))
+
 (define (compiler-optimize-unroll-self-test) : i64
   (let
     [func : compiler_ir_types.CompilerIrFunction

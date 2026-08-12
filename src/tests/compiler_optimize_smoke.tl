@@ -2761,6 +2761,10 @@
       (compiler_optimize_tests.compiler-optimize-unroll-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-unroll-load-store-self-test"
+      (compiler_optimize_tests.compiler-optimize-unroll-load-store-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-unroll-mb-self-test"
       (compiler_optimize_tests.compiler-optimize-unroll-mb-self-test)
       42)
@@ -4099,6 +4103,13 @@
     (compiler_optimize_tests.compiler-optimize-unroll-self-test)
     42
     "16x unrolling remaps every admitted store-free SIMD instruction"))
+
+(test
+  unroll-load-store-body-two-copies
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-unroll-load-store-self-test)
+    42
+    "a load-and-store counted loop unrolls twice while a store-only body keeps sixteen"))
 
 (test
   unroll-versioned-multiblock-quicksort-shape

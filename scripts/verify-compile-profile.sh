@@ -1495,11 +1495,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # The public-place migration removes the expanded legacy accessor calls;
     # the merged path-sensitive checker remains one segment above main alone.
     # The explicit job-owned macro carrier threads state through the former
-    # global helper surface. Together with the seven-packet optimizer/backend
-    # series, that checked source lands this exact combined boundary at 48
-    # segments; keep all four ownership boundaries measured independently.
+    # global helper surface. #6375's owned cursor-visible semantic binding
+    # regions cross the combined checked compiler graph from 48 to 49 segments;
+    # the authoritative Windows CI probe measured 3,148,431 used nodes,
+    # 3,211,264 capacity, and 102,760,448 physical payload bytes. Keep all four
+    # ownership boundaries measured independently.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 49 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

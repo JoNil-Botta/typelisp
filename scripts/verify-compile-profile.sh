@@ -1495,29 +1495,23 @@ if [ "$NL_HOST_OS" = windows ]; then
     # The public-place migration removes the expanded legacy accessor calls;
     # the merged path-sensitive checker remains one segment above main alone.
     # The explicit job-owned macro carrier threads state through the former
-    # global helper surface. Together with the seven-packet optimizer/backend
-    # series, that checked source lands this exact combined boundary at 48
-    # segments; keep all four ownership boundaries measured independently.
-    # Carrying template source spans through the native macro route brings
-    # ast_expr_pool.macro_expand from 48 to 41 segments. The native route used
-    # to strip the parser's `AstExpr.Spanned` wrapper from every template node;
-    # it now rebuilds each one, so a natively produced expansion is node-for-
-    # node the tree the interpreted quasiquote builds. That changes which side
-    # of the macro-hygiene copy-on-write commit the expansion lands on. A node
-    # `macro-hygiene-produced-owned?` accepts is rewritten in its own slot and
-    # the replacement is truncated back off the pool; a node it rejects leaves
-    # its replacement appended. Over this probe's 27,828 native dispatches
-    # walk_hygiene_nodes_copied falls from 786,701 to 232,422 and
-    # walk_hygiene_nodes_reused rises from 138,237 to 186,034 -- about twenty
-    # nodes per dispatch stop being copied -- so the macro pool holds 463,234
-    # fewer nodes (3,141,747 -> 2,678,513). The authoritative Windows probe
-    # measured 2,678,513 used nodes, 2,686,976 capacity, and 85,983,232
-    # physical payload bytes. Reverting only the span carriage in this same
-    # tree returns all four boundaries to their previous pins exactly
-    # (48/33/24/9), so this is that change and nothing else; the route itself
-    # never flipped and the image never lost coverage (107 entries, 100 native,
-    # 7 shells, 0 interpreted arms either way; 27,826 -> 27,828 native
-    # dispatches, 59 interpreted fallbacks and 0 load failures both times).
+    # global helper surface. Keep all four ownership boundaries measured
+    # independently. Two changes meet at this boundary. #6375's owned
+    # cursor-visible semantic binding regions grew the unspanned graph from 48
+    # to 49 segments (3,148,431 used nodes on the pre-span tree). Carrying
+    # template source spans through the native macro route then shrinks it:
+    # the native route used to strip the parser's `AstExpr.Spanned` wrapper
+    # from every template node; it now rebuilds each one, so a natively
+    # produced expansion is node-for-node the tree the interpreted quasiquote
+    # builds. That changes which side of the macro-hygiene copy-on-write
+    # commit the expansion lands on -- a node `macro-hygiene-produced-owned?`
+    # accepts is rewritten in its own slot and the replacement is truncated
+    # back off the pool; a node it rejects leaves its replacement appended --
+    # and on the pre-#6526 tree walk_hygiene_nodes_copied fell from 786,701 to
+    # 232,422 (463,234 fewer pool nodes; reverting only the span carriage
+    # restored every boundary exactly, and the route never flipped: 100 native
+    # entries, 7 shells, 0 interpreted arms either way). The authoritative
+    # Windows probe on the combined tree measured the value pinned below.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 41 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

@@ -101,6 +101,8 @@ reject_diag() {
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/vector_native_slice_grow_live.tl)
             printf 'typecheck: cannot mutably borrow borrowed place `items`' ;;
+        stdlib/tests/vector_native_slice_split_grow_live.tl)
+            printf 'typecheck: cannot read mutably borrowed place `items`' ;;
         stdlib/tests/vector_native_slice_alias_reject.tl)
             printf 'typecheck: cannot read mutably borrowed place `items`' ;;
         *) printf '' ;;

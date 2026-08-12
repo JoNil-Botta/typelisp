@@ -1063,6 +1063,46 @@
               (= (lower-test-function-pack-count functions "slice-forward") 0))]))]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-slice-split-at-source) : String
+  "(define (split [view : (&mut source (Slice i64))] [mid : i64]) : (Tuple (&mut source (Slice i64)) (&mut source (Slice i64)))
+  (slice-split-at-mut view mid))
+(define (main) : i64 0)")
+
+(define (compiler-lower-slice-split-at-mode-shape-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-slice-split-at-source)
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count functions "split" "tl_oob_abort")
+              1)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "split"
+                compiler_ir_types.CompilerIrBinOp.Le)
+              1)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "split"
+                compiler_ir_types.CompilerIrBinOp.Sub)
+              1)
+            (= (lower-test-function-call-count functions "split" "tl_alloc") 0)
+            (>= (lower-test-function-pack-count functions "split") 2))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-slice-split-at-shape-ok?) : bool
+  (and
+    (compiler-lower-slice-split-at-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-slice-split-at-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.WindowsScalar))))
+
 (define (compiler-lower-mut-ref-array-access-source) : String
   "(define (len [a : (& a (Array i64))]) : i64 (array-length a))
 (define (get [a : (& a (Array i64))] [i : i64]) : i64 (array-ref a i))
@@ -14194,6 +14234,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-slice-whole-array-pack-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-slice-split-at-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-boxed-helper-lists-ok?)

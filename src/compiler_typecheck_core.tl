@@ -1470,7 +1470,9 @@
 (defenum TcSliceViewCallKind
   (None)
   (Shared)
-  (Mutable))
+  (Mutable)
+  (SplitShared)
+  (SplitMutable))
 
 ;; Source shape accepted by the Slice subview builtins.  `Direct` is a genuine
 ;; Array/DynArray place; `Borrow` carries the source reference lifetime,
@@ -40497,6 +40499,8 @@
     (cond
       [(string.eq name "slice-view") TcSliceViewCallKind.Shared]
       [(string.eq name "slice-mut-view") TcSliceViewCallKind.Mutable]
+      [(string.eq name "slice-split-at") TcSliceViewCallKind.SplitShared]
+      [(string.eq name "slice-split-at-mut") TcSliceViewCallKind.SplitMutable]
       [else TcSliceViewCallKind.None])))
 
 (define (tc-slice-view-call-kind
@@ -40528,8 +40532,22 @@
           (if (tc-hygiene-global-name-id? raw-name)
             (tc-hygiene-global-call-name raw-text)
             raw-text)]
-        (or (string.eq name "slice-view") (string.eq name "slice-mut-view")))]
+        (or
+          (string.eq name "slice-view")
+          (string.eq name "slice-mut-view")
+          (string.eq name "slice-split-at")
+          (string.eq name "slice-split-at-mut")))]
     [_ false]))
+
+(define (tc-slice-call-mutable? [kind : TcSliceViewCallKind]) : bool
+  (or
+    (= kind TcSliceViewCallKind.Mutable)
+    (= kind TcSliceViewCallKind.SplitMutable)))
+
+(define (tc-slice-call-split? [kind : TcSliceViewCallKind]) : bool
+  (or
+    (= kind TcSliceViewCallKind.SplitShared)
+    (= kind TcSliceViewCallKind.SplitMutable)))
 
 (define (tc-slice-view-source-info [ctx : TcContext] [source-ty : ast.AstType]) : TcSliceViewSourceInfo
   (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
@@ -40602,7 +40620,7 @@
       [(TcSliceViewSourceInfo.Direct _)
         (begin
           (when
-            (= kind TcSliceViewCallKind.Mutable)
+            (tc-slice-call-mutable? kind)
             (match (tc-mut-borrow-non-call-place-ok ctx env source)
               [(ResultTcUnit.Ok) unit]
               [(ResultTcUnit.Err message)
@@ -40613,7 +40631,7 @@
               (match place
                 [(TcBorrowPlace lifetime _)
                   (ResultTcType.Ok
-                    (if (= kind TcSliceViewCallKind.Mutable)
+                    (if (tc-slice-call-mutable? kind)
                       (ast.ast-ty-mut-ref-with-pools
                         (tc-context-pools ctx)
                         lifetime
@@ -40629,13 +40647,13 @@
             [(ResultTcBorrowPlace.Err message)
               (ResultTcType.Err (tc-locate-error-at-expr source message))]))]
       [(TcSliceViewSourceInfo.Borrow lifetime source-mutable _)
-        (if (and (= kind TcSliceViewCallKind.Mutable) (not source-mutable))
+        (if (and (tc-slice-call-mutable? kind) (not source-mutable))
           (ResultTcType.Err
             (tc-locate-error-at-expr
               source
               "typecheck: slice-mut-view requires a mutable borrowed source"))
           (ResultTcType.Ok
-            (if (= kind TcSliceViewCallKind.Mutable)
+            (if (tc-slice-call-mutable? kind)
               (ast.ast-ty-mut-ref-with-pools
                 (tc-context-pools ctx)
                 lifetime
@@ -40648,6 +40666,87 @@
                 (ast.ast-ty-slice-with-pools
                   (tc-context-pools ctx)
                   (tc-slice-view-source-element ctx source-info))))))])))
+
+(define (tc-slice-split-result-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [kind : TcSliceViewCallKind]
+  [source : ast.AstExpr]
+  [source-ty : ast.AstType]) : ResultTcType
+  (match (tc-slice-view-source-info ctx source-ty)
+    [(TcSliceViewSourceInfo.Borrow _ source-mutable referent)
+      (match (tc-type-strip-region (tc-resolve-type ctx referent))
+        [(ast.AstType.Slice _)
+          (if (and (tc-slice-call-mutable? kind) (not source-mutable))
+            (ResultTcType.Err
+              (tc-locate-error-at-expr
+                source
+                "typecheck: slice-split-at-mut requires a mutable borrowed Slice"))
+            (begin
+              (when
+                (tc-slice-call-mutable? kind)
+                (match (tc-mut-borrow-non-call-place-ok ctx env source)
+                  [(ResultTcUnit.Ok) unit]
+                  [(ResultTcUnit.Err message)
+                    (return
+                      (ResultTcType.Err
+                        (tc-locate-error-at-expr source message)))]))
+              (match (tc-slice-view-result-type ctx env kind source source-ty)
+                [(ResultTcType.Ok half-ty)
+                  (ResultTcType.Ok
+                    (ast.ast-ty-tuple
+                      (ast.ast-type-cons-with-pools
+                        (tc-context-pools ctx)
+                        half-ty
+                        (ast.ast-type-cons-with-pools
+                          (tc-context-pools ctx)
+                          half-ty
+                          (ast.ast-type-list-new)))))]
+                [(ResultTcType.Err message) (ResultTcType.Err message)])))]
+        [_
+          (ResultTcType.Err
+            (tc-locate-error-at-expr
+              source
+              "typecheck: slice-split-at source must be a borrowed Slice"))])]
+    [_
+      (ResultTcType.Err
+        (tc-locate-error-at-expr
+          source
+          "typecheck: slice-split-at source must be a borrowed Slice"))]))
+
+(define (tc-slice-split-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [kind : TcSliceViewCallKind]
+  [args : ast.AstExprList]) : ResultTcType
+  (if (= args.len 2)
+    (let
+      [source : ast.AstExpr
+        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+      [mid : ast.AstExpr
+        (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0))]
+      (match (tc-expr ctx env source)
+        [(ResultTcType.Ok source-ty)
+          (match (tc-slice-split-result-type ctx env kind source source-ty)
+            [(ResultTcType.Ok result-ty)
+              (match (tc-expr ctx env mid)
+                [(ResultTcType.Ok mid-ty)
+                  (if (tc-integer-type? mid-ty)
+                    (ResultTcType.Ok result-ty)
+                    (ResultTcType.Err
+                      (tc-locate-error-at-expr
+                        mid
+                        (tc-call-argument-expected-text-message
+                          ctx
+                          func
+                          1
+                          mid-ty
+                          "integer"))))]
+                [(ResultTcType.Err message) (ResultTcType.Err message)])]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 2))))
 
 (define (tc-slice-view-call
   [ctx : TcContext]
@@ -40740,6 +40839,8 @@
                     func
                     args
                     (ast.AstType.I64))]
+                [(tc-slice-call-split? slice-call-kind)
+                  (tc-slice-split-call ctx env func slice-call-kind args)]
                 [(not (= slice-call-kind TcSliceViewCallKind.None))
                   (tc-slice-view-call ctx env func slice-call-kind args)]
                 [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
@@ -66291,6 +66392,10 @@
   (No)
   (Some i64 String))
 
+(defenum TcMaybeSliceSplitProjection
+  (No)
+  (Some i64 i64))
+
 (defenum TcMoveConflict
   (No)
   (Some String i64))
@@ -66625,6 +66730,10 @@
   1)
 (define tc-move-path-segment-kind-array : i64
   2)
+(define tc-move-path-segment-kind-slice-split : i64
+  3)
+(define tc-move-path-segment-kind-slice-half : i64
+  4)
 
 (define (tc-move-path-segments-empty) : TcMovePathSegments
   (TcMovePathSegments 0 -1 0))
@@ -66848,14 +66957,20 @@
                     (set!
                       out
                       (str_cat.str-cat out "." (string.int->string node.value)))]
-                  [else
+                  [(= node.kind tc-move-path-segment-kind-array)
                     (set!
                       out
                       (str_cat.str-cat
                         out
                         "["
                         (string.int->string node.value)
-                        "]"))])
+                        "]"))]
+                  [(= node.kind tc-move-path-segment-kind-slice-split)
+                    (set! out (str_cat.str-cat out ".<slice-split>"))]
+                  [else
+                    (set!
+                      out
+                      (str_cat.str-cat out "." (string.int->string node.value)))])
                 (set! read-index (+ read-index 1)))))
           out)))))
 
@@ -66912,7 +67027,9 @@
             (cond
               [(= node.kind tc-move-path-segment-kind-field) 23]
               [(= node.kind tc-move-path-segment-kind-tuple) 29]
-              [else 31])]
+              [(= node.kind tc-move-path-segment-kind-array) 31]
+              [(= node.kind tc-move-path-segment-kind-slice-split) 37]
+              [else 41])]
           (begin
             (set!
               out
@@ -67697,6 +67814,22 @@
     tc-move-path-segment-kind-array
     array-index))
 
+(define (tc-move-path-segments-append-slice-split
+  [segments : TcMovePathSegments]
+  [split-id : i64]) : TcMovePathSegments
+  (tc-move-path-segments-append
+    segments
+    tc-move-path-segment-kind-slice-split
+    split-id))
+
+(define (tc-move-path-segments-append-slice-half
+  [segments : TcMovePathSegments]
+  [half : i64]) : TcMovePathSegments
+  (tc-move-path-segments-append
+    segments
+    tc-move-path-segment-kind-slice-half
+    half))
+
 (define (tc-move-path-append [base : TcMovePath] [field-id : i64]) : TcMovePath
   (TcMovePath
     base.root
@@ -67711,6 +67844,34 @@
   (TcMovePath
     base.root
     (tc-move-path-segments-append-array base.segments index)))
+
+(define (tc-move-slice-split-half-path
+  [base : TcMovePath]
+  [split-id : i64]
+  [half : i64]) : TcMovePath
+  (TcMovePath
+    base.root
+    (tc-move-path-segments-append-slice-half
+      (tc-move-path-segments-append-slice-split base.segments split-id)
+      half)))
+
+(define (tc-move-path-slice-half? [path : TcMovePath] [half : i64]) : bool
+  (let
+    [segments : TcMovePathSegments path.segments]
+    (if (< segments.len 2)
+      false
+      (let
+        [half-node : TcMovePathSegmentNode
+          (tc-move-path-segments-node segments segments.tail)]
+        (if (and
+          (= half-node.kind tc-move-path-segment-kind-slice-half)
+          (= half-node.value half)
+          (>= half-node.parent 0))
+          (let
+            [split-node : TcMovePathSegmentNode
+              (tc-move-path-segments-node segments half-node.parent)]
+            (= split-node.kind tc-move-path-segment-kind-slice-split))
+          false)))))
 
 (define (tc-move-path-dense-storage-smoke?) : bool
   (let
@@ -67756,6 +67917,10 @@
     [same-path : TcMovePath (TcMovePath root-id same)]
     [sibling-path : TcMovePath (TcMovePath root-id sibling)]
     [other-root : TcMovePath (TcMovePath other-root-id mixed)]
+    [split-left : TcMovePath (tc-move-slice-split-half-path root 17 0)]
+    [split-right : TcMovePath (tc-move-slice-split-half-path root 17 1)]
+    [split-nested-left : TcMovePath
+      (tc-move-slice-split-half-path split-right 18 0)]
     [expected-hash : i64
       (tc-move-path-hash-combine
         (tc-move-path-hash-combine 23 alpha-id)
@@ -67804,6 +67969,15 @@
         (tc-move-path-conflicts? mixed-path same-path)
         (not (tc-move-path-conflicts? mixed-path sibling-path))
         (not (tc-move-path-conflicts? mixed-path other-root))
+        (tc-move-path-conflicts? root split-left)
+        (not (tc-move-path-conflicts? split-left split-right))
+        (tc-move-path-conflicts? split-right split-nested-left)
+        (not (tc-move-path-conflicts? split-left split-nested-left))
+        (tc-move-path-slice-half? split-left 0)
+        (tc-move-path-slice-half? split-right 1)
+        (string.eq
+          (tc-move-path-render split-left)
+          "dense-root.<slice-split>.0")
         (string.eq (tc-move-path-render prefix) "dense-root.alpha.2")
         (string.eq
           (tc-move-path-render mixed-path)
@@ -70012,6 +70186,122 @@
       exprs
       types)))
 
+;; Tuple and nominal-constructor expressions store each element by value.
+;; Unlike an ordinary non-consuming function argument, a reference-bearing
+;; MoveOnly element therefore transfers its exclusive handle into the aggregate.
+;; In particular this prevents safe source code from duplicating one mutable
+;; reference into two fields; trusted Slice splitting constructs its result in
+;; the compiler instead of passing through this source-level aggregate path.
+(define (tc-move-check-aggregate-exprs-with-types
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [exprs : ast.AstExprList]
+  [types : ast.AstTypeList]) : TcMoveResult
+  (tc-move-check-aggregate-exprs-with-types-at
+    ctx
+    expr-bases
+    env
+    locals
+    loop-carried
+    moved
+    (& exprs)
+    (& types)
+    0))
+
+(define (tc-move-check-aggregate-exprs-with-types-at
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [exprs : (& exprs ast.AstExprList)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : TcMoveResult
+  (if (>= index exprs.len)
+    (if (>= index (ast.ast-type-list-len types))
+      (TcMoveResult.Ok moved)
+      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check")))
+    (if (>= index (ast.ast-type-list-len types))
+      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check"))
+      (let
+        [head : i64 (ast.ast-expr-list-get exprs index 0)]
+        [head-expr : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases head)]
+        [raw-ty : ast.AstType
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        [value-ty : ast.AstType
+          (match (tc-body-type-fact-expr-id
+            "move.aggregate_arg_value"
+            ctx
+            env
+            head)
+            [(ResultTcType.Ok actual) actual]
+            [(ResultTcType.Err _) raw-ty])]
+        [ty : ast.AstType
+          (ast.ast-type-strip-consuming-param-with-pools
+            (tc-context-pools ctx)
+            raw-ty)]
+        (match (tc-call-effective-arg-expr ctx env head-expr ty)
+          [(ResultTcExpr.Ok effective-head)
+            (match (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              effective-head)
+              [(TcMoveResult.Ok moved1)
+                ;; Keep the ordinary `(:owned)` constructor-field transfer,
+                ;; then add aggregate-only transfer for a non-consuming
+                ;; reference handle that would otherwise remain reusable.
+                (match (tc-move-after-consuming-value
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  loop-carried
+                  moved1
+                  effective-head
+                  raw-ty
+                  value-ty)
+                  [(TcMoveResult.Ok moved2)
+                    (match (if (and
+                      (not (tc-call-param-consuming-now? ctx raw-ty))
+                      (tc-type-move-only? ctx (tc-resolve-type ctx raw-ty))
+                      (tc-type-contains-reference? (tc-resolve-type ctx raw-ty)))
+                      (tc-move-after-move-only-value
+                        ctx
+                        expr-bases
+                        env
+                        locals
+                        loop-carried
+                        moved2
+                        effective-head
+                        raw-ty)
+                      (TcMoveResult.Ok moved2))
+                      [(TcMoveResult.Ok moved3)
+                        (tc-move-check-aggregate-exprs-with-types-at
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          loop-carried
+                          moved3
+                          exprs
+                          types
+                          (+ index 1))]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(ResultTcExpr.Err message) (TcMoveResult.Err message)])))))
+
 (define (tc-move-check-thread-channel-send-message
   [ctx : TcContext]
   [expr-bases : i64]
@@ -70133,6 +70423,13 @@
         (TcMoveResult.Ok moved))]
     [_ (TcMoveResult.Ok moved)]))
 
+(define (tc-move-check-constructor-call? [ctx : TcContext] [func : ast.AstExpr]) : bool
+  (let
+    [name-id : i64 (tc-expr-var-name-id func)]
+    (if (>= name-id 0)
+      (tc-constructor-name-id? ctx name-id)
+      false)))
+
 (define (tc-move-check-call-args-with-types
   [ctx : TcContext]
   [expr-bases : i64]
@@ -70144,15 +70441,8 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [params : ast.AstTypeList]) : TcMoveResult
-  (match (if (or
-    (tc-move-global-place-inspector-call? ctx env func)
-    ;; Safe thread spawn requires one direct lambda and separately validates
-    ;; and transfers every capture below. Do not reject that intentional
-    ;; one-way transfer merely because its public `(-> ...)` parameter cannot
-    ;; encode the concrete environment's non-Copy fact.
-    (tc-thread-safe-spawn-call-signature? ctx env func params))
-    (tc-move-check-exprs ctx expr-bases env locals loop-carried moved args)
-    (tc-move-check-exprs-with-types
+  (match (if (tc-move-check-constructor-call? ctx func)
+    (tc-move-check-aggregate-exprs-with-types
       ctx
       expr-bases
       env
@@ -70160,7 +70450,24 @@
       loop-carried
       moved
       args
-      params))
+      params)
+    (if (or
+      (tc-move-global-place-inspector-call? ctx env func)
+      ;; Safe thread spawn requires one direct lambda and separately validates
+      ;; and transfers every capture below. Do not reject that intentional
+      ;; one-way transfer merely because its public `(-> ...)` parameter cannot
+      ;; encode the concrete environment's non-Copy fact.
+      (tc-thread-safe-spawn-call-signature? ctx env func params))
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved args)
+      (tc-move-check-exprs-with-types
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        args
+        params)))
     [(TcMoveResult.Ok moved-args)
       (match (tc-move-check-thread-channel-send-message
         ctx
@@ -70897,7 +71204,11 @@
   [call-expr : ast.AstExpr]
   [kind : TcSliceViewCallKind]
   [args : ast.AstExprList]) : TcMoveResult
-  (if (= args.len 3)
+  (if (=
+    args.len
+    (if (tc-slice-call-split? kind)
+      2
+      3))
     (let
       [source : ast.AstExpr
         (ast.ast-expr-segment-bases-get
@@ -70907,15 +71218,11 @@
         (ast.ast-expr-segment-bases-get
           expr-bases
           (ast.ast-expr-list-get (& args) 1 0))]
-      [len : ast.AstExpr
-        (ast.ast-expr-segment-bases-get
-          expr-bases
-          (ast.ast-expr-list-get (& args) 2 0))]
       ;; Mutable direct owners are still places, so preserve the existing
       ;; by-value-parameter storage guard.  Reference sources (including
       ;; nested subview results) do not consume or rebind their source.
       [write-check : ResultTcUnit
-        (if (= kind TcSliceViewCallKind.Mutable)
+        (if (tc-slice-call-mutable? kind)
           (match (tc-expr ctx env source)
             [(ResultTcType.Ok source-ty)
               (match (tc-slice-view-source-info ctx source-ty)
@@ -70951,20 +71258,26 @@
                 moved1
                 start)
                 [(TcMoveResult.Ok moved2)
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    locals
-                    loop-carried
-                    moved2
-                    len)]
+                  (if (tc-slice-call-split? kind)
+                    (TcMoveResult.Ok moved2)
+                    (tc-move-check-expr
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      loop-carried
+                      moved2
+                      (ast.ast-expr-segment-bases-get
+                        expr-bases
+                        (ast.ast-expr-list-get (& args) 2 0))))]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])]))
     (TcMoveResult.Err
       (tc-locate-error-at-expr
         call-expr
-        "typecheck: slice-view expects exactly three arguments"))))
+        (if (tc-slice-call-split? kind)
+          "typecheck: slice-split-at expects exactly two arguments"
+          "typecheck: slice-view expects exactly three arguments")))))
 
 ;; Borrowing a place observes every receiver and index but never performs the
 ;; by-value transfer represented by public `deref`. Rebuild only the place
@@ -72332,7 +72645,7 @@
     [(ast.AstExpr.Tuple exprs)
       (match (tc-body-type-fact-expr-list-types "move.tuple_list" ctx env exprs)
         [(ResultTcTypeList.Ok types)
-          (tc-move-check-exprs-with-types
+          (tc-move-check-aggregate-exprs-with-types
             ctx
             expr-bases
             env
@@ -75427,6 +75740,166 @@
     path
     (TcMovedPathKind.BorrowLending binding-id)
     (ast.ast-node-push origin)))
+
+(define (tc-borrow-check-split-provenance-for-binding-at
+  [facts : TcMovedPathFacts]
+  [binding-id : i64]
+  [half : i64]
+  [select-half : bool]) : TcMaybeMovePath
+  (match facts
+    [(TcMovedPathFacts.Nil) (TcMaybeMovePath.No)]
+    [(TcMovedPathFacts.Cons fact rest)
+      (if (and
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending fact-binding-id)
+            (= fact-binding-id binding-id)]
+          [_ false])
+        (if select-half
+          (tc-move-path-slice-half? fact.path half)
+          (or
+            (tc-move-path-slice-half? fact.path 0)
+            (tc-move-path-slice-half? fact.path 1))))
+        (TcMaybeMovePath.Some fact.path)
+        (tc-borrow-check-split-provenance-for-binding-at
+          (__tl-box-place rest)
+          binding-id
+          half
+          select-half))]))
+
+(define (tc-borrow-check-split-provenance
+  [expr-bases : i64]
+  [borrowed : TcMovedSet]
+  [source : ast.AstExpr]) : TcMaybeMovePath
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases source)
+    [(ast.AstExpr.Var binding-id)
+      (match (tc-borrow-check-split-provenance-for-binding-at
+        (tc-moved-paths borrowed)
+        binding-id
+        0
+        false)
+        [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
+        [(TcMaybeMovePath.No) (tc-borrow-check-place-path expr-bases source)])]
+    [(ast.AstExpr.TupleRef tuple-box half)
+      (let
+        [tuple-expr : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
+        (match (ast.ast-expr-unspan-with-segment-bases expr-bases tuple-expr)
+          [(ast.AstExpr.Var binding-id)
+            (match (tc-borrow-check-split-provenance-for-binding-at
+              (tc-moved-paths borrowed)
+              binding-id
+              half
+              true)
+              [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
+              [(TcMaybeMovePath.No)
+                (tc-borrow-check-place-path expr-bases source)])]
+          [_ (tc-borrow-check-place-path expr-bases source)]))]
+    [(ast.AstExpr.Ann inner-box _)
+      (tc-borrow-check-split-provenance
+        expr-bases
+        borrowed
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.Cast inner-box _)
+      (tc-borrow-check-split-provenance
+        expr-bases
+        borrowed
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [_ (tc-borrow-check-place-path expr-bases source)]))
+
+(define (tc-borrow-check-split-projection
+  [expr-bases : i64]
+  [expr : ast.AstExpr]) : TcMaybeSliceSplitProjection
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+    [(ast.AstExpr.TupleRef tuple-box half)
+      (match (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases tuple-box))
+        [(ast.AstExpr.Var binding-id)
+          (TcMaybeSliceSplitProjection.Some binding-id half)]
+        [_ (TcMaybeSliceSplitProjection.No)])]
+    [(ast.AstExpr.Ann inner-box _)
+      (tc-borrow-check-split-projection
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.Cast inner-box _)
+      (tc-borrow-check-split-projection
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [_ (TcMaybeSliceSplitProjection.No)]))
+
+(define (tc-borrow-check-rebind-split-projection-at
+  [facts : TcMovedPathFacts]
+  [source-binding-id : i64]
+  [half : i64]
+  [binding-id : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (match facts
+    [(TcMovedPathFacts.Nil) out]
+    [(TcMovedPathFacts.Cons fact rest)
+      (let
+        [copy : bool
+          (match fact.kind
+            [(TcMovedPathKind.BorrowLending fact-binding-id)
+              (and
+                (= fact-binding-id source-binding-id)
+                (or
+                  (and
+                    (not (tc-move-path-slice-half? fact.path 0))
+                    (not (tc-move-path-slice-half? fact.path 1)))
+                  (tc-move-path-slice-half? fact.path half)))]
+            [_ false])]
+        [out2 : TcMovedSet
+          (if copy
+            (tc-moved-add-path-fact
+              out
+              fact.path
+              (TcMovedPathKind.BorrowLending binding-id)
+              (tc-moved-path-fact-origin fact))
+            out)]
+        (tc-borrow-check-rebind-split-projection-at
+          (__tl-box-place rest)
+          source-binding-id
+          half
+          binding-id
+          out2))]))
+
+(define (tc-borrow-check-binding-has-split-provenance?
+  [facts : TcMovedPathFacts]
+  [binding-id : i64]) : bool
+  (match facts
+    [(TcMovedPathFacts.Nil) false]
+    [(TcMovedPathFacts.Cons fact rest)
+      (if (and
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending fact-binding-id)
+            (= fact-binding-id binding-id)]
+          [_ false])
+        (or
+          (tc-move-path-slice-half? fact.path 0)
+          (tc-move-path-slice-half? fact.path 1)))
+        true
+        (tc-borrow-check-binding-has-split-provenance?
+          (__tl-box-place rest)
+          binding-id))]))
+
+(define (tc-borrow-check-rebind-split-projection
+  [expr-bases : i64]
+  [borrowed : TcMovedSet]
+  [binding-id : i64]
+  [init : ast.AstExpr]) : TcMovedSet
+  (match (tc-borrow-check-split-projection expr-bases init)
+    [(TcMaybeSliceSplitProjection.Some source-binding-id half)
+      (if (tc-borrow-check-binding-has-split-provenance?
+        (tc-moved-paths borrowed)
+        source-binding-id)
+        (tc-borrow-check-rebind-split-projection-at
+          (tc-moved-paths borrowed)
+          source-binding-id
+          half
+          binding-id
+          borrowed)
+        borrowed)]
+    [(TcMaybeSliceSplitProjection.No) borrowed]))
 
 (define (tc-borrow-check-remove-root-state
   [borrowed : TcMovedSet]
@@ -80097,12 +80570,18 @@
                           binding-ty
                           init)]
                       [borrowed4 : TcMovedSet
+                        (tc-borrow-check-rebind-split-projection
+                          expr-bases
+                          borrowed3
+                          name
+                          init)]
+                      [borrowed5 : TcMovedSet
                         (tc-borrow-check-rebind-lambda-lending
                           ctx
                           expr-bases
                           env
                           locals
-                          borrowed3
+                          borrowed4
                           name
                           init)]
                       (tc-borrow-check-let-bindings-at
@@ -80121,7 +80600,7 @@
                           locals
                           name
                           init)
-                        (tc-borrow-check-remove-root-state borrowed4 name)
+                        (tc-borrow-check-remove-root-state borrowed5 name)
                         protected
                         bindings
                         body-box
@@ -80414,6 +80893,83 @@
         call-expr
         "typecheck: slice-view expects exactly three arguments"))))
 
+(define (tc-borrow-check-add-slice-split-provenance
+  [borrowed : TcMovedSet]
+  [base : TcMovePath]
+  [mutable : bool]
+  [split-id : i64]
+  [origin : ast.AstExpr]) : TcMovedSet
+  (tc-borrow-check-add-borrow-path
+    (tc-borrow-check-add-borrow-path
+      borrowed
+      (tc-move-slice-split-half-path base split-id 0)
+      mutable
+      origin)
+    (tc-move-slice-split-half-path base split-id 1)
+    mutable
+    origin))
+
+(define (tc-borrow-check-slice-split-call
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [call-expr : ast.AstExpr]
+  [kind : TcSliceViewCallKind]
+  [args : ast.AstExprList]) : TcBorrowCheckResult
+  (if (= args.len 2)
+    (let
+      [source : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& args) 0 0))]
+      [mid : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& args) 1 0))]
+      [mutable : bool (tc-slice-call-mutable? kind)]
+      (match (tc-borrow-check-expr ctx expr-bases env locals borrowed source)
+        [(TcBorrowCheckResult.Ok borrowed1)
+          (match (tc-borrow-check-add-place-with-mutability
+            expr-bases
+            locals
+            borrowed1
+            mutable
+            source
+            call-expr)
+            [(TcBorrowCheckResult.Ok borrowed2)
+              (let
+                [with-provenance : TcMovedSet
+                  (if mutable
+                    (match (tc-borrow-check-split-provenance
+                      expr-bases
+                      borrowed1
+                      source)
+                      [(TcMaybeMovePath.Some base)
+                        (tc-borrow-check-add-slice-split-provenance
+                          borrowed2
+                          base
+                          mutable
+                          (ast.ast-node-push call-expr)
+                          call-expr)]
+                      [(TcMaybeMovePath.No) borrowed2])
+                    borrowed2)]
+                (tc-borrow-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  with-provenance
+                  mid))]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
+    (TcBorrowCheckResult.Err
+      (tc-locate-error-at-expr
+        call-expr
+        "typecheck: slice-split-at expects exactly two arguments"))))
+
 (define (tc-borrow-check-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -80703,15 +81259,25 @@
                         (TcBorrowCheckResult.Err message)])]))]
             [(TcBorrowCheckResult.Err message)
               (TcBorrowCheckResult.Err message)])
-          (tc-borrow-check-slice-view-call
-            ctx
-            expr-bases
-            env
-            locals
-            borrowed
-            expr
-            slice-kind
-            args)))]
+          (if (tc-slice-call-split? slice-kind)
+            (tc-borrow-check-slice-split-call
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              expr
+              slice-kind
+              args)
+            (tc-borrow-check-slice-view-call
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              expr
+              slice-kind
+              args))))]
     [(ast.AstExpr.BracketClause items)
       (tc-borrow-check-exprs ctx expr-bases env locals borrowed items)]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)

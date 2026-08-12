@@ -23,6 +23,15 @@
 
 ;; The call makes this loop ineligible, so both wide literals retain the
 ;; ordinary per-site materialisation fallback.
+;;
+;; The round count is threaded through from this function's own parameter
+;; rather than written as a literal. With a literal the measured-plan inliner
+;; can absorb `opaque` here -- it prices call-carrying bodies now -- and
+;; constant propagation then folds the recursive arm away, leaving this loop
+;; call-free and ELIGIBLE, which silently retires the fallback this gate
+;; exists to pin. A dynamic round count keeps the recursive arm alive through
+;; any inline, so the loop stays ineligible however the callee is admitted.
+;; `rounds` is 1 at every call site, so the observable result is unchanged.
 (define (wide-call [n : i64] [rounds : i64]) : i64
   (let
     [original : i64 n]
@@ -31,7 +40,7 @@
       (while (> n 0)
         (begin
           (set! acc (bit-xor (* acc 2654435761) 2654435761))
-          (set! acc (opaque acc 1))
+          (set! acc (opaque acc rounds))
           (set! n (/ n 2))))
       (if (> rounds 1)
         (+ acc (wide-call original (- rounds 1)))

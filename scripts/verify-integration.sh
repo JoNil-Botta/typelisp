@@ -1698,6 +1698,14 @@ run_linux_backend_fixtures() {
         tests/integration/inline_alloc_scavenge_live_through.tl \
         42 \
         2
+    # The multiblock inliner only runs at opt2, so the manifest's opt0/opt1
+    # rows cannot exercise the call-carrying clone path at all; this row is
+    # where the cloned call actually happens (refs #6307, #6288).
+    run_linux_program_fixture \
+        inline-multiblock-call-carrying-clone-opt2 \
+        tests/integration/inline_multiblock_call_carrying_clone.tl \
+        42 \
+        2
     run_linux_program_fixture \
         integer-literal-boundary-matrix-opt0 \
         tests/integration/integer_literal_boundary_matrix.tl \
@@ -2022,6 +2030,11 @@ run_windows_backend_fixtures() {
     run_windows_program_fixture \
         inline-alloc-scavenge-live-through-opt2 \
         tests/integration/inline_alloc_scavenge_live_through.tl \
+        42 \
+        2
+    run_windows_program_fixture \
+        inline-multiblock-call-carrying-clone-opt2 \
+        tests/integration/inline_multiblock_call_carrying_clone.tl \
         42 \
         2
     run_windows_program_fixture \

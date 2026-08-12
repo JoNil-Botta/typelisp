@@ -71790,11 +71790,37 @@
       (opt-inline-blocks-have-bounds-check?
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-;; A body with no call of any kind. Used by the duplicating admission below:
-;; the clone the duplication makes is bounded by the callee's own size only when
-;; nothing inside it can bring another body along, and the multiblock clone path
-;; is known to miscompile call-carrying clones (#6307), so a duplicated callee
-;; stays a leaf by construction.
+;; A body with no call of any kind. Used by the STATIC admission bands below,
+;; and by none of them for a correctness reason: it is a PRICING clause.
+;;
+;; The clone path itself handles calls. opt-inline-clone-instr rebases a Call's
+;; destination and remaps its arguments through the same staging the rest of the
+;; body uses, opt-remap-spans-instr-key re-keys a cloned call's span under the
+;; caller, and the multiblock structural gate (opt-inline-body-instr-op-ok?)
+;; admits Call, CallIndirect and CallIndirectC on purpose -- so the ordinary
+;; cost model already clones call-carrying multiblock bodies in production, and
+;; compiler-optimize-inline-multiblock-nonleaf-ok? has pinned exactly that shape
+;; for as long as the gate has existed. The historical claim that this path
+;; "miscompiles call-carrying clones (#6307)" does not survive re-triage: #6307
+;; was closed against the INLINER and re-attributed to a Linux opt2 scalar
+;; register allocation pressure bug (#6288), its trigger was bounds-loop
+;; widening rather than calls, and relaxing this clause in every band at once
+;; still bootstraps to a stage2.s == stage3.s fixpoint and passes the whole
+;; inline suite.
+;;
+;; What the clause actually buys a static band is the cost it CANNOT see. These
+;; bands price a callee by its instruction and block counts; a callee's own
+;; calls carry costs those counts do not carry -- a caller that was a leaf stops
+;; being one, every value the caller holds across the imported call now has to
+;; survive a caller-saved clobber, and a duplicated body brings a whole second
+;; call sequence to each site it lands at. Measured on this tree: dropping the
+;; clause from every band at once moves gvn_table only -0.197% and takes
+;; borrowed_disjoint_store from 1,300,000,258 to 2,050,000,218, +57.69%. So the
+;; bands keep it, and a body they duplicate stays a leaf by construction.
+;;
+;; The measured-plan tier (opt-inline-checked-ok?) does not carry this clause,
+;; because it does not have to guess: it re-plans the merged caller through a
+;; real allocation and reverts whatever does not repay.
 (define (opt-inline-instr-call? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Call _ _ _ _) true]
@@ -73633,9 +73659,10 @@
 ;;
 ;; Everything the single-reference admission asks is asked here unchanged --
 ;; size, in-loop site, cascade -- through the same predicate, plus one condition
-;; of its own: the body must be call-free. A clone is bounded by the callee's
-;; measured size only while nothing inside it can bring another body along, and
-;; the multiblock clone path miscompiles call-carrying clones (#6307).
+;; of its own: the body must be call-free. That is the pricing clause documented
+;; at opt-inline-blocks-call-free? -- a duplicated body's own calls cost this
+;; band's model things it cannot count, twice over because there are two copies
+;; -- and not a clone-path limitation.
 ;;
 ;; The clause order is the cost argument. Every multiblock call site in the
 ;; program reaches this predicate, so the reference-class compare -- already
@@ -73688,10 +73715,11 @@
 ;;      does not grow -- so the two-reference duplication the loop tier allows
 ;;      is not offered here. A recursive caller is the worst place to pay for a
 ;;      copy that is not free;
-;;   2. the body is call-free. A clone is bounded by the callee's own size only
-;;      while nothing inside it brings another body along, the multiblock clone
-;;      path miscompiles call-carrying clones (#6307), and a call-free callee
-;;      absorbed into a recursive caller cannot deepen the recursion;
+;;   2. the body is call-free -- the pricing clause documented at
+;;      opt-inline-blocks-call-free?, which a recursive caller has the most to
+;;      lose from: its frame is re-entered per recursion node, so a leaf frame
+;;      it stops being is paid for at every one of them. A call-free callee
+;;      absorbed into a recursive caller also cannot deepen the recursion;
 ;;   3. the cascade clause is unchanged: an import that would hand a
 ;;      bounds-free single-reference caller its first bounds check costs that
 ;;      caller its own inline, and that trade loses wherever it is made.
@@ -73810,9 +73838,10 @@
 ;;      band makes no copies. Its blocks are still charged to the shared
 ;;      accumulator, so the bands that DO grow the caller see the real size;
 ;;   5. the body is call-free, the same clause the duplication and
-;;      recursive-site tiers carry, for the same reason: the multiblock clone
-;;      path miscompiles call-carrying bodies (#6307). Here it is conservatism
-;;      rather than a mechanism requirement -- a move makes one copy, not two --
+;;      recursive-site tiers carry, for the same reason: this band's model
+;;      cannot price a callee's own calls (see opt-inline-blocks-call-free?).
+;;      Here it is conservatism rather than a mechanism requirement -- a move
+;;      makes one copy, not two --
 ;;      and it costs less than it reads, because SCC order processes callees
 ;;      before callers, so a chain of single-site functions is absorbed
 ;;      bottom-up in ONE pass;
@@ -74178,9 +74207,9 @@
 ;;      its first bounds check, and a bounds-free callee cannot do that. Both
 ;;      of the measured lex_source sites are refused today by that clause and
 ;;      by nothing else it can be read as protecting;
-;;   3. the body is call-free -- a clone is bounded by the callee's own size
-;;      only while nothing inside it brings another body along, and the
-;;      multiblock clone path miscompiles call-carrying clones (#6307);
+;;   3. the body is call-free -- the pricing clause documented at
+;;      opt-inline-blocks-call-free?, which this band needs most of all: it
+;;      copies one body into every one of a shared accessor's sites;
 ;;   4. the site lies in a natural loop of the caller, so the retired boundary
 ;;      is repaid per iteration rather than once per program;
 ;;   5. the body is acyclic -- a loop inside a chain is not a chain;
@@ -74368,12 +74397,12 @@
 ;;      absorptions draw on, and spending it evicted pl-globl-line?'s
 ;;      absorption out of pl-run-chunk when pl-line-end's copy landed first,
 ;;      +8.4% on peephole_lines -- an import must never evict a banked inline;
-;;   4. the body is call-free. A clone is bounded by the callee's own size only
-;;      while nothing inside it can bring another body along, and the
-;;      multiblock clone path miscompiles call-carrying clones (#6307). This
-;;      clause is what separates the admitted leaf from #6307's failing
-;;      shapes: ln-live-out-into!, ln-fill-tokens, ln-count-tokens, and
-;;      byte-buf-copy-slots-range-into all carry calls;
+;;   4. the body is call-free -- the pricing clause documented at
+;;      opt-inline-blocks-call-free?. This band copies the biggest bodies of
+;;      any, into loop sites, so the costs that clause covers land where they
+;;      cost most. It is also what separates the admitted leaf from the
+;;      historical wide-gate population: ln-live-out-into!, ln-fill-tokens,
+;;      ln-count-tokens and byte-buf-copy-slots-range-into all carry calls;
 ;;   5. the retired boundary is repaid AND the import does not tax a caller
 ;;      loop's allocation. Measured, those are not the same thing: an in-loop
 ;;      site repays per iteration, but a body this size brings its own working
@@ -74400,7 +74429,8 @@
 ;; shapes just refused are `gvn-scan-ints` (148 in 46, a switch-per-byte
 ;; scanner whose body is a different working set from its caller's), stdlib
 ;; `int->string-negative-digit-count` (92 in 37, over on blocks alone), and
-;; `ln-live-out-into!` (138, the #6307 size class). A callee copied into some
+;; `ln-live-out-into!` (138, the historical wide-gate size class). A callee
+;; copied into some
 ;; of its sites keeps its own body and stays reachable from the rest: the
 ;; census is built before the pass and only read during it, so no absorption
 ;; bookkeeping is needed and none is claimed.
@@ -75046,10 +75076,24 @@
 ;; avoid.
 ;;
 ;; A NEW candidate is ordered cheapest-first: the tier's own state and the
-;; target key, then the integer size clauses, then the growth budgets, then the
-;; call-free scan, and last the site weight, which builds a depth table over the
-;; caller. In scan mode the last step RECORDS the site and refuses it; in target
-;; mode it admits the one site the round is pricing.
+;; target key, then the integer size clauses, then the growth budgets, and last
+;; the site weight, which builds a depth table over the caller. In scan mode the
+;; last step RECORDS the site and refuses it; in target mode it admits the one
+;; site the round is pricing.
+;;
+;; THERE IS NO CALL-FREE CLAUSE HERE, and the omission is the point. The static
+;; bands carry one (see opt-inline-blocks-call-free?) because their models price
+;; a callee by its instruction and block counts and a callee's own calls cost
+;; things those counts cannot carry. This tier does not price a body by counting
+;; it: it rebuilds the caller with the site, re-plans the merged function through
+;; a real register allocation, and keeps the site only when the measured saving
+;; lands inside the accept window. A callee's calls are inside everything it
+;; measures -- the merged caller's prologue, its callee-saved set and its spill
+;; traffic all move when an imported call takes the caller's leaf frame away --
+;; so the clause would only be refusing candidates the check is already able to
+;; refuse. Measured on this tree, dropping it leaves all twenty-two
+;; instruction-count rows byte identical and hands the check thirteen new
+;; candidates across the corpus, of which it accepts five and reverts the rest.
 (define (opt-inline-checked-ok?
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -75102,11 +75146,6 @@
         (<=
           (+ opt-inline-caller-checked-blocks added-blocks)
           (opt-inline-checked-max-blocks))
-        ;; A clone is bounded by the callee's own size only while nothing inside
-        ;; it brings another body along, and the multiblock clone path
-        ;; miscompiles call-carrying clones (#6307). The check prices a body; it
-        ;; cannot price one that is not all there.
-        (opt-inline-blocks-call-free? blocks)
         (let
           [site-depth : i64 (opt-inline-checked-site-depth-now)]
           [site-weight : i64 (opt-inline-census-depth-weight site-depth)]

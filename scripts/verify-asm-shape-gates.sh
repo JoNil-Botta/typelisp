@@ -612,7 +612,27 @@ check_handle_arg_csr() {
     _body=$(function_body "$_asm" _tl_handle_arg_csr_sum_args)
     assert_contains "$_body" 'call _tl_handle_arg_csr_probe' handle-arg-csr
     assert_matches "$_body" '^[[:space:]]+movq %rdi, %r(12|13|14|15|bx|bp)$' handle-arg-csr
-    assert_not_matches "$_body" '\(%rsp\)|\(%rbp\)' handle-arg-csr
+    # M-A2 is a claim about the HANDLE: `xs` is copied out of %rdi into a
+    # callee-saved register once at entry and every later use -- the direct
+    # call's argument included -- reads that register instead of re-materialising
+    # the handle from the frame.
+    #
+    # This used to be asserted as "no frame reference anywhere in the body",
+    # which is a proxy, not the claim: it also fails when some UNRELATED value
+    # takes a frame slot. The measured-plan inliner now prices call-carrying
+    # callees, so it absorbs `probe` at this site and hoists the absorbed body's
+    # own `xs[0]` into a spill slot -- a value that is not the handle and that
+    # the handle contract says nothing about. The two assertions below state the
+    # contract directly: the handle's callee-saved home is never reloaded from
+    # the frame, and the call's handle argument is never sourced from it either.
+    _home=$(sed -n \
+        's/^[[:space:]]*movq %rdi, %\(r1[2-5]\|rbx\|rbp\)$/\1/p' \
+        "$_body" | head -1)
+    [ -n "$_home" ] || fail "handle-arg-csr could not read the handle's register home"
+    assert_not_matches "$_body" \
+        "^[[:space:]]+movq [-0-9]*\\((%rsp|%rbp)\\), %$_home\$" handle-arg-csr
+    assert_not_matches "$_body" \
+        '^[[:space:]]+movq [-0-9]*\((%rsp|%rbp)\), %rdi$' handle-arg-csr
 }
 
 check_shift_pin() {

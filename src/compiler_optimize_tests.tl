@@ -15054,10 +15054,6 @@
     5
     (opt-inline-dup-leaf-call-zero-instrs helper-name)))
 
-;; N in-loop callers of one leaf, so the leaf's static reference count is
-;; exactly the number of callers. None of the callers is referenced itself, so
-;; the cascade clause is satisfied for all of them and only the reference count
-;; separates the cases.
 (define (opt-inline-dup-caller-chain
   [names : compiler_optimize.OptSlotList]
   [callee-name : i64]
@@ -15176,9 +15172,10 @@
         0))))
 
 ;; The same two-reference leaf with one call in its body stays out of line at
-;; both sites: a duplicated body is bounded by its own size only while nothing
-;; inside it can bring another body along, and the multiblock clone path
-;; miscompiles call-carrying clones (#6307).
+;; both sites. The clone path handles calls -- the measured tier clones
+;; call-carrying bodies and this file pins that -- but this band's model prices
+;; a body by counting it, and a callee's own calls cost the caller its leaf
+;; frame and every value live across them. See opt-inline-blocks-call-free?.
 ;; --- the measured-plan inline check -----------------------------------------
 ;;
 ;; The tier itself (compiler_optimize.tl, opt-inline-checked-*) admits one site
@@ -15340,12 +15337,23 @@
       (opt-inline-mb2-main-verified? optimized "main")
       (opt-inline-mb2-main-verified? optimized "inline_nonleaf"))))
 
-;; The tier armed over a program it cannot claim leaves that program exactly
-;; where the bands left it, and every function still verifies. This is the
-;; rollback's safety property stated where it can be checked without a fixture
-;; the size of a benchmark kernel: arming the tier must never change a program
-;; whose only sites belong to a band.
-(define (compiler-optimize-inline-checked-rollback-verifies-ok?) : bool
+;; The tier DECIDES a call-carrying candidate, and whichever side of the
+;; rollback it keeps verifies.
+;;
+;; The static bands refuse a call-carrying body outright -- that is their
+;; pricing clause, and opt-inline-dup-call-bearing-refusal pins it -- so this
+;; leaf reaches every one of its three in-loop sites with its boundary intact
+;; once the bands are done. The tier has no such clause: it rebuilds each
+;; caller with the site, re-plans the merged function, and keeps the site only
+;; when the measured saving lands in the accept window. This drives that
+;; sequence over the three callers and pins BOTH outcomes at once -- the callers
+;; whose plan repays keep the body, the caller whose plan does not keeps its
+;; call -- which is the property the tier's whole rollback exists to provide and
+;; the one that a clause refusing the candidate outright could never exercise.
+;;
+;; The encoding is `spent`, then the armed call counts, then the banked ones,
+;; so a change in any of the three reads directly off the number.
+(define (compiler-optimize-inline-checked-call-carrying-self-test) : i64
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
@@ -15358,8 +15366,25 @@
         (opt-inline-dup-three-caller-names symbols)
         callee-name
         (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
-    [banked-main : i64
-      (opt-count-direct-call-name-function-list banked "main" "inline_switch")]
+    [banked-code : i64
+      (+
+        (*
+          100
+          (opt-count-direct-call-name-function-list
+            banked
+            "main"
+            "inline_switch"))
+        (+
+          (*
+            10
+            (opt-count-direct-call-name-function-list
+              banked
+              "inline_nonleaf"
+              "inline_switch"))
+          (opt-count-direct-call-name-function-list
+            banked
+            "inline_loop"
+            "inline_switch")))]
     [_arm : unit
       (begin
         (compiler_optimize.opt-inline-checked-set-active! true)
@@ -15369,18 +15394,240 @@
         (opt-inline-dup-three-caller-names symbols)
         callee-name
         (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
-    [armed-main : i64
-      (opt-count-direct-call-name-function-list armed "main" "inline_switch")]
+    [armed-code : i64
+      (+
+        (*
+          100
+          (opt-count-direct-call-name-function-list
+            armed
+            "main"
+            "inline_switch"))
+        (+
+          (*
+            10
+            (opt-count-direct-call-name-function-list
+              armed
+              "inline_nonleaf"
+              "inline_switch"))
+          (opt-count-direct-call-name-function-list
+            armed
+            "inline_loop"
+            "inline_switch")))]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified? armed "main")
+        (opt-inline-mb2-main-verified? armed "inline_nonleaf")
+        (opt-inline-mb2-main-verified? armed "inline_loop"))]
     [_disarm-after : unit
       (compiler_optimize.opt-inline-checked-set-active! false)]
-    (and
-      ;; a call-carrying callee is outside the tier's class (#6307), so the
-      ;; armed run reproduces the disarmed one exactly
-      (= armed-main banked-main)
-      (= armed-main 1)
-      (opt-inline-mb2-main-verified? armed "main")
-      (opt-inline-mb2-main-verified? armed "inline_nonleaf")
-      (opt-inline-mb2-main-verified? armed "inline_loop"))))
+    (if verified?
+      (+ (* 1000000 spent) (+ (* 1000 armed-code) banked-code))
+      (- 0 1))))
+
+;; spent=3, armed=000 (all three callers kept the body), banked=111 (the bands
+;; left every site out of line).
+(define (compiler-optimize-inline-checked-call-carrying-ok?) : bool
+  (= (compiler-optimize-inline-checked-call-carrying-self-test) 3000111))
+
+;; The same in-loop site, one loop deeper. entry -> outer -> header -> body,
+;; with the call in `body`, so the site's depth weight is the census ladder's
+;; second rung rather than its first. Nothing else about the site changes: the
+;; callee, its arity and its body are the ones the accept fixture uses.
+(define (opt-inline-nested-loop-site-blocks [callee-name : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "outer"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "outer")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            6
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "outer_latch")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "header")
+              (compiler_ir_types.compiler-ir-label "done"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "header")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.compiler-ir-label "outer")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-inline-loop-site-call callee-name 5)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "outer_latch"))
+                  compiler_ir_types.CompilerIrInstrList.Nil))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "outer_latch")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "outer"))
+                    compiler_ir_types.CompilerIrInstrList.Nil))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "done")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 6)))
+                      compiler_ir_types.CompilerIrInstrList.Nil))
+                  compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-inline-nested-loop-site-function
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (opt-inline-nested-loop-site-blocks callee-name)))
+
+;; Two nested-loop callers of the same call-carrying leaf. Two references keep
+;; every band away -- the duplicating, hot-loop-leaf and shared-accessor bands
+;; all refuse a call-carrying body, and with no single-reference absorb bonus
+;; the ordinary cost model refuses a five-block callee on block weight alone --
+;; so both sites reach the measured tier, one loop deeper than the accept
+;; fixture's.
+(define (compiler-optimize-inline-checked-call-carrying-deep-self-test) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [armed : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-nested-loop-site-function symbols.main callee-name)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-nested-loop-site-function
+              symbols.inline-nonleaf
+              callee-name)
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-inline-dup-leaf-calling callee-name symbols.external-helper)
+              compiler_ir_types.CompilerIrFunctionList.Nil)))
+        2)]
+    [code : i64
+      (+
+        (*
+          10
+          (opt-count-direct-call-name-function-list
+            armed
+            "main"
+            "inline_switch"))
+        (opt-count-direct-call-name-function-list
+          armed
+          "inline_nonleaf"
+          "inline_switch"))]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified? armed "main")
+        (opt-inline-mb2-main-verified? armed "inline_nonleaf")
+        (opt-inline-mb2-main-verified? armed "inline_switch"))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 100 spent) code)
+      (- 0 1))))
+
+(define (compiler-optimize-inline-checked-call-carrying-deep-ok?) : bool
+  (= (compiler-optimize-inline-checked-call-carrying-deep-self-test) 200))
+
+;; ...and the other side of the same check, on the same call-carrying body.
+;;
+;; The verdict is priced here against a plan that did NOT change: the same
+;; caller stands in for both sides of the rollback, so nothing was saved and
+;; `before - after` is exactly the boundary the site would retire plus the
+;; callee's own body, priced where the inline would put it. A body that costs
+;; more than the boundary it retires is over-credit rather than saving, which
+;; is precisely what the window's upper bound refuses -- and the callee here is
+;; the call-carrying leaf the accept fixtures use, so what separates the two
+;; outcomes is the measured plan and nothing about the callee's calls.
+(define (compiler-optimize-inline-checked-call-carrying-revert-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [caller : compiler_ir_types.CompilerIrFunction
+      (opt-inline-loop-site-function
+        symbols.main
+        callee-name
+        (opt-inline-loop-site-entry-instrs))]
+    [leaf : compiler_ir_types.CompilerIrFunction
+      (opt-inline-dup-leaf-calling callee-name symbols.external-helper)]
+    [keep? : bool
+      (compiler_optimize.opt-inline-checked-verdict
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        caller
+        caller
+        leaf
+        1
+        (compiler_optimize.opt-inline-census-depth-base)
+        3
+        (- 0 1))]
+    (not keep?)))
 
 ;; --- the sequence: one caller, one site at a time ---------------------------
 ;;
@@ -16107,8 +16354,8 @@
       1)))
 
 ;; The same wide callee with one call to an external helper in its body stays
-;; out of line: a body that can bring another body along is not bounded by its
-;; own size (#6307).
+;; out of line: this band prices a body by counting it, and a callee's own
+;; calls are a cost those counts do not carry.
 (define (compiler-optimize-inline-single-site-call-bearing-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -16318,7 +16565,7 @@
               compiler_ir_types.CompilerIrBlockList.Nil)))))))
 
 ;; The same cyclic body with one call in its `zero` case: refused by the
-;; accessor's call-free clause and by the hot loop leaf's (#6307).
+;; accessor's call-free pricing clause and by the hot loop leaf's.
 (define (opt-inline-shared-cyclic-calling-leaf
   [callee-name : i64]
   [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
@@ -16490,8 +16737,8 @@
       (= (opt-inline-shared-remaining-calls refused 4) 4))))
 
 ;; The same leaf with one call in its body stays out of line at all five sites:
-;; a clone is bounded by its own size only while nothing inside it can bring
-;; another body along (#6307).
+;; this band copies one body into every site, so the cost a callee's own calls
+;; carry is paid five times over and its model cannot see any of it.
 (define (compiler-optimize-inline-shared-accessor-call-free-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -16508,7 +16755,7 @@
 
 ;; A cyclic CALL-BEARING body at the same five in-loop sites stays refused:
 ;; this admission is for the acyclic accessor, and the hot loop leaf's
-;; call-free clause (#6307) refuses the cyclic shape from the other side. A
+;; call-free pricing clause refuses the cyclic shape from the other side. A
 ;; cyclic call-free leaf at these sites is no longer refused anywhere -- it is
 ;; exactly what opt-inline-hot-loop-leaf-ok? admits, and that is covered by the
 ;; hot-loop-leaf tests below.
@@ -16598,8 +16845,8 @@
       (= (opt-inline-dominant-remaining-calls refused 0 63) 63))))
 
 ;; A CALL-BEARING body at the dominant floor stays refused at all 64 sites: the
-;; floor relaxes the two per-site questions, not the clauses that bound what a
-;; clone can drag in (#6307).
+;; floor relaxes the two per-site questions, not the pricing clause that keeps
+;; a copied body's own calls out of a model that cannot count them.
 (define (compiler-optimize-inline-shared-accessor-dominant-call-free-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -17219,9 +17466,9 @@
         0))))
 
 ;; The identical leaf with one call in its body stays out of line at all three
-;; sites: a clone is bounded by its own size only while nothing inside it can
-;; bring another body along, and the multiblock clone path miscompiles
-;; call-carrying clones (#6307).
+;; sites: this band copies the biggest bodies of any into loop sites, and a
+;; callee's own calls are exactly the cost its instruction and block counts
+;; cannot carry.
 (define (compiler-optimize-inline-hot-loop-leaf-call-bearing-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -18265,7 +18512,9 @@
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
-(define (opt-inline-nonleaf-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+(define (opt-inline-nonleaf-callee-named
+  [symbols : OptInlineMultiTestSymbols]
+  [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     symbols.inline-nonleaf
     compiler_ir_types.CompilerIrParamList.Nil
@@ -18286,7 +18535,7 @@
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Call
               0
-              symbols.external-helper
+              helper-name
               compiler_ir_types.CompilerIrCallArgs.Nil
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.compiler-ir-instr-cons
@@ -18303,6 +18552,9 @@
                   (compiler_ir_types.CompilerIrValue.I64 3)))
               compiler_ir_types.CompilerIrInstrList.Nil))
           compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-inline-nonleaf-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-nonleaf-callee-named symbols symbols.external-helper))
 
 (define (opt-inline-nonleaf-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -18332,6 +18584,279 @@
     (compiler_ir_types.compiler-ir-function-cons
       (opt-inline-nonleaf-callee symbols)
       compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-nonleaf-functions-named
+  [symbols : OptInlineMultiTestSymbols]
+  [helper-name : i64]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-nonleaf-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-nonleaf-callee-named symbols helper-name)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+;; The caller's call to the multiblock call-carrying callee, and the callee's
+;; own call, as span keys.
+(define (opt-inline-nonleaf-caller-call [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    0
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrCallArgs.Nil
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-inline-nonleaf-inner-call [helper-name : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    0
+    helper-name
+    compiler_ir_types.CompilerIrCallArgs.Nil
+    (compiler_ast_types.AstType.I64)))
+
+;; The SPANS variant of the multiblock clone, carrying a call.
+;;
+;; opt-inline-clone-multiblock-blocks-with-spans is a second copy of the clone
+;; walk, so the fact that the plain walk clones a call correctly says nothing
+;; about this one. The callee's call is rebased into the caller's frame -- the
+;; callee's `Call 0` becomes the caller's `Call 1`, because the caller already
+;; owns var 0 -- and the span the cloned call carries has to follow it to that
+;; new key, or the merged caller reports the CALL SITE's line for an
+;; instruction that came from the callee.
+(define (compiler-optimize-spans-inline-multiblock-call-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert-instr-located
+        (compiler_ir_types.compiler-source-spans-insert-instr-located
+          (opt-spans-base)
+          (opt-test-symbol "inline_nonleaf")
+          (opt-inline-nonleaf-inner-call symbols.external-helper)
+          703
+          (opt-test-span 73 11))
+        (opt-test-symbol "main")
+        (opt-inline-nonleaf-caller-call symbols)
+        803
+        (opt-test-span 83 17))]
+    [cloned-call : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Call
+        1
+        symbols.external-helper
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))]
+    [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    [ok : bool
+      (begin
+        (compiler_ir_types.compiler-debug-info-set-enabled! true)
+        (match (compiler_optimize.opt-inline-program-functions-with-spans
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-inline-nonleaf-functions symbols)
+          2
+          spans)
+          [(compiler_optimize.OptInlineSpanProgram.Program
+              optimized
+              optimized-spans)
+            (match (compiler_optimize.opt-function-list-find optimized "main")
+              [(compiler_optimize.OptMaybeFunction.Some main)
+                (let
+                  [blocks : compiler_ir_types.CompilerIrBlockList
+                    (compiler_optimize.opt-function-blocks main)]
+                  (and
+                    (=
+                      (opt-count-direct-call-name-blocks
+                        blocks
+                        "inline_nonleaf")
+                      0)
+                    (=
+                      (opt-count-direct-call-name-blocks
+                        blocks
+                        "external_helper")
+                      1)
+                    (compiler_optimize.opt-inline-structure-ok? blocks)
+                    (opt-inline-mb2-main-verified? optimized "main")
+                    ;; the callee's own line, under the caller's key
+                    (opt-span-lookup-ok?
+                      optimized-spans
+                      (opt-test-symbol "main")
+                      cloned-call
+                      73
+                      11)
+                    (opt-location-lookup-ok?
+                      optimized-spans
+                      (opt-test-symbol "main")
+                      cloned-call
+                      703
+                      73
+                      11)))]
+              [(compiler_optimize.OptMaybeFunction.No) false])]))]
+    (begin
+      (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)
+      ok)))
+
+;; ...and the same clone with the call being an ABORT, which is what trap
+;; parity rests on.
+;;
+;; With debug info off -- the configuration every corpus binary and the
+;; self-compile are built in -- opt-remap-spans-instr-key builds a key only for
+;; instructions that can abort at runtime, and `stdlib.io/panic` is one of them.
+;; So this is the one span in a cloned call-carrying body that survives a
+;; release build, and it is the span the abort message prints. If the clone
+;; dropped it or left it under the callee's key, an abort inside an inlined
+;; callee would report the caller's line instead of the callee's, and trap
+;; output would stop matching the un-inlined build byte for byte.
+(define (opt-inline-panic-symbol) : i64
+  (opt-test-symbol "stdlib/io.tl::stdlib.io/panic"))
+
+(define (compiler-optimize-inline-clone-abort-span-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [panic-name : i64 (opt-inline-panic-symbol)]
+    [spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert-instr
+        (compiler_ir_types.compiler-source-spans-insert-instr
+          (opt-spans-base)
+          (opt-test-symbol "inline_nonleaf")
+          (opt-inline-nonleaf-inner-call panic-name)
+          (opt-test-span 61 9))
+        (opt-test-symbol "main")
+        (opt-inline-nonleaf-caller-call symbols)
+        (opt-test-span 62 3))]
+    [cloned-call : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Call
+        1
+        panic-name
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))]
+    [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    [ok : bool
+      (begin
+        (compiler_ir_types.compiler-debug-info-set-enabled! false)
+        (match (compiler_optimize.opt-inline-program-functions-with-spans
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-inline-nonleaf-functions-named symbols panic-name)
+          2
+          spans)
+          [(compiler_optimize.OptInlineSpanProgram.Program
+              optimized
+              optimized-spans)
+            (match (compiler_optimize.opt-function-list-find optimized "main")
+              [(compiler_optimize.OptMaybeFunction.Some main)
+                (let
+                  [blocks : compiler_ir_types.CompilerIrBlockList
+                    (compiler_optimize.opt-function-blocks main)]
+                  (and
+                    (=
+                      (opt-count-direct-call-name-blocks
+                        blocks
+                        "inline_nonleaf")
+                      0)
+                    (compiler_optimize.opt-inline-structure-ok? blocks)
+                    (opt-inline-mb2-main-verified? optimized "main")
+                    ;; the abort still points at the callee's line
+                    (opt-span-lookup-ok?
+                      optimized-spans
+                      (opt-test-symbol "main")
+                      cloned-call
+                      61
+                      9)))]
+              [(compiler_optimize.OptMaybeFunction.No) false])]))]
+    (begin
+      (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)
+      ok)))
+
+;; --- a chain whose SECOND import carries a call ----------------------------
+;;
+;; main -> mid -> leaf, with the CALL in the leaf. SCC order processes callees
+;; before callers, so `leaf` is cloned into `mid` first and `mid` -- which now
+;; holds a cloned call, cloned blocks and a cloned continuation phi -- is cloned
+;; into `main` second. That second clone is the one that re-clones an already
+;; cloned call: it has to rebase the call a second time, prefix the labels a
+;; second time, and leave `main` with exactly one call, to the leaf's own
+;; helper. Both callees have a single reference, so the chain is absorbed
+;; bottom-up in one pass.
+(define (opt-inline-chain-mid [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-loop
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Bool true)
+            (compiler_ir_types.compiler-ir-label "mid_call")
+            (compiler_ir_types.compiler-ir-label "mid_ret"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "mid_call")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Call
+              0
+              symbols.inline-nonleaf
+              compiler_ir_types.CompilerIrCallArgs.Nil
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "mid_ret")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 9)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-inline-chain-main [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.main
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Call
+            0
+            symbols.inline-loop
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 0)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-optimize-inline-chain-second-import-call-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-chain-main symbols)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-chain-mid symbols)
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-inline-nonleaf-callee symbols)
+              compiler_ir_types.CompilerIrFunctionList.Nil)))
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_loop") 0)
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
+            (= (opt-count-direct-call-name-blocks blocks "external_helper") 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)
+            (opt-inline-mb2-main-verified? optimized "main")))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
 
 (define (compiler-optimize-inline-multiblock-nonleaf-ok?) : bool
   (let
@@ -19134,8 +19659,23 @@
                       (compiler-optimize-inline-checked-band-exclusion-ok?)
                       (return 104))
                     (unless
-                      (compiler-optimize-inline-checked-rollback-verifies-ok?)
+                      (compiler-optimize-inline-checked-call-carrying-ok?)
                       (return 105))
+                    (unless
+                      (compiler-optimize-inline-checked-call-carrying-deep-ok?)
+                      (return 106))
+                    (unless
+                      (compiler-optimize-inline-checked-call-carrying-revert-ok?)
+                      (return 107))
+                    (unless
+                      (compiler-optimize-spans-inline-multiblock-call-ok?)
+                      (return 108))
+                    (unless
+                      (compiler-optimize-inline-clone-abort-span-ok?)
+                      (return 109))
+                    (unless
+                      (compiler-optimize-inline-chain-second-import-call-ok?)
+                      (return 110))
                     (unless
                       (compiler-optimize-inline-bounds-labels-distinct-ok?)
                       (return 46))

@@ -3672,10 +3672,42 @@
     "a band-admitted site never reaches the check, so a banked program spends no budget"))
 
 (test
-  inline-checked-rollback-verifies
+  inline-checked-call-carrying-verdicts
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-self-test)
+    3000111
+    "the tier prices call-carrying candidates the bands refuse, keeps the ones whose plan repays, and every function verifies"))
+
+(test
+  inline-checked-call-carrying-deep-verdicts
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-deep-self-test)
+    200
+    "the tier keeps a call-carrying site one loop deeper too, and both callers verify"))
+
+(test
+  inline-checked-call-carrying-revert
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-rollback-verifies-ok?)
-    "arming the tier over a program outside its class changes nothing and every function still verifies"))
+    (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-revert-ok?)
+    "the same call-carrying callee reverts when its measured plan does not repay the boundary"))
+
+(test
+  inline-multiblock-call-clone-spans
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-spans-inline-multiblock-call-ok?)
+    "the spans clone walk rebases a cloned call and re-keys its span under the caller"))
+
+(test
+  inline-multiblock-clone-abort-span
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-clone-abort-span-ok?)
+    "an abort inside a cloned call-carrying callee keeps the callee's span in a release build"))
+
+(test
+  inline-chain-second-import-call
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-chain-second-import-call-ok?)
+    "a chain absorbed bottom-up re-clones an already cloned call and leaves one call in the caller"))
 
 (test
   inline-checked-sequence-two-sites
@@ -3747,7 +3779,7 @@
   inline-single-site-call-bearing-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-single-site-call-bearing-refusal-ok?)
-    "a wide single-site callee that calls out stays out of line (#6307)"))
+    "a wide single-site callee that calls out stays out of line: the band cannot price its callee's calls"))
 
 (test
   inline-single-site-address-taken-refusal
@@ -3790,7 +3822,7 @@
   inline-hot-loop-leaf-call-bearing-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-call-bearing-refusal-ok?)
-    "a multi-reference loop leaf carrying a call stays out of line at every site (#6307)"))
+    "a multi-reference loop leaf carrying a call stays out of line at every site"))
 
 (test
   inline-hot-loop-leaf-too-big-refusal
@@ -3844,7 +3876,7 @@
   inline-hot-loop-leaf-single-reference-call-bearing-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-call-bearing-refusal-ok?)
-    "the call-free clause still binds at one reference: a big-tier leaf carrying a call keeps its boundary (#6307)"))
+    "the call-free pricing clause still binds at one reference: a big-tier leaf carrying a call keeps its boundary"))
 
 (test
   inline-shared-accessor-floor

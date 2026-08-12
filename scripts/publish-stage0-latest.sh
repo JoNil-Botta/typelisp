@@ -241,6 +241,24 @@ cleanup_candidate() {
 }
 
 publish_latest() {
+    # Validate every operator-controlled setting before creating a candidate,
+    # and especially before deleting the stable release/tag. A configuration
+    # error must be a no-mutation failure rather than opening a cutover gap.
+    attempts=${TYPELISP_STAGE0_PROMOTE_ATTEMPTS:-4}
+    delay=${TYPELISP_STAGE0_PROMOTE_DELAY:-2}
+    case "$attempts" in
+        "" | *[!0-9]* | 0)
+            fail "TYPELISP_STAGE0_PROMOTE_ATTEMPTS must be a positive integer"
+            return 1
+            ;;
+    esac
+    case "$delay" in
+        "" | *[!0-9]*)
+            fail "TYPELISP_STAGE0_PROMOTE_DELAY must be a non-negative integer"
+            return 1
+            ;;
+    esac
+
     expected_names=
     for asset_path do
         [ -s "$asset_path" ] || {
@@ -313,21 +331,6 @@ EOF
         delete_release "$existing_id"
     fi
     delete_final_tag
-
-    attempts=${TYPELISP_STAGE0_PROMOTE_ATTEMPTS:-4}
-    delay=${TYPELISP_STAGE0_PROMOTE_DELAY:-2}
-    case "$attempts" in
-        "" | *[!0-9]* | 0)
-            fail "TYPELISP_STAGE0_PROMOTE_ATTEMPTS must be a positive integer"
-            return 1
-            ;;
-    esac
-    case "$delay" in
-        "" | *[!0-9]*)
-            fail "TYPELISP_STAGE0_PROMOTE_DELAY must be a non-negative integer"
-            return 1
-            ;;
-    esac
 
     promote_error=${TMPDIR:-/tmp}/stage0-promote.$$
     promoted=false
@@ -446,6 +449,7 @@ $expected_sha"
     printf 'notes\n' > "$NOTES_FILE"
     CANDIDATE_ID=
     CUTOVER_STARTED=0
+    TYPELISP_STAGE0_PROMOTE_ATTEMPTS=4
     TYPELISP_STAGE0_PROMOTE_DELAY=0
     publish_latest "$asset_a" "$asset_b"
     expected_actions='main
@@ -487,6 +491,24 @@ false'
         return 1
     fi
     mock_promote_drafts=false
+
+    # Invalid retry configuration is rejected before even the read-only main
+    # guard, so it cannot create a draft or enter the stable cutover.
+    : > "$action_log"
+    TYPELISP_STAGE0_PROMOTE_ATTEMPTS=invalid
+    CANDIDATE_ID=
+    CUTOVER_STARTED=0
+    set +e
+    publish_latest "$asset_a" "$asset_b"
+    invalid_config_status=$?
+    set -e
+    TYPELISP_STAGE0_PROMOTE_ATTEMPTS=4
+    if [ "$invalid_config_status" -ne 1 ] || [ -s "$action_log" ]; then
+        echo "stage0 publish self-test invalid configuration mutated release state:" >&2
+        cat "$action_log" >&2
+        rm -rf "$test_dir"
+        return 1
+    fi
 
     # A run already stale before staging must not create any release at all.
     : > "$action_log"

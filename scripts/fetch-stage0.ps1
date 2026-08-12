@@ -42,14 +42,11 @@ $OutputDirPath = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
     Join-Path $Root $OutputDir
 }
 
-$OutputDirItem = New-Item -ItemType Directory -Path $OutputDirPath -Force -Confirm:$false
-$OutputDirFull = $OutputDirItem.FullName
-$TempDir = Join-Path $OutputDirFull (".stage0-download." + [Guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Path $TempDir -Force -Confirm:$false | Out-Null
-
 # Match the POSIX fetcher's bounded whole-generation retry. The prepared-draft
 # publication protocol keeps the stage0-latest gap short, but release/tag and
 # CDN propagation can still expose a transient 404 or mismatched checksum.
+# Validate configuration before allocating download state so invalid settings
+# cannot leave a temporary directory behind.
 $FetchAttempts = 6
 if ($env:TYPELISP_STAGE0_FETCH_ATTEMPTS) {
     if (-not [int]::TryParse($env:TYPELISP_STAGE0_FETCH_ATTEMPTS, [ref] $FetchAttempts) -or $FetchAttempts -le 0) {
@@ -62,6 +59,11 @@ if ($env:TYPELISP_STAGE0_FETCH_RETRY_DELAY) {
         throw "TYPELISP_STAGE0_FETCH_RETRY_DELAY must be a non-negative integer"
     }
 }
+
+$OutputDirItem = New-Item -ItemType Directory -Path $OutputDirPath -Force -Confirm:$false
+$OutputDirFull = $OutputDirItem.FullName
+$TempDir = Join-Path $OutputDirFull (".stage0-download." + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $TempDir -Force -Confirm:$false | Out-Null
 
 try {
     $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"

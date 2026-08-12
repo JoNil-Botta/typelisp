@@ -17492,6 +17492,12 @@
   (No)
   (Some ir.CompilerIrBlockList i64))
 
+;; An accepted, verified rotation candidate: the rewritten function and the
+;; fresh context built for it.
+(defenum OptFunctionCtxMaybe
+  (No)
+  (Some ir.CompilerIrFunction OptCfgContext))
+
 (defstruct OptRotateSsaPlan
   (header i64)
   (preheader i64)
@@ -17729,6 +17735,49 @@
             (opt-label-tail body)
             header
             exit-label)))]))
+
+(define (opt-rotate-ssa-succs-inside?
+  [body : OptLabelSet]
+  [succs : OptLabelSet]) : bool
+  (match succs
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (and
+        (opt-label-contains body (opt-label-ref succs 0))
+        (opt-rotate-ssa-succs-inside? body (opt-label-tail succs)))]))
+
+;; True when the header's exit arm is the loop's ONLY way out: no body block
+;; other than the header has a successor outside the body. The fresh exit phis
+;; are defined in the exit block, so every outside reader of a loop-carried
+;; value has to be dominated by it; with a second exit (a `break`, or a lowered
+;; `(and ...)` loop condition whose second test leaves through a body block)
+;; the outside reader is reachable without passing through the exit block and
+;; the substitution is a dominance violation. That rewrite used to be built and
+;; handed to the verifier, which rejected it -- correct, but it cost a full
+;; rewrite, context build and verify per round per such loop. Only the exit-phi
+;; case needs the property, so multi-exit loops with no outside reader still
+;; rotate.
+(define (opt-rotate-ssa-single-exit?
+  [pred-map : OptPredMap]
+  [body : OptLabelSet]
+  [cursor : OptLabelSet]
+  [header : i64]) : bool
+  (match cursor
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref cursor 0)]
+        (and
+          (or
+            (= label header)
+            (opt-rotate-ssa-succs-inside?
+              body
+              (opt-pred-map-successors pred-map label)))
+          (opt-rotate-ssa-single-exit?
+            pred-map
+            body
+            (opt-label-tail cursor)
+            header)))]))
 
 (define (opt-rotate-ssa-uses-except-header
   [set : opt_i64_i64_map.Map]
@@ -18151,6 +18200,19 @@
         plan
         (ir.compiler-ir-block-seq-to-list seq))]))
 
+;; True when at least one header-phi destination is read outside the loop body,
+;; i.e. when the rewrite has to mint exit phis at the exit block. Every clause
+;; that exists only to make those phis well-formed is gated on this.
+(define (opt-rotate-ssa-recs-used-outside?
+  [recs : OptRotateSsaPhiRecs]
+  [outside-uses : opt_i64_i64_map.Map]) : bool
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) false]
+    [(OptRotateSsaPhiRecs.Cons dst _ _ _ rest)
+      (or
+        (opt-used-contains outside-uses dst)
+        (opt-rotate-ssa-recs-used-outside? (__tl-box-place rest) outside-uses))]))
+
 (define (opt-rotate-ssa-apply
   [blocks : ir.CompilerIrBlockList]
   [pred-map : OptPredMap]
@@ -18167,15 +18229,36 @@
     [phis : ir.CompilerIrInstrSeq shape.phis]
     [recs : OptRotateSsaPhiRecs shape.recs]
     [guard : ir.CompilerIrInstrSeq shape.guard]
+    [outside-uses : opt_i64_i64_map.Map
+      (opt-rotate-ssa-uses-outside-body
+        (opt_i64_i64_map.with-capacity 64)
+        blocks
+        body)]
+    ;; The exit block only has to be the header's private successor when the
+    ;; rewrite prepends phis to it. Those phis carry exactly the two loop-edge
+    ;; inputs {preheader, latch}, so any third predecessor would leave them
+    ;; short an input -- but with no exit phis to mint nothing is prepended,
+    ;; the exit block's own predecessors are untouched, and the rotation only
+    ;; swaps the header's single edge into it for the preheader's and the
+    ;; latch's. `bce_version` is the measured producer of that shape: it clones
+    ;; a loop into a bounds-checked and a fast version that SHARE one exit
+    ;; block, so the pre-existing clause refused BOTH halves of every versioned
+    ;; counted loop -- including the hot fast half.
+    [exit-phis-needed? : bool
+      (opt-rotate-ssa-recs-used-outside? recs outside-uses)]
     (if (and
       (not (= exit-label preheader))
       (not (opt-cfg-block-exists? blocks land-label))
       (opt-rotate-ssa-only-label?
         (opt-pred-map-lookup pred-map body-label)
         header)
-      (opt-rotate-ssa-only-label?
-        (opt-pred-map-lookup pred-map exit-label)
-        header)
+      (or
+        (not exit-phis-needed?)
+        (and
+          (opt-rotate-ssa-only-label?
+            (opt-pred-map-lookup pred-map exit-label)
+            header)
+          (opt-rotate-ssa-single-exit? pred-map body body header)))
       (opt-rotate-ssa-body-avoids-exit? pred-map body header exit-label)
       (not (opt-rotate-ssa-block-has-phi? blocks body-label))
       (not (opt-rotate-ssa-block-has-phi? blocks exit-label))
@@ -18210,10 +18293,7 @@
             [(OptRotateSsaClone.Clone latch-guard after-latch)
               (match (opt-rotate-ssa-exit-phis
                 recs
-                (opt-rotate-ssa-uses-outside-body
-                  (opt_i64_i64_map.with-capacity 64)
-                  blocks
-                  body)
+                outside-uses
                 preheader
                 latch
                 after-latch)
@@ -18280,22 +18360,60 @@
                 shape)])
           (OptRotateSsaRewrite.No)))]))
 
-(define (opt-rotate-ssa-loops
-  [blocks : ir.CompilerIrBlockList]
+(define (opt-rotate-ssa-loop-verified
+  [func : ir.CompilerIrFunction]
   [context : OptCfgContext]
-  [frame : i64]
-  [loops : OptNaturalLoopList]) : OptRotateSsaRewrite
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptRotateSsaRewrite.No)]
-    [(OptNaturalLoopList.Cons loop rest)
+  [loop : OptNaturalLoop]) : OptFunctionCtxMaybe
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (match (opt-rotate-ssa-loop blocks context frame loop)
+        [(OptRotateSsaRewrite.No) (OptFunctionCtxMaybe.No)]
         [(OptRotateSsaRewrite.Some next-blocks next-frame)
-          (OptRotateSsaRewrite.Some next-blocks next-frame)]
-        [(OptRotateSsaRewrite.No)
-          (opt-rotate-ssa-loops blocks context frame (__tl-box-place rest))])]))
+          (let
+            [next : ir.CompilerIrFunction
+              (ir.CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                next-frame
+                next-blocks)]
+            [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+            (match (opt-verify-function-with-context next next-context)
+              [(ResultCompilerOptimizeVerify.Ok)
+                (OptFunctionCtxMaybe.Some next next-context)]
+              [(ResultCompilerOptimizeVerify.Err _) (OptFunctionCtxMaybe.No)]))])]))
 
-;; One rotation per round, each round verified on its own and each accepted
-;; rotation followed by a fresh context: the rewrite adds the landing block and
+;; A candidate whose rewrite fails the post-rotation verify is a REFUSAL of
+;; that loop, not the end of the round. The verify used to sit above this scan,
+;; in `opt-rotate-ssa-rounds`, so the first loop whose rewrite the verifier
+;; rejected retired the whole rounds loop and every loop AFTER it in the list
+;; lost its chance -- for the rest of the pipeline, because the next stage
+;; re-scans the same list and stops at the same poison pill. Measured in
+;; `benchmarks/liveness_scan`'s `recompute!`: the `(and (< i words) (not
+;; changed))` early-exit loop passes every admission clause but rotates into a
+;; dominance violation (its second exit leaves the loop through a body block,
+;; so the fresh exit phi does not dominate the outside reader), and the
+;; writeback loop that follows it in the list was never even examined by either
+;; rotation stage. Verifying per candidate keeps the same discipline -- only an
+;; accepted, verified rewrite is banked -- and costs one extra verify per
+;; rejected candidate per round.
+(define (opt-rotate-ssa-loops
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [loops : OptNaturalLoopList]) : OptFunctionCtxMaybe
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptFunctionCtxMaybe.No)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-rotate-ssa-loop-verified func context loop)
+        [(OptFunctionCtxMaybe.Some next next-context)
+          (OptFunctionCtxMaybe.Some next next-context)]
+        [(OptFunctionCtxMaybe.No)
+          (opt-rotate-ssa-loops func context (__tl-box-place rest))])]))
+
+;; One rotation per round, each candidate verified on its own (in
+;; `opt-rotate-ssa-loop-verified`, so a rejected one only costs its own round
+;; position) and each accepted rotation followed by a fresh context: the rewrite
+;; adds the landing block and
 ;; rewires the header's predecessors, so the loop set, the predecessor map and
 ;; the dominance facts all have to be rebuilt before the next loop's shape test
 ;; reads them, and a rejected rotation must leave the rotations already banked
@@ -18313,29 +18431,13 @@
   [remaining : i64]) : OptFunctionCtxResult
   (if (<= remaining 0)
     (OptFunctionCtxResult.Result func context)
-    (match func
-      [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-        (match (opt-rotate-ssa-loops
-          blocks
-          context
-          frame
-          (opt-cfg-natural-loops-with-context blocks context))
-          [(OptRotateSsaRewrite.No) (OptFunctionCtxResult.Result func context)]
-          [(OptRotateSsaRewrite.Some next-blocks next-frame)
-            (let
-              [next : ir.CompilerIrFunction
-                (ir.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  next-frame
-                  next-blocks)]
-              [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-              (match (opt-verify-function-with-context next next-context)
-                [(ResultCompilerOptimizeVerify.Ok)
-                  (opt-rotate-ssa-rounds next next-context (- remaining 1))]
-                [(ResultCompilerOptimizeVerify.Err _)
-                  (OptFunctionCtxResult.Result func context)]))])])))
+    (match (opt-rotate-ssa-loops
+      func
+      context
+      (opt-cfg-natural-loops-with-context (opt-function-blocks func) context))
+      [(OptFunctionCtxMaybe.No) (OptFunctionCtxResult.Result func context)]
+      [(OptFunctionCtxMaybe.Some next next-context)
+        (opt-rotate-ssa-rounds next next-context (- remaining 1))])))
 
 (define (opt-rotate-ssa-function-with-context-result
   [context : OptCfgContext]

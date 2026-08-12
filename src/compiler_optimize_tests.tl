@@ -40122,6 +40122,240 @@
           [_ (- 0 1)])
         (opt-rotate-ssa-test-phi-input-value (__tl-box-place rest) label))]))
 
+;; `bce_version`'s output shape: a guard picks between two clones of one counted
+;; loop and BOTH clones leave through the SAME exit block. The exit block's
+;; predecessor set is then {fast header, slow header}, and the rotation refused
+;; both halves -- including the fast half, the one that actually runs -- because
+;; it demanded the exit block be the header's private successor. That demand
+;; exists only to keep the fresh exit phis well formed; with no loop-carried
+;; value read past the loop there are no exit phis, nothing is prepended to the
+;; exit block, and the rotation merely swaps the header's edge into it for the
+;; preheader's and the latch's. `recompute!`'s writeback loop in
+;; benchmarks/liveness_scan is the measured case.
+;;
+;; With `merge-phi` the shared block merges both counters, which is both an
+;; outside reader (exit phis are needed) and a pre-existing phi in the exit
+;; block -- refused, unchanged, on either count.
+(define (opt-rotate-ssa-test-shared-exit-blocks [merge-phi : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          10
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.compiler-ir-label "g1")
+            (compiler_ir_types.compiler-ir-label "g2"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-flag-exit-test-jump-block "g1" "h1")
+      (opt-rotate-ssa-test-counted-loop
+        "h1"
+        "g1"
+        "b1"
+        "l1"
+        "shared"
+        1
+        2
+        3
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-flag-exit-test-jump-block "g2" "h2")
+          (opt-rotate-ssa-test-counted-loop
+            "h2"
+            "g2"
+            "b2"
+            "l2"
+            "shared"
+            4
+            5
+            6
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "shared")
+                (if merge-phi
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      7
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        (compiler_ir_types.compiler-ir-label "h1")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 4)
+                          (compiler_ir_types.compiler-ir-label "h2")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 7)))
+                      (compiler_ir_types.CompilerIrInstrList.Nil)))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.I64 0)))
+                    (compiler_ir_types.CompilerIrInstrList.Nil))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-rotate-ssa-test-shared-exit-run [merge-phi : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-rotate-ssa-test-shared-exit-blocks merge-phi)]
+    (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "rotate_ssa_shared_exit")
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "n"
+            (compiler_ast_types.AstType.I64)
+            0)
+          (compiler_ir_types.CompilerIrParamList.Nil))
+        (compiler_ast_types.AstType.I64)
+        11
+        blocks))
+      [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
+
+;; Scan discipline: a REFUSED loop must not retire the rounds. The leading loop
+;; here is the second-exit-with-live-out class -- it leaves the loop through a
+;; body block AND its counter is read past both exits, so the fresh exit phi
+;; could not dominate the body's own exit and the rotation is refused. The
+;; plain counted loop that follows it in the loop list is rotatable and has
+;; nothing to do with it. The refusal used to be delivered by the post-rotation
+;; verify, which sat ABOVE the scan and ended the whole rounds loop, so the
+;; trailing loop was never examined by that stage -- nor by the next one, which
+;; re-scans the same list and stops at the same place. That is how
+;; benchmarks/liveness_scan's writeback loop stayed top-tested through both
+;; rotation stages.
+(define (opt-rotate-ssa-test-scan-past-refusal-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-flag-exit-test-jump-block "entry" "header")
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "cont")
+                (compiler_ir_types.compiler-ir-label "escape"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "cont")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                2
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-flag-exit-test-jump-block "latch" "header")
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-flag-exit-test-jump-block "escape" "done")
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-flag-exit-test-jump-block "exit" "done")
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "done")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        5
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 1)
+                          (compiler_ir_types.compiler-ir-label "exit")
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.Var 1)
+                            (compiler_ir_types.compiler-ir-label "escape")
+                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "h2"))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))
+                  (opt-rotate-ssa-test-counted-loop
+                    "h2"
+                    "done"
+                    "b2"
+                    "l2"
+                    "tail"
+                    6
+                    7
+                    8
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.compiler-ir-block
+                        (compiler_ir_types.compiler-ir-label "tail")
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.Var 5)))
+                          (compiler_ir_types.CompilerIrInstrList.Nil)))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+(define (opt-rotate-ssa-test-scan-past-refusal-run) : compiler_ir_types.CompilerIrFunction
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-rotate-ssa-test-scan-past-refusal-blocks)]
+    (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "rotate_ssa_scan_past_refusal")
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "n"
+            (compiler_ast_types.AstType.I64)
+            0)
+          (compiler_ir_types.CompilerIrParamList.Nil))
+        (compiler_ast_types.AstType.I64)
+        9
+        blocks))
+      [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
+
 ;; Fixpoint discipline: the rotated latch ends in the cloned guard branch, not a
 ;; jump, so `opt-loop-rotation-edge-compatible?` refuses it and a second run
 ;; changes nothing.
@@ -40150,6 +40384,12 @@
     [second-exit-live-out-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (opt-rotate-ssa-test-second-exit-run true))]
+    [shared-exit-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-rotate-ssa-test-shared-exit-run false))]
+    [scan-past-refusal-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-rotate-ssa-test-scan-past-refusal-run))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -40282,6 +40522,109 @@
         25]
       ;; and the whole pipeline settles the class bottom-tested
       [(not (opt-rotate-ssa-test-pipeline-bottom-tested?)) 26]
+      ;; `bce_version`'s two clones share one exit block; with nothing read past
+      ;; the loop BOTH rotate
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-rotate-ssa-test-shared-exit-run false))))
+        27]
+      [(not
+          (opt-block-list-has-label?
+            shared-exit-blocks
+            (compiler_ir_types.compiler-ir-label "h1__rotate_land")))
+        28]
+      [(not
+          (opt-block-list-has-label?
+            shared-exit-blocks
+            (compiler_ir_types.compiler-ir-label "h2__rotate_land")))
+        29]
+      [(opt-block-list-has-label?
+          shared-exit-blocks
+          (compiler_ir_types.compiler-ir-label "h1"))
+        30]
+      [(opt-block-list-has-label?
+          shared-exit-blocks
+          (compiler_ir_types.compiler-ir-label "h2"))
+        31]
+      [(not
+          (opt-rotate-ssa-test-ends-with-branch?
+            shared-exit-blocks
+            (compiler_ir_types.compiler-ir-label "l1")))
+        32]
+      [(not
+          (opt-rotate-ssa-test-ends-with-branch?
+            shared-exit-blocks
+            (compiler_ir_types.compiler-ir-label "l2")))
+        33]
+      ;; ... and the shared exit block keeps its own predecessors: no phi is
+      ;; prepended there, so it needs none of them
+      [(opt-rotate-ssa-test-starts-with-phi?
+          shared-exit-blocks
+          (compiler_ir_types.compiler-ir-label "shared"))
+        34]
+      ;; once the shared block merges both counters it is both an outside
+      ;; reader and a pre-existing exit phi: refused, unchanged
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-shared-exit-run true))
+            (opt-rotate-ssa-test-shared-exit-blocks true)))
+        35]
+      ;; rotating the shared-exit pair twice is a no-op
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-rerun
+                (opt-rotate-ssa-test-shared-exit-run false)))
+            shared-exit-blocks))
+        36]
+      ;; a refused loop does not retire the scan: the leading multi-exit
+      ;; live-out loop stays put and the counted loop behind it still rotates
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-rotate-ssa-test-scan-past-refusal-run))))
+        37]
+      [(not
+          (opt-block-list-has-label?
+            scan-past-refusal-blocks
+            (compiler_ir_types.compiler-ir-label "header")))
+        38]
+      [(opt-block-list-has-label?
+          scan-past-refusal-blocks
+          (compiler_ir_types.compiler-ir-label "header__rotate_land"))
+        39]
+      [(not
+          (opt-rotate-ssa-test-single-jump-to?
+            scan-past-refusal-blocks
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-label "header")))
+        40]
+      [(not
+          (opt-block-list-has-label?
+            scan-past-refusal-blocks
+            (compiler_ir_types.compiler-ir-label "h2__rotate_land")))
+        41]
+      [(opt-block-list-has-label?
+          scan-past-refusal-blocks
+          (compiler_ir_types.compiler-ir-label "h2"))
+        43]
+      [(not
+          (opt-rotate-ssa-test-ends-with-branch?
+            scan-past-refusal-blocks
+            (compiler_ir_types.compiler-ir-label "l2")))
+        44]
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-rerun
+                (opt-rotate-ssa-test-scan-past-refusal-run)))
+            scan-past-refusal-blocks))
+        45]
       [else 42])))
 
 (define (opt-label-set-persistent-branch-self-test) : bool

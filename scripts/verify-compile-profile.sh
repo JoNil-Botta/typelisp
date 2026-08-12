@@ -1502,10 +1502,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # Native result commit leaves the checked expression graph within the
-    # 32-segment boundary; macro_expand owns the corresponding exact increase.
+    # The three dense optimizer plan containers cross the checked expression
+    # graph 372 nodes past the 32-segment boundary: the Windows probe measured
+    # 2,097,524 used nodes, 2,162,688 capacity, and 69,206,016 payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 33 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \

@@ -890,18 +890,18 @@
 ;; memory corruption, not a type error. `ast-node-stride-pinned?` cross-checks
 ;; both against the layout the compiler actually gives an array slot.
 ;;
-;; These are zero-argument FUNCTIONS, not globals, and that is deliberate --
-;; the other two spellings were tried and both fail:
+;; These are zero-argument FUNCTIONS, not globals, and that is deliberate.
+;; Two other spellings have been investigated:
 ;;
 ;;   * A literal-initialised global folds to the same immediate, but naming the
 ;;     stride that way perturbs the SEED compiler's inliner. Measured:
 ;;     `target/stage0/typelisp` then inlines `ty-node-get` into
 ;;     `ty-node-shallow-eq?`, moves 32k lines of stage1 assembly, and the
 ;;     resulting stage1 segfaults in `tc-move-check-expr`.
-;;   * A `defmacro` does not survive here at all: the macro expander does not
-;;     descend into the operand of `(int->ptr x : (Ptr T))`, which is exactly
-;;     where all thirteen hot multiplies live, so the call reaches typecheck
-;;     unexpanded and fails as an unbound name.
+;;   * A `defmacro` was historically blocked because the macro expander did not
+;;     descend into `(int->ptr x : (Ptr T))` operands. That traversal gap is
+;;     fixed by #6029; changing this performance-sensitive representation still
+;;     requires its own bootstrap measurement rather than riding that fix.
 ;;
 ;; A zero-arg function inlines and folds to the same immediate the literal
 ;; produced, and stage1.s stays byte-identical to the pre-consolidation tree.
@@ -5763,14 +5763,20 @@
 (define (ast-expr-ptr-offset [ptr : i64] [offset : i64]) : i64
   (ast-node-push (AstExpr.PtrOffset ptr offset)))
 
+(define (ast-expr-ptr-cast-id [ptr : i64] [ty-id : i64]) : i64
+  (ast-node-push (AstExpr.PtrCast ptr ty-id)))
+
 (define (ast-expr-ptr-cast [ptr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.PtrCast ptr (ty-node-push ty))))
+  (ast-expr-ptr-cast-id ptr (ty-node-push ty)))
 
 (define (ast-expr-ptr-to-int [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrToInt ptr)))
 
+(define (ast-expr-int-to-ptr-id [value : i64] [ty-id : i64]) : i64
+  (ast-node-push (AstExpr.IntToPtr value ty-id)))
+
 (define (ast-expr-int-to-ptr [value : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.IntToPtr value (ty-node-push ty))))
+  (ast-expr-int-to-ptr-id value (ty-node-push ty)))
 
 (define (ast-expr-string-data [value : i64]) : i64
   (ast-node-push (AstExpr.StringData value)))

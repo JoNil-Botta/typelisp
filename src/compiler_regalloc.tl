@@ -2045,6 +2045,282 @@
     [(ir.CompilerIrBinOp.BitXor) true]
     [_ false]))
 
+;; GAP8-C. A two-address BinOp ties its destination to an operand's home, and
+;; both tie mechanisms below prefer the LHS. When the LHS is a fused `gep; load`
+;; result that is the backend's COMMUTED ALU memory-operand fold candidate
+;; (compiler-backend-gep-load-alu-probe, `mem-is-lhs?`), that preference is
+;; exactly wrong: the fold stages the NON-loaded operand into the destination's
+;; home and then reads the memory operand from the other side, so it only saves
+;; an instruction when the destination home IS that operand's home and the
+;; staging `mov` self-elides. Coalescing the destination onto the LOAD's home
+;; instead makes the folded and unfolded forms the same two instructions -- which
+;; is why the commuted arm landed inert.
+;;
+;; So: for a commutative BinOp whose LHS is a fusable load and whose RHS is not,
+;; prefer the RHS. Every other shape keeps today's LHS preference exactly.
+;;
+;; The admission below MIRRORS the backend, the way
+;; compiler-reg-leaf-csr-fuse-free-branch-var mirrors
+;; compiler-backend-fuse-free-branch-var: the structural conditions are restated
+;; here rather than shared, because regalloc runs before homes exist and can only
+;; see the IR half of the fold's gate. The home-dependent half (a register-homed
+;; destination distinct from the address component homes) stays the backend's;
+;; a preference that does not pay off costs code shape, never correctness.
+;; Mirror of compiler-backend-gep-load-alu-mnemonic INTERSECTED with
+;; compiler-backend-commutative-binop?: the ops whose commuted memory-operand
+;; form the backend actually folds. `Mul` is absent from the mnemonic table
+;; (`imul mem` needs the two-operand register form and folds worse than the fused
+;; load), `Sub` is in the table but is not commutative (`MEM - x` is not
+;; `x - MEM`), and the logical `And`/`Or` have no memory-form mnemonic there.
+(define (compiler-reg-alu-mem-fold-commutative? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Add) true]
+    [(ir.CompilerIrBinOp.BitAnd) true]
+    [(ir.CompilerIrBinOp.BitOr) true]
+    [(ir.CompilerIrBinOp.BitXor) true]
+    [_ false]))
+
+;; The var defined by a fusable `gep; load` pair immediately before `index`, or
+;; -1. This is the admission compiler-backend-emit-gep-step applies before the
+;; ALU probe is ever consulted -- a single-use gep whose result the very next
+;; instruction loads -- plus the probe's own load-destination gates: single use,
+;; not float, eight bytes wide. Width is tested as i64/u64 rather than through a
+;; type-size table because that is the width every folded word-loop accumulator
+;; carries and regalloc has no segment bases to size other types with; a narrower
+;; admission only declines preferences, it never mis-states one.
+(define (compiler-reg-alu-fused-load-dst
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [use-counts : (__tl_dyn-array i64)]) : i64
+  (if (< index 2)
+    (- 0 1)
+    (match (array-ref slots (- index 1))
+      [(ir.CompilerIrInstr.Load load-dst src load-ty)
+        (if (and
+          (compiler-reg-int-width-64? load-ty)
+          (compiler-reg-alu-single-use? use-counts load-dst))
+          (match src
+            [(ir.CompilerIrValue.Var gep-var)
+              (match (array-ref slots (- index 2))
+                [(ir.CompilerIrInstr.Gep gep-dst _ _ _)
+                  (if (and
+                    (= gep-dst gep-var)
+                    (compiler-reg-alu-single-use? use-counts gep-var))
+                    load-dst
+                    (- 0 1))]
+                [_ (- 0 1)])]
+            [_ (- 0 1)])
+          (- 0 1))]
+      [_ (- 0 1)])))
+
+;; Mirror of compiler-backend-var-single-use?, with one addition: a ZERO-LENGTH
+;; count array means "counts not built yet" and admits everything. The flag pass
+;; runs once that way to find out whether the function has any candidate at all,
+;; and only pays for the use-count walk when it does.
+(define (compiler-reg-alu-single-use?
+  [use-counts : (__tl_dyn-array i64)]
+  [var : i64]) : bool
+  (if (= (array-length use-counts) 0)
+    true
+    (if (or (< var 0) (>= var (array-length use-counts)))
+      false
+      (= (array-ref use-counts var) 1))))
+
+(define (compiler-reg-alu-load-defines?
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [var : i64]) : bool
+  (if (< index 0)
+    false
+    (match (array-ref slots index)
+      [(ir.CompilerIrInstr.Load load-dst _ _) (= load-dst var)]
+      [_ false])))
+
+(define (compiler-reg-alu-prefer-rhs-binop?
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [use-counts : (__tl_dyn-array i64)]) : bool
+  (and
+    (compiler-reg-alu-mem-fold-commutative? op)
+    (compiler-reg-int-width-64? ty)
+    (match lhs
+      [(ir.CompilerIrValue.Var lhs-var)
+        (match rhs
+          [(ir.CompilerIrValue.Var rhs-var)
+            (and
+              (not (= lhs-var rhs-var))
+              (=
+                (compiler-reg-alu-fused-load-dst slots index use-counts)
+                lhs-var)
+              ;; BOTH operands loaded is the backend's PAIR fold
+              ;; (compiler-backend-gep-load-pair-alu-probe), which loads one
+              ;; memory operand straight into the result home and needs no
+              ;; operand tie at all. Its shape is `gep; load; gep; load; binop`,
+              ;; so the rhs-defining load sits three slots back. Leave those ties
+              ;; exactly where they are.
+              (not (compiler-reg-alu-load-defines? slots (- index 3) rhs-var)))]
+          [_ false])]
+      [_ false])))
+
+(define (compiler-reg-alu-prefer-rhs-seq
+  [instrs : ir.CompilerIrInstrSeq]
+  [flags : (__tl_dyn-array i64)]
+  [use-counts : (__tl_dyn-array i64)]
+  [found : i64]) : i64
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    [out : i64 found]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+              ;; Counted BEFORE the store, so a zero-length `flags` still yields
+              ;; a truthful count -- that is how the probe pass avoids allocating
+              ;; a per-var array for the overwhelming majority of functions that
+              ;; hold no candidate at all.
+              (if (compiler-reg-alu-prefer-rhs-binop?
+                slots
+                index
+                op
+                lhs
+                rhs
+                ty
+                use-counts)
+                (begin
+                  (if (and (>= dst 0) (< dst (array-length flags)))
+                    (set! (array-ref flags dst) 1)
+                    unit)
+                  (set! out (+ out 1)))
+                unit)]
+            [_ unit])
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-reg-alu-prefer-rhs-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [flags : (__tl_dyn-array i64)]
+  [use-counts : (__tl_dyn-array i64)]
+  [found : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) found]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (compiler-reg-alu-prefer-rhs-blocks
+        (__tl-box-place rest)
+        flags
+        use-counts
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (compiler-reg-alu-prefer-rhs-seq instrs flags use-counts found)]))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [out : i64 found]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq i)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set!
+                    out
+                    (compiler-reg-alu-prefer-rhs-seq
+                      instrs
+                      flags
+                      use-counts
+                      out))])
+              (set! i (+ i 1))))
+          out))]))
+
+;; Use-only counts (the ref-count walks above deliberately score defs too).
+;; Structurally identical to compiler-backend-count-instr-uses: the id extractor
+;; and its bitset fallback enumerate the same operand positions, and the fold's
+;; single-use question is asked about a var whose only candidate use is one
+;; operand of one instruction, so the extractor's per-instruction de-duplication
+;; cannot separate the two answers.
+(define (compiler-reg-alu-use-counts-add-instr!
+  [counts : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    (if (< id-count 0)
+      (compiler-reg-ref-counts-add-set-weighted!
+        counts
+        (live.compiler-live-instr-uses instr)
+        1)
+      (compiler-reg-ref-counts-add-ids-weighted! counts ids id-count 1))))
+
+(define (compiler-reg-alu-use-counts-seq!
+  [counts : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-alu-use-counts-add-instr! counts (array-ref slots index))
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-alu-use-counts-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [counts : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (compiler-reg-alu-use-counts-seq! counts instrs)])
+        (compiler-reg-alu-use-counts-blocks! (__tl-box-place rest) counts))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (while (< i count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (compiler-reg-alu-use-counts-seq! counts instrs)])
+            (set! i (+ i 1)))))]))
+
+;; Per-var flags: 1 where a two-address BinOp destination should tie to its RHS
+;; instead of its LHS. Indexed by the BinOp's destination var, so the two tie
+;; mechanisms consult it without re-deriving the shape.
+;;
+;; Built in two probes so the common function pays nothing: the first runs the
+;; structural match with no use counts (every single-use test admits), and only a
+;; function that produced a candidate walks its uses and re-runs the match for
+;; real. The corpus census says that is a handful of functions.
+(define (compiler-reg-function-alu-prefer-rhs [func : ir.CompilerIrFunction]) : (__tl_dyn-array
+    i64)
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      (let
+        [none : (__tl_dyn-array i64) (array.make-array i64 0)]
+        [probe : i64 (compiler-reg-alu-prefer-rhs-blocks blocks none none 0)]
+        (if (= probe 0)
+          none
+          (let
+            [flags : (__tl_dyn-array i64) (array.make-array i64 vars)]
+            [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+            (begin
+              (compiler-reg-alu-use-counts-blocks! blocks counts)
+              (compiler-reg-alu-prefer-rhs-blocks blocks flags counts 0)
+              flags))))]))
+
+(define (compiler-reg-alu-prefer-rhs?
+  [flags : (__tl_dyn-array i64)]
+  [var : i64]) : bool
+  (and (>= var 0) (< var (array-length flags)) (= (array-ref flags var) 1)))
+
 ;; Harvest width-64 int casts as coalescable moves (M-C part 1). Kept SEPARATE
 ;; from compiler-reg-function-moves so the SIMD/AVX plan path and the post-hoc
 ;; loop-split/remat coalesce rebuilds stay byte-identical; only the scalar-opt2
@@ -2259,61 +2535,105 @@
   [anchors : (__tl_dyn-array i64)]
   [defs : (__tl_dyn-array i64)]
   [uses : (__tl_dyn-array i64)]
-  [eligible : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
+  [eligible : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (match instr
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
       (if (compiler-reg-binop-destructive-tie? op)
-        ;; Select exactly one destructive home. Prefer lhs whenever it is an
-        ;; eligible chain candidate; for commutative operations, rhs is the
-        ;; deterministic fallback when lhs cannot participate. Adding both
-        ;; alternatives lets unrelated rhs values reshape otherwise-stable
-        ;; coalesce classes and can increase register pressure.
-        (if (compiler-reg-destructive-value-candidate?
-          lhs
-          dst
-          anchors
-          defs
-          uses
-          eligible)
+        ;; GAP8-C: a commutative BinOp whose lhs is the backend's commuted
+        ;; ALU-fold load takes the rhs home instead, so the fold's staging `mov`
+        ;; self-elides and the load disappears into the ALU line. An rhs that is
+        ;; not itself an eligible chain candidate has no home to reuse, so the
+        ;; lhs-first selection below still decides those.
+        (if (and
+          (compiler-reg-alu-prefer-rhs? prefer-rhs dst)
+          (compiler-reg-destructive-value-candidate?
+            rhs
+            dst
+            anchors
+            defs
+            uses
+            eligible))
           (compiler-reg-destructive-add-value-tie
-            lhs
+            rhs
             dst
             moves
             anchors
             defs
             uses
             eligible)
-          (if (compiler-reg-binop-destructive-commutative? op)
-            (match lhs
-              ;; A variable lhs remains the canonical destructive operand even
-              ;; when it is not a chain candidate. Falling through to rhs in
-              ;; that case perturbs unrelated arithmetic classes. A literal lhs
-              ;; has no reusable home, so rhs is the only legal alternative.
-              [(ir.CompilerIrValue.Var _) moves]
-              [_
-                (match rhs
-                  ;; Keep the alternate relation chain-shaped: the reusable rhs
-                  ;; must itself be a destructive result. This covers operand-
-                  ;; swapped commutative chains without turning literal-led
-                  ;; standalone arithmetic into a global preference source.
-                  [(ir.CompilerIrValue.Var rhs-var)
-                    (if (and
-                      (>= rhs-var 0)
-                      (< rhs-var (array-length defs))
-                      (= (array-ref defs rhs-var) 1))
-                      (compiler-reg-destructive-add-value-tie
-                        rhs
-                        dst
-                        moves
-                        anchors
-                        defs
-                        uses
-                        eligible)
-                      moves)]
-                  [_ moves])])
-            moves))
+          (compiler-reg-destructive-tie-lhs-first
+            dst
+            op
+            lhs
+            rhs
+            moves
+            anchors
+            defs
+            uses
+            eligible))
         moves)]
     [_ moves]))
+
+(define (compiler-reg-destructive-tie-lhs-first
+  [dst : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [moves : CompilerRegMoveSeq]
+  [anchors : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [eligible : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
+  ;; Select exactly one destructive home. Prefer lhs whenever it is an
+  ;; eligible chain candidate; for commutative operations, rhs is the
+  ;; deterministic fallback when lhs cannot participate. Adding both
+  ;; alternatives lets unrelated rhs values reshape otherwise-stable
+  ;; coalesce classes and can increase register pressure.
+  (if (compiler-reg-destructive-value-candidate?
+    lhs
+    dst
+    anchors
+    defs
+    uses
+    eligible)
+    (compiler-reg-destructive-add-value-tie
+      lhs
+      dst
+      moves
+      anchors
+      defs
+      uses
+      eligible)
+    (if (compiler-reg-binop-destructive-commutative? op)
+      (match lhs
+        ;; A variable lhs remains the canonical destructive operand even
+        ;; when it is not a chain candidate. Falling through to rhs in
+        ;; that case perturbs unrelated arithmetic classes. A literal lhs
+        ;; has no reusable home, so rhs is the only legal alternative.
+        [(ir.CompilerIrValue.Var _) moves]
+        [_
+          (match rhs
+            ;; Keep the alternate relation chain-shaped: the reusable rhs
+            ;; must itself be a destructive result. This covers operand-
+            ;; swapped commutative chains without turning literal-led
+            ;; standalone arithmetic into a global preference source.
+            [(ir.CompilerIrValue.Var rhs-var)
+              (if (and
+                (>= rhs-var 0)
+                (< rhs-var (array-length defs))
+                (= (array-ref defs rhs-var) 1))
+                (compiler-reg-destructive-add-value-tie
+                  rhs
+                  dst
+                  moves
+                  anchors
+                  defs
+                  uses
+                  eligible)
+                moves)]
+            [_ moves])])
+      moves)))
 
 (define (compiler-reg-destructive-tie-moves-seq
   [instrs : ir.CompilerIrInstrSeq]
@@ -2321,7 +2641,8 @@
   [anchors : (__tl_dyn-array i64)]
   [defs : (__tl_dyn-array i64)]
   [uses : (__tl_dyn-array i64)]
-  [eligible : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
+  [eligible : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 (- instrs.len 1)]
@@ -2337,7 +2658,8 @@
               anchors
               defs
               uses
-              eligible))
+              eligible
+              prefer-rhs))
           (set! index (- index 1))))
       out)))
 
@@ -2347,7 +2669,8 @@
   [anchors : (__tl_dyn-array i64)]
   [defs : (__tl_dyn-array i64)]
   [uses : (__tl_dyn-array i64)]
-  [eligible : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
+  [eligible : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (match blocks
     [(ir.CompilerIrBlockList.Nil) moves]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -2361,11 +2684,13 @@
               anchors
               defs
               uses
-              eligible)
+              eligible
+              prefer-rhs)
             anchors
             defs
             uses
-            eligible)])]
+            eligible
+            prefer-rhs)])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -2384,14 +2709,16 @@
                       anchors
                       defs
                       uses
-                      eligible))])
+                      eligible
+                      prefer-rhs))])
               (set! i (+ i 1))))
           out))]))
 
 (define (compiler-reg-function-destructive-tie-moves
   [func : ir.CompilerIrFunction]
   [moves : CompilerRegMoveSeq]
-  [eligible : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
+  [eligible : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
@@ -2409,7 +2736,8 @@
             anchors
             defs
             uses
-            eligible)))]))
+            eligible
+            prefer-rhs)))]))
 
 ;; function-moves with the width-64 cast copies appended at the TAIL (the cast
 ;; list is built first and used as the seed accumulator the real moves are
@@ -2418,7 +2746,8 @@
 (define (compiler-reg-function-moves-with-destructive-and-casts-eligible
   [func : ir.CompilerIrFunction]
   [strict-pairs : bool]
-  [eligible : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
+  [eligible : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-block-list-moves
@@ -2426,7 +2755,8 @@
         (compiler-reg-function-destructive-tie-moves
           func
           (compiler-reg-cast-moves-blocks blocks (compiler-reg-move-seq-empty))
-          eligible)
+          eligible
+          prefer-rhs)
         strict-pairs)]))
 
 (define (compiler-reg-function-moves-with-destructive-and-casts
@@ -2441,7 +2771,8 @@
           (compiler-reg-function-moves-with-destructive-and-casts-eligible
             func
             strict-pairs
-            eligible)))]))
+            eligible
+            (compiler-reg-function-alu-prefer-rhs func))))]))
 
 (define (compiler-reg-move-list-filter-storage-identity
   [moves : CompilerRegMoveSeq]
@@ -8748,28 +9079,46 @@
 (define (compiler-reg-copy-hints-from-binops-instr!
   [instr : ir.CompilerIrInstr]
   [hints : (__tl_dyn-array i64)]
-  [parents : (__tl_dyn-array i64)]) : unit
+  [parents : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : unit
   (match instr
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
       (if (compiler-reg-binop-two-address? op)
-        (begin
-          (match lhs
-            [(ir.CompilerIrValue.Var lhs-var)
-              (compiler-reg-copy-hints-add-move! hints parents lhs-var dst)]
-            [_ unit])
-          (if (compiler-reg-binop-commutative? op)
+        ;; GAP8-C: the hint list is first-wins, so preferring the rhs is exactly
+        ;; offering it first. The lhs is still offered behind it -- a flipped
+        ;; binop whose rhs root is already hinted elsewhere keeps the old bias
+        ;; rather than losing one. The flag is only ever set for a commutative
+        ;; op, so the rhs hint it puts first is one the unflipped path would
+        ;; have offered second anyway.
+        (if (compiler-reg-alu-prefer-rhs? prefer-rhs dst)
+          (begin
             (match rhs
               [(ir.CompilerIrValue.Var rhs-var)
                 (compiler-reg-copy-hints-add-move! hints parents rhs-var dst)]
               [_ unit])
-            unit))
+            (match lhs
+              [(ir.CompilerIrValue.Var lhs-var)
+                (compiler-reg-copy-hints-add-move! hints parents lhs-var dst)]
+              [_ unit]))
+          (begin
+            (match lhs
+              [(ir.CompilerIrValue.Var lhs-var)
+                (compiler-reg-copy-hints-add-move! hints parents lhs-var dst)]
+              [_ unit])
+            (if (compiler-reg-binop-commutative? op)
+              (match rhs
+                [(ir.CompilerIrValue.Var rhs-var)
+                  (compiler-reg-copy-hints-add-move! hints parents rhs-var dst)]
+                [_ unit])
+              unit)))
         unit)]
     [_ unit]))
 
 (define (compiler-reg-copy-hints-from-binops-seq!
   [instrs : ir.CompilerIrInstrSeq]
   [hints : (__tl_dyn-array i64)]
-  [parents : (__tl_dyn-array i64)]) : unit
+  [parents : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : unit
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
@@ -8780,25 +9129,32 @@
           (compiler-reg-copy-hints-from-binops-instr!
             (array-ref slots index)
             hints
-            parents)
+            parents
+            prefer-rhs)
           (set! index (+ index 1))))
       unit)))
 
 (define (compiler-reg-copy-hints-from-binops-blocks!
   [blocks : ir.CompilerIrBlockList]
   [hints : (__tl_dyn-array i64)]
-  [parents : (__tl_dyn-array i64)]) : unit
+  [parents : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
       (begin
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-copy-hints-from-binops-seq! instrs hints parents)])
+            (compiler-reg-copy-hints-from-binops-seq!
+              instrs
+              hints
+              parents
+              prefer-rhs)])
         (compiler-reg-copy-hints-from-binops-blocks!
           (__tl-box-place rest)
           hints
-          parents))]
+          parents
+          prefer-rhs))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -8807,16 +9163,25 @@
           (begin
             (match (ir.compiler-ir-block-seq-ref seq i)
               [(ir.CompilerIrBlock.Block _ instrs)
-                (compiler-reg-copy-hints-from-binops-seq! instrs hints parents)])
+                (compiler-reg-copy-hints-from-binops-seq!
+                  instrs
+                  hints
+                  parents
+                  prefer-rhs)])
             (set! i (+ i 1)))))]))
 
 (define (compiler-reg-copy-hints-from-binops!
   [func : ir.CompilerIrFunction]
   [hints : (__tl_dyn-array i64)]
-  [parents : (__tl_dyn-array i64)]) : unit
+  [parents : (__tl_dyn-array i64)]
+  [prefer-rhs : (__tl_dyn-array i64)]) : unit
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-reg-copy-hints-from-binops-blocks! blocks hints parents)]))
+      (compiler-reg-copy-hints-from-binops-blocks!
+        blocks
+        hints
+        parents
+        prefer-rhs)]))
 
 ;; Build per-root copy hints from the move list + two-address binops, mapping each
 ;; endpoint to its coalesce root. Moves are added first (first-wins), then binops
@@ -8825,14 +9190,15 @@
   [moves : CompilerRegMoveSeq]
   [coalesce : CompilerRegCoalesceMap]
   [n : i64]
-  [func : ir.CompilerIrFunction]) : (__tl_dyn-array i64)
+  [func : ir.CompilerIrFunction]
+  [prefer-rhs : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (let
     [hints : (__tl_dyn-array i64) (array.make-array i64 n)]
     [parents : (__tl_dyn-array i64) coalesce.parents]
     (begin
       (compiler-reg-fill-i64-array hints -1)
       (compiler-reg-copy-hints-from-moves! hints parents moves)
-      (compiler-reg-copy-hints-from-binops! func hints parents)
+      (compiler-reg-copy-hints-from-binops! func hints parents prefer-rhs)
       hints)))
 
 (define (compiler-reg-fixed-preferred-register
@@ -25698,6 +26064,14 @@
         interval-index
         destructive-clobber-points
         storage-identity-vars)]
+    ;; GAP8-C operand-tie flips, shared by BOTH tie mechanisms below (the
+    ;; destructive-tie move harvest and the copy hints) so the shape is derived
+    ;; once per function. Scalar-opt2 only: the SIMD/AVX plan keeps its move list
+    ;; and hints byte-identical, and the empty array admits nothing there.
+    [alu-prefer-rhs : (__tl_dyn-array i64)
+      (if allow-caller-saved-zero-call
+        (compiler-reg-function-alu-prefer-rhs func)
+        (array.make-array i64 0))]
     [raw-moves
       : CompilerRegMoveSeq
       ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
@@ -25710,7 +26084,8 @@
         (compiler-reg-function-moves-with-destructive-and-casts-eligible
           func
           false
-          destructive-eligible)
+          destructive-eligible
+          alu-prefer-rhs)
         (compiler-reg-function-moves func false))]
     [moves : CompilerRegMoveSeq
       (compiler-reg-move-list-filter-storage-identity
@@ -25952,7 +26327,8 @@
         moves
         coalesce
         (array-length interval-index.starts)
-        func)]
+        func
+        alu-prefer-rhs)]
     ;; arg-var -> ABI-arg-register physical preference: each outgoing call-argument
     ;; var biased toward the target register it will be marshalled into, so the
     ;; backend's `movq <home>, <arg-reg>` becomes an elided self-move. Indexed by

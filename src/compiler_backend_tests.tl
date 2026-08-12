@@ -25012,6 +25012,137 @@
               (compiler-backend-todo-marker))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
+;; GAP8-B: the mirrored operand order. A COMMUTATIVE op whose LEFT operand is
+;; the single-use fused load folds the same way -- `dst = MEM op x` is
+;; `dst = x op MEM` -- so the memory operand still lands in the ALU's source
+;; slot. `mem-on-lhs?` selects which side the load occupies; both must produce
+;; the identical one-instruction shape.
+(define (compiler-backend-gep-load-alu-commuted-asm
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [mem-on-lhs? : bool]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            op
+            (if mem-on-lhs?
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.Var 4))
+            (if mem-on-lhs?
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Var 3))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))
+            compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r12))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r8))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            4
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r14))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              5
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r14))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))
+    7))
+
+(define (compiler-backend-gep-load-alu-commuted-shape-ok?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [mnem : String]
+  [mem-on-lhs? : bool]) : bool
+  (match (compiler-backend-gep-load-alu-commuted-asm op mem-on-lhs?)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          (str_cat.str-cat "    " mnem "q (%r12,%r8,8), %r14\n"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq (%r12,%r8,8)"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            (compiler-backend-todo-marker))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Sub is NOT commutative: `MEM - x` is not `x - MEM`, so the mirrored order
+;; keeps the load and the register-form subtract.
+(define (compiler-backend-gep-load-alu-commuted-rejects-sub-ok?) : bool
+  (match (compiler-backend-gep-load-alu-commuted-asm
+    (compiler_ir_types.CompilerIrBinOp.Sub)
+    true)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq (%r12,%r8,8)")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    subq (%r12,%r8,8), %r14\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-gep-load-alu-commuted-shapes-ok?) : bool
+  (and
+    (compiler_backend.backend-and4
+      (compiler-backend-gep-load-alu-commuted-shape-ok?
+        (compiler_ir_types.CompilerIrBinOp.BitAnd)
+        "and"
+        true)
+      (compiler-backend-gep-load-alu-commuted-shape-ok?
+        (compiler_ir_types.CompilerIrBinOp.BitOr)
+        "or"
+        true)
+      (compiler-backend-gep-load-alu-commuted-shape-ok?
+        (compiler_ir_types.CompilerIrBinOp.BitXor)
+        "xor"
+        true)
+      (compiler-backend-gep-load-alu-commuted-shape-ok?
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        "add"
+        true))
+    (compiler_backend.backend-and4
+      (compiler-backend-gep-load-alu-commuted-shape-ok?
+        (compiler_ir_types.CompilerIrBinOp.BitAnd)
+        "and"
+        false)
+      (compiler-backend-gep-load-alu-commuted-shape-ok?
+        (compiler_ir_types.CompilerIrBinOp.BitOr)
+        "or"
+        false)
+      (compiler-backend-gep-load-alu-commuted-shape-ok?
+        (compiler_ir_types.CompilerIrBinOp.BitXor)
+        "xor"
+        false)
+      (compiler-backend-gep-load-alu-commuted-rejects-sub-ok?))))
+
 ;; GAP9: an offset add feeding only a same-block gep index folds into the
 ;; addressing displacement -- the add vanishes, the load reads
 ;; `disp(base,counter,scale)` -- exercised through the pre-pass plus the
@@ -25589,6 +25720,13 @@
 ;; any refusal instruction the fixture wants in front of it.
 (define (compiler-backend-cmp-mem-wide-asm
   [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-cmp-mem-wide-asm-with
+    rest
+    (compiler-backend-cmp-mem-fold-assignments)))
+
+(define (compiler-backend-cmp-mem-wide-asm-with
+  [rest : compiler_ir_types.CompilerIrInstrList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_backend.ResultCompilerBackend
   (compiler-backend-emit-test-instrs
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Gep
@@ -25602,8 +25740,134 @@
           (compiler_ir_types.CompilerIrValue.Var 2)
           (compiler_ast_types.AstType.I64))
         rest))
-    (compiler-backend-cmp-mem-fold-assignments)
+    assignments
     8))
+
+;; M6-D fixtures: the same shape with one address component SPILLED. Everything
+;; else keeps the shared homes, so the fold's staging register is the load
+;; destination's own home %r13.
+(define (compiler-backend-cmp-mem-staged-assignments
+  [base-spilled? : bool]
+  [index-spilled? : bool]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (if base-spilled?
+        (compiler_regalloc.CompilerRegLocation.Spill 16)
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r12)))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (if index-spilled?
+          (compiler_regalloc.CompilerRegLocation.Spill 24)
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r8)))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r13))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            4
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r14))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              5
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r15))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
+
+;; A spilled BASE stages into the load destination's home and the compare reads
+;; `(%r13,%r8,8)` -- two instructions where the unfolded path emitted three.
+(define (compiler-backend-cmp-mem-staged-base-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-wide-asm-with
+    (compiler-backend-cmp-mem-wide-tail false)
+    (compiler-backend-cmp-mem-staged-assignments true false))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq %r14, (%r13,%r8,8)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq (%r13,%r8,8)"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            (compiler-backend-todo-marker))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; The mirror: a spilled INDEX stages into the same home and the register-homed
+;; base keeps the SIB base slot.
+(define (compiler-backend-cmp-mem-staged-index-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-wide-asm-with
+    (compiler-backend-cmp-mem-wide-tail false)
+    (compiler-backend-cmp-mem-staged-assignments false true))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq %r14, (%r12,%r13,8)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq (%r12,%r13,8)"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            (compiler-backend-todo-marker))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Both components spilled would need two staging registers; the fold owns one,
+;; so it declines and the ordinary load path emits the compare's operand.
+(define (compiler-backend-cmp-mem-staged-both-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-wide-asm-with
+    (compiler-backend-cmp-mem-wide-tail false)
+    (compiler-backend-cmp-mem-staged-assignments true true))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq %r14, %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq %r14, (")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; A SECOND use of the loaded value keeps it in its home: the fold would drop
+;; the only definition the later use reads.
+(define (compiler-backend-cmp-mem-staged-second-use-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-wide-asm-with
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          6
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.compiler-ir-label "lt")
+            (compiler_ir_types.compiler-ir-label "ge"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler-backend-cmp-mem-staged-assignments true false))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq %r14, (%r13,%r8,8)\n"))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-cmp-mem-wide-rhs-fold-ok?) : bool
   (match (compiler-backend-cmp-mem-wide-asm
@@ -25663,6 +25927,57 @@
             "    cmpq (%r12,%r8,8)")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; M6-F: a SPILLED compare operand on the side that takes the AT&T SOURCE slot
+;; is a legal memory operand as long as the other side is a register, so the
+;; reload the staging path emitted is dropped. Var 4 (the compare's other
+;; operand) is spilled here; var 3, the loaded value, keeps its register home
+;; and occupies the destination slot.
+(define (compiler-backend-cmp-mem-spilled-rhs-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-wide-asm-with
+    (compiler-backend-cmp-mem-wide-tail false)
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r12))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r8))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            3
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r13))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              4
+              (compiler_regalloc.CompilerRegLocation.Spill 32))
+            (compiler_regalloc.compiler-reg-assignments-prepend
+              (compiler_regalloc.CompilerRegAssignment
+                5
+                (compiler_regalloc.CompilerRegLocation.Register
+                  compiler_abi.compiler-reg-id-r15))
+              (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      ;; The loaded value keeps its register home (the memory-operand compare
+      ;; cannot take BOTH sides), and the spilled other operand is spelled
+      ;; straight into the compare's source slot instead of being reloaded --
+      ;; exactly one memory operand, which is all x86 allows.
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq (%r12,%r8,8), %r13\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq 32(%rbp), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            (compiler-backend-todo-marker))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-cmp-mem-fold-shapes-ok?) : bool
   (and
     (compiler_backend.backend-and4
@@ -25675,6 +25990,13 @@
       (compiler-backend-cmp-mem-bounds-cast-fold-ok?)
       (compiler-backend-cmp-mem-bounds-second-use-refused-ok?)
       (compiler-backend-cmp-mem-wide-rhs-fold-ok?))
+    (compiler_backend.backend-and4
+      (compiler-backend-cmp-mem-staged-base-fold-ok?)
+      (compiler-backend-cmp-mem-staged-index-fold-ok?)
+      (compiler-backend-cmp-mem-staged-both-refused-ok?)
+      (compiler-backend-cmp-mem-staged-second-use-refused-ok?))
+    (compiler-backend-cmp-mem-spilled-rhs-fold-ok?)
+    (compiler-backend-gep-load-alu-commuted-shapes-ok?)
     (compiler-backend-cmp-mem-store-between-refused-ok?)
     (compiler-backend-cmp-mem-flags-between-refused-ok?)))
 

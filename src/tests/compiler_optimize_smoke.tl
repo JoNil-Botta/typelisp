@@ -3543,6 +3543,10 @@
       (compiler_optimize_tests.compiler-optimize-cmp-sink-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-load-sink-self-test"
+      (compiler_optimize_tests.compiler-optimize-load-sink-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-cmp-dup-self-test"
       (compiler_optimize_tests.compiler-optimize-cmp-dup-self-test)
       42)
@@ -3636,6 +3640,55 @@
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)
     "import refused when it would cost a bounds-free single-site caller its own inline"))
+
+(test
+  inline-single-site-wide-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-absorb-ok?)
+    "a 220-instruction ten-parameter single-site callee absorbs whole at its one cold site"))
+
+(test
+  inline-single-site-wide-loop-site-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-wide-loop-site-refusal-ok?)
+    "the same unbounded body stays out of line at an in-loop site"))
+
+(test
+  inline-single-site-narrow-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-narrow-refusal-ok?)
+    "the same body below the arity floor stays out of line: no marshalling to retire"))
+
+(test
+  inline-single-site-two-reference-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-two-reference-refusal-ok?)
+    "two cold sites keep the body at both: this band moves, it never copies"))
+
+(test
+  inline-single-site-self-recursive-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-self-recursive-refusal-ok?)
+    "a self-calling callee counts two references and is refused"))
+
+(test
+  inline-single-site-call-bearing-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-call-bearing-refusal-ok?)
+    "a wide single-site callee that calls out stays out of line (#6307)"))
+
+(test
+  inline-single-site-address-taken-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-address-taken-refusal-ok?)
+    "an address-taken callee is refused even at one call site"))
+
+(test
+  inline-single-site-cascade
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-single-site-cascade-depth-code)
+    0
+    "a three-deep single-site chain collapses into one function in a single pass"))
 
 (test
   inline-dup-two-site
@@ -3752,10 +3805,10 @@
     "a body past the accessor block ceiling stays out of line at the same nested-loop sites"))
 
 (test
-  inline-accessor-depth-bounds-refusal
+  inline-accessor-depth-bounds-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-bounds-refusal-ok?)
-    "a bounds-carrying body stays out of line at the same nested-loop sites: weighted evidence admits only the cheap class"))
+    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-bounds-admission-ok?)
+    "a bounds-carrying body is taken at two nested-loop sites and kept behind its call one loop shallower: the weight decides, not the bounds check"))
 
 (test
   inline-depth-multiple-latches
@@ -3947,6 +4000,13 @@
     (compiler_optimize_tests.compiler-optimize-cmp-sink-self-test)
     42
     "Sinking a loop-closing compare next to its branch"))
+
+(test
+  load-sink-to-alu-consumer
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-load-sink-self-test)
+    42
+    "Sinking single-use gep;load pairs next to their consuming ALU ops"))
 
 (test
   cmp-dup-per-branch-copies

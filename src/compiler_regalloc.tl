@@ -21197,6 +21197,37 @@
 (define compiler-reg-c-memory-call-names : reg_i64_i64_map.Map
   (reg_i64_i64_map.with-capacity 8))
 
+;; The three maps above are IMAGE-SCOPED facts: the backend installs them from
+;; the program index of the image it is about to emit, and their storage belongs
+;; to THAT image's arena. Every reader below therefore has to run inside the
+;; backend's install-then-use window. That was true of every reader until the
+;; optimizer's measured inline tier began reading one register plan per
+;; candidate (opt-inline-checked-alloc-cost): those plans run from inside the
+;; OPTIMIZER, before this compile's backend has installed anything, so under
+;; `compile --batch` the globals still name the PREVIOUS entry's arena -- which
+;; is gone by then. Reading a freed map there segfaulted the build-invariance
+;; corpus on its third entry, inside compiler-reg-type-register-group?. (The
+;; object path records the same hazard where it installs its own maps before
+;; group discovery: "a prior batch entry may have left arena-owned maps in the
+;; register allocator globals".)
+;;
+;; A standalone plan has no image, so it is entitled to exactly the answers a
+;; fresh process gives -- every one of these queries missing, which is what the
+;; regalloc self-tests and the first entry of any batch already see. This flag
+;; says that directly: it costs no allocation, it short-circuits ahead of the
+;; lookup rather than after it, and because it names the absent image rather
+;; than patching the globals it leaves the backend's install-then-use window
+;; exactly as it was. A caller arms it around its standalone plan and clears it
+;; before returning; nothing here nests.
+(define compiler-reg-program-maps-suppressed? : bool
+  false)
+
+(define (compiler-reg-suppress-program-maps! [on : bool]) : unit
+  (set! compiler-reg-program-maps-suppressed? on))
+
+(define (compiler-reg-program-maps-suppressed-current?) : bool
+  compiler-reg-program-maps-suppressed?)
+
 (define (compiler-reg-set-group-counts! [counts : reg_i64_i64_map.Map]) : unit
   (set! compiler-reg-group-counts counts))
 
@@ -21210,7 +21241,9 @@
   (reg_i64_i64_map.insert-ref! (&mut compiler-reg-c-memory-call-names) name 1))
 
 (define (compiler-reg-c-memory-call-name? [name : i64]) : bool
-  (reg_i64_i64_map.contains? (& compiler-reg-c-memory-call-names) name))
+  (and
+    (not compiler-reg-program-maps-suppressed?)
+    (reg_i64_i64_map.contains? (& compiler-reg-c-memory-call-names) name)))
 
 (define (compiler-reg-linux-abi? [target-abi : cabi.CompilerRegTargetAbi]) : bool
   (match target-abi
@@ -21367,12 +21400,14 @@
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [_
-      (match (ast.ast-aggregate-type-key type-segment-bases ty)
-        [(ast.AstMaybeNominalKey.Some key)
-          (match (reg_i64_i64_map.get (& compiler-reg-group-counts) key)
-            [(reg_i64_i64_map.LookupFound count) (> count 1)]
-            [(reg_i64_i64_map.LookupMissing) false])]
-        [(ast.AstMaybeNominalKey.None) false])]))
+      (if compiler-reg-program-maps-suppressed?
+        false
+        (match (ast.ast-aggregate-type-key type-segment-bases ty)
+          [(ast.AstMaybeNominalKey.Some key)
+            (match (reg_i64_i64_map.get (& compiler-reg-group-counts) key)
+              [(reg_i64_i64_map.LookupFound count) (> count 1)]
+              [(reg_i64_i64_map.LookupMissing) false])]
+          [(ast.AstMaybeNominalKey.None) false]))]))
 
 (define (compiler-reg-type-register-group-has-sse?
   [type-segment-bases : i64]
@@ -21385,12 +21420,14 @@
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [_
-      (match (ast.ast-aggregate-type-key type-segment-bases ty)
-        [(ast.AstMaybeNominalKey.Some key)
-          (match (reg_i64_i64_map.get (& compiler-reg-group-class-masks) key)
-            [(reg_i64_i64_map.LookupFound mask) (> mask 0)]
-            [(reg_i64_i64_map.LookupMissing) false])]
-        [(ast.AstMaybeNominalKey.None) false])]))
+      (if compiler-reg-program-maps-suppressed?
+        false
+        (match (ast.ast-aggregate-type-key type-segment-bases ty)
+          [(ast.AstMaybeNominalKey.Some key)
+            (match (reg_i64_i64_map.get (& compiler-reg-group-class-masks) key)
+              [(reg_i64_i64_map.LookupFound mask) (> mask 0)]
+              [(reg_i64_i64_map.LookupMissing) false])]
+          [(ast.AstMaybeNominalKey.None) false]))]))
 
 (define (compiler-reg-type-register-group-word-sse?
   [type-segment-bases : i64]
@@ -21405,22 +21442,26 @@
         (ast.ast-type-segment-bases-get type-segment-bases inner)
         word-index)]
     [_
-      (if (or (< word-index 0) (> word-index 1))
+      (if compiler-reg-program-maps-suppressed?
         false
-        (match (ast.ast-aggregate-type-key type-segment-bases ty)
-          [(ast.AstMaybeNominalKey.Some key)
-            (match (reg_i64_i64_map.get (& compiler-reg-group-class-masks) key)
-              [(reg_i64_i64_map.LookupFound mask)
-                (not
-                  (=
-                    (bit-and
-                      mask
-                      (if (= word-index 0)
-                        1
-                        2))
-                    0))]
-              [(reg_i64_i64_map.LookupMissing) false])]
-          [(ast.AstMaybeNominalKey.None) false]))]))
+        (if (or (< word-index 0) (> word-index 1))
+          false
+          (match (ast.ast-aggregate-type-key type-segment-bases ty)
+            [(ast.AstMaybeNominalKey.Some key)
+              (match (reg_i64_i64_map.get
+                (& compiler-reg-group-class-masks)
+                key)
+                [(reg_i64_i64_map.LookupFound mask)
+                  (not
+                    (=
+                      (bit-and
+                        mask
+                        (if (= word-index 0)
+                          1
+                          2))
+                      0))]
+                [(reg_i64_i64_map.LookupMissing) false])]
+            [(ast.AstMaybeNominalKey.None) false])))]))
 
 (define (compiler-reg-var-register-group-has-sse?
   [type-segment-bases : i64]

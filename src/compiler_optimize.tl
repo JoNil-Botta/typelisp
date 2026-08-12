@@ -30,6 +30,15 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
+
+;; The inliner's measured-plan check (opt-inline-checked-*) reads one register
+;; allocation plan per candidate to price the caller's prologue and spill
+;; traffic. The allocator is standalone-callable on a single IR function, and
+;; nothing downstream of the check reads the plan -- it feeds accept-or-revert
+;; only -- so this is a read-only dependency on the allocator's own facts, not a
+;; layering inversion in the pipeline.
+(import compiler_regalloc as reg)
+(import compiler_abi as cabi)
 (import compiler_float as cfloat)
 (import stdlib.arena)
 (import stdlib.hash)
@@ -66,6 +75,19 @@
   0)
 (define compiler-opt-debug-verify-ir : bool
   false)
+
+;; Set while the inliner's measured-plan check re-runs the per-function
+;; optimizer. Those runs are MEASUREMENTS, not pipeline stages: their results
+;; are thrown away and only a bool escapes, so `--trace-passes` must not report
+;; passes over functions the pipeline never optimized and the `--dump-ir` buffer
+;; (which scripts/verify-ir-observability.sh reads) must not receive throwaway
+;; generations.
+(define compiler-opt-debug-suppressed? : bool
+  false)
+
+(define (compiler-opt-debug-set-suppressed! [on : bool]) : unit
+  (set! compiler-opt-debug-suppressed? on))
+
 (define compiler-opt-debug-verify-error : String
   "")
 
@@ -99,7 +121,9 @@
   (match func
     [(ir.CompilerIrFunction.Function name _ _ _ blocks)
       (begin
-        (if compiler-opt-debug-trace-passes
+        (if (and
+          compiler-opt-debug-trace-passes
+          (not compiler-opt-debug-suppressed?))
           (io.print-error
             (str_cat.str-cat
               "optimizer-pass|"
@@ -113,7 +137,9 @@
                 (ir.compiler-ir-block-list-instruction-count blocks))
               "\n"))
           unit)
-        (if (compiler-opt-debug-pass-selected? pass)
+        (if (and
+          (not compiler-opt-debug-suppressed?)
+          (compiler-opt-debug-pass-selected? pass))
           (let
             [pass-arena : i64 (arena.tl_arena_current)]
             (unsafe
@@ -15998,6 +16024,9 @@
 (define (opt-loop-body-contains-id? [body : OptLoopBody] [id : i64]) : bool
   (opt-loop-body-member-array-contains-id? body.members id))
 
+(define (opt-loop-body-members [body : OptLoopBody]) : (__tl_dyn-array bool)
+  body.members)
+
 (define (opt-loop-body-label-member?
   [body : OptLoopBody]
   [index : OptCfgIndex]
@@ -16051,6 +16080,12 @@
 
 (define (opt-natural-loop-body-contains-id? [loop : OptNaturalLoop] [id : i64]) : bool
   (opt-loop-body-contains-id? (opt-natural-loop-body-info loop) id))
+
+;; The body's per-block-id membership bits, for callers that want to test many
+;; ids against one loop without rebuilding the block list.
+(define (opt-natural-loop-body-members [loop : OptNaturalLoop]) : (__tl_dyn-array
+    bool)
+  (opt-loop-body-members (opt-natural-loop-body-info loop)))
 
 (define (opt-natural-loop-current-body-blocks
   [loop : OptNaturalLoop]
@@ -17483,6 +17518,12 @@
   (No)
   (Some ir.CompilerIrBlockList i64))
 
+;; An accepted, verified rotation candidate: the rewritten function and the
+;; fresh context built for it.
+(defenum OptFunctionCtxMaybe
+  (No)
+  (Some ir.CompilerIrFunction OptCfgContext))
+
 (defstruct OptRotateSsaPlan
   (header i64)
   (preheader i64)
@@ -17720,6 +17761,49 @@
             (opt-label-tail body)
             header
             exit-label)))]))
+
+(define (opt-rotate-ssa-succs-inside?
+  [body : OptLabelSet]
+  [succs : OptLabelSet]) : bool
+  (match succs
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (and
+        (opt-label-contains body (opt-label-ref succs 0))
+        (opt-rotate-ssa-succs-inside? body (opt-label-tail succs)))]))
+
+;; True when the header's exit arm is the loop's ONLY way out: no body block
+;; other than the header has a successor outside the body. The fresh exit phis
+;; are defined in the exit block, so every outside reader of a loop-carried
+;; value has to be dominated by it; with a second exit (a `break`, or a lowered
+;; `(and ...)` loop condition whose second test leaves through a body block)
+;; the outside reader is reachable without passing through the exit block and
+;; the substitution is a dominance violation. That rewrite used to be built and
+;; handed to the verifier, which rejected it -- correct, but it cost a full
+;; rewrite, context build and verify per round per such loop. Only the exit-phi
+;; case needs the property, so multi-exit loops with no outside reader still
+;; rotate.
+(define (opt-rotate-ssa-single-exit?
+  [pred-map : OptPredMap]
+  [body : OptLabelSet]
+  [cursor : OptLabelSet]
+  [header : i64]) : bool
+  (match cursor
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref cursor 0)]
+        (and
+          (or
+            (= label header)
+            (opt-rotate-ssa-succs-inside?
+              body
+              (opt-pred-map-successors pred-map label)))
+          (opt-rotate-ssa-single-exit?
+            pred-map
+            body
+            (opt-label-tail cursor)
+            header)))]))
 
 (define (opt-rotate-ssa-uses-except-header
   [set : opt_i64_i64_map.Map]
@@ -18142,6 +18226,19 @@
         plan
         (ir.compiler-ir-block-seq-to-list seq))]))
 
+;; True when at least one header-phi destination is read outside the loop body,
+;; i.e. when the rewrite has to mint exit phis at the exit block. Every clause
+;; that exists only to make those phis well-formed is gated on this.
+(define (opt-rotate-ssa-recs-used-outside?
+  [recs : OptRotateSsaPhiRecs]
+  [outside-uses : opt_i64_i64_map.Map]) : bool
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) false]
+    [(OptRotateSsaPhiRecs.Cons dst _ _ _ rest)
+      (or
+        (opt-used-contains outside-uses dst)
+        (opt-rotate-ssa-recs-used-outside? (__tl-box-place rest) outside-uses))]))
+
 (define (opt-rotate-ssa-apply
   [blocks : ir.CompilerIrBlockList]
   [pred-map : OptPredMap]
@@ -18158,15 +18255,36 @@
     [phis : ir.CompilerIrInstrSeq shape.phis]
     [recs : OptRotateSsaPhiRecs shape.recs]
     [guard : ir.CompilerIrInstrSeq shape.guard]
+    [outside-uses : opt_i64_i64_map.Map
+      (opt-rotate-ssa-uses-outside-body
+        (opt_i64_i64_map.with-capacity 64)
+        blocks
+        body)]
+    ;; The exit block only has to be the header's private successor when the
+    ;; rewrite prepends phis to it. Those phis carry exactly the two loop-edge
+    ;; inputs {preheader, latch}, so any third predecessor would leave them
+    ;; short an input -- but with no exit phis to mint nothing is prepended,
+    ;; the exit block's own predecessors are untouched, and the rotation only
+    ;; swaps the header's single edge into it for the preheader's and the
+    ;; latch's. `bce_version` is the measured producer of that shape: it clones
+    ;; a loop into a bounds-checked and a fast version that SHARE one exit
+    ;; block, so the pre-existing clause refused BOTH halves of every versioned
+    ;; counted loop -- including the hot fast half.
+    [exit-phis-needed? : bool
+      (opt-rotate-ssa-recs-used-outside? recs outside-uses)]
     (if (and
       (not (= exit-label preheader))
       (not (opt-cfg-block-exists? blocks land-label))
       (opt-rotate-ssa-only-label?
         (opt-pred-map-lookup pred-map body-label)
         header)
-      (opt-rotate-ssa-only-label?
-        (opt-pred-map-lookup pred-map exit-label)
-        header)
+      (or
+        (not exit-phis-needed?)
+        (and
+          (opt-rotate-ssa-only-label?
+            (opt-pred-map-lookup pred-map exit-label)
+            header)
+          (opt-rotate-ssa-single-exit? pred-map body body header)))
       (opt-rotate-ssa-body-avoids-exit? pred-map body header exit-label)
       (not (opt-rotate-ssa-block-has-phi? blocks body-label))
       (not (opt-rotate-ssa-block-has-phi? blocks exit-label))
@@ -18201,10 +18319,7 @@
             [(OptRotateSsaClone.Clone latch-guard after-latch)
               (match (opt-rotate-ssa-exit-phis
                 recs
-                (opt-rotate-ssa-uses-outside-body
-                  (opt_i64_i64_map.with-capacity 64)
-                  blocks
-                  body)
+                outside-uses
                 preheader
                 latch
                 after-latch)
@@ -18271,22 +18386,60 @@
                 shape)])
           (OptRotateSsaRewrite.No)))]))
 
-(define (opt-rotate-ssa-loops
-  [blocks : ir.CompilerIrBlockList]
+(define (opt-rotate-ssa-loop-verified
+  [func : ir.CompilerIrFunction]
   [context : OptCfgContext]
-  [frame : i64]
-  [loops : OptNaturalLoopList]) : OptRotateSsaRewrite
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptRotateSsaRewrite.No)]
-    [(OptNaturalLoopList.Cons loop rest)
+  [loop : OptNaturalLoop]) : OptFunctionCtxMaybe
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (match (opt-rotate-ssa-loop blocks context frame loop)
+        [(OptRotateSsaRewrite.No) (OptFunctionCtxMaybe.No)]
         [(OptRotateSsaRewrite.Some next-blocks next-frame)
-          (OptRotateSsaRewrite.Some next-blocks next-frame)]
-        [(OptRotateSsaRewrite.No)
-          (opt-rotate-ssa-loops blocks context frame (__tl-box-place rest))])]))
+          (let
+            [next : ir.CompilerIrFunction
+              (ir.CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                next-frame
+                next-blocks)]
+            [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+            (match (opt-verify-function-with-context next next-context)
+              [(ResultCompilerOptimizeVerify.Ok)
+                (OptFunctionCtxMaybe.Some next next-context)]
+              [(ResultCompilerOptimizeVerify.Err _) (OptFunctionCtxMaybe.No)]))])]))
 
-;; One rotation per round, each round verified on its own and each accepted
-;; rotation followed by a fresh context: the rewrite adds the landing block and
+;; A candidate whose rewrite fails the post-rotation verify is a REFUSAL of
+;; that loop, not the end of the round. The verify used to sit above this scan,
+;; in `opt-rotate-ssa-rounds`, so the first loop whose rewrite the verifier
+;; rejected retired the whole rounds loop and every loop AFTER it in the list
+;; lost its chance -- for the rest of the pipeline, because the next stage
+;; re-scans the same list and stops at the same poison pill. Measured in
+;; `benchmarks/liveness_scan`'s `recompute!`: the `(and (< i words) (not
+;; changed))` early-exit loop passes every admission clause but rotates into a
+;; dominance violation (its second exit leaves the loop through a body block,
+;; so the fresh exit phi does not dominate the outside reader), and the
+;; writeback loop that follows it in the list was never even examined by either
+;; rotation stage. Verifying per candidate keeps the same discipline -- only an
+;; accepted, verified rewrite is banked -- and costs one extra verify per
+;; rejected candidate per round.
+(define (opt-rotate-ssa-loops
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [loops : OptNaturalLoopList]) : OptFunctionCtxMaybe
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptFunctionCtxMaybe.No)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-rotate-ssa-loop-verified func context loop)
+        [(OptFunctionCtxMaybe.Some next next-context)
+          (OptFunctionCtxMaybe.Some next next-context)]
+        [(OptFunctionCtxMaybe.No)
+          (opt-rotate-ssa-loops func context (__tl-box-place rest))])]))
+
+;; One rotation per round, each candidate verified on its own (in
+;; `opt-rotate-ssa-loop-verified`, so a rejected one only costs its own round
+;; position) and each accepted rotation followed by a fresh context: the rewrite
+;; adds the landing block and
 ;; rewires the header's predecessors, so the loop set, the predecessor map and
 ;; the dominance facts all have to be rebuilt before the next loop's shape test
 ;; reads them, and a rejected rotation must leave the rotations already banked
@@ -18304,29 +18457,13 @@
   [remaining : i64]) : OptFunctionCtxResult
   (if (<= remaining 0)
     (OptFunctionCtxResult.Result func context)
-    (match func
-      [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-        (match (opt-rotate-ssa-loops
-          blocks
-          context
-          frame
-          (opt-cfg-natural-loops-with-context blocks context))
-          [(OptRotateSsaRewrite.No) (OptFunctionCtxResult.Result func context)]
-          [(OptRotateSsaRewrite.Some next-blocks next-frame)
-            (let
-              [next : ir.CompilerIrFunction
-                (ir.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  next-frame
-                  next-blocks)]
-              [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-              (match (opt-verify-function-with-context next next-context)
-                [(ResultCompilerOptimizeVerify.Ok)
-                  (opt-rotate-ssa-rounds next next-context (- remaining 1))]
-                [(ResultCompilerOptimizeVerify.Err _)
-                  (OptFunctionCtxResult.Result func context)]))])])))
+    (match (opt-rotate-ssa-loops
+      func
+      context
+      (opt-cfg-natural-loops-with-context (opt-function-blocks func) context))
+      [(OptFunctionCtxMaybe.No) (OptFunctionCtxResult.Result func context)]
+      [(OptFunctionCtxMaybe.Some next next-context)
+        (opt-rotate-ssa-rounds next next-context (- remaining 1))])))
 
 (define (opt-rotate-ssa-function-with-context-result
   [context : OptCfgContext]
@@ -19463,6 +19600,22 @@
         (opt-licm-store-state-add-summary
           provenance
           (opt-licm-store-summary-header-or-unknown-store))]
+      ;; A named global-cell write is the one write whose target is a SYMBOL
+      ;; rather than a pointer, so it can be classified by name instead of by
+      ;; may-alias. A cell holds a descriptor HANDLE (or a scalar); the two
+      ;; header words a handle points at live in the object, never in the cell,
+      ;; so `Store G` cannot invalidate a descriptor data/length load -- the
+      ;; same allocation-layer argument the load table's granular kill makes
+      ;; (see opt-load-entry-survives-global-cell-store?). It therefore
+      ;; contributes the element-only class, which leaves
+      ;; opt-licm-store-summary-header-load-safe? true and the descriptor-header
+      ;; hoist available, while the global-write flag is raised EXPLICITLY so
+      ;; `Global` operand promotion still refuses: that pass reasons about cell
+      ;; CONTENTS, which is exactly what this instruction changes.
+      [(ir.CompilerIrInstr.Store _ _ _)
+        (opt-licm-store-state-add-summary-keeping-globals
+          (opt-licm-store-state-mark-global-write provenance)
+          (opt-licm-store-summary-element-only-store))]
       [_
         (opt-licm-store-state-add-summary
           provenance
@@ -53883,14 +54036,13 @@
         (opt-bce-mb-labels-all-in? (opt-label-tail labels) set)
         false)]))
 
-;; A forwarding-stub predecessor: an outside block whose only successor is the
-;; using block (an explicit Jump), check-free, clonable by the same whitelist
-;; the loop blocks pass, every one of whose own predecessors is a loop block,
-;; and whose fast twin label is fresh.
-(define (opt-bce-mb-stub-ok?
-  [pred-map : OptPredMap]
+;; The SHAPE half of a forwarding stub: an outside block whose only successor is
+;; the using block (an explicit Jump), check-free, clonable by the same
+;; whitelist the loop blocks pass, and whose fast twin label is fresh. Split out
+;; because the exit-join admission below reuses the shape with a different
+;; predecessor rule.
+(define (opt-bce-mb-stub-shape-ok?
   [blocks : ir.CompilerIrBlockList]
-  [body-labels : OptLabelSet]
   [stub : i64]
   [user : i64]) : bool
   (match (opt-cfg-find-block blocks stub)
@@ -53919,13 +54071,20 @@
                     "__bce_fast"))))
               false
               (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
-                [(ir.CompilerIrInstr.Jump target)
-                  (if (not (= target user))
-                    false
-                    (opt-bce-mb-labels-all-in?
-                      (opt-pred-map-lookup pred-map stub)
-                      body-labels))]
+                [(ir.CompilerIrInstr.Jump target) (= target user)]
                 [_ false])))])]))
+
+;; A forwarding-stub predecessor: the shape above, every one of whose own
+;; predecessors is a loop block.
+(define (opt-bce-mb-stub-ok?
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [stub : i64]
+  [user : i64]) : bool
+  (and
+    (opt-bce-mb-stub-shape-ok? blocks stub user)
+    (opt-bce-mb-labels-all-in? (opt-pred-map-lookup pred-map stub) body-labels)))
 
 ;; Classify every predecessor of the using block: loop blocks wire directly,
 ;; anything else must be a forwarding stub. Returns the stub labels found.
@@ -54273,6 +54432,249 @@
                       (OptBceMbWiring.Some
                         (ir.compiler-ir-block-cons wired-block wired-tail)
                         wired-stubs)])])))])]))
+
+;; --- exit-stub phi escapes ----------------------------------------------------
+;;
+;; The escape test counts a loop def read by a phi OUTSIDE the loop as an escape
+;; whenever the input's edge is not a clone-group edge. On a STANDALONE callee
+;; the loop's own exit block is the reader, its inputs sit on loop edges, and
+;; the ordinary exit-phi extension carries them to the fast clone. INLINING
+;; breaks exactly that and nothing else: the absorbed body's exit joins into the
+;; site's `cont` merge, so the callee's own exit block becomes a jump-only
+;; FORWARDER between the loop and the phi that reads the loop's result, and the
+;; input is keyed on the forwarder. The measured case is `it-slice-eq?`'s byte
+;; compare, which versions to a check-free clone standing alone and refuses the
+;; instant it is absorbed into `it-intern-slice` -- same loop, same counter, same
+;; invariant bound, same two derivable checks. The refusal was POSITIONAL.
+;;
+;; What absorption adds, and only absorption, is an EXIT JOIN: the callee's exit
+;; arms fan into the callee's own exit block, which then forwards into the
+;; site's continuation. So the block the phi input is keyed on is a join of the
+;; loop's exits and is reached by NO loop edge of its own. That is the exact
+;; admission here, and it is narrow on purpose. A block keyed directly off a
+;; loop edge is the ordinary exit-phi case the extension already handles; a
+;; block with BOTH a loop edge and a forwarder edge is one CFG simplification
+;; away from it, and taking it costs the rotated version the pass builds a
+;; pipeline round later from the same loop -- measured on lex_source's
+;; `ls-tokenize` newline scan, where admitting that shape versions the
+;; pre-rotation top-tested form and gives up the rotated clone's register
+;; assignment for +0.118%.
+;;
+;; Every level is the forwarding stub the direct-use wiring already defines: an
+;; outside block that only Jumps to its user, check-free, phi-free, clonable by
+;; the loop's own whitelist, with a fresh fast-twin label. Pulling the join and
+;; its arms into the clone group makes the phi's edge a clone edge, and the
+;; ordinary extension then gives that phi a parallel input carrying the fast
+;; clone's remapped value on the join's fast twin. No new construction, no block
+;; gains a predecessor the loop did not already reach, and the slow blocks stay
+;; instruction-for-instruction the original -- the guard and clone rules are the
+;; unchanged ones.
+;;
+;; Every phi input on a non-group edge is accounted for: an input whose value is
+;; not a group def cannot carry an escape and is left alone (the `false` arm of
+;; the absorbed `(if (= name-length len) ... false)` is exactly that), and an
+;; input whose value IS a group def must sit on an admissible join or the whole
+;; attempt keeps the original rejection. The escape test then reruns over the
+;; widened group, so a def escaping any OTHER way still refuses.
+(define (opt-bce-mb-value-group-def?
+  [value : ir.CompilerIrValue]
+  [defs : opt_i64_i64_map.Map]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var id) (opt-used-contains defs id)]
+    [_ false]))
+
+;; Every predecessor of the join is a forwarding stub out of the clone group --
+;; never a group block itself. Returns the arms to pull in with the join.
+(define (opt-bce-mb-exit-join-arms
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [preds : OptLabelSet]
+  [join : i64]
+  [arms : OptLabelSet]) : OptBceMbMaybeLabels
+  (match preds
+    [(OptLabelSet.Nil) (OptBceMbMaybeLabels.Some arms)]
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred : i64 (opt-label-ref preds 0)]
+        (if (or
+          (opt-label-contains clone-labels pred)
+          (not (opt-bce-mb-stub-ok? pred-map all-blocks clone-labels pred join)))
+          (OptBceMbMaybeLabels.No)
+          (opt-bce-mb-exit-join-arms
+            pred-map
+            all-blocks
+            clone-labels
+            (opt-label-tail preds)
+            join
+            (opt-label-add arms pred))))]))
+
+;; The join block itself plus its arms, or No.
+(define (opt-bce-mb-exit-join-labels
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [join : i64]
+  [user : i64]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (if (not (opt-bce-mb-stub-shape-ok? all-blocks join user))
+    (OptBceMbMaybeLabels.No)
+    (let
+      [preds : OptLabelSet (opt-pred-map-lookup pred-map join)]
+      (if (< (opt-label-count preds) 1)
+        (OptBceMbMaybeLabels.No)
+        (match (opt-bce-mb-exit-join-arms
+          pred-map
+          all-blocks
+          clone-labels
+          preds
+          join
+          (OptLabelSet.Nil))
+          [(OptBceMbMaybeLabels.No) (OptBceMbMaybeLabels.No)]
+          [(OptBceMbMaybeLabels.Some arms)
+            (OptBceMbMaybeLabels.Some
+              (opt-bce-mb-labels-union arms (opt-label-add stubs join)))])))))
+
+(define (opt-bce-mb-phi-stub-inputs
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [defs : opt_i64_i64_map.Map]
+  [user : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (OptBceMbMaybeLabels.Some stubs)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-phi-stub-inputs
+        pred-map
+        all-blocks
+        clone-labels
+        defs
+        user
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        stubs)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (if (or
+        (opt-label-contains clone-labels label)
+        (not (opt-bce-mb-value-group-def? value defs)))
+        (opt-bce-mb-phi-stub-inputs
+          pred-map
+          all-blocks
+          clone-labels
+          defs
+          user
+          (__tl-box-place rest)
+          stubs)
+        (match (opt-bce-mb-exit-join-labels
+          pred-map
+          all-blocks
+          clone-labels
+          label
+          user
+          stubs)
+          [(OptBceMbMaybeLabels.No) (OptBceMbMaybeLabels.No)]
+          [(OptBceMbMaybeLabels.Some next)
+            (opt-bce-mb-phi-stub-inputs
+              pred-map
+              all-blocks
+              clone-labels
+              defs
+              user
+              (__tl-box-place rest)
+              next)]))]))
+
+(define (opt-bce-mb-phi-stub-labels-seq
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [defs : opt_i64_i64_map.Map]
+  [user : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (OptBceMbMaybeLabels.Some stubs)
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (match (opt-bce-mb-phi-stub-inputs
+          pred-map
+          all-blocks
+          clone-labels
+          defs
+          user
+          inputs
+          stubs)
+          [(OptBceMbMaybeLabels.No) (OptBceMbMaybeLabels.No)]
+          [(OptBceMbMaybeLabels.Some next)
+            (opt-bce-mb-phi-stub-labels-seq
+              pred-map
+              all-blocks
+              clone-labels
+              defs
+              user
+              instrs
+              (+ index 1)
+              next)])]
+      [_
+        (opt-bce-mb-phi-stub-labels-seq
+          pred-map
+          all-blocks
+          clone-labels
+          defs
+          user
+          instrs
+          (+ index 1)
+          stubs)])))
+
+;; Every forwarding stub the outside phis need pulled into the clone group, or
+;; No when one of those edges is not an admissible stub.
+(define (opt-bce-mb-phi-stub-labels
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [defs : opt_i64_i64_map.Map]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptBceMbMaybeLabels.Some stubs)]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-phi-stub-labels
+        pred-map
+        (ir.compiler-ir-block-seq-to-list seq)
+        all-blocks
+        clone-labels
+        defs
+        stubs)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (if (opt-label-contains clone-labels label)
+            (opt-bce-mb-phi-stub-labels
+              pred-map
+              (__tl-box-place rest)
+              all-blocks
+              clone-labels
+              defs
+              stubs)
+            (match (opt-bce-mb-phi-stub-labels-seq
+              pred-map
+              all-blocks
+              clone-labels
+              defs
+              label
+              instrs
+              0
+              stubs)
+              [(OptBceMbMaybeLabels.No) (OptBceMbMaybeLabels.No)]
+              [(OptBceMbMaybeLabels.Some next)
+                (opt-bce-mb-phi-stub-labels
+                  pred-map
+                  (__tl-box-place rest)
+                  all-blocks
+                  clone-labels
+                  defs
+                  next)]))])]))
 
 ;; --- far exit uses ------------------------------------------------------------
 ;;
@@ -59115,6 +59517,41 @@
             (array-ref cell 0)
             true))])))
 
+;; Apply with a settled clone group: the loop's own blocks plus every stub the
+;; wiring or the exit-phi widening pulled in. The escape test has already been
+;; answered for this exact group by the caller.
+(define (opt-bce-mb-apply-group
+  [doms : OptDomInfo]
+  [descriptor : OptBceMbDescriptor]
+  [write-free? : bool]
+  [wired-blocks : ir.CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [clone-labels : OptLabelSet]
+  [clone-blocks : ir.CompilerIrBlockList]
+  [cell : (__tl_dyn-array i64)]
+  [frame : i64]) : OptUnrollResult
+  (opt-bce-mb-apply-wired
+    doms
+    descriptor
+    write-free?
+    wired-blocks
+    (OptBceMbShape
+      shape.header
+      shape.latch
+      shape.preheader
+      clone-labels
+      clone-blocks
+      shape.iphi
+      shape.seed
+      shape.bound
+      shape.step
+      shape.uncovered
+      shape.inner
+      shape.region?)
+    (opt-bce-mb-collect-defs clone-blocks (opt_i64_i64_map.with-capacity 64))
+    cell
+    frame))
+
 ;; `blocks` is the function as the far-use repair left it; `original` is what
 ;; the caller keeps when the attempt fails, so a repair that the wiring then
 ;; refuses costs nothing.
@@ -59174,29 +59611,57 @@
                 (opt_i64_i64_map.with-capacity 64)
                 wired-blocks
                 clone-labels)]
-            (if (opt-bce-mb-defs-escape? clone-blocks clone-outside)
-              (OptUnrollResult.Result original frame false)
-              (opt-bce-mb-apply-wired
+            (if (not (opt-bce-mb-defs-escape? clone-blocks clone-outside))
+              (opt-bce-mb-apply-group
                 doms
                 descriptor
                 (opt-bce-mb-write-free-blocks? body-blocks)
                 wired-blocks
-                (OptBceMbShape
-                  shape.header
-                  shape.latch
-                  shape.preheader
-                  clone-labels
-                  clone-blocks
-                  shape.iphi
-                  shape.seed
-                  shape.bound
-                  shape.step
-                  shape.uncovered
-                  shape.inner
-                  shape.region?)
-                clone-defs
+                shape
+                clone-labels
+                clone-blocks
                 cell
-                frame)))]))))
+                frame)
+              ;; What is left may be nothing but a phi keyed on a jump-only
+              ;; exit forwarder -- the shape inlining leaves behind. Widen the
+              ;; clone group by those stubs and rerun the escape test over it;
+              ;; a def escaping any other way still keeps the rejection.
+              (match (opt-bce-mb-phi-stub-labels
+                pred-map
+                wired-blocks
+                wired-blocks
+                clone-labels
+                clone-defs
+                (OptLabelSet.Nil))
+                [(OptBceMbMaybeLabels.No)
+                  (OptUnrollResult.Result original frame false)]
+                [(OptBceMbMaybeLabels.Some phi-stubs)
+                  (if (= (opt-label-count phi-stubs) 0)
+                    (OptUnrollResult.Result original frame false)
+                    (let
+                      [wide-labels : OptLabelSet
+                        (opt-bce-mb-labels-union phi-stubs clone-labels)]
+                      [wide-blocks : ir.CompilerIrBlockList
+                        (opt-bce-mb-blocks-append
+                          clone-blocks
+                          (opt-bce-mb-stub-blocks-from wired-blocks phi-stubs))]
+                      [wide-outside : opt_i64_i64_map.Map
+                        (opt-bce-mb-outside-uses
+                          (opt_i64_i64_map.with-capacity 64)
+                          wired-blocks
+                          wide-labels)]
+                      (if (opt-bce-mb-defs-escape? wide-blocks wide-outside)
+                        (OptUnrollResult.Result original frame false)
+                        (opt-bce-mb-apply-group
+                          doms
+                          descriptor
+                          (opt-bce-mb-write-free-blocks? body-blocks)
+                          wired-blocks
+                          shape
+                          wide-labels
+                          wide-blocks
+                          cell
+                          frame))))])))]))))
 
 (define (opt-bce-mb-apply
   [descriptor : OptBceMbDescriptor]
@@ -73069,6 +73534,8 @@
     (set! opt-inline-caller-hot-loop-blocks 0)
     (set! opt-inline-caller-chain-blocks 0)
     (set! opt-inline-caller-accessor-blocks 0)
+    (set! opt-inline-caller-checked-blocks 0)
+    (set! opt-inline-caller-checked-taken? false)
     (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
 
 (define (opt-inline-caller-facts-ensure!) : unit
@@ -73812,29 +74279,87 @@
     (opt-inline-bounds-loop-site-in-loop?)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
 
-;; --- hot loop leaves: admission past the duplication ceiling -------------
+;; --- hot loop leaves: the call-free cyclic leaf band -------------------------
 ;;
-;; The census above stops answering at two references: one is absorbed, two are
-;; duplicated, and past opt-inline-dup-max-refcount a loop-bearing callee kept
-;; its call at every site. The measured occupant of that class is gvn_table's
-;; hashmap probe, `gvn-facts-slot`: 114 instructions in 29 blocks as the inline
-;; stage sees it, call-free, one linear-probe loop, referenced from seven sites
-;; in six callers. C inlines the whole chain into one blob; this compiler kept
-;; the boundary at all seven, and the row prices the callee at 248.6M dynamic
-;; instructions, 18.4% of the benchmark, before any cross-boundary hoisting the
-;; barrier blocks.
+;; A call-free callee whose body holds a loop, admitted where the bands above
+;; refuse it. The measured occupant is gvn_table's hashmap probe,
+;; `gvn-facts-slot`: 114 instructions in 29 blocks as the inline stage sees it,
+;; call-free, one linear-probe loop, referenced from seven sites in six callers.
+;; C inlines the whole chain into one blob; this compiler kept the boundary at
+;; all seven, and the row prices the callee at 248.6M dynamic instructions,
+;; 18.4% of the benchmark, before any cross-boundary hoisting the barrier
+;; blocks.
 ;;
 ;; Admission asks, in cost order:
 ;;
-;;   1. the census places the callee past the duplication ceiling -- three or
-;;      more references. Absorption and duplication keep their own bands;
-;;      widening THIS class to single- and two-reference callees was measured
-;;      and loses exactly the way the legacy bands document: absorbing the
-;;      53-88 instruction loop leaves into their loop callers (it-slice-eq?
-;;      and it-hash-words into it-intern-slice, the peephole scanner leaves,
-;;      qs-checksum into main) regressed intern_table +22%, peephole_lines
-;;      +14%, opt_quicksort +6%, and cfg_domloops +2% through caller
-;;      allocation churn, so the reference clause stays;
+;;   1. the census knows the callee -- at least one reference.
+;;
+;;      THIS CLAUSE USED TO READ `> opt-inline-dup-max-refcount`: three
+;;      references and up, so that absorption (one reference) and duplication
+;;      (two) kept the class to themselves and this band began past them. That
+;;      was not taste, it was measured. Widening the band to single- and
+;;      two-reference callees absorbed the 53-88 instruction loop leaves into
+;;      their loop callers -- `it-slice-eq?` and `it-hash-words` into
+;;      `it-intern-slice`, the peephole scanner leaves, `qs-checksum` into
+;;      `main` -- and regressed intern_table +22%, peephole_lines +14%,
+;;      opt_quicksort +6% and cfg_domloops +2%. The mechanism the autopsy named
+;;      was CALLER ALLOCATION CHURN: the imported loop brings its own working
+;;      set into a caller loop that is already allocating tightly, and what the
+;;      copy costs in spills exceeds the boundary it retires.
+;;
+;;      That mechanism has since been repaired by work with no connection to
+;;      this gate, which is why the ceiling is gone:
+;;
+;;        - LOOP-REGION RESCUE AND SEGMENT-PRECISE INTERVALS (#6485) attack the
+;;          named cost directly: an interval that used to hold a register
+;;          across a whole loop region is now described by the segments it is
+;;          really live in, so a second working set inside a caller loop no
+;;          longer prices as if it were live throughout;
+;;        - SINGLE-USE LOAD SINKING and DOMINATING-LOAD SUBSTITUTION shorten the
+;;          ranges an imported body opens in the first place, which is the same
+;;          pressure measured from the other end;
+;;        - GUARD-FACT IMPLICATION (#6480) and CHECK-DOMAIN FUSION (#6485)
+;;          retire the dominated checks a copied loop lands among, and COMPARE
+;;          DUPLICATION with FLAGS-REUSE branch emission keeps the survivors
+;;          folded into their branches instead of materialising booleans -- the
+;;          de-fusion that used to make an imported guard cost more than it
+;;          reads;
+;;        - EXIT-JOIN PHI-ESCAPE VERSIONING (6264441d6) lets the versioner keep
+;;          an imported loop's checks out of the loop body rather than giving
+;;          up on the escape.
+;;
+;;      Re-measured on this tree, not one of the four historical regressions
+;;      reproduces. All 22 rows are non-regressing and five improve:
+;;      liveness_scan -1,363,343 (-0.244%), peephole_lines -51,197,
+;;      hashmap_grow -647, opt_crc32 -10, opt_quicksort -10; the other 17 rows
+;;      are byte-identical. The named historical callees are NOT what moves:
+;;      intern_table's assembly is unchanged to the byte, and neither
+;;      `qs-checksum` nor the peephole scanner leaves appear in the diff. The
+;;      bands below still claim those first, and this band only ever sees the
+;;      single- and two-reference sites those bands REFUSE, which is why the
+;;      newly BAND-admitted population is four callees across the whole corpus:
+;;      `ln-set-count` (liveness_scan), `get-value-or` (hashmap_grow),
+;;      `pl-owners-find-reg` (peephole_lines) and stdlib's `>int` (crc32,
+;;      quicksort, peephole). Compiler-wide a self-compile retires 62 more call
+;;      instructions and absorbs 74 more callees outright.
+;;
+;;      `>= 1` rather than dropping the clause outright: a zero from the census
+;;      means it has no entry for the callee at all (no slot in the function
+;;      index), which is not the same fact as "referenced once". Admitting that
+;;      is a widening nothing has measured, so the clause keeps the floor it can
+;;      justify -- the same floor the measured tier below already asks for
+;;      (opt-inline-checked-ok?'s own `>= refs 1`). opt-inline-dup-max-refcount
+;;      itself is untouched and still classifies absorption against duplication
+;;      for the census, which is the only other thing that reads it.
+;;
+;;      One interaction is worth recording because it is where the corpus win
+;;      comes from. The measured tier is asked only about sites NO band takes,
+;;      so every site this clause newly admits leaves that tier's candidate
+;;      pool -- and the tier is budgeted in VERDICTS. On liveness_scan the base
+;;      tree spent liveness's verdict pricing `ln-set-count` and rejected it;
+;;      with `ln-set-count` band-admitted, the freed verdict reaches
+;;      `ln-fold-live-in`, which is accepted at both its sites. The row's
+;;      -0.244% is that reallocation, not the newly admitted body itself;
 ;;   2. the body is not address-taken;
 ;;   3. the caller does not balloon: the copy spends the gate's OWN per-caller
 ;;      block fuel (opt-inline-hot-loop-leaf-block-fuel), and the heavy gate
@@ -73920,7 +74445,7 @@
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
   (and
-    (> refs (opt-inline-dup-max-refcount))
+    (>= refs 1)
     (not (opt-inline-census-address-taken? index census callee-name))
     ;; The heavy gate is asked about TOTAL caller growth, shared and
     ;; gate-specific alike; the block fuel is the gate's own accumulator.
@@ -73951,6 +74476,965 @@
             (opt-inline-bounds-loop-site-in-loop?)))))
     (opt-inline-bounds-loop-cascade-safe?)
     (not (opt-inline-tiny-predicate-acyclic-reclaiming? blocks))))
+
+;; --- the measured-plan check: inline, re-optimize, measure, keep or revert ---
+;;
+;; Every band above is PREDICTIVE. Each one names a shape, argues from a
+;; measured population why that shape's inline pays, and admits it. The
+;; campaign's history of inlining regressions is the history of that prediction
+;; being wrong in a way no cheap clause could see: the single-site band's first
+;; version asked the reference count and nothing else and cost liveness_scan
+;; +17.10%, because absorbing a body into a LOOP puts its working set inside
+;; that loop; the hot-loop-leaf band's reference clause exists because widening
+;; it to one- and two-reference callees cost intern_table +22%, peephole_lines
+;; +14% and opt_quicksort +6%.
+;;
+;; This tier stops predicting. It admits one site per caller from the class the
+;; bands refuse -- a multi-block, loop-bearing, call-free callee past every size
+;; ceiling at a hot site -- then REBUILDS THE CALLER BOTH WAYS, runs each
+;; through the per-function optimizer and the register allocator, prices the two
+;; plans, and keeps the inline only if the measured plan says it pays. A refused
+;; site restores the caller's banked-band-only rewrite exactly: this is the
+;; verifier-gated rollback idiom of opt-inline-repair-or-keep, keyed on the
+;; measured plan instead of on structural verification.
+;;
+;; WHAT THE PLAN PRICES, and why all three terms are needed. Re-measured on this
+;; tree, admitting this class predictively costs intern_table +16.3%
+;; (616,947,863 -> 717,296,251), lex_source +1.82% and opt_quicksort +1.99%, and
+;; pays liveness_scan -0.21%. The autopsy of the intern_table loss is NOT the
+;; allocation churn the older bands document: `it-intern-slice` keeps exactly
+;; six callee-saved pushes with `it-slice-eq?` absorbed and grows its frame by
+;; 16 bytes. What it loses is the loop BCE VERSIONING the standalone callee gets
+;; -- `it-slice-eq?` emits a `__bce_guard` plus a bounds-free `__bce_fast` inner
+;; loop of seven instructions per byte, and the absorbed copy inside
+;; `it-intern-slice` (a function the versioner never versions) runs the guarded
+;; form at fifteen. A callee-saved/spill proxy alone reads that inline as free.
+;;
+;; So the plan is priced in three terms, each measured on the RE-OPTIMIZED body:
+;;
+;;   1. the loop-depth-weighted instruction count of the optimized blocks. This
+;;      is the term that catches an optimization the merged body loses -- a
+;;      de-versioned loop, a hoist that no longer fires, a check that no longer
+;;      retires -- and it is the only term that sees inside a loop. The weight
+;;      ladder is the census's (opt-inline-census-depth-weight), so an
+;;      instruction inside one loop counts eight and inside two counts sixty
+;;      four, exactly as a reference does;
+;;   2. the callee-saved register count of the register allocator's plan, times
+;;      two, charged once per invocation: this is the prologue tax, in the
+;;      currency the allocator actually decides it in;
+;;   3. the allocator's own spill weights, summed over the vars the plan spills.
+;;      The weights are the frequency estimates the greedy allocator already
+;;      computes, so this term prices spill TRAFFIC rather than spill count.
+;;
+;; The plan is read WITHOUT emission. compiler-reg-plan-function-scalar is
+;; standalone-callable on one IR function (the regalloc self-tests call it that
+;; way), and the two facts above are read off its assignment table. The FINAL
+;; plan the emitter uses is the product of a four-stage replan/rewrite pipeline
+;; inside compiler-backend-emit-function with no extracted entry point, so this
+;; is a proxy, not the emitted truth -- but it is the same allocator, run on the
+;; same IR, on both sides of one comparison, and nothing downstream reads it.
+;; The verdict feeds only accept-or-revert.
+;;
+;; THE COMPARISON. Both sides are priced per invocation of the caller:
+;;
+;;   before = plan-cost(banked caller) + w(site) * (boundary + plan-cost(callee))
+;;   after  = plan-cost(checked caller)
+;;
+;; where w(site) is the depth weight of the site's block. Charging the callee's
+;; own plan cost times the site weight is what makes the two sides
+;; commensurate: a callee loop that weighs eight inside its own body, reached
+;; from a site that weighs eight, enters the merged body at depth two where it
+;; weighs sixty four -- and 8 * 8 is sixty four. The boundary term is what the
+;; inline retires: a call, a return, the callee's frame setup, and the argument
+;; marshalling, which is why arity is in it.
+;;
+;; THE MARGIN. If an inline were free -- the copy exactly as good as the callee,
+;; the boundary gone -- `after` would be `before` minus the boundary credit
+;; w(site) * boundary. This tier keeps the site only when at least HALF that
+;; modelled saving actually survives re-optimization. That is the house's
+;; clear-margin discipline stated in the only currency this check has: the model
+;; is an estimate on both sides, and an inline whose measured saving is a
+;; rounding error against its own predicted saving is exactly the case where the
+;; estimate's error, not the inline, decides the verdict.
+;;
+;; THE BUDGETS are what keep the check's own cost bounded, and they are not
+;; taste: this check runs DURING COMPILATION, and it re-optimizes and re-plans
+;; the caller twice and the callee once per candidate. opt-inline-checked-
+;; program-budget verdicts per program and opt-inline-checked-max-caller-
+;; verdicts per caller cap the tier at a fixed number of extra per-function
+;; optimizer runs, and every clause above them is an integer test or a scan the
+;; bands already run.
+;;
+;; SITES ARE PRICED ONE AT A TIME, IN SEQUENCE. A caller may hold more than one
+;; site of this class, and the fusion prizes are exactly the callers that do --
+;; a kernel's inner routine absorbing its comparison leaf AND its hash leaf.
+;; Each verdict prices ONE site against the caller's current state, and the
+;; state that a verdict keeps or restores is what the next site is priced
+;; against. See the round driver (opt-inline-checked-rounds) for why that is the
+;; only way one caller can accept one callee and refuse another.
+;;
+;; ORDERING. The pass is already bottom-up (Tarjan pops a callee's component
+;; before any caller's), so a chain is processed leaf-upward with no ordering
+;; machinery of this tier's own: by the time a caller is examined, every
+;; candidate callee below it is final. That approximates the bottom-up CGSCC
+;; order without the SCC scheduling, and it is why the check prices a parent
+;; inline against a callee that has already absorbed its own leaves.
+;;
+;; NO RE-CENSUS is needed between accepted sites. The census is built before the
+;; pass and only read during it, and this tier never retires a callee: it copies
+;; a body into one site and leaves the original reachable from that site's
+;; siblings. Reference counts and hot counts are therefore still exactly what
+;; they were when the census was built.
+(define (opt-inline-checked-max-body) : i64
+  512)
+
+(define (opt-inline-checked-max-blocks) : i64
+  64)
+
+;; Composite site frequency floor: the caller's own depth-weighted reference
+;; count times the depth weight of the site's block. One weight is 8, so the
+;; floor says "the site is reached through at least one loop level", counting a
+;; loop in the caller and a loop above the caller alike. A site below it cannot
+;; repay a boundary often enough for the check to be worth running.
+(define (opt-inline-checked-min-frequency) : i64
+  8)
+
+;; ...and the site must be in a natural loop OF THE CALLER, not merely reached
+;; through one. This is clause 3 of the loop tier and clause 5 of the hot-loop
+;; tier, kept here for the reason those bands keep it and re-confirmed by
+;; measurement: a once-per-call setup helper absorbed into a caller that HOLDS a
+;; hot loop pays that caller's whole allocation to retire a boundary worth one
+;; execution. The measured case is `cfg-build-csr` into `cfg-function` -- a
+;; seven-parameter builder at a straight-line site, admitted by the plan model
+;; with a modelled saving of 23 against a boundary of 13, and costing
+;; cfg_domloops +1.085%. The plan model cannot see it: the tax lands on the
+;; caller's LOOPS, whose register pressure the merged body raises, and the plan
+;; prices an allocation once per invocation.
+;;
+;; The frequency floor above is subsumed by this clause on the caller's own
+;; loops (a depth-1 site already weighs 8), and remains the clause that
+;; disqualifies an in-loop site inside a caller nothing ever reaches.
+(define (opt-inline-checked-min-site-depth) : i64
+  1)
+
+;; VERDICTS per program, not accepts. This is the tier's compile-time bound and
+;; it has to count the work, which a cap on accepts does not: a rejected
+;; candidate costs exactly what an accepted one costs -- one extra walk of the
+;; caller, three per-function optimizer runs and three allocation plans -- and a
+;; cap that refunded rejections would leave the work unbounded on a program with
+;; many candidates. Twenty-four verdicts is the whole tier's budget for one
+;; compilation. No benchmark in the corpus reaches it; a self-compile does, and
+;; that is the point.
+(define (opt-inline-checked-program-budget) : i64
+  24)
+
+;; ...and per CALLER, because the sites are priced in sequence and one caller
+;; would otherwise be able to drain the program's whole budget: a caller holding
+;; nine candidates would spend a verdict apiece and leave every later caller
+;; unmeasured. Four is what the measured fusion chains need -- an interner
+;; absorbing a comparison leaf and a hash leaf, each reachable through one
+;; helper -- with a round to spare.
+(define (opt-inline-checked-max-caller-verdicts) : i64
+  4)
+
+;; How many candidate sites one caller's SCAN walk ranks. Only the richest
+;; opt-inline-checked-max-caller-verdicts of them can ever be priced, so the
+;; table only has to be deep enough that the richest are certainly in it; past
+;; that, a longer table is a longer linear scan for nothing.
+(define (opt-inline-checked-scan-cap) : i64
+  8)
+
+;; The retired boundary, per call: the call and the return, the callee's frame
+;; setup, and one argument move per parameter.
+(define (opt-inline-checked-boundary-cost [np : i64]) : i64
+  (+ 6 np))
+
+;; A candidate's RICHNESS, which is the order the caller's sites are priced in.
+;;
+;; The numerator is what a free inline of the site would be worth: how often the
+;; site runs times what its boundary costs. The denominator is the BODY the site
+;; would copy, and it is there because the sites of one caller compete for a
+;; shared allowance -- opt-inline-checked-max-blocks caps this tier's total
+;; growth in a caller, so the order the sites are offered in decides which of
+;; them still fit. Worth per unit of that allowance is the greedy a shared
+;; ceiling makes correct.
+;;
+;; Measured twice over. The interner this tier exists for holds three candidates
+;; in one routine that are worth exactly the same by the numerator alone (each
+;; an in-loop site of a six-parameter callee: 96 apiece), so the numerator alone
+;; leaves the order to the block walk -- which put a 35-block, 276-instruction
+;; grow routine first and the 59-instruction comparison leaf last, where 49 of
+;; the 64 blocks were spent and the leaf needed 16. And lex_source's tokenizer
+;; holds four, of which only the 56-instruction digit test repays: by the
+;; numerator alone it ranks last behind three larger scanners, and every one of
+;; those is refused -- under the one-site cap the tokenizer's whole chance was
+;; spent on the first of them. Ranking by worth per instruction copied puts the
+;; digit test first and takes it: lex_source -1.16%.
+;;
+;; The scale keeps the ratio in integers with enough resolution that two sites
+;; differing only slightly in body size still order.
+(define (opt-inline-checked-richness
+  [frequency : i64]
+  [np : i64]
+  [callee-instrs : i64]) : i64
+  (/
+    (* 64 (* frequency (opt-inline-checked-boundary-cost np)))
+    (if (< callee-instrs 1)
+      1
+      callee-instrs)))
+
+(define opt-inline-checked-active? : bool
+  false)
+(define opt-inline-checked-budget : i64
+  0)
+
+;; SCAN or TARGET, the two modes a caller walk runs in. A scan walk admits no
+;; new site -- so its result is exactly the caller's banked-band-only rewrite,
+;; the baseline the first verdict is priced against -- and records every
+;; candidate it passes over. A target walk admits the sites already kept plus
+;; the one new site named by the target key below.
+(define opt-inline-checked-scanning? : bool
+  true)
+
+;; The target key: (callee name, caller block label, site position), the same
+;; triple a site prefix is built from, so it names ONE call site of ONE callee
+;; in the caller. A target walk admits the site that matches it and no other.
+(define opt-inline-checked-target-callee : i64
+  0)
+(define opt-inline-checked-target-block : i64
+  0)
+(define opt-inline-checked-target-pos : i64
+  (- 0 1))
+
+;; The ACCEPTED table: the caller's sites that have already been priced and
+;; kept, three columns per row (callee name, block label, site position), room
+;; for opt-inline-checked-max-caller-verdicts rows.
+(define opt-inline-checked-accepted : (__tl_dyn-array i64)
+  (array.make-array i64 12))
+(define opt-inline-checked-accepted-count : i64
+  0)
+
+;; The SCAN table: one row per candidate the scan walk found, four columns --
+;; callee name, block label, site position, and the site's RICHNESS, which is
+;; what a free inline of it would be worth (how often the site runs times what
+;; its boundary costs). Room for opt-inline-checked-scan-cap rows. A row whose
+;; richness has been set negative has already been armed as a target.
+(define opt-inline-checked-scan : (__tl_dyn-array i64)
+  (array.make-array i64 32))
+(define opt-inline-checked-scan-count : i64
+  0)
+
+;; Verdicts spent on the caller being walked, against the per-caller cap.
+(define opt-inline-checked-caller-verdicts : i64
+  0)
+
+;; Set by the admission test to say which kind of site it just admitted: a NEW
+;; candidate, which consumes the walk's one new-site slot, or a re-admission of
+;; an already-accepted site, which does not.
+(define opt-inline-checked-new-site? : bool
+  false)
+
+;; The plan cost of the state a verdict leaves behind -- the accepted body's
+;; cost when it keeps, the previous state's when it reverts -- so the next round
+;; prices its site against a baseline it does not have to re-optimize. Negative
+;; means "not known", which is what the first round starts from.
+(define opt-inline-checked-next-state-cost : i64
+  (- 0 1))
+(define opt-inline-caller-checked-blocks : i64
+  0)
+(define opt-inline-caller-checked-taken? : bool
+  false)
+(define opt-inline-checked-site-weight : i64
+  0)
+
+;; The site's RAW loop depth, kept alongside its weight because the callee's
+;; body has to be priced at the depth it would land at, not at the product of
+;; two weights. The weight ladder saturates at opt-inline-census-depth-cap;
+;; multiplying a site weight by an internal weight does not, so a callee loop
+;; one level down from a site one level down would be charged 8 * 64 on the
+;; `before` side against 64 on the `after` side, and every such candidate would
+;; be accepted on the arithmetic alone.
+(define opt-inline-checked-site-depth : i64
+  0)
+(define opt-inline-checked-callee-slot : i64
+  (- 0 1))
+(define opt-inline-checked-callee-params : i64
+  0)
+
+;; Per-program state reset, run by the level-2 inline driver before the SCC
+;; walk. It resets the budget and the per-caller flags but does NOT arm the
+;; tier: arming is a separate act performed by the whole-program optimizer
+;; entries alone (opt-inline-checked-set-active!).
+;;
+;; That split is deliberate. opt-inline-program-functions is also the optimizer
+;; unit tests' direct entry, and a large family of those tests asserts what the
+;; BANDS do -- which sites each band refuses and why. A refusal test for one
+;; band should hold that band's admission fixed; it should not silently also
+;; assert that no later admitter, arguing from a measurement rather than from a
+;; shape, ever takes the same site. Arming at the optimizer entries keeps every
+;; band fixture testing its band, and keeps the tier live on every path that
+;; actually compiles a program.
+;; Per-caller reset, run by the walk entries before a caller's scan walk. It
+;; empties the accepted and scan tables, returns the tier to scan mode and
+;; refunds the per-caller verdict allowance.
+(define (opt-inline-checked-caller-begin!) : unit
+  (begin
+    (set! opt-inline-checked-accepted-count 0)
+    (set! opt-inline-checked-scan-count 0)
+    (set! opt-inline-checked-caller-verdicts 0)
+    (set! opt-inline-checked-scanning? true)))
+
+(define (opt-inline-checked-program-begin!) : unit
+  (begin
+    (set! opt-inline-checked-budget (opt-inline-checked-program-budget))
+    (set! opt-inline-caller-checked-taken? false)
+    (opt-inline-checked-caller-begin!)))
+
+;; Arm (or disarm) the tier. The whole-program optimizer entries arm it; a
+;; fixture disarms it to assert the banked-band-only rewrite against the
+;; measured one over the same input.
+(define (opt-inline-checked-set-active! [on : bool]) : unit
+  (set! opt-inline-checked-active? on))
+
+(define (opt-inline-checked-armed?) : bool
+  opt-inline-checked-active?)
+
+;; What is left of the verdict budget. A program whose sites all belong to a
+;; band never spends any of it, which is how a fixture asserts that a
+;; band-admitted site never reaches the check.
+(define (opt-inline-checked-budget-current) : i64
+  opt-inline-checked-budget)
+
+;; Verdicts spent on, and sites kept in, the caller most recently walked. Both
+;; are what a fixture reads to assert the SEQUENCE: how many sites one caller
+;; was allowed to price, and how many of them survived their own verdict.
+(define (opt-inline-checked-caller-verdicts-current) : i64
+  opt-inline-checked-caller-verdicts)
+
+(define (opt-inline-checked-accepted-current) : i64
+  opt-inline-checked-accepted-count)
+
+;; --- the per-site key tables ------------------------------------------------
+(define (opt-inline-checked-accepted-row-eq?
+  [base : i64]
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]) : bool
+  (and
+    (= (array-ref opt-inline-checked-accepted base) callee-name)
+    (= (array-ref opt-inline-checked-accepted (+ base 1)) block-label)
+    (= (array-ref opt-inline-checked-accepted (+ base 2)) site-pos)))
+
+(define (opt-inline-checked-accepted-from?
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]
+  [row : i64]) : bool
+  (if (>= row opt-inline-checked-accepted-count)
+    false
+    (if (opt-inline-checked-accepted-row-eq?
+      (* row 3)
+      callee-name
+      block-label
+      site-pos)
+      true
+      (opt-inline-checked-accepted-from?
+        callee-name
+        block-label
+        site-pos
+        (+ row 1)))))
+
+;; Is this site one the caller already priced and kept?
+(define (opt-inline-checked-accepted?
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]) : bool
+  (and
+    (> opt-inline-checked-accepted-count 0)
+    (opt-inline-checked-accepted-from? callee-name block-label site-pos 0)))
+
+;; Is this site the ONE new site the current target walk may admit?
+(define (opt-inline-checked-target-match?
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]) : bool
+  (and
+    (= callee-name opt-inline-checked-target-callee)
+    (= block-label opt-inline-checked-target-block)
+    (= site-pos opt-inline-checked-target-pos)))
+
+;; The armed target, for a fixture that drives the sequence by hand.
+(define (opt-inline-checked-target-callee-current) : i64
+  opt-inline-checked-target-callee)
+
+(define (opt-inline-checked-target-pos-current) : i64
+  opt-inline-checked-target-pos)
+
+(define (opt-inline-checked-scan-record!
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]
+  [richness : i64]) : unit
+  (if (>= opt-inline-checked-scan-count (opt-inline-checked-scan-cap))
+    unit
+    (let
+      [base : i64 (* opt-inline-checked-scan-count 4)]
+      (begin
+        (set! (array-ref opt-inline-checked-scan base) callee-name)
+        (set! (array-ref opt-inline-checked-scan (+ base 1)) block-label)
+        (set! (array-ref opt-inline-checked-scan (+ base 2)) site-pos)
+        (set! (array-ref opt-inline-checked-scan (+ base 3)) richness)
+        (set! opt-inline-checked-scan-count (+ opt-inline-checked-scan-count 1))))))
+
+;; ONE CALLEE PER CALLER, and it is a measured rule rather than a budget.
+;;
+;; A caller's later sites are restricted to the callee its first ACCEPT named.
+;; The sequence's wins across the corpus are all one body landing at the several
+;; sites that share it -- a map lookup at two probe sites of one caller
+;; (hashmap_get -11.40%), a line copy at two sites of a chunk runner -- and its
+;; losses are all a caller absorbing DIFFERENT bodies: a sort harness taking a
+;; fill loop and then a checksum loop (opt_quicksort +2.01%), an interner taking
+;; a map insert and then a hash (intern_table +1.60%). The mechanism is the one
+;; the site-depth clause already records: the plan prices an allocation once per
+;; invocation and cannot see the tax a merged body lays on the caller's OTHER
+;; loops. Two copies of one body make one demand on the caller's frame twice
+;; over; two different bodies make two independent demands, and the second is
+;; what pushes the caller's own loops into spilling.
+;;
+;; A refused candidate does not claim the caller: only an accept does.
+(define (opt-inline-checked-callee-allowed? [callee-name : i64]) : bool
+  (or
+    (= opt-inline-checked-accepted-count 0)
+    (= (array-ref opt-inline-checked-accepted 0) callee-name)))
+
+;; The richest allowed row still unarmed, or -1. Ties go to the earlier row, so
+;; the ordering is the scan's walk order refined by richness and never depends
+;; on anything but the caller's own text.
+(define (opt-inline-checked-scan-best-from
+  [row : i64]
+  [best : i64]
+  [best-richness : i64]) : i64
+  (if (>= row opt-inline-checked-scan-count)
+    best
+    (let
+      [base : i64 (* row 4)]
+      [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
+      (if (and
+        (> richness best-richness)
+        (opt-inline-checked-callee-allowed?
+          (array-ref opt-inline-checked-scan base)))
+        (opt-inline-checked-scan-best-from (+ row 1) row richness)
+        (opt-inline-checked-scan-best-from (+ row 1) best best-richness)))))
+
+;; Arm the next round's target: the richest candidate the caller has left, if
+;; the caller and the program can still afford a verdict. The row is spent here
+;; rather than at the verdict, so a target the current state can no longer place
+;; is never retried.
+(define (opt-inline-checked-arm-next-target!) : bool
+  (if (or
+    (>=
+      opt-inline-checked-caller-verdicts
+      (opt-inline-checked-max-caller-verdicts))
+    (<= opt-inline-checked-budget 0))
+    false
+    (let
+      [row : i64 (opt-inline-checked-scan-best-from 0 (- 0 1) 0)]
+      (if (< row 0)
+        false
+        (let
+          [base : i64 (* row 4)]
+          (begin
+            (set!
+              opt-inline-checked-target-callee
+              (array-ref opt-inline-checked-scan base))
+            (set!
+              opt-inline-checked-target-block
+              (array-ref opt-inline-checked-scan (+ base 1)))
+            (set!
+              opt-inline-checked-target-pos
+              (array-ref opt-inline-checked-scan (+ base 2)))
+            (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
+            (set! opt-inline-checked-scanning? false)
+            true))))))
+
+;; Move the armed target into the accepted table: from here on every walk of
+;; this caller rebuilds the site.
+(define (opt-inline-checked-accept-target!) : unit
+  (if (>=
+    opt-inline-checked-accepted-count
+    (opt-inline-checked-max-caller-verdicts))
+    unit
+    (let
+      [base : i64 (* opt-inline-checked-accepted-count 3)]
+      (begin
+        (set!
+          (array-ref opt-inline-checked-accepted base)
+          opt-inline-checked-target-callee)
+        (set!
+          (array-ref opt-inline-checked-accepted (+ base 1))
+          opt-inline-checked-target-block)
+        (set!
+          (array-ref opt-inline-checked-accepted (+ base 2))
+          opt-inline-checked-target-pos)
+        (set!
+          opt-inline-checked-accepted-count
+          (+ opt-inline-checked-accepted-count 1))))))
+
+(define (opt-inline-checked-spend-verdict!) : unit
+  (begin
+    (set! opt-inline-checked-budget (- opt-inline-checked-budget 1))
+    (set!
+      opt-inline-checked-caller-verdicts
+      (+ opt-inline-checked-caller-verdicts 1))))
+
+;; The loop depth of the caller block the walk is standing in, as a census
+;; weight. Built from the caller's current blocks with the census's own
+;; back-edge depth estimate; the label-to-position scan is linear and only a
+;; candidate that has already cleared every integer clause pays for it.
+(define (opt-inline-checked-block-weight-from
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]
+  [position : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) 0]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block block-label _)
+          (if (= block-label label)
+            (opt-inline-census-depth-at position)
+            (opt-inline-checked-block-weight-from
+              (__tl-box-place rest)
+              label
+              (+ position 1)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-checked-block-weight-from
+        (ir.compiler-ir-block-seq-to-list seq)
+        label
+        position)]))
+
+(define (opt-inline-checked-site-depth-now) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (opt-inline-caller-facts-blocks-shared-view)]
+    (begin
+      (opt-inline-census-depths-build! blocks)
+      (opt-inline-checked-block-weight-from
+        blocks
+        opt-inline-current-block-label
+        0))))
+
+(define (opt-inline-checked-site-frequency
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [site-weight : i64]) : i64
+  (let
+    [caller-hot : i64
+      (opt-inline-census-hot-refcount index census opt-inline-caller-name)]
+    (*
+      site-weight
+      (if (< caller-hot 1)
+        1
+        caller-hot))))
+
+;; An ALREADY-ACCEPTED site skips every clause below. Its growth was priced in
+;; the round that kept it, and the two clauses that could refuse it now -- the
+;; block ceiling and the heavy gate, both of which count this tier's own blocks
+;; -- have only tightened since, because the accepted sites' blocks are exactly
+;; what they count. Re-refusing one would drop a kept inline out of the state
+;; the next verdict is priced against, and that verdict would then be pricing
+;; two changes rather than one, which is the whole thing this tier exists to
+;; avoid.
+;;
+;; A NEW candidate is ordered cheapest-first: the tier's own state and the
+;; target key, then the integer size clauses, then the growth budgets, then the
+;; call-free scan, and last the site weight, which builds a depth table over the
+;; caller. In scan mode the last step RECORDS the site and refuses it; in target
+;; mode it admits the one site the round is pricing.
+(define (opt-inline-checked-ok?
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [callee-name : i64]
+  [refs : i64]
+  [callee-instrs : i64]
+  [np : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [site-pos : i64]) : bool
+  (if (not opt-inline-checked-active?)
+    false
+    (if (opt-inline-checked-accepted?
+      callee-name
+      opt-inline-current-block-label
+      site-pos)
+      (begin
+        (set! opt-inline-checked-new-site? false)
+        true)
+      (and
+        (not opt-inline-caller-checked-taken?)
+        (> opt-inline-checked-budget 0)
+        (<
+          opt-inline-checked-caller-verdicts
+          (opt-inline-checked-max-caller-verdicts))
+        (or
+          opt-inline-checked-scanning?
+          (opt-inline-checked-target-match?
+            callee-name
+            opt-inline-current-block-label
+            site-pos))
+        (opt-inline-checked-callee-allowed? callee-name)
+        (>= refs 1)
+        (<= callee-instrs (opt-inline-checked-max-body))
+        (<=
+          (ir.compiler-ir-block-list-count blocks)
+          (opt-inline-checked-max-blocks))
+        (not (opt-inline-census-address-taken? index census callee-name))
+        ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
+        ;; included; the block ceiling above is also this tier's own fuel, so a
+        ;; checked import never spends the fuel the caller's banked absorptions
+        ;; draw on.
+        (not
+          (opt-inline-cost-crosses-heavy-gate?
+            caller-blocks
+            (+ added-so-far opt-inline-caller-checked-blocks)
+            added-blocks))
+        (<=
+          (+ opt-inline-caller-checked-blocks added-blocks)
+          (opt-inline-checked-max-blocks))
+        ;; A clone is bounded by the callee's own size only while nothing inside
+        ;; it brings another body along, and the multiblock clone path
+        ;; miscompiles call-carrying clones (#6307). The check prices a body; it
+        ;; cannot price one that is not all there.
+        (opt-inline-blocks-call-free? blocks)
+        (let
+          [site-depth : i64 (opt-inline-checked-site-depth-now)]
+          [site-weight : i64 (opt-inline-census-depth-weight site-depth)]
+          [frequency : i64
+            (opt-inline-checked-site-frequency index census site-weight)]
+          (if (and
+            (>= site-depth (opt-inline-checked-min-site-depth))
+            (>= frequency (opt-inline-checked-min-frequency)))
+            (if opt-inline-checked-scanning?
+              ;; RICHNESS: what a free inline of this site would be worth --
+              ;; how often the site runs times what its boundary costs. It is
+              ;; the `boundary` term of the verdict itself, scaled by the
+              ;; caller's own hot reference count, which is the only ranking
+              ;; that puts the biggest claim in front of the smallest state.
+              (begin
+                (opt-inline-checked-scan-record!
+                  callee-name
+                  opt-inline-current-block-label
+                  site-pos
+                  (opt-inline-checked-richness frequency np callee-instrs))
+                false)
+              (begin
+                (set! opt-inline-checked-site-depth site-depth)
+                (set! opt-inline-checked-site-weight site-weight)
+                (set! opt-inline-checked-callee-params np)
+                (set!
+                  opt-inline-checked-callee-slot
+                  (match (opt-function-index-slot index callee-name)
+                    [(option_i64.Some slot) slot]
+                    [(option_i64.None) (- 0 1)]))
+                (set! opt-inline-checked-new-site? true)
+                true))
+            false))))))
+
+;; --- pricing one function's plan --------------------------------------------
+(define (opt-inline-checked-weighted-instrs-from
+  [blocks : ir.CompilerIrBlockList]
+  [offset : i64]
+  [position : i64]
+  [acc : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-inline-checked-weighted-instrs-from
+            (__tl-box-place rest)
+            offset
+            (+ position 1)
+            (+
+              acc
+              (*
+                (opt-inline-census-depth-weight
+                  (+ offset (opt-inline-census-depth-at position)))
+                (ir.compiler-ir-instr-seq-count instrs))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-checked-weighted-instrs-from
+        (ir.compiler-ir-block-seq-to-list seq)
+        offset
+        position
+        acc)]))
+
+;; `offset` is the loop depth the body would sit at in its caller. Zero prices a
+;; body where it stands; the site's depth prices a callee's body where the
+;; inline would put it, which is the only reading under which the two sides of
+;; the comparison stay in the same currency once the weight ladder saturates.
+(define (opt-inline-checked-weighted-instrs-at
+  [func : ir.CompilerIrFunction]
+  [offset : i64]) : i64
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (begin
+        (opt-inline-census-depths-build! blocks)
+        (opt-inline-checked-weighted-instrs-from blocks offset 0 0))]))
+
+;; Callee-saved integer registers the plan homes a value in, read straight off
+;; the assignment table against the ABI's own callee-saved list, so no backend
+;; emission state is involved. The ABI is fixed to Linux on purpose: an
+;; admission verdict feeds codegen, and codegen must not depend on the target.
+(define (opt-inline-checked-csr-count-from
+  [assignments : reg.CompilerRegAssignmentTable]
+  [index : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-inline-checked-csr-count-from
+      assignments
+      (+ index 1)
+      count
+      (+
+        acc
+        (if (reg.compiler-reg-assignments-use-register?
+          assignments
+          (cabi.compiler-abi-callee-saved-gp-register-id
+            (cabi.CompilerRegTargetAbi.Linux)
+            index))
+          1
+          0)))))
+
+(define (opt-inline-checked-spill-cost-from
+  [assignments : reg.CompilerRegAssignmentTable]
+  [weights : (__tl_dyn-array i64)]
+  [var : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= var count)
+    acc
+    (opt-inline-checked-spill-cost-from
+      assignments
+      weights
+      (+ var 1)
+      count
+      (+
+        acc
+        (match (reg.compiler-reg-assignment-lookup assignments var)
+          [(reg.CompilerRegMaybeLocation.Some location)
+            (match location
+              [(reg.CompilerRegLocation.Spill _)
+                (if (< var (array-length weights))
+                  (array-ref weights var)
+                  0)]
+              [_ 0])]
+          [(reg.CompilerRegMaybeLocation.No) 0])))))
+
+;; The plan is read STANDALONE: this tier runs the allocator on one IR function
+;; from inside the optimizer, and the backend of this compile has not run yet.
+;; The allocator's program maps -- aggregate group word counts, their SSE class
+;; masks, and the private-memory C call names -- are facts about the IMAGE the
+;; backend is emitting, installed from its program index and owned by that
+;; image's arena. A standalone plan has no image, so those queries must answer
+;; the way they answer in a fresh process: missing.
+;;
+;; That is not merely tidy. `compile --batch` reuses one process across entries,
+;; so on the second entry onward those globals still name the PREVIOUS entry's
+;; arena, which has been torn down -- and this tier is the first reader in the
+;; compile that reaches them, arriving before the backend re-installs. Reading
+;; them there dereferences freed storage: it segfaulted the build-invariance
+;; corpus on generated_hashmap_global_mutation, the third entry of its first
+;; opt2 chunk, inside compiler-reg-type-register-group?. Suppressing the maps
+;; for the duration of the measurement gives every entry the answers the first
+;; entry already gets, so the verdict stops depending on batch position as well.
+(define (opt-inline-checked-alloc-cost [func : ir.CompilerIrFunction]) : i64
+  (let
+    [_suppress-image-maps : unit (reg.compiler-reg-suppress-program-maps! true)]
+    [plan : reg.CompilerRegPlan (reg.compiler-reg-plan-function-scalar func)]
+    [assignments : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-plan-assignments plan)]
+    [weights : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-spill-weights func)]
+    [vars : i64
+      (match func
+        [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
+    [cost : i64
+      (+
+        (*
+          2
+          (opt-inline-checked-csr-count-from
+            assignments
+            0
+            (cabi.compiler-abi-callee-saved-gp-register-count
+              (cabi.CompilerRegTargetAbi.Linux))
+            0))
+        (opt-inline-checked-spill-cost-from assignments weights 0 vars 0))]
+    [_restore-image-maps : unit (reg.compiler-reg-suppress-program-maps! false)]
+    cost))
+
+;; `offset` and `entry-weight` place the body: `offset` is the loop depth its
+;; instructions would sit at, and `entry-weight` is how often the body is
+;; entered, which is what the prologue and the spill traffic pay per entry.
+;; The check's optimizer runs are MEASUREMENTS, not pipeline stages: their
+;; results are thrown away and only a bool escapes. So the developer
+;; observability hooks are silenced around them. Leaving them live would make
+;; `--trace-passes` report passes over functions the pipeline never optimized
+;; and would push throwaway generations into the `--dump-ir` buffer, which is
+;; what scripts/verify-ir-observability.sh reads.
+(define (opt-inline-checked-plan-cost-at
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [offset : i64]
+  [entry-weight : i64]) : i64
+  (let
+    [saved-verify : bool compiler-opt-debug-verify-ir]
+    [_silence : unit
+      (begin
+        (compiler-opt-debug-set-suppressed! true)
+        (set! compiler-opt-debug-verify-ir false))]
+    [optimized : ir.CompilerIrFunction
+      (optimize-function-with-level pools type-segment-bases func 2)]
+    [_restore : unit
+      (begin
+        (compiler-opt-debug-set-suppressed! false)
+        (set! compiler-opt-debug-verify-ir saved-verify))]
+    (+
+      (opt-inline-checked-weighted-instrs-at optimized offset)
+      (* entry-weight (opt-inline-checked-alloc-cost optimized)))))
+
+(define (opt-inline-checked-plan-cost
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : i64
+  (opt-inline-checked-plan-cost-at pools type-segment-bases func 0 1))
+
+;; The accept window, named so it can be pinned on its own. `saving` is the
+;; modelled cost the inline removes; `boundary` is what a free inline would
+;; remove. See opt-inline-checked-verdict for why the window is two-sided.
+(define (opt-inline-checked-window-ok? [saving : i64] [boundary : i64]) : bool
+  (and (>= (* 2 saving) boundary) (<= saving (* 2 boundary))))
+
+;; The verdict. Both sides priced per invocation of the caller; see the tier
+;; comment for the model and the margin.
+;;
+;; `banked-cost-in` is the priced state's cost when a previous round in this
+;; caller already computed it -- the sequence prices site after site against
+;; states it built itself, and re-optimizing a function this tier has already
+;; optimized to read the same integer back is a third of the check's cost for
+;; nothing. Negative means "not known". Whichever cost the verdict settles on
+;; for the state it leaves behind is published for the next round.
+(define (opt-inline-checked-verdict
+  [type-segment-bases : i64]
+  [checked : ir.CompilerIrFunction]
+  [banked : ir.CompilerIrFunction]
+  [callee : ir.CompilerIrFunction]
+  [site-depth : i64]
+  [site-weight : i64]
+  [np : i64]
+  [banked-cost-in : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [after : i64
+      (opt-inline-checked-plan-cost pools type-segment-bases checked)]
+    [banked-cost : i64
+      (if (>= banked-cost-in 0)
+        banked-cost-in
+        (opt-inline-checked-plan-cost pools type-segment-bases banked))]
+    ;; The callee priced where the inline would put it: its instructions at the
+    ;; site's depth, its prologue and its spill traffic once per site
+    ;; execution.
+    [callee-cost : i64
+      (opt-inline-checked-plan-cost-at
+        pools
+        type-segment-bases
+        callee
+        site-depth
+        site-weight)]
+    [boundary : i64 (* site-weight (opt-inline-checked-boundary-cost np))]
+    [before : i64 (+ banked-cost (+ boundary callee-cost))]
+    ;; A TWO-SIDED window, not a threshold. A free inline -- the copy exactly as
+    ;; good as the callee, the boundary gone -- predicts a saving of exactly
+    ;; `boundary`. The lower bound is the ordinary demand that at least half
+    ;; that saving survives re-optimization. The UPPER bound is what the
+    ;; measured corpus forced, and it is a statement about the model rather than
+    ;; about inlining: both sides are priced through a loop-depth estimate that
+    ;; reads back edges in BLOCK ORDER, and inlining is precisely the rewrite
+    ;; that reorders a caller's blocks, so the two sides stop being measured in
+    ;; the same currency exactly when the merged body's shape changes most. A
+    ;; modelled saving many times what a free inline can produce is evidence of
+    ;; that, not evidence of a brilliant merge -- and every one of the campaign's
+    ;; documented losers presents that way here: `pl-line-end` into
+    ;; `pl-drop-fallthrough` models a saving of 1,193 against a boundary of 64
+    ;; and measures +6.3% on peephole_lines; `recompute!` into `fixpoint!` models
+    ;; 972 against 160 and measures +2.5% on liveness_scan; `cfg-loop-body` into
+    ;; `cfg-natural-loops` models 2,698 against 832 and measures +0.7%.
+    ;;
+    ;; So the tier keeps a site only when the model AGREES with the free-inline
+    ;; prediction to within a factor of two in both directions. Where it does
+    ;; not, the model is not trusted in either direction and the site reverts.
+    ;; This is the clear-margin discipline read as a confidence interval, which
+    ;; is the only honest reading of a two-sided estimate.
+    [keep? : bool (opt-inline-checked-window-ok? (- before after) boundary)]
+    [_publish : unit
+      (set!
+        opt-inline-checked-next-state-cost
+        (if keep?
+          after
+          banked-cost))]
+    keep?))
+
+;; The check allocates three optimizer generations and three allocation plans
+;; per candidate and reads one bool out of them. Run it in the inline stage's
+;; verify scratch arena and rewind, exactly as the structural verifier does, so
+;; none of that survives into the program arena.
+(define (opt-inline-checked-verdict-reclaiming
+  [type-segment-bases : i64]
+  [checked : ir.CompilerIrFunction]
+  [banked : ir.CompilerIrFunction]
+  [callee : ir.CompilerIrFunction]
+  [site-depth : i64]
+  [site-weight : i64]
+  [np : i64]
+  [banked-cost-in : i64]) : bool
+  (if (= opt-inline-verify-scratch-arena 0)
+    (opt-inline-checked-verdict
+      type-segment-bases
+      checked
+      banked
+      callee
+      site-depth
+      site-weight
+      np
+      banked-cost-in)
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 opt-inline-verify-scratch-arena]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set scratch))]
+      [mark : i64 (arena.tl_region_mark)]
+      [ok : bool
+        (opt-inline-checked-verdict
+          type-segment-bases
+          checked
+          banked
+          callee
+          site-depth
+          site-weight
+          np
+          banked-cost-in)]
+      [scratch-head : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch-head)
+          (arena.tl_region_reset mark))
+        (set! opt-inline-verify-scratch-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set enclosing))
+        ok))))
 
 (define (opt-inline-bounds-leaf-cost-inline?
   [callee-instrs : i64]
@@ -74449,10 +75933,11 @@
                     added-blocks
                     caller-blocks
                     added-so-far)]
-                ;; A call-free cyclic leaf past the duplication ceiling is
-                ;; admitted on its own terms too: it keeps its own body
-                ;; wherever this gate does not take it, so no absorb credit is
-                ;; claimed.
+                ;; A call-free cyclic leaf is admitted on its own terms too: it
+                ;; keeps its own body wherever this gate does not take it, so no
+                ;; absorb credit is claimed -- which is what lets the gate span
+                ;; every reference class, single-reference sites included,
+                ;; without owing the census an absorption it did not perform.
                 [hot-loop-leaf? : bool
                   (opt-inline-hot-loop-leaf-ok?
                     index
@@ -74535,7 +76020,8 @@
                     added-blocks
                     caller-blocks
                     added-so-far)]
-                [inline? : bool
+                ;; The predictive verdict: every band above, unchanged.
+                [band-admits? : bool
                   (and
                     bounds-ok?
                     bounds-loop-ok?
@@ -74544,6 +76030,26 @@
                       hot-loop-leaf?
                       branch-chain?
                       single-site-absorb?))]
+                ;; The measured tier is asked only about sites no band takes: a
+                ;; site both admit belongs to the band, which is cheaper (no
+                ;; re-optimize, no re-plan) and already carries its own
+                ;; measured argument.
+                [checked? : bool
+                  (and
+                    (not band-admits?)
+                    (opt-inline-checked-ok?
+                      index
+                      census
+                      callee-name
+                      refs
+                      callee-instrs
+                      np
+                      cblocks
+                      added-blocks
+                      caller-blocks
+                      added-so-far
+                      site-pos))]
+                [inline? : bool (or band-admits? checked?)]
                 ;; True only when the hot-loop-leaf gate is what admits this
                 ;; site: its blocks spend the gate's own fuel, not the shared
                 ;; accumulator the caller's banked absorptions draw on.
@@ -74610,13 +76116,37 @@
                               opt-inline-caller-accessor-blocks
                               (+ opt-inline-caller-accessor-blocks added-blocks))
                             unit)]
-                        ;; A hot-loop or chain import's blocks stay out of the
-                        ;; shared accumulator; each gate charged its own fuel
-                        ;; above.
+                        ;; The measured tier's own accounting: its blocks, and
+                        ;; the flag that says THIS walk placed its one new site.
+                        ;; A re-admitted accepted site adds its blocks -- a
+                        ;; later candidate is budgeted against the caller's
+                        ;; whole checked growth -- but does not consume the
+                        ;; walk's new-site slot. The program budget is spent by
+                        ;; the VERDICT, not here, because a rejected candidate
+                        ;; costs the same work an accepted one does.
+                        [_checked-bump : unit
+                          (if checked?
+                            (begin
+                              (set!
+                                opt-inline-caller-checked-blocks
+                                (+
+                                  opt-inline-caller-checked-blocks
+                                  added-blocks))
+                              (if opt-inline-checked-new-site?
+                                (set! opt-inline-caller-checked-taken? true)
+                                unit))
+                            unit)]
+                        ;; A hot-loop, chain, accessor or checked import's
+                        ;; blocks stay out of the shared accumulator; each gate
+                        ;; charged its own fuel above.
                         [added2 : i64
                           (+
                             prefix-added
-                            (if (or hot-import? chain-import? accessor-import?)
+                            (if (or
+                              hot-import?
+                              chain-import?
+                              accessor-import?
+                              checked?)
                               0
                               added-blocks))]
                         [stage-instrs : ir.CompilerIrInstrList
@@ -75327,7 +76857,8 @@
                     added-blocks
                     caller-blocks
                     added-so-far)]
-                [inline? : bool
+                ;; Same predictive verdict as the non-span path.
+                [band-admits? : bool
                   (and
                     bounds-ok?
                     bounds-loop-ok?
@@ -75336,6 +76867,23 @@
                       hot-loop-leaf?
                       branch-chain?
                       single-site-absorb?))]
+                ;; Same measured tier as the non-span path.
+                [checked? : bool
+                  (and
+                    (not band-admits?)
+                    (opt-inline-checked-ok?
+                      index
+                      census
+                      callee-name
+                      refs
+                      callee-instrs
+                      np
+                      cblocks
+                      added-blocks
+                      caller-blocks
+                      added-so-far
+                      site-pos))]
+                [inline? : bool (or band-admits? checked?)]
                 ;; Same hot-import accounting as the non-span path.
                 [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
                 ;; Same chain-import accounting as the non-span path.
@@ -75403,12 +76951,35 @@
                               opt-inline-caller-accessor-blocks
                               (+ opt-inline-caller-accessor-blocks added-blocks))
                             unit)]
-                        ;; Same hot-import and chain-import accounting as the
-                        ;; non-span path.
+                        ;; The measured tier's own accounting: its blocks, and
+                        ;; the flag that says THIS walk placed its one new site.
+                        ;; A re-admitted accepted site adds its blocks -- a
+                        ;; later candidate is budgeted against the caller's
+                        ;; whole checked growth -- but does not consume the
+                        ;; walk's new-site slot. The program budget is spent by
+                        ;; the VERDICT, not here, because a rejected candidate
+                        ;; costs the same work an accepted one does.
+                        [_checked-bump : unit
+                          (if checked?
+                            (begin
+                              (set!
+                                opt-inline-caller-checked-blocks
+                                (+
+                                  opt-inline-caller-checked-blocks
+                                  added-blocks))
+                              (if opt-inline-checked-new-site?
+                                (set! opt-inline-caller-checked-taken? true)
+                                unit))
+                            unit)]
+                        ;; Same import accounting as the non-span path.
                         [added2 : i64
                           (+
                             prefix-added
-                            (if (or hot-import? chain-import? accessor-import?)
+                            (if (or
+                              hot-import?
+                              chain-import?
+                              accessor-import?
+                              checked?)
                               0
                               added-blocks))]
                         [stage-instrs : ir.CompilerIrInstrList
@@ -75988,7 +77559,69 @@
           next)
         fallback)]))
 
-(define (opt-inline-function
+;; The measured tier's SEQUENTIAL per-site pricing, shared by both walk entries.
+;;
+;; A caller is walked once in SCAN mode. The checked band admits nothing there,
+;; so that walk's result is exactly the caller's banked-band-only rewrite --
+;; same input function, same census, same caller facts -- which is what makes
+;; the baseline a restore rather than an approximation of one; and the same walk
+;; ranks every candidate it passes over. A caller with no candidate stops there
+;; and pays nothing.
+;;
+;; Then one ROUND per verdict, richest candidate first. A target walk rebuilds
+;; the caller with every site already kept PLUS the round's one new site, and
+;; the verdict prices exactly that difference against the state that preceded
+;; it. Keep, and the new state carries the site into the next round; revert, and
+;; the previous state is what the next round is priced against.
+;;
+;; WHY THE SEQUENCE. The all-or-nothing alternative -- admit every candidate in
+;; one walk and price the lot -- can only accept or lose the whole set, and a
+;; caller's sites are not all worth the same: the measured case is an interner
+;; whose two leaves both belong in it and a third caller whose one accepted leaf
+;; would be dragged out by a sibling that does not repay. Per-site rollback is
+;; the only shape in which one caller can keep one callee and refuse another.
+;;
+;; WHY RICHEST FIRST, and it is load-bearing rather than tidiness: a verdict
+;; prices its site against the state that precedes it, so a poor site taken
+;; first spends a round AND leaves the rich site to be priced against a caller
+;; already carrying the poor one's blocks -- both of which cost the rich site
+;; its verdict. Ranking by the site's own free-inline worth puts the biggest
+;; claim in front of the smallest state.
+;;
+;; The program budget is spent by the VERDICT, so a round whose target the
+;; current state can no longer place -- the block ceiling counts the accepted
+;; sites' blocks, and that is the ceiling doing its job -- costs one walk and no
+;; budget, and the next candidate down the ranking is still measured.
+(define (opt-inline-checked-callee-at [index : OptFunctionIndex] [slot : i64]) : OptMaybeFunction
+  (if (or (< slot 0) (>= slot (opt-function-index-count index)))
+    (OptMaybeFunction.No)
+    (OptMaybeFunction.Some (array-ref index.values slot))))
+
+(define (opt-inline-checked-keep?
+  [type-segment-bases : i64]
+  [index : OptFunctionIndex]
+  [checked : ir.CompilerIrFunction]
+  [banked : ir.CompilerIrFunction]
+  [banked-cost : i64]) : bool
+  (match (opt-inline-checked-callee-at index opt-inline-checked-callee-slot)
+    [(OptMaybeFunction.Some callee)
+      (opt-inline-checked-verdict-reclaiming
+        type-segment-bases
+        checked
+        banked
+        callee
+        opt-inline-checked-site-depth
+        opt-inline-checked-site-weight
+        opt-inline-checked-callee-params
+        banked-cost)]
+    ;; No callee to price against: the site cannot be justified, so it goes --
+    ;; and the state the next round is priced against is unchanged.
+    [(OptMaybeFunction.No)
+      (begin
+        (set! opt-inline-checked-next-state-cost banked-cost)
+        false)]))
+
+(define (opt-inline-function-walk
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [index : OptFunctionIndex]
@@ -76046,7 +77679,98 @@
                           opt-inline-caller-accessor-blocks)))
                     0))))]))]))
 
-(define (opt-inline-function-with-spans
+;; One round: arm the richest remaining candidate, rebuild the caller with it,
+;; price it against `state`, and recurse on whichever side the verdict names.
+;; The recursion terminates because arming a target spends its scan row whether
+;; or not the walk can still place it.
+(define (opt-inline-checked-rounds
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [state : ir.CompilerIrFunction]
+  [state-cost : i64]) : ir.CompilerIrFunction
+  (if (not (opt-inline-checked-arm-next-target!))
+    state
+    (let
+      [candidate : ir.CompilerIrFunction
+        (opt-inline-function-walk
+          type-segment-bases
+          func
+          index
+          census
+          scc-result
+          caller-scc)]
+      (if (not opt-inline-caller-checked-taken?)
+        ;; The state that precedes this site no longer admits it. Nothing was
+        ;; priced, so nothing is spent.
+        (opt-inline-checked-rounds
+          type-segment-bases
+          func
+          index
+          census
+          scc-result
+          caller-scc
+          state
+          state-cost)
+        (let
+          [_spend : unit (opt-inline-checked-spend-verdict!)]
+          [keep? : bool
+            (opt-inline-checked-keep?
+              type-segment-bases
+              index
+              candidate
+              state
+              state-cost)]
+          [next-cost : i64 opt-inline-checked-next-state-cost]
+          [_accept : unit
+            (if keep?
+              (opt-inline-checked-accept-target!)
+              unit)]
+          (opt-inline-checked-rounds
+            type-segment-bases
+            func
+            index
+            census
+            scc-result
+            caller-scc
+            (if keep?
+              candidate
+              state)
+            next-cost))))))
+
+(define (opt-inline-function
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : ir.CompilerIrFunction
+  (let
+    [_begin : unit (opt-inline-checked-caller-begin!)]
+    [banked : ir.CompilerIrFunction
+      (opt-inline-function-walk
+        type-segment-bases
+        func
+        index
+        census
+        scc-result
+        caller-scc)]
+    (if (= opt-inline-checked-scan-count 0)
+      banked
+      (opt-inline-checked-rounds
+        type-segment-bases
+        func
+        index
+        census
+        scc-result
+        caller-scc
+        banked
+        (- 0 1)))))
+
+(define (opt-inline-function-with-spans-walk
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [index : OptFunctionIndex]
@@ -76121,6 +77845,138 @@
                       func
                       ir.CompilerIrFunctionList.Nil)
                     out-spans))))]))]))
+
+(define (opt-inline-span-program-function
+  [program : OptInlineSpanProgram]
+  [fallback : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match program
+    [(OptInlineSpanProgram.Program one _)
+      (match one
+        [(ir.CompilerIrFunctionList.Cons head _) head]
+        [(ir.CompilerIrFunctionList.Nil) fallback]
+        [(ir.CompilerIrFunctionList.Array seq)
+          (if (> (ir.compiler-ir-function-seq-count seq) 0)
+            (ir.compiler-ir-function-seq-ref seq 0)
+            fallback)])]))
+
+;; Same sequence as the span-free entry. Re-walking is safe on the spans side,
+;; but not for the reason the shape first suggests, so the argument is written
+;; out here.
+;;
+;; A spans value is (slots, len) by value, and every round's walk starts from
+;; the SAME `out-spans` value. Rounds therefore write their entries over each
+;; other's slots rather than after them, and the survivor's `len` can end up
+;; covering slots the LAST round wrote. What makes that harmless is that the
+;; instruction table is a KEY->span map, not a positional record, and the round
+;; ordering makes the last writer's key set a SUPERSET of the survivor's: a
+;; round rebuilds the accepted sites and adds at most the one armed target, so
+;; every key the survivor owns is also written by the last round, carrying the
+;; same span for the same instruction. A lookup of a survivor key therefore
+;; finds the survivor's span whichever round physically wrote the slot.
+;;
+;; That superset property is the invariant to preserve. A future round that can
+;; REMOVE an accepted site, or a walk that renumbers the caller's own values so
+;; the same instruction changes key between rounds, would break it -- and then
+;; the survivor would have to be rebuilt by a final disarmed walk rather than
+;; read back out of shared slots.
+(define (opt-inline-checked-span-rounds
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]
+  [state : OptInlineSpanProgram]
+  [state-cost : i64]) : OptInlineSpanProgram
+  (if (not (opt-inline-checked-arm-next-target!))
+    state
+    (let
+      [candidate : OptInlineSpanProgram
+        (opt-inline-function-with-spans-walk
+          type-segment-bases
+          func
+          index
+          census
+          scc-result
+          caller-scc
+          source-spans
+          out-spans)]
+      (if (not opt-inline-caller-checked-taken?)
+        (opt-inline-checked-span-rounds
+          type-segment-bases
+          func
+          index
+          census
+          scc-result
+          caller-scc
+          source-spans
+          out-spans
+          state
+          state-cost)
+        (let
+          [_spend : unit (opt-inline-checked-spend-verdict!)]
+          [keep? : bool
+            (opt-inline-checked-keep?
+              type-segment-bases
+              index
+              (opt-inline-span-program-function candidate func)
+              (opt-inline-span-program-function state func)
+              state-cost)]
+          [next-cost : i64 opt-inline-checked-next-state-cost]
+          [_accept : unit
+            (if keep?
+              (opt-inline-checked-accept-target!)
+              unit)]
+          (opt-inline-checked-span-rounds
+            type-segment-bases
+            func
+            index
+            census
+            scc-result
+            caller-scc
+            source-spans
+            out-spans
+            (if keep?
+              candidate
+              state)
+            next-cost))))))
+
+(define (opt-inline-function-with-spans
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
+  (let
+    [_begin : unit (opt-inline-checked-caller-begin!)]
+    [banked : OptInlineSpanProgram
+      (opt-inline-function-with-spans-walk
+        type-segment-bases
+        func
+        index
+        census
+        scc-result
+        caller-scc
+        source-spans
+        out-spans)]
+    (if (= opt-inline-checked-scan-count 0)
+      banked
+      (opt-inline-checked-span-rounds
+        type-segment-bases
+        func
+        index
+        census
+        scc-result
+        caller-scc
+        source-spans
+        out-spans
+        banked
+        (- 0 1)))))
 
 (define (opt-function-index-to-list [index : OptFunctionIndex]) : ir.CompilerIrFunctionList
   (ir.CompilerIrFunctionList.Array
@@ -76920,6 +78776,7 @@
       [verify-scratch : i64 (arena.tl_arena_make)]
       (begin
         (set! opt-inline-verify-scratch-arena verify-scratch)
+        (opt-inline-checked-program-begin!)
         (opt-inline-multiblock-ok-memo-install! index)
         (opt-inline-process-scc-order!
           type-segment-bases
@@ -76955,6 +78812,7 @@
       [verify-scratch : i64 (arena.tl_arena_make)]
       [_install-verify-scratch : unit
         (set! opt-inline-verify-scratch-arena verify-scratch)]
+      [_begin-checked : unit (opt-inline-checked-program-begin!)]
       [_install-multiblock-memo : unit
         (opt-inline-multiblock-ok-memo-install! index)]
       [next-spans : ir.CompilerSourceSpans
@@ -82121,6 +83979,7 @@
         ;; same escape argument re-made for a second control flow.
         (begin
           (cfg compile-profile (compiler-opt-profile-start profile-state))
+          (opt-inline-checked-set-active! true)
           (let
             [reachable-functions : ir.CompilerIrFunctionList
               (opt-inline-program-functions type-segment-bases functions level)]
@@ -82555,6 +84414,7 @@
             [_enter-inline-arena : unit
               (unsafe
                 (arena.tl_arena_set inline-arena))]
+            [_arm-checked : unit (opt-inline-checked-set-active! true)]
             [inlined : OptInlineSpanProgram
               (opt-inline-program-functions-with-spans
                 type-segment-bases
@@ -86708,9 +88568,21 @@
   (match class
     [(OptLoadStoreElement)
       ;; Element stores write data-buffer memory; only descriptor-field
-      ;; entries (header-typed base) are provably outside every buffer.
+      ;; entries (header-typed base) and named global CELLS are provably
+      ;; outside every buffer.
+      ;;
+      ;; The global-cell arm is the same allocation-layer argument the header
+      ;; arm makes, one level up the descriptor chain: an element address is
+      ;; derived from a data pointer LOADED out of a descriptor slot, so it
+      ;; addresses that allocation's payload, while a `GlobalField` key
+      ;; addresses a named cell in the static data segment, which no payload
+      ;; allocation overlaps. An inline global array cannot produce the key
+      ;; either -- a variable-offset gep off a global drops its global-base
+      ;; binding (opt-load-global-bases-step), so only constant-offset cell
+      ;; words are ever keyed this way.
       (match (opt-load-entry-key entry)
         [(OptLoadKey.Field _ _ _ header?) header?]
+        [(OptLoadKey.GlobalField _ _ _ _) true]
         [_ false])]
     [(OptLoadStoreField sbase slo swidth sheader?)
       (match (opt-load-entry-key entry)
@@ -86765,6 +88637,47 @@
       (opt-load-key-alias-root facts (opt-load-entry-key entry)))
     (opt-load-entry-precedes-fresh-alloc? store-root entry)
     (opt-load-entry-survives-store-location? type-segment-bases class entry)))
+
+;; `CompilerIrInstr.Store G, v` is the one write form whose target is a SYMBOL
+;; instead of a pointer: it writes the cell named G and nothing else, so its
+;; kill set can be spelled by name rather than emptying the table. An entry
+;; survives when its location is provably not cell G:
+;;
+;;   * `GlobalField` on a DIFFERENT global -- distinct cells never overlap, and
+;;     for a descriptor-valued cell the key names the object the cell POINTS AT,
+;;     which `Store G` (a cell write) leaves untouched either way;
+;;   * a header-typed `Field` -- a descriptor header word lives in the heap
+;;     object a cell points at, never in the cell itself (a global of array or
+;;     string type holds the handle, not the two header words), the same
+;;     allocation-layer argument the element rule above makes;
+;;   * an element-typed `Raw` -- data-buffer payload, never a cell.
+;;
+;; Everything else is dropped. Same-global cell words are the store's own
+;; location; generic fields, scaled fields and unclassified `Raw` addresses may
+;; hold the cell's own address, because `(&mut G)` on a value-typed global
+;; lowers to a `Global G` operand, which the program's address-taken set (built
+;; from `GlobalAddr` operands) does not record.
+(define (opt-load-entry-survives-global-cell-store?
+  [global : i64]
+  [entry : OptLoadEntry]) : bool
+  (match (opt-load-entry-key entry)
+    [(OptLoadKey.GlobalField entry-global _ _ _) (not (= entry-global global))]
+    [(OptLoadKey.Field _ _ _ header?) header?]
+    [(OptLoadKey.ScaledField _ _ _ _) false]
+    [(OptLoadKey.Raw _ _ element?) element?]))
+
+(define (opt-load-table-filter-global-cell-store
+  [table : OptLoadTable]
+  [global : i64]) : OptLoadTable
+  (match table
+    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
+    [(OptLoadTable.Cons entry rest)
+      (let
+        [tail : OptLoadTable
+          (opt-load-table-filter-global-cell-store (__tl-box-place rest) global)]
+        (if (opt-load-entry-survives-global-cell-store? global entry)
+          (OptLoadTable.Cons entry (box tail))
+          tail))]))
 
 (define (opt-load-table-filter-store
   [type-segment-bases : i64]
@@ -87244,6 +89157,47 @@
             instr
             next-epoch)
           (OptLoadTable.Nil)
+          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
+          table-cap
+          next-epoch
+          (opt-load-global-bases-clear bases)
+          profile-state))]))
+
+;; A named global-cell write. Same transfer as the clear-for-memory arm above --
+;; the alias facts, the pointer kinds and the allocation counter all step
+;; identically, and the global bases still CLEAR, because a binding formed
+;; before the store names `contents-of-G + off`, which this instruction is
+;; exactly what changes. Only the load table is treated granularly: the write
+;; lands on cell G alone, so entries proven to live elsewhere are kept (see
+;; opt-load-entry-survives-global-cell-store?). The cleared base map means a
+;; later re-derivation rebuilds its own `GlobalField` key from a fresh
+;; `Global`/`GlobalAddr` operand, so a kept entry is only ever consulted under a
+;; key the walk re-proved, exactly as before this arm existed.
+(define (opt-load-cse-state-global-store
+  [type-segment-bases : i64]
+  [hs : OptLoadHeaderSet]
+  [state : OptLoadCseState]
+  [global : i64]
+  [instr : ir.CompilerIrInstr]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
+      (let
+        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        (OptLoadCseState.State
+          (opt-load-alias-update-facts
+            type-segment-bases
+            facts
+            kinds
+            instr
+            next-epoch)
+          (opt-load-table-filter-global-cell-store table global)
           (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
           table-cap
           next-epoch
@@ -87762,6 +89716,15 @@
           args
           instr)
         instr)]
+    [(ir.CompilerIrInstr.Store name _ _)
+      (OptLoadCseResult.Result
+        (opt-load-cse-state-global-store
+          type-segment-bases
+          hs
+          state
+          (ir.compiler-ir-symbol-id name)
+          instr)
+        instr)]
     [_
       (if (opt-alias-instr-clears-all? instr)
         (OptLoadCseResult.Result
@@ -88015,6 +89978,22 @@
             (if (and header? (opt-gvn-stable-var? sources base))
               (OptLoadTable.Cons entry (box tail))
               tail)]
+          ;; A named cell word is NOT carried, even though a loop-safe body (no
+          ;; call, no clear-all, no `Store G`, element stores only) provably
+          ;; leaves every cell alone, so the key would still name the same
+          ;; location holding the same value. Measured: carrying it is a
+          ;; register-pressure loss, because the carried handle drags the
+          ;; descriptor words derived from it into the same loop-spanning live
+          ;; range. One cachegrind run each, against this tier alone --
+          ;; gvn_table 1,173,199,923 -> 1,169,328,223 (-3,871,700, the post-loop
+          ;; re-derivation in gvn-facts-remove/-insert folding onto the
+          ;; pre-loop walk) but peephole_lines 668,397,310 -> 670,418,364
+          ;; (+2,021,054, +0.30%), all of it in pl_parse_line: its `pl-text`
+          ;; cell, data pointer and length stop being re-derived per scan and
+          ;; start being spilled and reloaded around the loop instead
+          ;; (`movq %r9, 160(%rsp)` / `movq 152(%rsp), %rsi` appear where three
+          ;; rip-relative loads used to be). Same shape as the call-arm carry
+          ;; refusal above: the copy was never the cost, the live range is.
           [_ tail]))]))
 
 ;; Find the (single, SSA) instruction defining `var` anywhere in the function.
@@ -88119,17 +90098,34 @@
 ;; A CALL is rejected even when the per-callee summary proves it writes no
 ;; descriptor field (element-only or write-free), which
 ;; opt-load-table-filter-element-call is happy to act on at an ordinary call
-;; site. Measurement is why. Carrying a descriptor entry across a loop back edge
-;; does not DELETE the loop body's load, it rewrites it to a copy of a var
-;; defined outside the loop -- and that copy's source stays live around the back
-;; edge, so register allocation cannot coalesce the copy away. LICM already
-;; hoists the un-rewritten load into the preheader, where it runs once per loop
-;; ENTRY; the rewrite trades that for one move per ITERATION. Measured on
-;; benchmarks/gvn_table (gvn-scan-ints, whose outer loop's only call is the
-;; element-only vector setter): descriptor-field loads fell 5,369,431 ->
-;; 2,684,716 Ir per round and the function still grew 80,342,627 -> 82,683,001,
-;; because the digit-scan inner loop gained `mov %r12,%r9` at 2,064,917
-;; executions in exchange for a preheader load at 1,275,750.
+;; site. Measurement is why, and it stayed why after substitution mode landed.
+;;
+;; The first measurement was made against the Mov form of the rewrite. Carrying
+;; a descriptor entry across a loop back edge did not DELETE the loop body's
+;; load, it rewrote it to a copy of a var defined outside the loop -- and that
+;; copy's source stays live around the back edge, so register allocation cannot
+;; coalesce the copy away. LICM already hoists the un-rewritten load into the
+;; preheader, where it runs once per loop ENTRY; the rewrite traded that for one
+;; move per ITERATION. Measured on benchmarks/gvn_table (gvn-scan-ints, whose
+;; outer loop's only call is the element-only vector setter): descriptor-field
+;; loads fell 5,369,431 -> 2,684,716 Ir per round and the function still grew
+;; 80,342,627 -> 82,683,001, because the digit-scan inner loop gained
+;; `mov %r12,%r9` at 2,064,917 executions in exchange for a preheader load at
+;; 1,275,750.
+;;
+;; RE-TESTED under substitution mode (opt-load-gvn-subst-pair), which was
+;; expected to rescue the widening by deleting the load instead of copying it.
+;; The rewrite half worked exactly as predicted -- with the call arm admitted,
+;; gvn-scan-ints lost all three carried `gep %0, 8` + `load` pairs outright and
+;; every use read the preheader load directly, the LICM shape with zero copies
+;; -- and the benchmark still LOST. Admitting the call arm on top of
+;; substitution mode moved gvn_table 1,179,567,963 -> 1,181,908,337 Ir
+;; (+2,340,374, +0.20%) and cfg_domloops +834,661 (measured against the
+;; then-current substitution build, before the loop-escape gate below); no other
+;; row moved. +2,340,374 is the SAME delta the Mov form paid, which is the
+;; result: the copy was never the cost. The cost is the carried value's live
+;; range spanning the digit-scan inner loop, and deleting the copy does not
+;; shorten it. The carry stays rejected; substitution mode ships without it.
 (define (opt-load-gvn-loop-safe-instr?
   [hs : OptLoadHeaderSet]
   [blocks : ir.CompilerIrBlockList]
@@ -88541,6 +90537,431 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-load-gvn-block-seq-has-load? seq 0)]))
 
+;; --- load-GVN substitution mode ---------------------------------------------
+;;
+;; opt-load-cse-core-load rewrites a redundant load to `Mov dst earlier`: a COPY
+;; that only pays once register allocation coalesces it away, and that cannot
+;; coalesce when the two live ranges overlap (the loop case documented at
+;; opt-load-gvn-loop-safe-instr?). Substitution mode removes the copy instead of
+;; hoping for a coalesce: rewrite every USE of `dst` to `earlier` and delete the
+;; copy, which for loop-carried reuse equals the LICM outcome (one def outside,
+;; uses inside, zero copies).
+;;
+;; Legality. `earlier` was available at the load, so its def dominates the load;
+;; the load dominates every SSA use of `dst`; so the def dominates every
+;; substituted use. Both vars are required single-source (opt-gvn-stable-var?)
+;; so no intervening redefinition can break that chain -- the cross-block pass
+;; already demands it of `dst`, this adds the same demand on `earlier`.
+;;
+;; Phi uses are the one position where the transitivity argument fails: a phi
+;; input's use position is the incoming EDGE's predecessor end, not the phi's
+;; block, and the load need not dominate that predecessor. opt-copy-subst-instr
+;; already refuses phi inputs (and AddrOf storage names, and the private vector
+;; aggregates), so those uses survive substitution -- and a surviving use is
+;; exactly what keeps the copy alive here: the copy is deleted only when the
+;; substituted function has ZERO remaining uses of `dst`, the same use-count
+;; test DCE deletes a Mov on. A load whose value reaches a phi therefore falls
+;; back to today's Mov form, with no dominance query needed.
+;;
+;; PRESSURE, and the one profitability gate. Against the Mov form substitution
+;; never costs a register: from the copy to `dst`'s last use the Mov form keeps
+;; `dst` live and `earlier` live too wherever `earlier` has a later use, so the
+;; merged range is never the wider one. Against NOT eliminating the load it can,
+;; because a load re-reads memory and holds nothing in between -- and the pass
+;; feeds itself, so a substitution that canonicalizes one address exposes a
+;; second redundant load the Mov form never reached. The shape that loses is a
+;; dominating def INSIDE a loop feeding a load OUTSIDE it: the value then has to
+;; survive every later block instead of dying at its loop's exit. Measured on
+;; benchmarks/cfg_domloops (cfg-idom-iterate): the `%96 = load` in one inner
+;; loop's header forwarded to the sibling inner loop's header two blocks later,
+;; deleting a gep+load pair per iteration but pinning %96 across the second loop
+;; -- 798,103,345 -> 801,917,881 Ir (+0.48%). The register the second loop lost
+;; pushed its data pointer into %rbp, which the backend cannot spell as a SIB
+;; base (see #rbp-base at compiler-backend-address-base-register-ok?), so each
+;; indexed read grew a `movq %rbp,%rN` -- four of them across the loop's two
+;; clones. So the gate: a substitution may shorten a value's live range or
+;; extend it WITHIN the loops it already lives in, never carry it out of one.
+;; Literals are exempt (no live range at all), which is the store-to-load
+;; forwarded constant that folds a bounds guard away in the spmd rows.
+(define (opt-load-gvn-subst-escapes-loop?
+  [loop-masks : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [load-id : i64]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (or (< var 0) (>= var (array-length def-blocks)))
+        true
+        (let
+          ;; def-blocks stores id+1, so 0 is "no def recorded in this function"
+          ;; -- a parameter or an entry-live var, neither of which is in a loop.
+          [def-id : i64 (- (array-ref def-blocks var) 1)]
+          (if (< def-id 0)
+            false
+            (if (or
+              (< load-id 0)
+              (>= load-id (array-length loop-masks))
+              (>= def-id (array-length loop-masks)))
+              true
+              (not
+                (=
+                  (bit-and
+                    (array-ref loop-masks def-id)
+                    (bit-not (array-ref loop-masks load-id)))
+                  0))))))]
+    [_ false]))
+
+;; The gate-free half of the candidate test, shared by the pre-scan and the
+;; gated walk.
+(define (opt-load-gvn-subst-candidate?
+  [sources : opt_i64_i64_map.Map]
+  [original : ir.CompilerIrInstr]
+  [rewritten : ir.CompilerIrInstr]) : bool
+  (match original
+    [(ir.CompilerIrInstr.Load load-dst _ _)
+      (match rewritten
+        [(ir.CompilerIrInstr.Mov mov-dst src _)
+          (and
+            (= load-dst mov-dst)
+            (opt-gvn-stable-var? sources mov-dst)
+            (opt-gvn-value-stable? sources src)
+            (not (opt-value-is-var? src mov-dst)))]
+        [_ false])]
+    [_ false]))
+
+(define (opt-load-gvn-subst-pair
+  [sources : opt_i64_i64_map.Map]
+  [loop-masks : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [load-id : i64]
+  [original : ir.CompilerIrInstr]
+  [rewritten : ir.CompilerIrInstr]
+  [env : OptCopyEnv]) : OptCopyEnv
+  (if (not (opt-load-gvn-subst-candidate? sources original rewritten))
+    env
+    (match rewritten
+      [(ir.CompilerIrInstr.Mov mov-dst src _)
+        (let
+          [resolved : ir.CompilerIrValue (opt-copy-resolve env src)]
+          (if (opt-load-gvn-subst-escapes-loop?
+            loop-masks
+            def-blocks
+            load-id
+            resolved)
+            env
+            (OptCopyEnv.Cons mov-dst resolved (box env))))]
+      [_ env])))
+
+;; Record where each var is defined, as block id + 1. The walk is in RPO, and a
+;; substituted value's def dominates its load, so the def is always already
+;; recorded when the load is reached.
+(define (opt-load-gvn-record-def
+  [def-blocks : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [dst : i64 (opt-gvn-instr-dst instr)]
+    (if (or (< dst 0) (>= dst (array-length def-blocks)))
+      unit
+      (begin
+        (set! (array-ref def-blocks dst) (+ block-id 1))
+        unit))))
+
+;; Pair the pass input block with its rewrite. The rewrite is 1:1 in index and
+;; order, so an index whose input is a Load and whose output is a Mov to the
+;; same dst is exactly one redundant-load rewrite.
+(define (opt-load-gvn-subst-block-env
+  [sources : opt_i64_i64_map.Map]
+  [loop-masks : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [original : ir.CompilerIrBlock]
+  [rewritten : ir.CompilerIrBlock]
+  [env : OptCopyEnv]) : OptCopyEnv
+  (match original
+    [(ir.CompilerIrBlock.Block _ original-instrs)
+      (match rewritten
+        [(ir.CompilerIrBlock.Block _ rewritten-instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count original-instrs)]
+            [paired? : bool
+              (= count (ir.compiler-ir-instr-seq-count rewritten-instrs))]
+            [index : i64 0]
+            [acc : OptCopyEnv env]
+            (begin
+              (while (< index count)
+                (begin
+                  (if paired?
+                    (set!
+                      acc
+                      (opt-load-gvn-subst-pair
+                        sources
+                        loop-masks
+                        def-blocks
+                        block-id
+                        (ir.compiler-ir-instr-seq-ref original-instrs index)
+                        (ir.compiler-ir-instr-seq-ref rewritten-instrs index)
+                        acc))
+                    unit)
+                  (opt-load-gvn-record-def
+                    def-blocks
+                    block-id
+                    (ir.compiler-ir-instr-seq-ref original-instrs index))
+                  (set! index (+ index 1))))
+              acc))])]))
+
+;; Allocation-free pre-scan: does any rewrite in this function clear the
+;; gate-free half of the candidate test? A function with none skips the frame
+;; walk and the two per-block-id arrays entirely.
+(define (opt-load-gvn-subst-block-any?
+  [sources : opt_i64_i64_map.Map]
+  [original : ir.CompilerIrBlock]
+  [rewritten : ir.CompilerIrBlock]) : bool
+  (match original
+    [(ir.CompilerIrBlock.Block _ original-instrs)
+      (match rewritten
+        [(ir.CompilerIrBlock.Block _ rewritten-instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count original-instrs)]
+            [index : i64 0]
+            [found : bool false]
+            (begin
+              (if (= count (ir.compiler-ir-instr-seq-count rewritten-instrs))
+                (while (and (not found) (< index count))
+                  (begin
+                    (if (opt-load-gvn-subst-candidate?
+                      sources
+                      (ir.compiler-ir-instr-seq-ref original-instrs index)
+                      (ir.compiler-ir-instr-seq-ref rewritten-instrs index))
+                      (set! found true)
+                      unit)
+                    (set! index (+ index 1))))
+                unit)
+              found))])]))
+
+(define (opt-load-gvn-subst-any?
+  [index : OptCfgIndex]
+  [sources : opt_i64_i64_map.Map]
+  [out : (__tl_dyn-array OptGvnBlockResult)]) : bool
+  (let
+    [count : i64 (array-length out)]
+    [id : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< id count))
+        (begin
+          (match (array-ref out id)
+            [(OptGvnBlockResult.SomeBlock rewritten)
+              (match (opt-cfg-index-block index id)
+                [(OptMaybeBlock.Some original)
+                  (if (opt-load-gvn-subst-block-any? sources original rewritten)
+                    (set! found true)
+                    unit)]
+                [(OptMaybeBlock.No) unit])]
+            [(OptGvnBlockResult.NoBlock) unit])
+          (set! id (+ id 1))))
+      found)))
+
+;; Natural-loop membership per block id, one bit per loop. Loops past bit 61
+;; share the sentinel bit, which only ever makes the escape test coarser (two
+;; loops that share a bit read as one), never unsound: the gate is a
+;; profitability rule, not a legality rule.
+(define (opt-load-gvn-loop-mask-bit [loop-index : i64]) : i64
+  (if (< loop-index 62)
+    (shl 1 loop-index)
+    (shl 1 62)))
+
+(define (opt-load-gvn-loop-mask-mark
+  [loop-masks : (__tl_dyn-array i64)]
+  [members : (__tl_dyn-array bool)]
+  [bit : i64]) : unit
+  (let
+    [count : i64 (array-length loop-masks)]
+    [id : i64 0]
+    (begin
+      (while (< id count)
+        (begin
+          (if (opt-loop-body-member-array-contains-id? members id)
+            (begin
+              (set!
+                (array-ref loop-masks id)
+                (bit-or (array-ref loop-masks id) bit))
+              unit)
+            unit)
+          (set! id (+ id 1))))
+      unit)))
+
+(define (opt-load-gvn-loop-masks-fill
+  [loop-masks : (__tl_dyn-array i64)]
+  [loops : OptNaturalLoopList]
+  [loop-index : i64]) : unit
+  (match loops
+    [(OptNaturalLoopList.Nil) unit]
+    [(OptNaturalLoopList.Cons loop rest)
+      (begin
+        (opt-load-gvn-loop-mask-mark
+          loop-masks
+          (opt-natural-loop-body-members loop)
+          (opt-load-gvn-loop-mask-bit loop-index))
+        (opt-load-gvn-loop-masks-fill
+          loop-masks
+          (__tl-box-place rest)
+          (+ loop-index 1)))]))
+
+(define (opt-load-gvn-subst-env
+  [index : OptCfgIndex]
+  [sources : opt_i64_i64_map.Map]
+  [loop-masks : (__tl_dyn-array i64)]
+  [frame : i64]
+  [out : (__tl_dyn-array OptGvnBlockResult)]) : OptCopyEnv
+  (let
+    [def-blocks : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [reach-count : i64 index.reach-count]
+    [slot : i64 0]
+    [env : OptCopyEnv (OptCopyEnv.Nil)]
+    (begin
+      (while (< slot reach-count)
+        (begin
+          (let
+            [id : i64 (opt-cfg-index-rpo-id index slot)]
+            (match (array-ref out id)
+              [(OptGvnBlockResult.SomeBlock rewritten)
+                (match (opt-cfg-index-block index id)
+                  [(OptMaybeBlock.Some original)
+                    (begin
+                      (set!
+                        env
+                        (opt-load-gvn-subst-block-env
+                          sources
+                          loop-masks
+                          def-blocks
+                          id
+                          original
+                          rewritten
+                          env))
+                      unit)]
+                  [(OptMaybeBlock.No) unit])]
+              [(OptGvnBlockResult.NoBlock) unit]))
+          (set! slot (+ slot 1))))
+      env)))
+
+;; Substitute the env through one block's instructions and count the operand
+;; uses of the RESULT, so the surviving-use test below sees post-substitution
+;; counts.
+(define (opt-load-gvn-subst-seq
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (let
+            [next : ir.CompilerIrInstr
+              (opt-copy-subst-instr
+                env
+                (ir.compiler-ir-instr-seq-ref instrs index))]
+            (begin
+              (set! (array-ref slots index) next)
+              (opt-collect-instr-uses-array used next)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
+
+(define (opt-load-gvn-subst-blocks
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-load-gvn-subst-seq env used instrs))
+            (opt-load-gvn-subst-blocks env used (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-load-gvn-subst-blocks
+        env
+        used
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; A rewritten load's copy is dead exactly when substitution reached every use
+;; of its destination.
+(define (opt-load-gvn-dead-copy?
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst _ _)
+      (if (opt-used-array-contains used dst)
+        false
+        (match (opt-copy-lookup env dst)
+          [(ir.CompilerIrMaybeValue.Some _) true]
+          [(ir.CompilerIrMaybeValue.No) false]))]
+    [_ false]))
+
+;; Compaction runs over the slot arrays opt-load-gvn-subst-seq just allocated,
+;; so it may write them in place; the returned seq re-lengths the same storage.
+(define (opt-load-gvn-drop-copies-seq
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (begin
+          (if (opt-load-gvn-dead-copy? env used (array-ref slots read))
+            unit
+            (begin
+              (if (not (= read write))
+                (set! (array-ref slots write) (array-ref slots read))
+                unit)
+              (set! write (+ write 1))))
+          (set! read (+ read 1))))
+      (ir.CompilerIrInstrSeq slots write))))
+
+(define (opt-load-gvn-drop-copies-blocks
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-load-gvn-drop-copies-seq env used instrs))
+            (opt-load-gvn-drop-copies-blocks env used (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-load-gvn-drop-copies-blocks
+        env
+        used
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-load-gvn-substitute
+  [frame : i64]
+  [env : OptCopyEnv]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    ;; Substitution never mints a var, so the pre-substitution frame bounds the
+    ;; result's var ids.
+    [used : (__tl_dyn-array i64) (opt-used-array-new frame)]
+    [substituted : ir.CompilerIrBlockList
+      (opt-load-gvn-subst-blocks env used blocks)]
+    (opt-load-gvn-drop-copies-blocks env used substituted)))
+
 (define (opt-load-gvn-blocks-with-context
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
@@ -88562,11 +90983,9 @@
       [processed : (__tl_dyn-array bool) (array.make-array bool count)]
       [out : (__tl_dyn-array OptGvnBlockResult)
         (array.make-array OptGvnBlockResult count)]
-      [loop-safe : OptLabelSet
-        (opt-load-gvn-loop-safe-collect
-          hs
-          blocks
-          (opt-cfg-natural-loops-with-context blocks context))]
+      [loops : OptNaturalLoopList
+        (opt-cfg-natural-loops-with-context blocks context)]
+      [loop-safe : OptLabelSet (opt-load-gvn-loop-safe-collect hs blocks loops)]
       [empty-state : OptLoadCseState
         (opt-load-cse-state-with-caps-and-facts
           profile-state
@@ -88589,4 +91008,30 @@
           out
           empty-state
           0)
-        (opt-gvn-materialize-blocks context.doms out blocks)))))
+        ;; Substitution mode: where the rewrite's uses can all be redirected to
+        ;; the dominating def, redirect them and delete the copy. The env is
+        ;; read from the input/output instruction pairing, so the streaming
+        ;; rewrite above needs no extra plumbing; an empty env (no rewrite
+        ;; fired, or every rewrite was gated out) keeps the materialized blocks
+        ;; untouched.
+        (let
+          [materialized : ir.CompilerIrBlockList
+            (opt-gvn-materialize-blocks context.doms out blocks)]
+          (if (not (opt-load-gvn-subst-any? index sources out))
+            materialized
+            (let
+              [frame : i64
+                (+
+                  1
+                  (opt-sccp-max-var-params
+                    params
+                    (opt-sccp-max-var-blocks blocks (- 0 1))))]
+              [loop-masks : (__tl_dyn-array i64) (array.make-array i64 count)]
+              (begin
+                (opt-load-gvn-loop-masks-fill loop-masks loops 0)
+                (let
+                  [subst : OptCopyEnv
+                    (opt-load-gvn-subst-env index sources loop-masks frame out)]
+                  (match subst
+                    [(OptCopyEnv.Nil) materialized]
+                    [_ (opt-load-gvn-substitute frame subst materialized)]))))))))))

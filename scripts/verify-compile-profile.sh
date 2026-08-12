@@ -1495,21 +1495,50 @@ if [ "$NL_HOST_OS" = windows ]; then
     # The public-place migration removes the expanded legacy accessor calls;
     # the merged path-sensitive checker remains one segment above main alone.
     # The explicit job-owned macro carrier threads state through the former
-    # global helper surface. #6375's owned cursor-visible semantic binding
-    # regions cross the combined checked compiler graph from 48 to 49 segments;
-    # the authoritative Windows CI probe measured 3,148,431 used nodes,
-    # 3,211,264 capacity, and 102,760,448 physical payload bytes. Keep all four
-    # ownership boundaries measured independently.
+    # global helper surface. Keep all four ownership boundaries measured
+    # independently. Two changes meet at this boundary. #6375's owned
+    # cursor-visible semantic binding regions grew the unspanned graph from 48
+    # to 49 segments (3,148,431 used nodes on the pre-span tree). Carrying
+    # template source spans through the native macro route then shrinks it:
+    # the native route used to strip the parser's `AstExpr.Spanned` wrapper
+    # from every template node; it now rebuilds each one, so a natively
+    # produced expansion is node-for-node the tree the interpreted quasiquote
+    # builds. That changes which side of the macro-hygiene copy-on-write
+    # commit the expansion lands on -- a node `macro-hygiene-produced-owned?`
+    # accepts is rewritten in its own slot and the replacement is truncated
+    # back off the pool; a node it rejects leaves its replacement appended --
+    # and on the pre-#6526 tree walk_hygiene_nodes_copied fell from 786,701 to
+    # 232,422 (463,234 fewer pool nodes; reverting only the span carriage
+    # restored every boundary exactly, and the route never flipped: 100 native
+    # entries, 7 shells, 0 interpreted arms either way). #6526's semantic index
+    # then adds its own nodes on top, so the combined tree lands one segment
+    # above the arithmetic on the two changes alone: the authoritative Windows
+    # probe measured 2,690,790 used nodes, 2,752,512 capacity, and 88,080,384
+    # physical payload bytes, which is 3,814 nodes past the 41-segment line
+    # (walk_hygiene_nodes_copied 233,130 here). Do not reconstruct this
+    # boundary by adding published deltas; it is close enough to a step that
+    # only a direct Windows measurement decides it.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 49 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
     # series keeps the combined graph in that exact segment count. The apparent
     # jitter observed while landing the series was merge-base movement, not
     # identical-source nondeterminism, so this remains an exact pin.
+    # The template span wrappers that survive their expansion carry this
+    # boundary from 33 to 34 segments -- the same change that lowered the
+    # macro-expand boundary above raises this one, which is why the two are
+    # pinned independently. walk_decl_fire_survivor_expr_nodes rises from
+    # 403,079 to 453,835 (+50,756) and the checked graph gains 50,828 nodes:
+    # the pre-#6526 Windows probe measured 2,183,339 used nodes. #6526's
+    # semantic index adds a further 10,890 checked nodes (survivor expr nodes
+    # 455,537) and holds the same segment count: the authoritative Windows
+    # probe on the combined tree measured 2,194,229 used nodes, 2,228,224
+    # capacity, and 71,303,168 physical payload bytes, leaving 33,995 nodes of
+    # headroom below the 35-segment line.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 33 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 34 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \

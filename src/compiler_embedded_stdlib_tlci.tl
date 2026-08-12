@@ -2015,9 +2015,9 @@
 
 (define (compiler-comptime-host-callback-expr-call
   [session : i64]
-  [arg-a : i64]
-  [arg-b : i64]
-  [arg-c : i64]) : i64
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
   (if (or
     (= compiler-comptime-host-session-cookie 0)
     (not (= session compiler-comptime-host-session-cookie)))
@@ -2053,27 +2053,15 @@
                           (compiler-comptime-host-global-shared-view
                             compiler-comptime-host-pools)
                           0)]
-                      [macro-call? : bool
-                        (ctfe_support.ctfe-result-macro-provenance-call-head-with-pools?
-                          (compiler-comptime-host-session-macro-state-value)
-                          pools
-                          callee-node)]
-                      [provenance-callee-node : i64
-                        (if (and macro-call? (> arg-a 0))
-                          (ast.ast-expr-spanned-with-pools
-                            pools
-                            callee-node
-                            (ast.ast-source-span
-                              arg-a
-                              arg-b
-                              (shr arg-c 32)
-                              (bit-and arg-c 4294967295)))
-                          callee-node)]
+                      ;; The callee arrives spanned or unspanned exactly as the
+                      ;; template built it: expr-span re-wraps a template head
+                      ;; before this op runs, and the provenance note reads
+                      ;; through any wrapper. Refs #5212.
                       [node : i64
                         (ctfe_support.ctfe-ast-expr-call-with-provenance
                           (compiler-comptime-host-session-macro-state-value)
                           pools
-                          provenance-callee-node
+                          callee-node
                           items)]
                       (begin
                         (set!
@@ -2084,6 +2072,121 @@
                             node
                             (ast.AstType.Expr)))))]
                   [_ tlci.tlci-host-callback-status-bad-request]))))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+;; Does `node` already carry a parser or template source-span wrapper?
+;; `ctfe-quote-preserve-unquoted-source-span?` asks exactly this question of a
+;; substituted unquote result before it decides to keep the caller's origin.
+(define (compiler-comptime-host-node-spanned?
+  [pools : ast.AstNodePoolContext]
+  [node : i64]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools node)
+    [(ast.AstExpr.Spanned _ _) true]
+    [_ false]))
+
+;; Re-wrap the stack top in one template source span. `unquoted?` marks a
+;; template position that was an unquote, where a value that already carries
+;; its own call-site span keeps it; every other position takes the template's
+;; span unconditionally. A stack top holding no expression node -- a type, a
+;; comptime scalar, a list under construction -- is left alone, matching the
+;; interpreted quote, which only ever spans expressions.
+(define (compiler-comptime-host-span-step!
+  [arg-a : i64]
+  [arg-b : i64]
+  [arg-c : i64]
+  [unquoted? : bool]) : i64
+  (if (< compiler-comptime-host-stack-len 1)
+    tlci.tlci-host-callback-status-bad-request
+    (let
+      [value : ctfe_support.CompilerCtfeValue
+        (array-ref
+          (compiler-comptime-host-global-shared-view
+            compiler-comptime-host-stack)
+          (- compiler-comptime-host-stack-len 1))]
+      [span : ast.AstSourceSpan
+        (ast.ast-source-span
+          arg-a
+          arg-b
+          (shr arg-c 32)
+          (bit-and arg-c 4294967295))]
+      (match value
+        [(ctfe_support.CompilerCtfeValue.Expr node ty)
+          (let
+            [pools : ast.AstNodePoolContext
+              (array-ref
+                (compiler-comptime-host-global-shared-view
+                  compiler-comptime-host-pools)
+                0)]
+            (if (and
+              unquoted?
+              (compiler-comptime-host-node-spanned? pools node))
+              tlci.tlci-host-callback-status-ok
+              (begin
+                (set!
+                  compiler-comptime-host-stack-len
+                  (- compiler-comptime-host-stack-len 1))
+                (compiler-comptime-host-push!
+                  (ctfe_support.CompilerCtfeValue.Expr
+                    (ast.ast-expr-spanned-with-pools pools node span)
+                    ty)))))]
+        [(ctfe_support.CompilerCtfeValue.CapturedExpr node ty pools)
+          (if (and unquoted? (compiler-comptime-host-node-spanned? pools node))
+            tlci.tlci-host-callback-status-ok
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-push!
+                (ctfe_support.CompilerCtfeValue.CapturedExpr
+                  (ast.ast-expr-spanned-with-pools pools node span)
+                  ty
+                  pools))))]
+        [_ tlci.tlci-host-callback-status-ok]))))
+
+(define (compiler-comptime-host-callback-expr-span
+  [session : i64]
+  [arg-a : i64]
+  [arg-b : i64]
+  [arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (compiler-comptime-host-span-step! arg-a arg-b arg-c false)]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-expr-span-unquoted
+  [session : i64]
+  [arg-a : i64]
+  [arg-b : i64]
+  [arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (compiler-comptime-host-span-step! arg-a arg-b arg-c true)]
         (begin
           (when
             (not (= result tlci.tlci-host-callback-status-ok))
@@ -8024,6 +8127,16 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-call)
         compiler-comptime-host-callback-expr-call)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-span)
+        compiler-comptime-host-callback-expr-span)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-span-unquoted)
+        compiler-comptime-host-callback-expr-span-unquoted)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

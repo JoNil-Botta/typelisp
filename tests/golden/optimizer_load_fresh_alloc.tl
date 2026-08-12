@@ -4,8 +4,10 @@
 ;; proven alias root (NoRoot). Building `scratch` runs tl_alloc, tl_array_zero, and the
 ;; descriptor header stores between the two length reads. Every one of those
 ;; writes goes through storage allocated after the first length load was cached,
-;; so the cached entry survives and the second read becomes a copy: the dump
-;; must contain exactly one load of the parameter's length field.
+;; so the cached entry survives and the second read is eliminated: the dump must
+;; contain exactly one load of the parameter's length field, and under
+;; substitution mode no copy either -- the add reads the surviving load's var
+;; directly (see opt-load-gvn-subst-pair).
 (import stdlib.array)
 
 (define (load-across-fresh-alloc [values : (__tl_dyn-array i64)]) : i64

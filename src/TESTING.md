@@ -377,23 +377,56 @@ These wall-clock distributions are diagnostic local measurements rather than
 committed performance baselines. Keep the source, compiler revisions, cfgs,
 warmups, iteration count, and Defender state with any reported comparison.
 
-### Assembly size reports
+### Selfhost linked-size attribution
 
 Use [`../scripts/analyze-selfhost-build-asm-size.sh`](../scripts/analyze-selfhost-build-asm-size.sh)
-for local code-size comparisons of the selfhost compiler. It compiles
-`src/main.tl` with `TYPELISP_BIN` when set, otherwise with the published
-stage0 selected by `scripts/lib-stage0.sh`, then prints total assembly
-bytes/lines, section totals, top `.text` symbols, module/file buckets inferred
-from TypeLisp symbol names, and generated clone-helper totals:
+for local code-size comparisons of the selfhost compiler. The authoritative
+mode reads sized function symbols from the retained unstripped object and
+reconciles them with its actual `.text` sections. Current TypeLisp symbols are
+attributed to the longest matching checked-in `src/` or `stdlib/` module;
+clone helpers, generated specializations, global initializers, and runtime
+entry points are reported as separate families. The human report and optional
+TSV both record the target, optimization level, producer, source git hash,
+function count, object text bytes, attributed function bytes, and the explicit
+unattributed remainder. When a final binary is supplied, it also records that
+binary's `.text` bytes and the linker delta from the input object.
+
+The stage0 build retains `target/build-stage0/stage4.o` (or `stage4.obj`). Set
+`TYPELISP_STAGE0_SIZE_REPORT=1` to analyze that exact object together with the
+final stripped publication binary without changing the publication artifact:
 
 ```sh
-TYPELISP_BIN=target/stage0/typelisp scripts/analyze-selfhost-build-asm-size.sh
+scripts/fetch-stage0.sh
+TYPELISP_STAGE0_SIZE_REPORT=1 \
+  scripts/build-stage0.sh target/stage0/typelisp target/stage0-branch/typelisp
+# human: target/build-stage0/size-attribution.txt
+# machine: target/build-stage0/size-attribution.tsv
 ```
 
-Use `--top N` to change the table size, `TYPELISP_ASM_SIZE_OUT` to choose the
-artifact directory, and `--asm target/path/build.s` to analyze an existing
-assembly file without recompiling. The report is intentionally a local
-measurement tool, not a CI size gate.
+For an opt1/opt2 comparison, retain the benchmark objects and give each report
+the exact producer and level:
+
+```sh
+scripts/benchmark-compile-cli.sh target/stage0/typelisp
+for opt in 1 2; do
+  scripts/analyze-selfhost-build-asm-size.sh \
+    --asm "target/compile-cli-benchmark/opt$opt/stage2.s" \
+    --object "target/compile-cli-benchmark/opt$opt/stage2.o" \
+    --binary "target/compile-cli-benchmark/opt$opt/stage2" \
+    --target linux-x86_64 --opt-level "$opt" \
+    --producer-binary target/compile-cli-benchmark/shared/stage1 \
+    --tsv "target/compile-cli-benchmark/opt$opt/size-attribution.tsv"
+done
+```
+
+On Windows, use the corresponding `.obj` and `.exe` paths from Git Bash;
+`llvm-nm`/`llvm-size` or compatible `nm`/`size` tools must support COFF. The
+script fails with an actionable diagnostic when sized symbols or `.text`
+sections are unavailable. `--asm` alone retains the historical assembly
+character report, and invoking the script without artifacts compiles
+`src/main.tl` at opt2. Use `--top N` to change the human table size. The parser
+fixtures run in CI, but code size remains a local measurement rather than a
+budget gate.
 
 Use [`../scripts/analyze-stage0-size.sh`](../scripts/analyze-stage0-size.sh)
 for linked stage0 binary size comparisons. It reports total file bytes, section

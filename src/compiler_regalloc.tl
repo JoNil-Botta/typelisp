@@ -29843,6 +29843,92 @@
           dst
           (__tl-box-place rest)))]))
 
+;; --- the induction-step witness -------------------------------------------------
+;;
+;; A loop counter's web is `phi <- step`, and the step is `next = cur + k` for a
+;; literal `k`, never a Mov. Without a witness for THAT link the pair fails the
+;; all-pairs disjointness rule -- `cur` is live from the header down to the step
+;; and `next` from the step to the back edge, so the two hulls TOUCH at the step
+;; instruction -- and a spilled counter then pays, every iteration, a second slot
+;; plus a slot-to-slot phi copy through a scratch register (measured in
+;; cfg_domloops: eight instructions per iteration to decrement `pos` and branch,
+;; where three suffice).
+;;
+;; The Mov witness's own argument covers this shape unchanged. Interval points are
+;; two coordinates per instruction: an instruction's uses and its def are both
+;; stamped at its point, and anything live AFTER it is stamped at point+1. So
+;; `hull(src).end == hull(dst).start` still says exactly "src's last liveness event
+;; is this instruction, dst's first is this instruction" -- src is dead after the
+;; step, which is what makes one home serve both.
+;;
+;; WHY THE BACKEND IS SAFE HERE. The hazard the header warns about is a
+;; destination home written before a source home is read, which is what a parallel
+;; copy at a block edge can do. A BinOp is not a parallel copy: the emitter stages
+;; the LHS into a register, applies the operator against the RHS operand, and only
+;; then writes the destination home (`compiler-backend-binop-asm-with-plan` builds
+;; exactly that sequence), so BOTH operands are consumed before the destination is
+;; written. That is what makes either operand a legal witness, whatever the other
+;; one is.
+;;
+;; The admitted operator set is the plain two-operand ALU family, whose lowering
+;; is that staged sequence and nothing else. Everything with its own register
+;; discipline is excluded so no operator that writes a fixed register before
+;; consuming its operands can reach the rule: Div/Mod/SafeDiv/SafeMod (the
+;; rdx:rax pair plus the planned min/neg registers), Shl/Shr (the %cl count).
+;; The comparisons are excluded too -- they define a `bool` while their operands
+;; are the compared width, so the link's own type-equality guard would refuse
+;; them anyway, and naming them here keeps the reason local.
+(define (compiler-reg-color-scalar-step-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Add) true]
+    [(ir.CompilerIrBinOp.Sub) true]
+    [(ir.CompilerIrBinOp.Mul) true]
+    [(ir.CompilerIrBinOp.And) true]
+    [(ir.CompilerIrBinOp.Or) true]
+    [(ir.CompilerIrBinOp.BitAnd) true]
+    [(ir.CompilerIrBinOp.BitOr) true]
+    [(ir.CompilerIrBinOp.BitXor) true]
+    [_ false]))
+
+;; Offer one BinOp operand as the induction-step witness. Both operands are
+;; offered, in operand order, and the hull equality decides which one -- if
+;; either -- actually dies here. When BOTH do (`dst = a + b` with a and b each
+;; last used at this instruction) only the first can join: the second offer finds
+;; the destination already rooted in the first operand's web, falls through to
+;; the all-pairs rule, and is refused there because a and b are live at once up
+;; to this point. So the shared home is always a home the surviving member alone
+;; was reading.
+(define (compiler-reg-color-scalar-alias-step-operand!
+  [type-segment-bases : i64]
+  [alias : (__tl_dyn-array i64)]
+  [web-root : (__tl_dyn-array bool)]
+  [web-end : (__tl_dyn-array i64)]
+  [web-next : (__tl_dyn-array i64)]
+  [web-size : (__tl_dyn-array i64)]
+  [eligible : (__tl_dyn-array bool)]
+  [var-tys : (__tl_dyn-array ast.AstType)]
+  [ep-starts : (__tl_dyn-array i64)]
+  [ep-ends : (__tl_dyn-array i64)]
+  [operand : ir.CompilerIrValue]
+  [dst : i64]) : unit
+  (match operand
+    [(ir.CompilerIrValue.Var src-var)
+      (compiler-reg-color-scalar-alias-link!
+        type-segment-bases
+        alias
+        web-root
+        web-end
+        web-next
+        web-size
+        eligible
+        var-tys
+        ep-starts
+        ep-ends
+        src-var
+        dst
+        true)]
+    [_ unit]))
+
 ;; One instruction's link offers for ONE pass. `phi-pass` true is the loop-carry
 ;; priority pass (phi-defined phi inputs only); the Mov witness rides that pass so
 ;; the second visit adds nothing for non-phi instructions. The caller re-reads the
@@ -29882,6 +29968,38 @@
               dst
               true))]
         [_ unit])]
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
+      ;; The induction step `next = cur <op> k` and its accumulator cousins:
+      ;; same witness as a Mov (see above).
+      (when
+        (and phi-pass (compiler-reg-color-scalar-step-op? op))
+        (begin
+          (compiler-reg-color-scalar-alias-step-operand!
+            type-segment-bases
+            alias
+            web-root
+            web-end
+            web-next
+            web-size
+            eligible
+            var-tys
+            ep-starts
+            ep-ends
+            lhs
+            dst)
+          (compiler-reg-color-scalar-alias-step-operand!
+            type-segment-bases
+            alias
+            web-root
+            web-end
+            web-next
+            web-size
+            eligible
+            var-tys
+            ep-starts
+            ep-ends
+            rhs
+            dst)))]
     [(ir.CompilerIrInstr.Phi dst inputs _)
       (compiler-reg-color-scalar-alias-phi-inputs!
         type-segment-bases

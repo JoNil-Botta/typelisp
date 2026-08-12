@@ -7119,6 +7119,14 @@
       (compiler-reg-color-carry-priority-ok?)
       "a phi dst joins the loop carry's web rather than an interfering computed source")))
 
+(cfg
+  test
+  (test
+    regalloc-scalar-web-step-witness
+    (test.assert-true
+      (compiler-reg-color-step-witness-ok?)
+      "an induction step joins its counter's web on the same witness a Mov gets, and a counter that outlives the step is refused")))
+
 ;; M-B2 scalar phi-web slot sharing. Both cases hand the colorer the SAME plan
 ;; intervals -- deliberately overlapping, which is what the conservative model
 ;; produces for a phi and its input, because it counts the input as live AT the
@@ -7354,6 +7362,134 @@
               ;; Genuine interference still refuses: %1 outlives %2's definition.
               (> overlap-slots 1)
               (not (= (array-ref overlap-remap 1) (array-ref overlap-remap 2))))]
+          [(reg.CompilerRegColoring.None) false])]
+      [(reg.CompilerRegColoring.None) false])))
+
+;; The induction-step witness. Same fixture idea as the web-merge case above, cut
+;; down to the counter itself: `%0 = phi(%2 entry, %1 latch)` with the back-edge
+;; value produced by `%1 = %0 + 1` -- a BinOp, which is what every counted loop
+;; writes and what the Mov-only witness could not see. The two hulls TOUCH at the
+;; step (the counter's last event and the step's definition are the same
+;; instruction), so the all-pairs disjointness rule refuses them and the pair used
+;; to cost a second slot plus a slot-to-slot phi copy on the back edge.
+;;
+;; `outlives` is the negative: `exit` returns the COUNTER, so %0's hull runs past
+;; the step into a later block and the equality that carries the witness no longer
+;; holds. The step must then keep its own slot -- exactly the case where sharing
+;; one home would clobber a value still to be read.
+(cfg
+  test
+  (define (compiler-reg-color-step-witness-blocks [outlives : bool]) : ir.CompilerIrBlockList
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            2
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+            ir.CompilerIrInstrList.Nil)))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "header")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.Var 1)
+                (ir.compiler-ir-label "latch")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 2)
+                  (ir.compiler-ir-label "entry")
+                  ir.CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 0)
+                (ir.compiler-ir-label "body")
+                (ir.compiler-ir-label "exit"))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                1
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "latch")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "exit")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some
+                      (if outlives
+                        (ir.CompilerIrValue.Var 0)
+                        (ir.CompilerIrValue.I64 0))))
+                  ir.CompilerIrInstrList.Nil))
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; Deliberately overlapping conservative intervals again: the ordinary
+;; disjoint-interval walk can share nothing, so any sharing is the web logic's.
+(cfg
+  test
+  (define (compiler-reg-color-step-witness-intervals) : reg.CompilerRegIntervalSeq
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 0 0 9)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 1 9)
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 2 2 9)
+          (reg.compiler-reg-interval-seq-empty))))))
+
+(cfg
+  test
+  (define (compiler-reg-color-step-witness-coloring [outlives : bool]) : reg.CompilerRegColoring
+    (reg.compiler-reg-color-stack-slots
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (reg.CompilerRegPlan.Plan
+        (compiler-reg-color-spill-sharing-assignments 3)
+        (live.compiler-live-set-empty)
+        (compiler-reg-color-step-witness-intervals)
+        (compiler-reg-color-spill-sharing-types 3)
+        (reg.compiler-reg-call-split-empty)
+        (reg.compiler-reg-split-plan-empty))
+      (live.compiler-live-set-empty)
+      ir.CompilerIrParamList.Nil
+      (compiler-reg-color-step-witness-blocks outlives)
+      3
+      3
+      (live.compiler-live-set-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-color-step-witness-ok?) : bool
+    (match (compiler-reg-color-step-witness-coloring false)
+      [(reg.CompilerRegColoring.Remap step-remap step-slots)
+        (match (compiler-reg-color-step-witness-coloring true)
+          [(reg.CompilerRegColoring.Remap live-remap live-slots)
+            (and
+              ;; Counter, its step and the entry seed all share ONE slot, so the
+              ;; back-edge phi copy is a same-home no-op.
+              (= step-slots 1)
+              (= (array-ref step-remap 0) (array-ref step-remap 1))
+              (= (array-ref step-remap 0) (array-ref step-remap 2))
+              ;; A counter still live past its step keeps its own home.
+              (> live-slots 1)
+              (not (= (array-ref live-remap 0) (array-ref live-remap 1))))]
           [(reg.CompilerRegColoring.None) false])]
       [(reg.CompilerRegColoring.None) false])))
 

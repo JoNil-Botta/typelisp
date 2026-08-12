@@ -85,13 +85,12 @@
   (let
     [i : i64 0]
     [x : i64 step]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref a i) x)
-          (set! x (+ (* x 7) 13))
-          (set! x (- x (* (/ x 251) 251)))
-          (set! i (+ i 1)))))))
+    (while (< i n)
+      (begin
+        (set! (array-ref a i) x)
+        (set! x (+ (* x 7) 13))
+        (set! x (- x (* (/ x 251) 251)))
+        (set! i (+ i 1))))))
 
 (define (main) : i64
   (let

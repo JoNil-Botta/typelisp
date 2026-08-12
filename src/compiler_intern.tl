@@ -3112,6 +3112,24 @@
     (ptr-read
       (int->ptr (cast handle.address : u64) : (Ptr InternSourceNameSession)))))
 
+;; Hot provenance checks need only these scalar identity fields. Reading them
+;; through focused accessors avoids copying the full session's six array views.
+(define (intern-source-name-session-handle-table-id
+  [handle : InternSourceNameSessionHandle]) : i64
+  (unsafe
+    (__tl-project-field
+      (ptr-read
+        (int->ptr (cast handle.address : u64) : (Ptr InternSourceNameSession)))
+      table-id)))
+
+(define (intern-source-name-session-handle-reset-generation
+  [handle : InternSourceNameSessionHandle]) : i64
+  (unsafe
+    (__tl-project-field
+      (ptr-read
+        (int->ptr (cast handle.address : u64) : (Ptr InternSourceNameSession)))
+      reset-generation)))
+
 (define (intern-source-name-session-capture-active-handle) : InternSourceNameSessionHandle
   (intern-source-name-session-handle
     (intern-source-name-session-capture-active)))

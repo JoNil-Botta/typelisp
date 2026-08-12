@@ -920,6 +920,20 @@
           (array_ops.length map.slots))
         (define (capacity-mut [map : (&mut map Map)]) : i64
           (array_ops.length map.slots))
+        (define (clear-ref! [map : (&mut map Map)]) : unit
+          (let
+            [cap : i64 (capacity-mut map)]
+            [index : i64 0]
+            (begin
+              (while (< index cap)
+                (begin
+                  (__tl-project-set-field-name
+                    (array-ref map.slots index)
+                    "state"
+                    (GeneratedHashmapSlotState.Empty))
+                  (set! index (+ index 1))))
+              (set! map.len 0)
+              (set! map.growth-limit (growth-limit-for cap)))))
         (define (deleted [map : (& map Map)]) : i64
           (- (growth-limit-for (capacity map)) map.growth-limit))
         (define (is-empty? [map : (& map Map)]) : bool
@@ -1221,7 +1235,28 @@
           "generated string-key remove")
         (test.assert-true
           (hashmap_i64_i64.insert-if-absent! im 3 300)
-          "generated i64 insert-if-absent")))))
+          "generated i64 insert-if-absent")
+        (let
+          [old-capacity : i64 (hashmap_i64_i64.capacity (& im))]
+          (begin
+            (hashmap_i64_i64.remove! im 1)
+            (hashmap_i64_i64.clear-ref! (&mut im))
+            (test.assert-true
+              (hashmap_i64_i64.is-empty? (& im))
+              "generated i64 clear empties map")
+            (test.assert-i64-eq
+              (hashmap_i64_i64.capacity (& im))
+              old-capacity
+              "generated i64 clear retains capacity")
+            (test.assert-i64-eq
+              (hashmap_i64_i64.deleted (& im))
+              0
+              "generated i64 clear removes tombstones")
+            (hashmap_i64_i64.insert! im 4 400)
+            (test.assert-i64-eq
+              (hashmap_i64_i64.get-value-or (& im) 4 -1)
+              400
+              "generated i64 insert after clear")))))))
 
 (cfg
   test

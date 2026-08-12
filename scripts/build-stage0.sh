@@ -117,6 +117,13 @@ stage_seed_bootstrap_cfg_args() {
 # so it never ships the seed's unconverged codegen. Built at --opt-level 2.
 STAGES=4
 PREV="$SEED"
+case "${TYPELISP_STAGE0_SIZE_REPORT:-0}" in
+    0 | 1) ;;
+    *)
+        echo "TYPELISP_STAGE0_SIZE_REPORT must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
 
 if [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ]; then
     echo "[build-stage0] published seed predates the dotted-import cutover; building a one-generation bridge"
@@ -219,6 +226,7 @@ bootstrap_resolve_seed_global_views "$PREV" "$WORKDIR" "$ROOT"
 
 i=1
 while [ "$i" -le "$STAGES" ]; do
+    STAGE_PRODUCER=$PREV
     STAGE_ASM="$WORKDIR/stage$i.s"
     STAGE_OBJ="$WORKDIR/stage$i.$NL_OBJ_EXT"
     if [ "$i" -eq "$STAGES" ]; then
@@ -305,6 +313,23 @@ if [ -s "$VERSION_STDERR" ]; then
     echo "[build-stage0] built compiler wrote unexpected --version stderr" >&2
     sed 's/^/  /' "$VERSION_STDERR" >&2 || true
     exit 1
+fi
+
+echo "[build-stage0] retained linked-size attribution object: $STAGE_OBJ"
+if [ "${TYPELISP_STAGE0_SIZE_REPORT:-0}" -eq 1 ]; then
+    SIZE_REPORT_TEXT="$WORKDIR/size-attribution.txt"
+    SIZE_REPORT_TSV="$WORKDIR/size-attribution.tsv"
+    scripts/analyze-selfhost-build-asm-size.sh \
+        --asm "$STAGE_ASM" \
+        --object "$STAGE_OBJ" \
+        --binary "$OUT" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        --opt-level 2 \
+        --producer-binary "$STAGE_PRODUCER" \
+        --tsv "$SIZE_REPORT_TSV" \
+        > "$SIZE_REPORT_TEXT"
+    cat "$SIZE_REPORT_TEXT"
+    echo "[build-stage0] size attribution TSV: $SIZE_REPORT_TSV"
 fi
 
 echo "[build-stage0] built $OUT"

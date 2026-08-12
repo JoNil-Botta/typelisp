@@ -185,6 +185,12 @@ fi
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.
 run_gate "build provenance helper self-tests" scripts/verify-build-provenance.sh
+# Keep current-mangling module/clone attribution pinned without making code
+# size itself a CI budget. Linked-object measurement remains an opt-in report.
+run_gate \
+    "selfhost linked-size attribution parser self-tests" \
+    scripts/analyze-selfhost-build-asm-size.sh \
+    --self-test
 # The seed capability probe that decides the legacy global shared-view cfg only
 # ever runs one branch per bootstrap, and the branch a published seed selects
 # changes under CI without any source change (#6385). Cover all three branches
@@ -245,6 +251,13 @@ run_gate \
     "stage0 release publication verifier self-tests" \
     scripts/verify-stage0-release.sh \
     --self-test
+run_gate \
+    "stage0 latest staged publication self-tests" \
+    scripts/publish-stage0-latest.sh \
+    --self-test
+run_gate \
+    "stage0 publication workflow policy" \
+    scripts/verify-stage0-workflow-policy.sh
 run_gate \
     "docs publication workflow policy" \
     scripts/verify-docs-workflow-policy.sh

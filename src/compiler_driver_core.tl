@@ -916,7 +916,8 @@
         ;; compatibility selectors are only touched while they name this
         ;; state's handles.
         (compiler-driver-state-reset-builtins! state)
-        (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
+        (compiler_typecheck_core.compiler-typecheck-reset-file-state-for-job!
+          (compiler-driver-state-typecheck state))
         (compiler_lower.lower-reset-file-state!)
         (compiler-driver-state-reset-lower! state)
         ;; Drop the previous entry's lowerer arenas. At opt level 0
@@ -949,7 +950,8 @@
         ;; State-owned builtin/CTFE reset and lowerer-arena release, exactly as
         ;; in `compiler-driver-state-reset-file-state!`.
         (compiler-driver-state-reset-builtins! state)
-        (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
+        (compiler_typecheck_core.compiler-typecheck-reset-file-state-for-job!
+          (compiler-driver-state-typecheck state))
         (compiler_lower.lower-reset-file-state!)
         (compiler-driver-state-reset-lower! state)
         (compiler-driver-state-release-lower-arenas! state)))))
@@ -983,7 +985,8 @@
           (compiler-driver-state-reset-typecheck! state)
           (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
           (compiler-driver-state-reset-builtins! state)
-          (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
+          (compiler_typecheck_core.compiler-typecheck-reset-file-state-for-job!
+            (compiler-driver-state-typecheck state))
           (compiler-driver-batch-profile-mark!
             (compiler-driver-state-profile state)
             ordinal
@@ -1817,7 +1820,7 @@
                           "backend"))
                       (ResultCompilerDriver.Err
                         (box
-                          (compiler_diagnostic.compiler-diagnostic-with-path
+                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (__tl-box-place diag)
                             input-path))))]))))]))))
 
@@ -1911,7 +1914,7 @@
                         backend-state)
                       (ResultCompilerDriverBuffer.Err
                         (box
-                          (compiler_diagnostic.compiler-diagnostic-with-path
+                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (__tl-box-place diag)
                             input-path))))]))))]))))
 
@@ -2012,7 +2015,7 @@
                                 "backend"))
                             (ResultCompilerDriverObject.Err
                               (box
-                                (compiler_diagnostic.compiler-diagnostic-with-path
+                                (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                                   (__tl-box-place diag)
                                   input-path))))]))]))))]))))
 
@@ -2129,7 +2132,7 @@
                           "backend"))
                       (ResultCompilerDriverPic.Err
                         (box
-                          (compiler_diagnostic.compiler-diagnostic-with-path
+                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (__tl-box-place diag)
                             input-path))))]))))]))))
 

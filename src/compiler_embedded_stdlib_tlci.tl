@@ -409,6 +409,9 @@
 (define compiler-comptime-host-reflections : (__tl_dyn-array
     ctfe_support.CtfeReflectInfoList)
   (array.make-array ctfe_support.CtfeReflectInfoList 1))
+(define compiler-comptime-host-session-macro-state : (__tl_dyn-array
+    ctfe_support.CompilerCtfeMacroState)
+  (array.make-array ctfe_support.CompilerCtfeMacroState 1))
 (define compiler-comptime-host-stack : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
   (array.make-array ctfe_support.CompilerCtfeValue 64))
@@ -480,13 +483,14 @@
 ;; Open the compiler-owned state addressed by the opaque session cookie passed
 ;; to every named callback. The callback's hidden environment carries the host
 ;; context; its explicit arguments begin with this cookie.
-(define (compiler-comptime-host-session-open!
+(define (compiler-comptime-host-session-open-with-macro-state!
   [pools : ast.AstNodePoolContext]
   [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
   [operand-count : i64]
   [fuel : i64]
   [cookie : i64]
-  [reflections : ctfe_support.CtfeReflectInfoList]) : unit
+  [reflections : ctfe_support.CtfeReflectInfoList]
+  [macro-state : ctfe_support.CompilerCtfeMacroState]) : unit
   (begin
     (cfg
       tlci-native-route-stress
@@ -495,6 +499,7 @@
         (+ compiler-embedded-stdlib-tlci-stress-session-generations 1)))
     (set! (array-ref compiler-comptime-host-pools 0) pools)
     (set! (array-ref compiler-comptime-host-reflections 0) reflections)
+    (set! (array-ref compiler-comptime-host-session-macro-state 0) macro-state)
     (let
       [index : i64 0]
       (while (and (< index operand-count) (< index 8))
@@ -514,9 +519,35 @@
     (set! (array-ref compiler-comptime-host-diagnostic 0) "")
     (set! compiler-comptime-host-session-cookie cookie)))
 
+;; Standalone callback tests intentionally use the serial CTFE adapter. The
+;; production macro route calls the explicit entry above with its CtfeEnv's
+;; job-owned state; the callback ABI then carries that capability for exactly
+;; one validated native session.
+(define (compiler-comptime-host-session-open!
+  [pools : ast.AstNodePoolContext]
+  [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
+  [operand-count : i64]
+  [fuel : i64]
+  [cookie : i64]
+  [reflections : ctfe_support.CtfeReflectInfoList]) : unit
+  (compiler-comptime-host-session-open-with-macro-state!
+    pools
+    operands
+    operand-count
+    fuel
+    cookie
+    reflections
+    (ctfe_support.compiler-ctfe-serial-macro-state)))
+
+(define (compiler-comptime-host-session-macro-state-value) : ctfe_support.CompilerCtfeMacroState
+  (array-ref compiler-comptime-host-session-macro-state 0))
+
 (define (compiler-comptime-host-session-close!) : unit
   (begin
     (set! compiler-comptime-host-session-cookie 0)
+    (set!
+      (array-ref compiler-comptime-host-session-macro-state 0)
+      (ctfe_support.CompilerCtfeMacroState 0))
     (set!
       compiler-comptime-host-session-status
       tlci.tlci-host-callback-status-ok)
@@ -1352,7 +1383,10 @@
   [name-id : i64]) : i64
   (if (or
     (string.eq module "")
-    (ctfe_support.ctfe-module-macro-export-id? module-id name-id))
+    (ctfe_support.ctfe-module-macro-export-id-for-state?
+      (compiler-comptime-host-session-macro-state-value)
+      module-id
+      name-id))
     (begin
       (set!
         compiler-comptime-host-stack-len
@@ -1658,7 +1692,10 @@
   [name : String]
   [name-id : i64]
   [type-query : bool]) : i64
-  (match (ctfe_support.ctfe-module-value-type-id module-id name-id)
+  (match (ctfe_support.ctfe-module-value-type-id-for-state
+    (compiler-comptime-host-session-macro-state-value)
+    module-id
+    name-id)
     [(ctfe_support.CtfeMaybeModuleValueType.Some ty)
       (begin
         (set!
@@ -2018,6 +2055,7 @@
                           0)]
                       [macro-call? : bool
                         (ctfe_support.ctfe-result-macro-provenance-call-head-with-pools?
+                          (compiler-comptime-host-session-macro-state-value)
                           pools
                           callee-node)]
                       [provenance-callee-node : i64
@@ -2033,6 +2071,7 @@
                           callee-node)]
                       [node : i64
                         (ctfe_support.ctfe-ast-expr-call-with-provenance
+                          (compiler-comptime-host-session-macro-state-value)
                           pools
                           provenance-callee-node
                           items)]
@@ -7686,7 +7725,8 @@
                             (ctfe_support.ctfe-hygiene-inert-literal-node?
                               pools
                               when-false-node))
-                            (ctfe_support.ctfe-result-hygiene-free-note!
+                            (ctfe_support.ctfe-result-hygiene-free-note-for-state!
+                              (compiler-comptime-host-session-macro-state-value)
                               out-node)
                             unit)
                           (compiler-comptime-host-push!
@@ -7809,7 +7849,8 @@
                             (ctfe_support.ctfe-hygiene-inert-literal-node?
                               pools
                               else-not-final-node))
-                            (ctfe_support.ctfe-result-hygiene-free-note!
+                            (ctfe_support.ctfe-result-hygiene-free-note-for-state!
+                              (compiler-comptime-host-session-macro-state-value)
                               out-node)
                             unit)
                           (compiler-comptime-host-push!

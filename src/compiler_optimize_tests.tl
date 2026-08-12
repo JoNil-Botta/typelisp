@@ -49258,21 +49258,18 @@
     [header : i64
       (compiler_ir_types.compiler-ir-label "dense.induction.header")]
     [exit : i64 (compiler_ir_types.compiler-ir-label "dense.induction.exit")]
-    [seed-instrs : compiler_ir_types.CompilerIrInstrList
-      (compiler_ir_types.compiler-ir-instr-cons
-        (opt-dense-insertion-test-mov 20)
-        compiler_ir_types.CompilerIrInstrList.Nil)]
-    [phi-instrs : compiler_ir_types.CompilerIrInstrList
-      (compiler_ir_types.compiler-ir-instr-cons
+    [seed-instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq1
+        (opt-dense-insertion-test-mov 20))]
+    [phi-instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq1
         (compiler_ir_types.CompilerIrInstr.Phi
           30
           compiler_ir_types.CompilerIrPhiInputList.Nil
-          (compiler_ast_types.AstType.I64))
-        compiler_ir_types.CompilerIrInstrList.Nil)]
-    [next-instrs : compiler_ir_types.CompilerIrInstrList
-      (compiler_ir_types.compiler-ir-instr-cons
-        (opt-dense-insertion-test-mov 40)
-        compiler_ir_types.CompilerIrInstrList.Nil)]
+          (compiler_ast_types.AstType.I64)))]
+    [next-instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq1
+        (opt-dense-insertion-test-mov 40))]
     [cons-result : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-induction-insert-support-blocks
         header

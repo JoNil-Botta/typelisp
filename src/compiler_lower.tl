@@ -2463,10 +2463,10 @@
       (cdiag.compiler-diagnostic-from-ast-span "" span message)]
     [(ir.CompilerMaybeSourceSpan.No) (lower-diagnostic message)]))
 
-(define (lower-diagnostic-with-path
+(define (lower-diagnostic-with-fallback-path
   [diag : cdiag.CompilerDiagnostic]
   [path : String]) : cdiag.CompilerDiagnostic
-  (cdiag.compiler-diagnostic-with-path diag path))
+  (cdiag.compiler-diagnostic-with-fallback-path diag path))
 
 (define (lower-resetting-entry-in-live-session?) : bool
   (load.compiler-load-active-session-live?))
@@ -2476,7 +2476,7 @@
   [path : String]) : ResultCompilerLower
   (ResultCompilerLower.Err
     (box
-      (lower-diagnostic-with-path
+      (lower-diagnostic-with-fallback-path
         (lower-diagnostic
           (str_cat.str-cat
             entry
@@ -9123,14 +9123,18 @@
 ;; scratch arena is destroyed mirrors the macro-walk boundary clears.
 (define (lower-clone-handoff-expansion-cache-clear!
   [job-state : tc_core.TcJobState]) : unit
-  (begin
-    (tc_core.macro-generated-decls-memo-reset!)
-    (tc_core.macro-generated-module-memo-reset!)
-    (tc_core.tc-macro-helper-env-cache-reset!)
-    (tc_core.tc-nominal-owner-cache-reset!)
-    (tc_core.macro-alias-derived-cache-reset!)
-    (tc_core.tc-job-state-reset-file-state! job-state)
-    (ctfe.ctfe-module-macro-export-reset!)))
+  (let
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state job-state)]
+    (begin
+      (tc_core.macro-generated-decls-memo-reset! macro-state)
+      (tc_core.macro-generated-module-memo-reset! macro-state)
+      (tc_core.tc-macro-helper-env-cache-reset! macro-state)
+      (tc_core.tc-nominal-owner-cache-reset!)
+      (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
+      (tc_core.tc-job-state-reset-file-state! job-state)
+      (ctfe.ctfe-module-macro-export-reset-for-state!
+        (tc_core.tc-macro-ctfe-state macro-state)))))
 
 ;; The handoff expansion runs the full macro/CTFE machinery for every clone
 ;; root in one shot. Its working set (CTFE values, env spines, memo entries) is
@@ -9443,8 +9447,11 @@
           [(tc_core.ResultTcEnv.Ok next-env)
             (begin
               (tc_core.tc-context-capture-active-pools! next-ctx)
-              (tc_core.tc-hygiene-reset-active-top-env! next-env)
-              (tc_core.tc-macro-helper-env-cache-reset!)
+              (tc_core.tc-hygiene-reset-active-top-env!
+                (tc_core.tc-context-macro-state next-ctx)
+                next-env)
+              (tc_core.tc-macro-helper-env-cache-reset!
+                (tc_core.tc-context-macro-state next-ctx))
               (ResultLowerCheckedContext.Ok next-ctx next-env))]
           [(tc_core.ResultTcEnv.Err message)
             (ResultLowerCheckedContext.Err message)]))]))
@@ -65761,7 +65768,7 @@
     [(ResultCompilerLower.Ok ir spans) (ResultCompilerLower.Ok ir spans)]
     [(ResultCompilerLower.Err diag)
       (ResultCompilerLower.Err
-        (box (lower-diagnostic-with-path (__tl-box-place diag) path)))]))
+        (box (lower-diagnostic-with-fallback-path (__tl-box-place diag) path)))]))
 
 (define (lower-compiler-program-with-path-mode
   [path : String]
@@ -65974,7 +65981,7 @@
                                 (compiler-lower-profile-finish "decls"))
                               (ResultCompilerLower.Err
                                 (box
-                                  (lower-diagnostic-with-path
+                                  (lower-diagnostic-with-fallback-path
                                     (__tl-box-place diag)
                                     entry-path))))]))))]
                 [(ResultLowerCheckedContext.Err message)
@@ -66241,7 +66248,9 @@
                 (compiler-lower-profile-specialization-counters))
               (ResultCompilerLower.Err
                 (box
-                  (lower-diagnostic-with-path (__tl-box-place diag) entry-path))))])))))
+                  (lower-diagnostic-with-fallback-path
+                    (__tl-box-place diag)
+                    entry-path))))])))))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
   [lower-state : CompilerLowerState]
@@ -66452,7 +66461,8 @@
                             [checked-detach? : bool
                               lower-checked-dest-pools-active]
                             [macro-changed? : bool
-                              (tc_core.macro-expand-program-structurally-changed?)]
+                              (tc_core.macro-expand-program-structurally-changed?
+                                (tc_core.tc-job-state-macro-state job-state))]
                             [retain-macro-source? : bool
                               (and checked-detach? (not macro-changed?))]
                             [detach-load-pools? : bool
@@ -66570,7 +66580,7 @@
                           (ResultCompilerLower.Err
                             (box
                               (cdiag.compiler-diagnostic-copy
-                                (lower-diagnostic-with-path
+                                (lower-diagnostic-with-fallback-path
                                   (__tl-box-place diag)
                                   macro-entry-path)))))])))))]
           [(spec.ResultGenProgramWithPaths.Err diag)
@@ -66580,7 +66590,9 @@
                 (compiler-lower-profile-finish "macro_handoff"))
               (ResultCompilerLower.Err
                 (box
-                  (lower-diagnostic-with-path (__tl-box-place diag) entry-path))))])))))
+                  (lower-diagnostic-with-fallback-path
+                    (__tl-box-place diag)
+                    entry-path))))])))))
 
 ;; Serial/test compatibility adapter for callers that already provide the
 ;; explicit loader/prefix/job state but still rely on the active interner.
@@ -67163,7 +67175,10 @@
             mode))]
       [(parser.ResultAstProgram.Err message)
         (ResultCompilerLower.Err
-          (box (lower-diagnostic-with-path (lower-diagnostic message) path)))])))
+          (box
+            (lower-diagnostic-with-fallback-path
+              (lower-diagnostic message)
+              path)))])))
 
 (define (lower-compiler-source-with-path-mode
   [path : String]

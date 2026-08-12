@@ -3896,9 +3896,7 @@
 (define (tltest-diagnostic-with-source-fallback
   [source : String]
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
-  (if (= (string.string-length (cdiag.compiler-diagnostic-path diag)) 0)
-    (cdiag.compiler-diagnostic-with-path diag source)
-    diag))
+  (cdiag.compiler-diagnostic-with-fallback-path diag source))
 
 (define (tltest-executable-spawn-detail [bin-path : String]) : String
   (match (build_run_core.source-tool-try-file-exists? bin-path)

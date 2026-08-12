@@ -2689,12 +2689,10 @@
       (compiler-parse-dispatch-index-current-control? control))
       (compiler-parse-dispatch-cache-ref control)
       (let
-        [previous-arena : i64 (arena.tl_arena_current)]
-        [persistent-arena : i64
-          (compiler-parse-state-owner-persistent-arena control)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set persistent-arena))
+        [persistent-arena : arena.Arena
+          (arena.Arena (compiler-parse-state-owner-persistent-arena control))]
+        (in-arena
+          persistent-arena
           (let
             [seed : sym_i64_env.SymI64Env
               (sym_i64_env.sym-i64-bind-id
@@ -2718,8 +2716,6 @@
               ;; lexing continues after its syntax IDs. Inactive owners remain
               ;; untouched, preserving A/B state isolation.
               (compiler-parse-state-owner-sync-active! control)
-              (unsafe
-                (arena.tl_arena_set previous-arena))
               dispatch)))))))
 
 (define (compiler-parse-dispatch-env-from-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env

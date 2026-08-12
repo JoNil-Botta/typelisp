@@ -1375,7 +1375,7 @@
 (define (compiler-live-use-ids-add-value-array!
   [out : (__tl_dyn-array i64)]
   [n : i64]
-  [values : (Array ir.CompilerIrValue)]
+  [values : (__tl_dyn-array ir.CompilerIrValue)]
   [index : i64]) : i64
   (if (>= index (array-length values))
     n

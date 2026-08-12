@@ -2706,6 +2706,10 @@
       (compiler_optimize_tests.compiler-optimize-global-value-number-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-load-gvn-substitution-self-test"
+      (compiler_optimize_tests.compiler-optimize-load-gvn-substitution-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-wide-literal-operand-self-test"
       (compiler_optimize_tests.compiler-optimize-wide-literal-operand-self-test)
       42)
@@ -3487,6 +3491,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-merged-body-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-merged-body-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-negative-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
       42)
@@ -3612,16 +3624,16 @@
     "absorbable acyclic bounds+switch callee inlines with fresh CFG/phi labels"))
 
 (test
-  inline-multiblock-cyclic-bounds-switch-refusal
+  inline-multiblock-cyclic-bounds-switch-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-multiblock-cyclic-bounds-switch-refusal-ok?)
-    "cyclic bounds+switch callee remains behind the acyclic admission gate"))
+    (compiler_optimize_tests.compiler-optimize-inline-multiblock-cyclic-bounds-switch-admission-ok?)
+    "a one-reference cyclic bounds+switch callee is taken in a loop-free caller, bounds check and cloned CFG intact"))
 
 (test
   inline-vm-run-bounds-loop-exception
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-vm-run-bounds-loop-ok?)
-    "only exact vm-run bounds loop inlines at opt2; qs-partition and opt1 stay refused"))
+    "vm-run and the same-shaped qs-partition both inline at opt2 on shape, not on name; opt1 still refuses both"))
 
 (test
   inline-bounds-loop-in-loop-site
@@ -3630,10 +3642,70 @@
     "small absorbable bounds loop leaf inlines at an in-loop call site"))
 
 (test
-  inline-bounds-loop-cold-site-refusal
+  inline-bounds-loop-cold-site-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cold-site-refusal-ok?)
-    "the same leaf stays refused at a straight-line call site"))
+    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cold-site-admission-ok?)
+    "the same leaf is taken at a straight-line site of a loop-free caller: no caller loop is there to tax"))
+
+(test
+  inline-checked-depth-weighting
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-depth-weighting-ok?)
+    "the measured tier prices a body at the depth an inline would put it, and the weight ladder saturates"))
+
+(test
+  inline-checked-window
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-window-ok?)
+    "the accept window is two-sided: the model must agree with a free inline within a factor of two"))
+
+(test
+  inline-checked-budget
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-budget-ok?)
+    "the program budget counts verdicts and the tier arms and disarms"))
+
+(test
+  inline-checked-band-exclusion
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-band-exclusion-ok?)
+    "a band-admitted site never reaches the check, so a banked program spends no budget"))
+
+(test
+  inline-checked-rollback-verifies
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-rollback-verifies-ok?)
+    "arming the tier over a program outside its class changes nothing and every function still verifies"))
+
+(test
+  inline-checked-sequence-two-sites
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-sequence-two-sites-ok?)
+    "two sites of one callee are priced richest-first and both kept, each against the state before it"))
+
+(test
+  inline-checked-sequence-partial
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-sequence-partial-ok?)
+    "a caller keeps its first site and reverts its second: the rollback is per site, not per caller"))
+
+(test
+  inline-checked-richness
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-richness-ok?)
+    "sites are ordered by what a free inline is worth, per unit of the caller's growth budget it spends"))
+
+(test
+  inline-checked-caller-cap
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-caller-cap-ok?)
+    "one caller cannot drain the program's verdict budget"))
+
+(test
+  inline-checked-one-callee
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-one-callee-ok?)
+    "a caller's later sites are restricted to the callee its first accept named"))
 
 (test
   inline-bounds-loop-cascade-refusal
@@ -3757,6 +3829,24 @@
     "five copies fit the per-caller block fuel; the sixth site keeps its call"))
 
 (test
+  inline-hot-loop-leaf-single-reference
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-ok?)
+    "a one-reference big-tier loop leaf is taken at its in-loop site: the band starts at one reference, not three"))
+
+(test
+  inline-hot-loop-leaf-single-reference-too-big-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-too-big-refusal-ok?)
+    "the size ceiling still binds at one reference: a leaf one instruction past the band keeps its call"))
+
+(test
+  inline-hot-loop-leaf-single-reference-call-bearing-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-call-bearing-refusal-ok?)
+    "the call-free clause still binds at one reference: a big-tier leaf carrying a call keeps its boundary (#6307)"))
+
+(test
   inline-shared-accessor-floor
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-floor-ok?)
@@ -3833,18 +3923,30 @@
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code
       "bench.tl::vm-run"
-      true)
+      true
+      2)
     15
     "span-aware inliner admits exact vm-run and preserves cloned spans"))
+
+(test
+  inline-qs-partition-bounds-loop-span-positive
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-switch-span-case-code
+      "bench.tl::qs-partition"
+      true
+      2)
+    15
+    "the similarly shaped qs-partition loop is admitted on its shape now, not on a name, and its cloned spans survive"))
 
 (test
   inline-vm-run-bounds-loop-span-negative
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code
-      "bench.tl::qs-partition"
-      false)
+      "bench.tl::vm-run"
+      false
+      1)
     15
-    "span-aware inliner refuses the similarly shaped qs-partition loop"))
+    "below opt2 the multiblock inliner does not run: the call survives with its caller-side span intact"))
 
 (test
   inline-multiblock-switch-cost-refusal
@@ -3895,6 +3997,20 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
     42
     "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
+
+(test
+  bce-version-multiblock-merged-body
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
+    42
+    "multi-block versioning admits an absorbed body's exit join and clones it"))
+
+(test
+  bce-version-multiblock-merged-body-boundaries
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-refusal-self-test)
+    42
+    "exit-join admission refuses loop-edge joins, checked joins and outside arms"))
 
 (test
   bce-version-cross-array-fusion

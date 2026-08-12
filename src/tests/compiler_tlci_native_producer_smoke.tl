@@ -35,6 +35,59 @@
 (define (producer-test-name-id [name : String]) : i64
   (ci.intern-template-source-id (ci.intern name)))
 
+;; A native expansion rebuilds the parser's `Spanned` wrapper around every
+;; template node, exactly as the interpreted quote does, so every shape probe
+;; below reads a node through its wrappers. `producer-test-node-span` is the
+;; complementary reader: the wrapper the probes see through is itself asserted
+;; where a template span is the point of the case. Refs #5212.
+(define (producer-test-expr-get [pools : ast.AstNodePoolContext] [node : i64]) : ast.AstExpr
+  (let
+    [expr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools node)]
+    (match expr
+      [(ast.AstExpr.Spanned inner _) (producer-test-expr-get pools inner)]
+      [_ expr])))
+
+;; The outermost source span on `node`, or the four-zero span when it carries
+;; none. A template node always carries one; a synthesized node never does.
+(define (producer-test-node-span [pools : ast.AstNodePoolContext] [node : i64]) : ast.AstSourceSpan
+  (match (ast.ast-node-pool-context-expr-get pools node)
+    [(ast.AstExpr.Spanned _ span) span]
+    [_ (ast.ast-source-span 0 0 0 0)]))
+
+(define (producer-test-node-span-at?
+  [pools : ast.AstNodePoolContext]
+  [node : i64]
+  [line : i64]
+  [col : i64]) : bool
+  (let
+    [span : ast.AstSourceSpan (producer-test-node-span pools node)]
+    (and
+      (= (ast.ast-source-span-start-line span) line)
+      (= (ast.ast-source-span-start-col span) col))))
+
+;; An operand arrives from a parsed call site, so it carries its own span the
+;; way a real macro argument does. That origin survives substitution: a
+;; template's unquote position never covers it with the template's own span.
+(define (producer-test-spanned-node
+  [pools : ast.AstNodePoolContext]
+  [node : i64]
+  [line : i64]
+  [col : i64]) : i64
+  (ast.ast-expr-spanned-with-pools
+    pools
+    node
+    (ast.ast-source-span line col line (+ col 1))))
+
+;; Push one operand node the way the parser would hand it over: spanned.
+(define (producer-test-push-spanned
+  [pools : ast.AstNodePoolContext]
+  [expr : ast.AstExpr]) : i64
+  (producer-test-spanned-node
+    pools
+    (ast.ast-node-pool-context-expr-push pools expr)
+    900
+    7))
+
 (define (producer-test-collect-decl!
   [decl : ast.AstDecl]
   [module : String]
@@ -117,10 +170,10 @@
   [expected-callee : String]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Call callee args)
           (and
-            (match (ast.ast-node-pool-context-expr-get pools callee)
+            (match (producer-test-expr-get pools callee)
               [(ast.AstExpr.Var name)
                 (= name (producer-test-name-id expected-callee))]
               [_ false])
@@ -134,14 +187,14 @@
   [condition : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.If actual-condition then-node else-node)
           (and
             (= actual-condition condition)
-            (match (ast.ast-node-pool-context-expr-get pools then-node)
+            (match (producer-test-expr-get pools then-node)
               [(ast.AstExpr.Literal (ast.AstLiteral.Bool flag)) flag]
               [_ false])
-            (match (ast.ast-node-pool-context-expr-get pools else-node)
+            (match (producer-test-expr-get pools else-node)
               [(ast.AstExpr.Literal (ast.AstLiteral.Bool flag)) (not flag)]
               [_ false]))]
         [_ false])]
@@ -154,22 +207,20 @@
   [operand : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Call callee args)
           (and
-            (match (ast.ast-node-pool-context-expr-get pools callee)
+            (match (producer-test-expr-get pools callee)
               [(ast.AstExpr.Var name)
                 (= name (producer-test-name-id "stdlib.json.JsonValue"))]
               [_ false])
             (= (ast.ast-expr-list-len (& args)) 1)
             (let
               [inner : i64 (ast.ast-expr-list-get (& args) 0 -1)]
-              (match (ast.ast-node-pool-context-expr-get pools inner)
+              (match (producer-test-expr-get pools inner)
                 [(ast.AstExpr.Call inner-callee inner-args)
                   (and
-                    (match (ast.ast-node-pool-context-expr-get
-                      pools
-                      inner-callee)
+                    (match (producer-test-expr-get pools inner-callee)
                       [(ast.AstExpr.Var name)
                         (= name (producer-test-name-id "stdlib.json.JsonBool"))]
                       [_ false])
@@ -183,30 +234,30 @@
 (define (producer-test-lits-result-ok? [pools : ast.AstNodePoolContext]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Call callee args)
           (and
-            (match (ast.ast-node-pool-context-expr-get pools callee)
+            (match (producer-test-expr-get pools callee)
               [(ast.AstExpr.Var name) (= name (producer-test-name-id "f"))]
               [_ false])
             (= (ast.ast-expr-list-len (& args)) 4)
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& args) 0 -1))
               [(ast.AstExpr.Literal (ast.AstLiteral.String sid))
                 (string.eq (ci.intern-str sid) "a\tb")]
               [_ false])
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& args) 1 -1))
               [(ast.AstExpr.Literal (ast.AstLiteral.Char c)) (= c 'x')]
               [_ false])
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& args) 2 -1))
               [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value -7)]
               [_ false])
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& args) 3 -1))
               [(ast.AstExpr.Literal (ast.AstLiteral.Bool flag)) flag]
@@ -223,18 +274,18 @@
   [second : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.If actual-condition then-node else-node)
           (and
             (= actual-condition condition)
-            (match (ast.ast-node-pool-context-expr-get pools then-node)
+            (match (producer-test-expr-get pools then-node)
               [(ast.AstExpr.Begin items)
                 (and
                   (= (ast.ast-expr-list-len (& items)) 2)
                   (= (ast.ast-expr-list-get (& items) 0 -1) first)
                   (= (ast.ast-expr-list-get (& items) 1 -1) second))]
               [_ false])
-            (match (ast.ast-node-pool-context-expr-get pools else-node)
+            (match (producer-test-expr-get pools else-node)
               [(ast.AstExpr.Literal (ast.AstLiteral.Unit)) true]
               [_ false]))]
         [_ false])]
@@ -245,7 +296,7 @@
   [expected-name : String]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Var name) (= name (producer-test-name-id expected-name))]
         [_ false])]
     [_ false]))
@@ -360,9 +411,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     (compiler_ctfe.CompilerCtfeValue.Expr
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern name)))
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern name)))
       (ast.AstType.Expr))))
 
 ;; The named local Expr probes return boolean data for live Expr slots and the
@@ -371,11 +420,9 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [var-node : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "value")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
     [string-node : i64
-      (ast.ast-node-pool-context-expr-push
+      (producer-test-push-spanned
         pools
         (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern "literal"))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -488,21 +535,21 @@
 (define (producer-test-gen-result-ok? [pools : ast.AstNodePoolContext]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Begin items)
           (and
             (= (ast.ast-expr-list-len (& items)) 2)
             (let
               [first : i64 (ast.ast-expr-list-get (& items) 0 -1)]
-              (match (ast.ast-node-pool-context-expr-get pools first)
+              (match (producer-test-expr-get pools first)
                 [(ast.AstExpr.Call callee args)
                   (and
-                    (match (ast.ast-node-pool-context-expr-get pools callee)
+                    (match (producer-test-expr-get pools callee)
                       [(ast.AstExpr.Var name)
                         (= name (producer-test-name-id "module"))]
                       [_ false])
                     (= (ast.ast-expr-list-len (& args)) 1)
-                    (match (ast.ast-node-pool-context-expr-get
+                    (match (producer-test-expr-get
                       pools
                       (ast.ast-expr-list-get (& args) 0 -1))
                       [(ast.AstExpr.Var name-id)
@@ -518,24 +565,24 @@
 (define (producer-test-decls-result-ok? [pools : ast.AstNodePoolContext]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Begin items)
           (and
             (= (ast.ast-expr-list-len (& items)) 2)
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& items) 0 -1))
               [(ast.AstExpr.Call callee _)
-                (match (ast.ast-node-pool-context-expr-get pools callee)
+                (match (producer-test-expr-get pools callee)
                   [(ast.AstExpr.Var name)
                     (= name (producer-test-name-id "define"))]
                   [_ false])]
               [_ false])
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& items) 1 -1))
               [(ast.AstExpr.Call callee _)
-                (match (ast.ast-node-pool-context-expr-get pools callee)
+                (match (producer-test-expr-get pools callee)
                   [(ast.AstExpr.Var name)
                     (= name (producer-test-name-id "define"))]
                   [_ false])]
@@ -548,7 +595,7 @@
 (define (producer-test-classify-result-ok? [pools : ast.AstNodePoolContext]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Match match-box)
           (match (__tl-box-place match-box)
             [(ast.AstMatch.Match _ arms)
@@ -587,17 +634,17 @@
 (define (producer-test-twice-result-ok? [pools : ast.AstNodePoolContext]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Begin items)
           (and
             (= (ast.ast-expr-list-len (& items)) 2)
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& items) 0 -1))
               [(ast.AstExpr.Set name-id _)
                 (= name-id (producer-test-name-id "flag"))]
               [_ false])
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& items) 1 -1))
               [(ast.AstExpr.Set name-id _)
@@ -620,16 +667,16 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (cond
         [(= count 0)
-          (match (ast.ast-node-pool-context-expr-get pools node)
+          (match (producer-test-expr-get pools node)
             [(ast.AstExpr.Literal (ast.AstLiteral.String sid))
               (string.eq (ci.intern-str sid) "")]
             [_ false])]
         [(= count 1) (= node first)]
         [(= count 2)
-          (match (ast.ast-node-pool-context-expr-get pools node)
+          (match (producer-test-expr-get pools node)
             [(ast.AstExpr.Call callee args)
               (and
-                (match (ast.ast-node-pool-context-expr-get pools callee)
+                (match (producer-test-expr-get pools callee)
                   [(ast.AstExpr.Var name)
                     (= name (producer-test-name-id "concat2"))]
                   [_ false])
@@ -647,30 +694,28 @@
   [first : i64]
   [second : i64]
   [third : i64]) : bool
-  (match (ast.ast-node-pool-context-expr-get pools node)
+  (match (producer-test-expr-get pools node)
     [(ast.AstExpr.Call callee args)
       (and
-        (match (ast.ast-node-pool-context-expr-get pools callee)
+        (match (producer-test-expr-get pools callee)
           [(ast.AstExpr.Var name) (= name (producer-test-name-id "concat-all"))]
           [_ false])
         (= (ast.ast-expr-list-len (& args)) 1)
-        (match (ast.ast-node-pool-context-expr-get
+        (match (producer-test-expr-get
           pools
           (ast.ast-expr-list-get (& args) 0 -1))
           [(ast.AstExpr.Call pack-callee pack-args)
             (and
-              (match (ast.ast-node-pool-context-expr-get pools pack-callee)
+              (match (producer-test-expr-get pools pack-callee)
                 [(ast.AstExpr.Var name) (= name (producer-test-name-id "pack"))]
                 [_ false])
               (= (ast.ast-expr-list-len (& pack-args)) 2)
-              (match (ast.ast-node-pool-context-expr-get
+              (match (producer-test-expr-get
                 pools
                 (ast.ast-expr-list-get (& pack-args) 0 -1))
                 [(ast.AstExpr.Call carrier-callee carrier-args)
                   (and
-                    (match (ast.ast-node-pool-context-expr-get
-                      pools
-                      carrier-callee)
+                    (match (producer-test-expr-get pools carrier-callee)
                       [(ast.AstExpr.Var name)
                         (= name (producer-test-name-id "__args"))]
                       [_ false])
@@ -679,7 +724,7 @@
                     (= (ast.ast-expr-list-get (& carrier-args) 1 -1) second)
                     (= (ast.ast-expr-list-get (& carrier-args) 2 -1) third))]
                 [_ false])
-              (match (ast.ast-node-pool-context-expr-get
+              (match (producer-test-expr-get
                 pools
                 (ast.ast-expr-list-get (& pack-args) 1 -1))
                 [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 3)]
@@ -695,17 +740,11 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [first : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "alpha")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "alpha")))]
     [second : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "beta")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "beta")))]
     [third : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "gamma")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "gamma")))]
     [items : ast.AstExprList (ast.ast-expr-list-new)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
@@ -756,7 +795,7 @@
   [borrowed : bool]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Call callee args)
           (let
             [expected-base : String
@@ -775,7 +814,7 @@
             [index : i64 0]
             [ok : bool
               (and
-                (match (ast.ast-node-pool-context-expr-get pools callee)
+                (match (producer-test-expr-get pools callee)
                   [(ast.AstExpr.Var name)
                     (= name (producer-test-name-id expected))]
                   [_ false])
@@ -791,7 +830,7 @@
                     (set! ok false))
                   (set! index (+ index 1))))
               (if (and ok (= count 2))
-                (match (ast.ast-node-pool-context-expr-get
+                (match (producer-test-expr-get
                   pools
                   (ast.ast-expr-list-get (& args) 2 -1))
                   [(ast.AstExpr.Literal (ast.AstLiteral.String sid))
@@ -812,40 +851,36 @@
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     [call-callee : i64
-      (ast.ast-node-pool-context-expr-push
+      (producer-test-push-spanned
         pools
         (ast.AstExpr.Var (ci.intern "make-value")))]
     (begin
       (set!
         (array-ref nodes 0)
-        (ast.ast-node-pool-context-expr-push
+        (producer-test-push-spanned
           pools
           (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern "alpha")))))
       (set!
         (array-ref nodes 1)
-        (ast.ast-node-pool-context-expr-push
-          pools
-          (ast.AstExpr.Var (ci.intern "beta"))))
+        (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "beta"))))
       (set!
         (array-ref nodes 2)
-        (ast.ast-node-pool-context-expr-push
+        (producer-test-push-spanned
           pools
           (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern "gamma")))))
       (set!
         (array-ref nodes 3)
-        (ast.ast-node-pool-context-expr-push
-          pools
-          (ast.AstExpr.Var (ci.intern "delta"))))
+        (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "delta"))))
       (set!
         (array-ref nodes 4)
-        (ast.ast-node-pool-context-expr-push
+        (producer-test-push-spanned
           pools
           (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern "epsilon")))))
       (when
         mixed
         (set!
           (array-ref nodes 1)
-          (ast.ast-node-pool-context-expr-push
+          (producer-test-push-spanned
             pools
             (ast.AstExpr.Call call-callee (ast.ast-expr-list-new)))))
       (let
@@ -905,14 +940,12 @@
       (cond
         [(= check 1) (= node carrier)]
         [else
-          (match (ast.ast-node-pool-context-expr-get pools node)
+          (match (producer-test-expr-get pools node)
             [(ast.AstExpr.Call actual-callee args)
               (and
                 (if (= check 0)
                   (= actual-callee callee)
-                  (match (ast.ast-node-pool-context-expr-get
-                    pools
-                    actual-callee)
+                  (match (producer-test-expr-get pools actual-callee)
                     [(ast.AstExpr.Var name)
                       (= name (producer-test-name-id "joined"))]
                     [_ false]))
@@ -936,21 +969,13 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [callee : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "carry")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "carry")))]
     [first : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "alpha")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "alpha")))]
     [second : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "beta")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "beta")))]
     [piece : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "gamma")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "gamma")))]
     [items : ast.AstExprList (ast.ast-expr-list-new)]
     [carrier : i64 0]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -962,9 +987,7 @@
         carrier
         (if (= check 1)
           piece
-          (ast.ast-node-pool-context-expr-push
-            pools
-            (ast.AstExpr.Call callee items))))
+          (producer-test-push-spanned pools (ast.AstExpr.Call callee items))))
       (set!
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr carrier (ast.AstType.Expr)))
@@ -1024,7 +1047,7 @@
       (and
         (> (ast.ast-source-span-start-line span) 0)
         (> (ast.ast-source-span-start-col span) 0)
-        (match (ast.ast-node-pool-context-expr-get pools inner)
+        (match (producer-test-expr-get pools inner)
           [(ast.AstExpr.Var name) (= name (producer-test-name-id "foldlike"))]
           [_ false]))]
     [_ false]))
@@ -1039,20 +1062,18 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (if (or (= check 1) (= check 2))
         (= node acc)
-        (match (ast.ast-node-pool-context-expr-get pools node)
+        (match (producer-test-expr-get pools node)
           [(ast.AstExpr.Call callee args)
             (and
               (producer-test-foldlike-callee-ok? pools callee)
               (= (ast.ast-expr-list-len (& args)) 3)
               (= (ast.ast-expr-list-get (& args) 0 -1) carrier)
-              (match (ast.ast-node-pool-context-expr-get
+              (match (producer-test-expr-get
                 pools
                 (ast.ast-expr-list-get (& args) 1 -1))
                 [(ast.AstExpr.Call step-callee step-args)
                   (and
-                    (match (ast.ast-node-pool-context-expr-get
-                      pools
-                      step-callee)
+                    (match (producer-test-expr-get pools step-callee)
                       [(ast.AstExpr.Var name)
                         (= name (producer-test-name-id "step"))]
                       [_ false])
@@ -1060,7 +1081,7 @@
                     (= (ast.ast-expr-list-get (& step-args) 0 -1) acc)
                     (= (ast.ast-expr-list-get (& step-args) 1 -1) first))]
                 [_ false])
-              (match (ast.ast-node-pool-context-expr-get
+              (match (producer-test-expr-get
                 pools
                 (ast.ast-expr-list-get (& args) 2 -1))
                 [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 1)]
@@ -1075,21 +1096,13 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [head : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "carry")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "carry")))]
     [first : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "alpha")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "alpha")))]
     [second : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "beta")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "beta")))]
     [acc : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "seed")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "seed")))]
     [items : ast.AstExprList (ast.ast-expr-list-new)]
     [carrier : i64 0]
     [idx : i64 0]
@@ -1102,16 +1115,14 @@
       (ast.ast-expr-list-push (&mut items) second)
       (set!
         carrier
-        (ast.ast-node-pool-context-expr-push
-          pools
-          (ast.AstExpr.Call head items)))
+        (producer-test-push-spanned pools (ast.AstExpr.Call head items)))
       (set!
         idx
         (if (= check 2)
           acc
           (let
             [literal : i64
-              (ast.ast-node-pool-context-expr-push
+              (producer-test-push-spanned
                 pools
                 (ast.AstExpr.Literal
                   (ast.ast-lit-int
@@ -1121,7 +1132,7 @@
             (if (= check 3)
               (ast.ast-expr-spanned-with-pools
                 pools
-                (ast.ast-node-pool-context-expr-push
+                (producer-test-push-spanned
                   pools
                   (ast.AstExpr.MacroExpansion literal 17 23))
                 (ast.ast-source-span 1 1 1 2))
@@ -1186,7 +1197,7 @@
   [expected : String]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Var name-id) (string.eq (ci.intern-str name-id) expected)]
         [_ false])]
     [_ false]))
@@ -1202,14 +1213,12 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [value : i64
       (if var-operand
-        (ast.ast-node-pool-context-expr-push
-          pools
-          (ast.AstExpr.Var (ci.intern name)))
-        (ast.ast-node-pool-context-expr-push
+        (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern name)))
+        (producer-test-push-spanned
           pools
           (ast.AstExpr.Literal (ast.ast-lit-int index))))]
     [idx : i64
-      (ast.ast-node-pool-context-expr-push
+      (producer-test-push-spanned
         pools
         (ast.AstExpr.Literal (ast.ast-lit-int index)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -1256,7 +1265,7 @@
   [operand : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Match match-box)
           (match (__tl-box-place match-box)
             [(ast.AstMatch.Match _ arms)
@@ -1264,35 +1273,29 @@
                 (= arms.len 2)
                 (match (array-ref arms.slots 0)
                   [(ast.AstMatchArm.Arm _ body)
-                    (match (ast.ast-node-pool-context-expr-get pools body)
+                    (match (producer-test-expr-get pools body)
                       [(ast.AstExpr.Begin items)
                         (and
                           (= (ast.ast-expr-list-len (& items)) 2)
-                          (match (ast.ast-node-pool-context-expr-get
+                          (match (producer-test-expr-get
                             pools
                             (ast.ast-expr-list-get (& items) 0 -1))
                             [(ast.AstExpr.Set name value)
                               (and
                                 (= name (producer-test-name-id "inner.len"))
-                                (match (ast.ast-node-pool-context-expr-get
-                                  pools
-                                  value)
+                                (match (producer-test-expr-get pools value)
                                   [(ast.AstExpr.Literal
                                       (ast.AstLiteral.Float text))
                                     (string.eq text "1.5")]
                                   [_ false]))]
                             [_ false])
-                          (match (ast.ast-node-pool-context-expr-get
+                          (match (producer-test-expr-get
                             pools
                             (ast.ast-expr-list-get (& items) 1 -1))
                             [(ast.AstExpr.BoxTake boxed)
-                              (match (ast.ast-node-pool-context-expr-get
-                                pools
-                                boxed)
+                              (match (producer-test-expr-get pools boxed)
                                 [(ast.AstExpr.Box inner)
-                                  (match (ast.ast-node-pool-context-expr-get
-                                    pools
-                                    inner)
+                                  (match (producer-test-expr-get pools inner)
                                     [(ast.AstExpr.Var name)
                                       (= name (producer-test-name-id "inner"))]
                                     [_ false])]
@@ -1302,7 +1305,7 @@
                   [_ false])
                 (match (array-ref arms.slots 1)
                   [(ast.AstMatchArm.Arm _ body)
-                    (match (ast.ast-node-pool-context-expr-get pools body)
+                    (match (producer-test-expr-get pools body)
                       [(ast.AstExpr.Return inner) (= inner operand)]
                       [_ false])]
                   [_ false]))])]
@@ -1319,7 +1322,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [literal : i64
-      (ast.ast-node-pool-context-expr-push
+      (producer-test-push-spanned
         pools
         (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern "picked.name"))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -1350,7 +1353,7 @@
                 (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                 (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
                   [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-                    (match (ast.ast-node-pool-context-expr-get pools node)
+                    (match (producer-test-expr-get pools node)
                       ;; expr-var-from-value resolves the name through the
                       ;; source-name session rather than the template-source
                       ;; mark, so compare rendered text like the `gen` fixture.
@@ -1375,9 +1378,7 @@
     [source-id : i64 (ci.intern "structural.alias")]
     [structural-id : i64 (+ (ci.intern-macro-global-structural-base) source-id)]
     [operand : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var structural-id))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var structural-id))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -1441,9 +1442,7 @@
                         (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                         (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
                           [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-                            (match (ast.ast-node-pool-context-expr-get
-                              pools
-                              node)
+                            (match (producer-test-expr-get pools node)
                               [(ast.AstExpr.Var name-id)
                                 (= name-id structural-id)]
                               [_ false])]
@@ -1490,7 +1489,7 @@
                 (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                 (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
                   [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-                    (match (ast.ast-node-pool-context-expr-get pools node)
+                    (match (producer-test-expr-get pools node)
                       [(ast.AstExpr.Var name-id)
                         (string.eq (ci.intern-str name-id) module)]
                       [_ false])]
@@ -1538,7 +1537,7 @@
                 (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                 (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
                   [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-                    (match (ast.ast-node-pool-context-expr-get pools node)
+                    (match (producer-test-expr-get pools node)
                       [(ast.AstExpr.Var name-id)
                         (=
                           name-id
@@ -1602,9 +1601,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operand : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "value")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -1633,12 +1630,10 @@
                 (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                 (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
                   [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-                    (match (ast.ast-node-pool-context-expr-get pools node)
+                    (match (producer-test-expr-get pools node)
                       [(ast.AstExpr.Call callee args)
                         (and
-                          (match (ast.ast-node-pool-context-expr-get
-                            pools
-                            callee)
+                          (match (producer-test-expr-get pools callee)
                             [(ast.AstExpr.Var name)
                               (= name (producer-test-name-id "marker"))]
                             [_ false])
@@ -1666,7 +1661,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operand : i64
-      (ast.ast-node-pool-context-expr-push
+      (producer-test-push-spanned
         pools
         (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern literal))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -1697,12 +1692,10 @@
                 (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                 (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
                   [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-                    (match (ast.ast-node-pool-context-expr-get pools node)
+                    (match (producer-test-expr-get pools node)
                       [(ast.AstExpr.Call callee args)
                         (and
-                          (match (ast.ast-node-pool-context-expr-get
-                            pools
-                            callee)
+                          (match (producer-test-expr-get pools callee)
                             [(ast.AstExpr.Var name)
                               (= name (producer-test-name-id expected-callee))]
                             [_ false])
@@ -1723,7 +1716,7 @@
   [node : i64]
   [expected-int : i64]
   [expected-text : String]) : bool
-  (match (ast.ast-node-pool-context-expr-get pools node)
+  (match (producer-test-expr-get pools node)
     [(ast.AstExpr.Literal (ast.AstLiteral.Int value _))
       (and (>= expected-int 0) (= value expected-int))]
     [(ast.AstExpr.Literal (ast.AstLiteral.String sid))
@@ -1776,9 +1769,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operand : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern argument)))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern argument)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -1827,9 +1818,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operand : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "value")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
@@ -1907,10 +1896,10 @@
   [operand : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Call callee args)
           (and
-            (match (ast.ast-node-pool-context-expr-get pools callee)
+            (match (producer-test-expr-get pools callee)
               [(ast.AstExpr.Var name)
                 (=
                   name
@@ -1918,12 +1907,12 @@
                     (ci.intern "stdlib.eq.struct-eq-fields")))]
               [_ false])
             (= (ast.ast-expr-list-len (& args)) 3)
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& args) 0 -1))
               [(ast.AstExpr.Var _) true]
               [_ false])
-            (match (ast.ast-node-pool-context-expr-get
+            (match (producer-test-expr-get
               pools
               (ast.ast-expr-list-get (& args) 1 -1))
               [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 0)]
@@ -1938,9 +1927,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operand : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "value")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
@@ -2065,7 +2052,7 @@
 (define (producer-test-typetpl-result-ok? [pools : ast.AstNodePoolContext]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Let let-box)
           (match (__tl-box-place let-box)
             [(ast.AstLet.Let bindings _)
@@ -2156,10 +2143,10 @@
   [operand : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Call callee args)
           (and
-            (match (ast.ast-node-pool-context-expr-get pools callee)
+            (match (producer-test-expr-get pools callee)
               [(ast.AstExpr.Var name)
                 (= name (producer-test-name-id expected-callee))]
               [_ false])
@@ -2167,7 +2154,7 @@
             (let
               [arg : i64 (ast.ast-expr-list-get (& args) 0 -1)]
               (if check-cast
-                (match (ast.ast-node-pool-context-expr-get pools arg)
+                (match (producer-test-expr-get pools arg)
                   [(ast.AstExpr.Cast inner ty-id)
                     (and
                       (= inner operand)
@@ -2185,9 +2172,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operand : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "value")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -2225,9 +2210,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operand : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "value")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
@@ -2538,9 +2521,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [condition : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "flag")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "flag")))]
     [items : ast.AstExprList
       (ast.ast-expr-cons condition (ast.ast-expr-list-new))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -2584,17 +2565,11 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [condition : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "flag")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "flag")))]
     [first : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "alpha")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "alpha")))]
     [second : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "beta")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "beta")))]
     [items : ast.AstExprList
       (if (= body-count 2)
         (ast.ast-expr-cons
@@ -2665,7 +2640,7 @@
   [expected : (& expected ast.AstExprList)]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (ast.ast-node-pool-context-expr-get pools node)
+      (match (producer-test-expr-get pools node)
         [(ast.AstExpr.Tuple items)
           (producer-test-tuple-items-eq? (& items) expected)]
         [_ false])]
@@ -2681,9 +2656,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [value : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "value")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
     [items : ast.AstExprList
       (if (= count 0)
         (ast.ast-expr-list-new)
@@ -2725,13 +2698,9 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [first : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "first")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "first")))]
     [second : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "second")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "second")))]
     [expected : ast.AstExprList
       (ast.ast-expr-cons
         first
@@ -2776,9 +2745,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [value : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (ci.intern "value")))]
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -2807,11 +2774,11 @@
                 (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                 (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
                   [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-                    (match (ast.ast-node-pool-context-expr-get pools node)
+                    (match (producer-test-expr-get pools node)
                       [(ast.AstExpr.Tuple items)
                         (and
                           (= (ast.ast-expr-list-len (& items)) 2)
-                          (match (ast.ast-node-pool-context-expr-get
+                          (match (producer-test-expr-get
                             pools
                             (ast.ast-expr-list-get (& items) 0 -1))
                             [(ast.AstExpr.Var name)
@@ -2836,11 +2803,11 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [target : i64
-      (ast.ast-node-pool-context-expr-push
+      (producer-test-push-spanned
         pools
         (ast.AstExpr.Var (ci.intern "struct-target")))]
     [value : i64
-      (ast.ast-node-pool-context-expr-push
+      (producer-test-push-spanned
         pools
         (ast.AstExpr.Var (ci.intern "struct-value")))]
     [source-name-id : i64 (ci.intern "name-field")]
@@ -2904,7 +2871,7 @@
                     [(compiler_ctfe.CompilerCtfeValue.Expr
                         node
                         (ast.AstType.Unit))
-                      (match (ast.ast-node-pool-context-expr-get pools node)
+                      (match (producer-test-expr-get pools node)
                         [(ast.AstExpr.StructSet
                             actual-target
                             actual-field
@@ -3599,6 +3566,154 @@
   (unless
     (producer-test-package-native-image-ok?)
     (io.panic "package tlci native producer test failed")))
+
+;; Every template node carries the span the parser gave it, and the unquote
+;; position leaves the substituted operand's own call-site span alone. This is
+;; the whole of what a native expansion has to reproduce for lowering to place
+;; the same located runtime-abort sites as an interpreted one: a compiler built
+;; with `--cfg embedded-stdlib-tlci` and a compiler built without it must emit
+;; the same assembly, and before the producer walked these wrappers they
+;; disagreed on exactly the bounds checks whose spans were dropped here.
+;; Refs #5212.
+(define (producer-test-span-result-ok?
+  [pools : ast.AstNodePoolContext]
+  [operand : i64]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+      (and
+        (producer-test-node-span-at? pools node 2 44)
+        (match (producer-test-expr-get pools node)
+          [(ast.AstExpr.Call callee args)
+            (and
+              (producer-test-node-span-at? pools callee 2 45)
+              (match (producer-test-expr-get pools callee)
+                [(ast.AstExpr.Var name)
+                  (= name (producer-test-name-id "outer"))]
+                [_ false])
+              (= (ast.ast-expr-list-len (& args)) 1)
+              (let
+                [inner : i64 (ast.ast-expr-list-get (& args) 0 -1)]
+                (and
+                  (producer-test-node-span-at? pools inner 2 51)
+                  (match (producer-test-expr-get pools inner)
+                    [(ast.AstExpr.Call inner-callee inner-args)
+                      (and
+                        (producer-test-node-span-at? pools inner-callee 2 52)
+                        (match (producer-test-expr-get pools inner-callee)
+                          [(ast.AstExpr.Var name)
+                            (= name (producer-test-name-id "inner"))]
+                          [_ false])
+                        (= (ast.ast-expr-list-len (& inner-args)) 1)
+                        (= (ast.ast-expr-list-get (& inner-args) 0 -1) operand)
+                        (producer-test-node-span-at? pools operand 900 7))]
+                    [_ false]))))]
+          [_ false]))]
+    [_ false]))
+
+(define (producer-test-dispatch-span?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    ;; Built through this function's own captured pools: a second capture
+    ;; would take its own watermark and hand back a node id the expansion
+    ;; then reuses.
+    [operand : i64
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            "span.macros/spanned"
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= dispatch.status tlci.tlci-host-callback-status-ok)
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                (>= operand 0)
+                (producer-test-span-result-ok? pools operand))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
+;; One template whose every node sits at a column this test names outright.
+;; Line 2 of the source below reads, with column 1 at the opening paren:
+;;   44 `(outer (inner ,value))`   51 `(inner ,value)`   58 `,value`
+;;   45 `outer`                    52 `inner`
+(define (producer-test-span-image-ok?) : bool
+  (let
+    [names : producer_test_svec.Vec (producer_test_svec.new)]
+    [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
+      (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
+    (match (parse_core.parse-ast-source
+      "(module span.macros)
+(defmacro (spanned [value : Expr]) : Expr `(outer (inner ,value)))
+")
+      [(parse_core.ResultAstProgram.Err _) false]
+      [(parse_core.ResultAstProgram.Ok program)
+        (match program
+          [(ast.AstProgram.Program decls)
+            (begin
+              (producer-test-collect-decls!
+                (__tl-box-place decls)
+                ""
+                (&mut names)
+                (&mut captures))
+              (let
+                [name-count : i64 (producer_test_svec.len (& names))]
+                [name-array : (__tl_dyn-array String)
+                  (array.make-array String name-count)]
+                [name-index : i64 0]
+                [_copy-names : unit
+                  (while (< name-index name-count)
+                    (begin
+                      (set!
+                        (array-ref name-array name-index)
+                        (producer_test_svec.get (& names) name-index ""))
+                      (set! name-index (+ name-index 1))))]
+                (match (compiler_tlci_native_producer.embedded-native-emit-package
+                  (tlci.tlci-metadata-emit
+                    (tlci.tlci-make-metadata "v1" "span-test" "0.1.0"))
+                  "producer-test"
+                  (cfg windows true false)
+                  (tlci.tlci-empty-bytes)
+                  name-array
+                  (& captures))
+                  [(compiler_tlci_native_producer.ResultProducerBytes.Err _)
+                    false]
+                  [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
+                    (match (tlci_loader.tlci-loader-load-from-bytes-with-host
+                      (producer-test-image-owner-arena)
+                      bytes
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+                      [(tlci_loader.ResultTlciLoadedImage.Err _) false]
+                      [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+                        (let
+                          [ok : bool (producer-test-dispatch-span? (& loaded))]
+                          (match (tlci_loader.tlci-loader-release loaded)
+                            [(tlci_loader.ResultTlciLoaderUnit.Ok) ok]
+                            [(tlci_loader.ResultTlciLoaderUnit.Err _) false]))])])))])])))
+
+(test
+  template-span-tlci-native-producer
+  (unless
+    (producer-test-span-image-ok?)
+    (io.panic "template span tlci native producer test failed")))
 
 (define (main) : i64
   (if (= (io.arg-count) 6)

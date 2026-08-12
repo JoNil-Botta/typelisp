@@ -12858,8 +12858,40 @@
           (<= (+ (array-ref remap group-var) 1) slots))]
       [(reg.CompilerRegColoring.None) false])))
 
+;; Image-scoped program-map suppression, the contract a STANDALONE plan runs
+;; under. The allocator's group/class/C-call maps describe the image the backend
+;; is emitting and are owned by that image's arena; a caller that plans outside
+;; the backend -- the optimizer's measured inline tier -- must see them missing
+;; instead of reading a previous `compile --batch` entry's freed storage. Two
+;; halves are asserted: while armed every query answers missing, and the flag
+;; does not survive the measurement, because the readers are shared with the
+;; backend's own planning.
+(define (compiler-reg-program-maps-suppression-ok?) : bool
+  (let
+    [name : i64 4242]
+    [idle-before? : bool (reg.compiler-reg-program-maps-suppressed-current?)]
+    [_seed : unit (reg.compiler-reg-add-c-memory-call-name! name)]
+    [installed? : bool (reg.compiler-reg-c-memory-call-name? name)]
+    [_arm : unit (reg.compiler-reg-suppress-program-maps! true)]
+    [armed? : bool (reg.compiler-reg-program-maps-suppressed-current?)]
+    [suppressed? : bool (reg.compiler-reg-c-memory-call-name? name)]
+    [_clear : unit (reg.compiler-reg-suppress-program-maps! false)]
+    [idle-after? : bool (reg.compiler-reg-program-maps-suppressed-current?)]
+    [restored? : bool (reg.compiler-reg-c-memory-call-name? name)]
+    [_reset : unit (reg.compiler-reg-clear-c-memory-call-names!)]
+    (and
+      (not idle-before?)
+      installed?
+      armed?
+      (not suppressed?)
+      (not idle-after?)
+      restored?)))
+
 (define (compiler-regalloc-core-self-test?) : bool
   (begin
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-program-maps-suppression-ok?"
+      (compiler-reg-program-maps-suppression-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-low-bit-index32-powers-ok?"
       (cfg test (compiler-reg-low-bit-index32-powers-ok? 0 1) true))

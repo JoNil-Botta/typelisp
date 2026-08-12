@@ -200,20 +200,22 @@
       (embedded-stdlib-tlci-unwrap-expr inner)]
     [_ (compiler_ast_types.ast-node-get node)]))
 
-(defenum EmbeddedNativeMaybeSourceSpan
-  (Some compiler_ast_types.AstSourceSpan)
-  (None))
+;; Is this template position an unquote? Its substituted value already carries
+;; the caller's span, so the template span only applies when it does not --
+;; `ctfe-quote-preserve-unquoted-source-span?` states the same rule for the
+;; interpreted quote.
+(define (embedded-native-unquote-template-node? [node : i64]) : bool
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(compiler_ast_types.AstExpr.Unquote _) true]
+    [_ false]))
 
-;; Native quasiquote reconstruction normally drops parser wrappers. Retain a
-;; call head's template span so a generated call to another macro can report
-;; the same expansion frame as the interpreted route.
-(define (embedded-native-call-head-source-span [node : i64]) : EmbeddedNativeMaybeSourceSpan
-  (match (compiler_ast_types.ast-node-get node)
-    [(compiler_ast_types.AstExpr.Spanned _ span)
-      (EmbeddedNativeMaybeSourceSpan.Some span)]
-    [(compiler_ast_types.AstExpr.MacroExpansion inner _ _)
-      (embedded-native-call-head-source-span inner)]
-    [_ EmbeddedNativeMaybeSourceSpan.None]))
+;; The immediates one template source span travels in: start line, start
+;; column, then end line and column packed into one word. Refs #5212.
+(define (embedded-native-span-end-arg [span : compiler_ast_types.AstSourceSpan]) : String
+  (string.int->string
+    (bit-or
+      (shl (compiler_ast_types.ast-source-span-end-line span) 32)
+      (compiler_ast_types.ast-source-span-end-col span))))
 
 (define (embedded-stdlib-tlci-param-index
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -537,8 +539,12 @@
   (Ok (__tl_dyn-array u8))
   (Err String))
 
+;; Per-body op budget. A template node costs its construction op plus the
+;; span op that rebuilds the parser's wrapper, so the largest bodies sit near
+;; twice the op count they had before spans were carried; 4096 dropped
+;; `stdlib.text_buf_family/owned` back to a registration shell.
 (define embedded-native-ops-cap : i64
-  4096)
+  8192)
 
 ;; Large native arms use bounded chunks only when necessary; ordinary entries
 ;; retain their exact legacy nested source shape.
@@ -978,7 +984,45 @@
       (str_cat.str-cat
         "template-node:"
         (embedded-native-expr-kind-name (embedded-stdlib-tlci-unwrap-expr node))))
-    (embedded-native-template-ops-inner params node ops ops-count)))
+    (embedded-native-template-spanned-ops params node ops ops-count)))
+
+;; The parser wraps every expression it reads, and `ctfe-quote-expr` rebuilds
+;; that wrapper around every template node it reconstructs. A native expansion
+;; that dropped the wrappers handed lowering a differently spanned tree than
+;; the interpreted one -- same instructions, different located runtime-abort
+;; sites -- so rebuild each wrapper here in the same order and leave the node
+;; kinds themselves to `embedded-native-template-ops-inner`. A MacroExpansion
+;; wrapper stays transparent, as the reconstruction has always treated it.
+(define (embedded-native-template-spanned-ops
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [node : i64]
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
+  (match (compiler_ast_types.ast-node-get node)
+    [(compiler_ast_types.AstExpr.Spanned inner span)
+      (let
+        [inner-opened : i64
+          (embedded-native-template-spanned-ops params inner ops ops-count)]
+        (if (< inner-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              (if (embedded-native-unquote-template-node? inner)
+                (tlci_core.tlci-host-callback-name-shared-view
+                  tlci_core.tlci-host-callback-name-expr-span-unquoted)
+                (tlci_core.tlci-host-callback-name-shared-view
+                  tlci_core.tlci-host-callback-name-expr-span))
+              (string.int->string
+                (compiler_ast_types.ast-source-span-start-line span))
+              (string.int->string
+                (compiler_ast_types.ast-source-span-start-col span))
+              (embedded-native-span-end-arg span))
+            (+ inner-opened 1))))]
+    [(compiler_ast_types.AstExpr.MacroExpansion inner _ _)
+      (embedded-native-template-spanned-ops params inner ops ops-count)]
+    [_ (embedded-native-template-ops-inner params node ops ops-count)]))
 
 (define (embedded-native-template-ops-inner
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -1085,27 +1129,12 @@
             "0")
           1))]
     [(compiler_ast_types.AstExpr.Call func-id args)
+      ;; The head builds like any other template expression -- a plain symbol,
+      ;; an unquoted macro parameter, or a let-bound local -- so it carries its
+      ;; own span wrapper and expr-call needs no immediates of its own.
       (let
-        [source-span : EmbeddedNativeMaybeSourceSpan
-          (embedded-native-call-head-source-span func-id)]
         [head-opened : i64
-          (match (embedded-stdlib-tlci-unwrap-expr func-id)
-            [(compiler_ast_types.AstExpr.Var head-id)
-              (let
-                [head : String (ci.intern-str head-id)]
-                (begin
-                  (embedded-native-template-push!
-                    ops
-                    ops-count
-                    (tlci_core.tlci-host-callback-name-shared-view
-                      tlci_core.tlci-host-callback-name-expr-var)
-                    (embedded-native-name-arg head)
-                    (string.int->string (string.string-length head))
-                    "0")
-                  1))]
-            ;; An unquoted head (a macro parameter or let-bound local used as
-            ;; the call operator) builds like any other template expression.
-            [_ (embedded-native-template-ops params func-id ops ops-count)])]
+          (embedded-native-template-ops params func-id ops ops-count)]
         (if (< head-opened 0)
           -1
           (let
@@ -1119,26 +1148,10 @@
                   ops-count
                   (tlci_core.tlci-host-callback-name-shared-view
                     tlci_core.tlci-host-callback-name-expr-call)
-                  (match source-span
-                    [(EmbeddedNativeMaybeSourceSpan.Some span)
-                      (string.int->string
-                        (compiler_ast_types.ast-source-span-start-line span))]
-                    [(EmbeddedNativeMaybeSourceSpan.None) "0"])
-                  (match source-span
-                    [(EmbeddedNativeMaybeSourceSpan.Some span)
-                      (string.int->string
-                        (compiler_ast_types.ast-source-span-start-col span))]
-                    [(EmbeddedNativeMaybeSourceSpan.None) "0"])
-                  (match source-span
-                    [(EmbeddedNativeMaybeSourceSpan.Some span)
-                      (string.int->string
-                        (bit-or
-                          (shl
-                            (compiler_ast_types.ast-source-span-end-line span)
-                            32)
-                          (compiler_ast_types.ast-source-span-end-col span)))]
-                    [(EmbeddedNativeMaybeSourceSpan.None) "0"]))
-                (+ arg-opened 2))))))]
+                  "0"
+                  "0"
+                  "0")
+                (+ head-opened arg-opened 1))))))]
     [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
       (let
         [cond-opened : i64
@@ -6739,6 +6752,8 @@
     "(extern comptime-host-expr-list-append (:symbol \"_tl_comptime_host_expr-list-append\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-push-operand (:symbol \"_tl_comptime_host_push-operand\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-call (:symbol \"_tl_comptime_host_expr-call\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-span (:symbol \"_tl_comptime_host_expr-span\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-span-unquoted (:symbol \"_tl_comptime_host_expr-span-unquoted\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-tuple (:symbol \"_tl_comptime_host_expr-tuple\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-ref (:symbol \"_tl_comptime_host_expr-array-ref\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-push (:symbol \"_tl_comptime_host_expr-array-push\") : (-> i64 i64 i64 i64 i64 i64))\n"

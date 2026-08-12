@@ -1395,13 +1395,12 @@
     [source-identity-count : i64]
     [identity-count : i64]) : ResultSurfaceAstBytes
     (let
-      [previous-arena : i64 (arena.tl_arena_current)]
-      [surface-arena : i64 (arena.tl_arena_make)]
+      [surface-arena : arena.Arena (arena.make)]
       [dest-pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities-in-arena
           (ast.ast-node-pool-context-expr-len source-pools)
           (ast.ast-node-pool-context-type-len source-pools)
-          surface-arena)]
+          (arena.raw-handle surface-arena))]
       [compaction : ast.AstProgramCompaction
         (ast.ast-program-compact-with-pools
           source-pools
@@ -1427,11 +1426,7 @@
           [bytes : (__tl_dyn-array u8)
             (byte_buf_core.byte-buf-builder-finish-array (& out))]
           (begin
-            (unsafe
-              (arena.tl_arena_set previous-arena))
-            (unsafe
-              (arena.tl_arena_destroy
-                (ast.ast-node-pool-context-base-arena dest-pools)))
+            (arena.destroy-safe! surface-arena)
             (if (codec.surface-ast-write-valid? context)
               (ResultSurfaceAstBytes.Ok bytes)
               (ResultSurfaceAstBytes.Err

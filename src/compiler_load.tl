@@ -10522,6 +10522,11 @@
             params
             ret
             spmd-interface)))]
+    ;; Package macro declarations remain source-backed until #2755 commits
+    ;; dependency-native results. Retaining the declaration also ensures the
+    ;; catalog registry is consulted only after ordinary import visibility and
+    ;; shadowing resolve this exact transformer.
+    [(ast.AstDecl.DefMacro _ _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(ast.AstDecl.DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(ast.AstDecl.Module _) (CompilerLoadSomeDecl decl)]
     [(ast.AstDecl.Unsafe inner-box)
@@ -16161,6 +16166,34 @@
           "_tl_dep_src_lib_helper")]
       [_ false])))
 
+(define (compiler-load-package-source-macro-preserved-ok?) : bool
+  (let
+    [name : i64 (ci.intern-generated-name "package-source-macro")]
+    [body : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [decl : ast.AstDecl
+      (ast.ast-decl-def-macro-id
+        name
+        (ast.ast-macro-param-list-new)
+        (ast.AstType.I64)
+        body)]
+    (match (compiler-load-package-transform-decl
+      "dep"
+      "C:/dep/"
+      (svec.new)
+      "C:/dep/src/lib.tl"
+      "dep.module"
+      CompilerLoadPackageSpmdInterface.Unavailable
+      decl)
+      [(CompilerLoadSomeDecl transformed)
+        (match transformed
+          [(ast.AstDecl.DefMacro _ got-name params (ast.AstType.I64) got-body)
+            (and
+              (= got-name name)
+              (= (ast.ast-macro-param-list-len (& params)) 0)
+              (= got-body body))]
+          [_ false])]
+      [(CompilerLoadNoDecl) false])))
+
 (define (compiler-load-package-imported-spmd-metadata-ok?) : bool
   (let
     [specialization : tlci.TlciSpmdSpecialization
@@ -17227,6 +17260,10 @@
       (compiler-load-package-owner-extern-symbol-ok?)
       (return
         (io.panic "compiler-load: package owner extern symbol smoke mismatch")))
+    (unless
+      (compiler-load-package-source-macro-preserved-ok?)
+      (return
+        (io.panic "compiler-load: package source macro was not preserved")))
     (unless
       (compiler-load-package-imported-spmd-metadata-ok?)
       (return

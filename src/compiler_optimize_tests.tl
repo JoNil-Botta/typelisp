@@ -37578,9 +37578,10 @@
 ;; Runtime boundary behavior of the versioned eq loop: windows ending exactly
 ;; at the array end still pass the guard, and every window compares the same
 ;; with or without versioning.
-(define (opt-bce-mb-eq-runtime-make [n : i64] [seed : i64]) : (Array u8)
+(define (opt-bce-mb-eq-runtime-make [n : i64] [seed : i64]) : (__tl_dyn-array
+    u8)
   (let
-    [out : (Array u8) (array.make-array u8 n)]
+    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -37590,9 +37591,9 @@
       out)))
 
 (define (opt-bce-mb-eq-runtime-slice-eq?
-  [a : (Array u8)]
+  [a : (__tl_dyn-array u8)]
   [a-start : i64]
-  [b : (Array u8)]
+  [b : (__tl_dyn-array u8)]
   [b-start : i64]
   [len : i64]) : bool
   (let
@@ -37617,8 +37618,8 @@
 (test
   bce-version-mb-eq-loop-runtime-boundary
   (let
-    [buf : (Array u8) (opt-bce-mb-eq-runtime-make 16 0)]
-    [other : (Array u8) (opt-bce-mb-eq-runtime-make 16 0)]
+    [buf : (__tl_dyn-array u8) (opt-bce-mb-eq-runtime-make 16 0)]
+    [other : (__tl_dyn-array u8) (opt-bce-mb-eq-runtime-make 16 0)]
     (begin
       (set! (array-ref other 15) 255)
       (test.assert-bool-eq
@@ -37658,9 +37659,9 @@
 ;; window one past the end fails the guard and aborts on the checked slow
 ;; path; the inline harness has no way to assert aborts, so only correct
 ;; results are asserted here.
-(define (opt-bce-sb-runtime-make [n : i64] [step : i64]) : (Array i64)
+(define (opt-bce-sb-runtime-make [n : i64] [step : i64]) : (__tl_dyn-array i64)
   (let
-    [out : (Array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -37670,7 +37671,7 @@
       out)))
 
 (define (opt-bce-sb-runtime-sum2
-  [text : (Array i64)]
+  [text : (__tl_dyn-array i64)]
   [base : i64]
   [count : i64]) : i64
   (let
@@ -37685,7 +37686,7 @@
       acc)))
 
 (define (opt-bce-sb-runtime-sum8
-  [text : (Array i64)]
+  [text : (__tl_dyn-array i64)]
   [base : i64]
   [count : i64]) : i64
   (let
@@ -37699,7 +37700,7 @@
       acc)))
 
 (define (opt-bce-sb-runtime-fill2
-  [out : (Array i64)]
+  [out : (__tl_dyn-array i64)]
   [base : i64]
   [count : i64]
   [value : i64]) : unit
@@ -37713,7 +37714,7 @@
       unit)))
 
 (define (opt-bce-sb-runtime-fill8
-  [out : (Array i64)]
+  [out : (__tl_dyn-array i64)]
   [base : i64]
   [count : i64]
   [value : i64]) : unit
@@ -37729,8 +37730,8 @@
 ;; The CSR counting-fill shape: a strided variable-base token read (derivable)
 ;; feeding a data-indexed fill read+write (kept in the fast clone).
 (define (opt-bce-sb-runtime-hist2
-  [tokens : (Array i64)]
-  [fill : (Array i64)]
+  [tokens : (__tl_dyn-array i64)]
+  [fill : (__tl_dyn-array i64)]
   [base : i64]
   [count : i64]) : unit
   (let
@@ -37747,7 +37748,7 @@
 (test
   bce-version-strided-runtime-load2-boundary
   (let
-    [buf : (Array i64) (opt-bce-sb-runtime-make 16 3)]
+    [buf : (__tl_dyn-array i64) (opt-bce-sb-runtime-make 16 3)]
     (begin
       ;; base + 2*(count-1) + 1 == 15: the pair window ends exactly at the
       ;; array end, so the guard accepts at equality.
@@ -37771,7 +37772,7 @@
 (test
   bce-version-strided-runtime-load8-boundary
   (let
-    [buf : (Array i64) (opt-bce-sb-runtime-make 25 1)]
+    [buf : (__tl_dyn-array i64) (opt-bce-sb-runtime-make 25 1)]
     (begin
       ;; base + 8*(count-1) == 24: the stride lands exactly on the last slot.
       (test.assert-i64-eq
@@ -37794,7 +37795,7 @@
 (test
   bce-version-strided-runtime-store2-boundary
   (let
-    [buf : (Array i64) (opt-bce-sb-runtime-make 16 1)]
+    [buf : (__tl_dyn-array i64) (opt-bce-sb-runtime-make 16 1)]
     (begin
       ;; base + 2*(count-1) == 14: the last store lands at the stride boundary.
       (opt-bce-sb-runtime-fill2 buf 4 6 7)
@@ -37820,7 +37821,7 @@
 (test
   bce-version-strided-runtime-store8-boundary
   (let
-    [buf : (Array i64) (opt-bce-sb-runtime-make 25 1)]
+    [buf : (__tl_dyn-array i64) (opt-bce-sb-runtime-make 25 1)]
     (begin
       ;; base + 8*(count-1) == 24: the last store lands exactly on the last slot.
       (opt-bce-sb-runtime-fill8 buf 0 4 7)
@@ -37843,8 +37844,8 @@
 (test
   bce-version-strided-runtime-partial-hist
   (let
-    [tokens : (Array i64) (opt-bce-sb-runtime-make 16 0)]
-    [fill : (Array i64) (opt-bce-sb-runtime-make 8 0)]
+    [tokens : (__tl_dyn-array i64) (opt-bce-sb-runtime-make 16 0)]
+    [fill : (__tl_dyn-array i64) (opt-bce-sb-runtime-make 8 0)]
     (begin
       (set! (array-ref tokens 0) 7)
       (set! (array-ref tokens 2) 3)
@@ -39024,7 +39025,10 @@
 ;; must be observed by the element reads (only the header load moves; element
 ;; loads stay in the body -- the IR-level poison-3 case stores through the
 ;; loaded element pointer, an alias of the hoisted header's data pointer).
-(define (opt-licm-dh-runtime-sum [arr : (Array i64)] [n : i64] [stop : i64]) : i64
+(define (opt-licm-dh-runtime-sum
+  [arr : (__tl_dyn-array i64)]
+  [n : i64]
+  [stop : i64]) : i64
   (let
     [i : i64 0]
     [ok : bool true]
@@ -39042,7 +39046,7 @@
 ;; Store at i, accumulate the mirror slot n-1-i: the middle iteration reads a
 ;; slot stored by an earlier iteration, so the stores must be observed through
 ;; whatever pointer the loads use.
-(define (opt-licm-dh-runtime-alias-store [arr : (Array i64)] [n : i64]) : i64
+(define (opt-licm-dh-runtime-alias-store [arr : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [ok : bool true]
@@ -39061,8 +39065,8 @@
 (test
   licm-descriptor-header-runtime
   (let
-    [arr : (Array i64) (array.make-array i64 8)]
-    [work : (Array i64) (array.make-array i64 5)]
+    [arr : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [work : (__tl_dyn-array i64) (array.make-array i64 5)]
     (begin
       (set! (array-ref arr 0) 3)
       (set! (array-ref arr 1) 1)
@@ -47860,14 +47864,14 @@
 
 ;; Runtime witnesses: the two compose spellings compute the little-endian
 ;; word of the eight bytes at `at`.
-(define (opt-lc-runtime-fill! [data : (Array u8)] [at : i64] [j : i64]) : unit
+(define (opt-lc-runtime-fill! [data : (__tl_dyn-array u8)] [at : i64] [j : i64]) : unit
   (if (>= j 8)
     unit
     (begin
       (set! (array-ref data (+ at j)) (cast (+ j 1) : u8))
       (opt-lc-runtime-fill! data at (+ j 1)))))
 
-(define (opt-lc-runtime-word [src : (Array u8)] [at : i64]) : i64
+(define (opt-lc-runtime-word [src : (__tl_dyn-array u8)] [at : i64]) : i64
   (let
     [word : i64 0]
     [b : i64 7]
@@ -47880,7 +47884,7 @@
           (set! b (- b 1))))
       word)))
 
-(define (opt-lc-runtime-word-muladd [src : (Array u8)] [at : i64]) : i64
+(define (opt-lc-runtime-word-muladd [src : (__tl_dyn-array u8)] [at : i64]) : i64
   (let
     [word : i64 0]
     [b : i64 7]
@@ -47920,8 +47924,8 @@
 (test
   unroll-const-guard-runtime-boundaries
   (let
-    [data : (Array u8) (array.make-array u8 16)]
-    [tight : (Array u8) (array.make-array u8 8)]
+    [data : (__tl_dyn-array u8) (array.make-array u8 16)]
+    [tight : (__tl_dyn-array u8) (array.make-array u8 8)]
     (begin
       (opt-lc-runtime-fill! data 0 0)
       (test.assert-i64-eq
@@ -47946,7 +47950,7 @@
 (test
   load-combine-runtime-word
   (let
-    [data : (Array u8) (array.make-array u8 16)]
+    [data : (__tl_dyn-array u8) (array.make-array u8 16)]
     (begin
       (opt-lc-runtime-fill! data 3 0)
       (test.assert-i64-eq
@@ -50897,7 +50901,7 @@
 
 (define (opt-dense-insertion-test-seq-codes?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [expected : (Array i64)]
+  [expected : (__tl_dyn-array i64)]
   [count : i64]
   [index : i64]) : bool
   (if (>= index count)
@@ -50951,8 +50955,8 @@
       (compiler_optimize.opt-licm-insert-before-terminator-seq
         (opt-dense-insertion-test-licm-hoisted 40 41)
         no-term)]
-    [expected-inserted : (Array i64) (array.make-array i64 6)]
-    [expected-appended : (Array i64) (array.make-array i64 4)]
+    [expected-inserted : (__tl_dyn-array i64) (array.make-array i64 6)]
+    [expected-appended : (__tl_dyn-array i64) (array.make-array i64 4)]
     (begin
       (set! (array-ref expected-inserted 0) 10)
       (set! (array-ref expected-inserted 1) 11)
@@ -51073,7 +51077,7 @@
 ;; opt-2 self-build exercise the pass itself).
 (define opt-gc-runtime-cell : i64
   3)
-(define opt-gc-runtime-table : (Array i64)
+(define opt-gc-runtime-table : (__tl_dyn-array i64)
   (array.make-array i64 4))
 
 (define (opt-gc-runtime-load! [v : i64]) : unit
@@ -51213,12 +51217,12 @@
 ;; Runtime witness for bit-test semantics on descriptor loads (the folded
 ;; gep+load+compare form): (bit-and arr[k], mask) ==/!= 0 must evaluate as a
 ;; bit test, not an equality compare.
-(define opt-bt-expand-witness-arr : (Array i64)
+(define opt-bt-expand-witness-arr : (__tl_dyn-array i64)
   (array.make-array i64 8))
 
 (define (opt-bt-expand-witness-run [k : i64]) : i64
   (let
-    [arr : (Array i64) (clone opt-bt-expand-witness-arr)]
+    [arr : (__tl_dyn-array i64) (clone opt-bt-expand-witness-arr)]
     (if (= (bit-and (array-ref arr 3) 2) 0)
       (+ k 100)
       (+ k 200))))
@@ -51957,7 +51961,7 @@
 ;; Runtime witness: three sequential loops over one table (a fill+sum loop, a
 ;; strided read loop, and a descending read loop) compiled by the pipeline
 ;; carrying the multi-application scheduler must compute exact results.
-(define opt-loop-budget-runtime-table : (Array i64)
+(define opt-loop-budget-runtime-table : (__tl_dyn-array i64)
   (array.make-array i64 64))
 
 (define (opt-loop-budget-runtime-run [n : i64]) : i64
@@ -52019,7 +52023,7 @@
 
 (define (compiler-optimize-bit-test-runtime-self-test) : i64
   (let
-    [values : (Array i64)
+    [values : (__tl_dyn-array i64)
       (make-array
         -100
         32
@@ -52050,7 +52054,7 @@
         95
         96
         1000)]
-    [expected : (Array i64)
+    [expected : (__tl_dyn-array i64)
       (make-array 0 0 1 0 0 1 1 0 0 1 1 0 1 1 1 1 1 1 1 0 1 1 1 1 0 0 1 0 0)]
     [index : i64 0]
     (begin

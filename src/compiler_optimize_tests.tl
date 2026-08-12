@@ -32265,6 +32265,14 @@
 (define (opt-bce-mb-test-cast-variant? [variant : i64]) : bool
   (and (>= variant 11) (<= variant 12)))
 
+;; Variants 14-15 turn the same fixture around: the counter seeds at the
+;; invariant top (`Var 0`) and the latch walks it DOWN to an inclusive literal
+;; floor of 0. 14 decrements, so the step's sign matches the `>=` latch and the
+;; loop versions off the mirrored range; 15 keeps the increment, so the counter
+;; walks AWAY from the limit it is tested against and no trip range exists.
+(define (opt-bce-mb-test-descending-variant? [variant : i64]) : bool
+  (>= variant 14))
+
 (define (opt-bce-mb-test-header-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.compiler-ir-block
     (compiler_ir_types.compiler-ir-label "body")
@@ -32272,7 +32280,9 @@
       (compiler_ir_types.CompilerIrInstr.Phi
         3
         (compiler_ir_types.compiler-ir-phi-input-cons
-          (compiler_ir_types.CompilerIrValue.I64 0)
+          (if (opt-bce-mb-test-descending-variant? variant)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 0))
           (compiler_ir_types.compiler-ir-label "entry")
           (compiler_ir_types.compiler-ir-phi-input-cons
             (compiler_ir_types.CompilerIrValue.Var 8)
@@ -32540,7 +32550,9 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           8
-          (compiler_ir_types.CompilerIrBinOp.Add)
+          (if (= variant 14)
+            (compiler_ir_types.CompilerIrBinOp.Sub)
+            (compiler_ir_types.CompilerIrBinOp.Add))
           (compiler_ir_types.CompilerIrValue.Var 3)
           (compiler_ir_types.CompilerIrValue.I64
             (if (= variant 3)
@@ -32550,9 +32562,13 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
             9
-            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (if (opt-bce-mb-test-descending-variant? variant)
+              (compiler_ir_types.CompilerIrBinOp.Ge)
+              (compiler_ir_types.CompilerIrBinOp.Lt))
             (compiler_ir_types.CompilerIrValue.Var 8)
-            (compiler_ir_types.CompilerIrValue.Var 0)
+            (if (opt-bce-mb-test-descending-variant? variant)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.CompilerIrValue.Var 0))
             (compiler_ast_types.AstType.Bool))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Branch
@@ -32817,6 +32833,20 @@
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 3)))]
     [step-two-out : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks step-two)]
+    [down : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 14)))]
+    [down-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks down)]
+    ;; Re-running the pass on its own output must find nothing: the fast
+    ;; labels now exist, which is what opt-bce-mb-fast-labels-fresh? refuses on.
+    [down-again-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function down))]
+    [wrong-way-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-mb-test-function (opt-bce-mb-test-blocks 15))))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -32983,6 +33013,88 @@
             (compiler_ir_types.CompilerIrBinOp.Add)
             1))
         26]
+      ;; Variant 14 counts DOWN from the invariant top to an inclusive floor
+      ;; of 0. The mirrored range is [0, seed+1), so the fixture versions
+      ;; exactly as its ascending twin does: same block count, both checks out
+      ;; of the fast region, both kept in the slow one.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function down)))
+        27]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count down-out) 11))
+        28]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              down-out
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        29]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              down-out
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        30]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              down-out
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        31]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              down-out
+              (compiler_ir_types.compiler-ir-label "then"))
+            1))
+        32]
+      ;; The guard exists and materializes the mirrored limit `seed + 1`; the
+      ;; ascending fixture's guard has no such add (its limit is the bound as
+      ;; written), so this conjunct is the mirror's signature.
+      [(match (compiler_optimize.opt-cfg-find-block
+          down-out
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        33]
+      [(not
+          (opt-bce-version-test-block-binop-op-lit?
+            down-out
+            (compiler_ir_types.compiler-ir-label "body__bce_guard")
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            1))
+        34]
+      [(opt-bce-version-test-block-binop-op-lit?
+          out
+          (compiler_ir_types.compiler-ir-label "body__bce_guard")
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          1)
+        35]
+      ;; Idempotent: a second pass over the versioned function changes nothing.
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count down-again-out) 11))
+        36]
+      [(match (compiler_optimize.opt-cfg-find-block
+          down-again-out
+          (compiler_ir_types.compiler-ir-label "body__bce_fast__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) false]
+          [(compiler_optimize.OptMaybeBlock.Some _) true])
+        37]
+      ;; Variant 15 keeps the increment under the `>=` latch: the counter walks
+      ;; away from the limit it is tested against, so no range is recovered and
+      ;; the function is left alone.
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count wrong-way-out) 6))
+        38]
+      [(match (compiler_optimize.opt-cfg-find-block
+          wrong-way-out
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) false]
+          [(compiler_optimize.OptMaybeBlock.Some _) true])
+        39]
       [else 42])))
 
 (define (opt-bce-mb-test-cloned-switch-cases-ok?

@@ -1,6 +1,7 @@
 tlci image
 format-version: 2
-host-arch: x86_64 (1)
+host-platform: x86_64-legacy-ambiguous (1)
+image-classification: code-bearing
 callback-abi-version: 2
 producer-compiler-identity: tlci-v2-corpus
 source-set-binding-schema: missing-or-legacy

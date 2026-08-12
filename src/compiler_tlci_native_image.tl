@@ -830,6 +830,7 @@
 (define (compiler-tlci-native-package
   [metadata-text : String]
   [build-hash : String]
+  [host-platform : i64]
   [rodata : (__tl_dyn-array u8)]
   [code : (__tl_dyn-array u8)]
   [imports : (__tl_dyn-array u8)]
@@ -846,6 +847,7 @@
       (match (tlci_core.tlci-emit-native-package-image
         metadata
         build-hash
+        host-platform
         (tlci_core.TlciNativePackageInput
           rodata
           code

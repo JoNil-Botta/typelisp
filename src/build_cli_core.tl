@@ -4218,7 +4218,7 @@
   [producer-identity : String]
   [rodata : (__tl_dyn-array u8)]) : tlci.TlciImage
   (tlci.TlciImage
-    tlci.tlci-host-arch-x86-64
+    (tlci.tlci-build-host-platform)
     tlci.tlci-callback-abi-version
     producer-identity
     metadata

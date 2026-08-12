@@ -1503,13 +1503,13 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The accessor-admission/absorption/fold/sinking series pushed the
-    # checked expression graph 3,337 nodes past the 32-segment line
-    # (2,100,489 used) -- inside the run-to-run jitter band issue #6509
-    # documents for this pool family, so an exact pin risks the same
-    # flip-flop macro_expand exhibited. Range-pinned to the two adjacent
-    # counts until the jitter source is found.
-    assert_selfhost_pool_family_range \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 33 65536 32 \
+    # checked expression graph past the 32-segment line: the Windows CI
+    # probe measured 2,100,489 used nodes (33 segments). The apparent
+    # macro-expand jitter was merge-base movement between runs, not
+    # identical-source nondeterminism (see the note above that pin), so
+    # this stays an exact pin per that resolution.
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 33 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \

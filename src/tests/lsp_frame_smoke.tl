@@ -1238,6 +1238,28 @@
         wide-form
         (+ wide-form 1)
         (+ wide-form 7)
+        1)
+      (lsp_frame_core.lsp-completion-context-at-end-is?
+        deep
+        0
+        (string.string-length deep)
+        (string.string-length deep)
+        ""
+        ""
+        ""
+        "f"
+        deep-form
+        0)
+      (lsp_frame_core.lsp-completion-context-at-end-is?
+        wide
+        0
+        (string.string-length wide)
+        (string.string-length wide)
+        ""
+        ""
+        ""
+        "target"
+        wide-form
         1))))
 
 ;; The same byte spans are returned through either negotiated position unit.

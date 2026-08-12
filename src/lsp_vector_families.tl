@@ -143,7 +143,10 @@
 ;; parenthesized form and 1 for a bracket group. Parenthesized frames progress
 ;; from an unknown head (`head-state` 0), to an ordinary token head (1), or a
 ;; non-call head (2). The datum fields track exactly one direct argument while
-;; prefixes and nested groups are still incomplete.
+;; prefixes and nested groups are still incomplete. Completion context shares
+;; this stack: `literal` suppresses code candidates inside quoted data,
+;; `type-context` marks a nested type datum, and `expect-type` marks the next
+;; direct datum after `:`.
 (defstruct LspCallFrame
   (kind i64)
   (form-start i64)
@@ -152,7 +155,10 @@
   (head-state i64)
   (argument-index i64)
   (datum-active bool)
-  (datum-complete bool))
+  (datum-complete bool)
+  (literal bool)
+  (type-context bool)
+  (expect-type bool))
 
 ;; Kept hand-grown for the same code-size reason as `LspFoldRanges`. Popped
 ;; slots are reused, so storage is proportional to maximum source nesting.

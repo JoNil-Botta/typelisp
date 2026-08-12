@@ -14642,7 +14642,17 @@
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
-(define (compiler-optimize-inline-multiblock-cyclic-bounds-switch-refusal-ok?) : bool
+;; THIS WAS A REFUSAL TEST. The cyclic bounds+switch callee at its single site
+;; in a loop-free caller used to stay behind the acyclic admission gate, and the
+;; hot-loop-leaf band could not rescue it because that band began at three
+;; references. The band now begins at one (see its reference clause), and this
+;; shape is exactly what its loop-free site tier was measured to take: the
+;; imported loop becomes the caller's only loop, so there is no caller loop
+;; whose allocation the second working set could tax. What the assertion pins is
+;; that the newly enabled clone is a CORRECT one -- the boundary is retired, the
+;; callee's bounds check comes along rather than being dropped, and the cloned
+;; CFG verifies.
+(define (compiler-optimize-inline-multiblock-cyclic-bounds-switch-admission-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : compiler_ir_types.CompilerIrFunctionList
@@ -14660,8 +14670,8 @@
           [blocks : compiler_ir_types.CompilerIrBlockList
             (compiler_optimize.opt-function-blocks main)]
           (and
-            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 1)
-            (= (compiler_optimize.opt-count-bounds-blocks blocks) 0)
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 0)
+            (= (compiler_optimize.opt-count-bounds-blocks blocks) 1)
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
@@ -14716,7 +14726,17 @@
         1)]
     (and
       (opt-inline-switch-case-result-ok? vm-opt2 vm-text 0 1)
-      (opt-inline-switch-case-result-ok? other-opt2 other-text 1 0)
+      ;; `qs-partition` USED TO STAY REFUSED HERE, and that is what the
+      ;; name-matching exception above existed to arrange: at opt2 only a leaf
+      ;; whose name ends in `vm-run` escaped the acyclic gate. It escapes on its
+      ;; SHAPE now -- one reference, call-free, cyclic, in a loop-free caller is
+      ;; the hot-loop-leaf band's loop-free tier, which since the band's
+      ;; reference clause was widened to one reference no longer needs a name.
+      ;; The exception is not dead: it still admits a `vm-run` leaf the band
+      ;; refuses on size or on caller shape, which is why it stays.
+      (opt-inline-switch-case-result-ok? other-opt2 other-text 0 1)
+      ;; opt1 still refuses BOTH: below opt2 the multiblock inliner does not run
+      ;; at all, so the widened band cannot reach this shape there.
       (opt-inline-switch-case-result-ok? vm-opt1 vm-text 1 0))))
 
 ;; --- loop-bearing bounds callee admission (in-loop site + cascade) ----------
@@ -14859,9 +14879,16 @@
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
-;; The identical callee at a straight-line site stays refused: retiring a
-;; boundary that runs once cannot pay for the caller's allocation.
-(define (compiler-optimize-inline-bounds-loop-cold-site-refusal-ok?) : bool
+;; THIS WAS A REFUSAL TEST, on the argument that retiring a boundary which runs
+;; once cannot pay for the caller's allocation. That argument is about a caller
+;; whose allocation there is something to lose -- and this caller is loop-free,
+;; which is the case the hot-loop-leaf band's third site tier was measured on
+;; (gvn-facts-slot's five straight-line sites): with no caller loop, the
+;; imported loop becomes the only one and there is no allocation to tax. The
+;; band could not reach this site while its reference clause began at three
+;; references; at one reference it does, and the corpus measured the widening
+;; non-regressing on all 22 rows.
+(define (compiler-optimize-inline-bounds-loop-cold-site-admission-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
@@ -14880,8 +14907,8 @@
           [blocks : compiler_ir_types.CompilerIrBlockList
             (compiler_optimize.opt-function-blocks main)]
           (and
-            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 1)
-            (= (compiler_optimize.opt-count-bounds-blocks blocks) 0)
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 0)
+            (= (compiler_optimize.opt-count-bounds-blocks blocks) 1)
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
@@ -15075,8 +15102,10 @@
 
 ;; Two in-loop callers duplicate the leaf into both. The three-reference shape
 ;; that used to sit here as the ceiling case moved to the hot-loop-leaf tests
-;; below: past the duplication ceiling a call-free cyclic leaf at in-loop
-;; sites is exactly what opt-inline-hot-loop-leaf-ok? now admits.
+;; below, and since that band's reference clause was widened to one reference it
+;; would take this two-reference leaf as well: both bands admit it and the
+;; duplicating one, being cheaper, is asked first. What this test pins is
+;; unchanged either way -- the leaf reaches both in-loop sites.
 (define (compiler-optimize-inline-dup-two-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -15102,6 +15131,12 @@
 ;; own inline by taking the leaf's bounds check, so the cascade clause refuses
 ;; the copy THERE and admits it at the other site. One caller taking the body
 ;; does not commit the other.
+;;
+;; This is also the CASCADE pin for the hot-loop-leaf band. That band carries
+;; its own copy of the cascade clause, and since its reference clause was
+;; widened to one reference it now reaches this two-reference leaf too -- so the
+;; refused site stays refused only while BOTH bands keep asking. Drop the clause
+;; from either one and the assertion below starts finding zero calls.
 (define (compiler-optimize-inline-dup-cascade-per-caller-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -16597,8 +16632,13 @@
 ;;     and the cost model prices it at 12 + 6*9 against a threshold of 4;
 ;;   - one block holding four instructions, so the branch-chain gate's
 ;;     three-instruction block cap refuses it;
-;;   - two static references, so the hot-loop-leaf gate's `> 2` refuses it and
-;;     the shared tier's raw floor of five refuses it;
+;;   - two static references, so the shared tier's raw floor of five refuses it.
+;;     This used to refuse the hot-loop-leaf gate too, whose reference clause
+;;     began at three; that clause now begins at one, so what keeps the leaf out
+;;     of that band is its LAST clause instead -- the body is acyclic, and the
+;;     band takes only genuinely cyclic ones. That makes this fixture the
+;;     acyclic clause's pin: if the band ever stopped asking, the
+;;     one-loop-shallower refusal below would start admitting;
 ;;   - bounds-free, acyclic and call-free, so nothing above refuses it for a
 ;;     reason the weighted entrance does not own.
 (define (opt-inline-depth-leaf-zero-instrs) : compiler_ir_types.CompilerIrInstrList
@@ -17142,10 +17182,11 @@
 
 ;; --- hot loop leaves ---------------------------------------------------------
 ;;
-;; The callee under test is the cyclic bounds-carrying Switch leaf again, now
-;; past the duplication ceiling -- three references and up -- where admission
-;; used to stop. Every fixture below varies exactly one clause of
-;; opt-inline-hot-loop-leaf-ok?.
+;; The callee under test is the cyclic bounds-carrying Switch leaf again, at
+;; three references and up, which is where this band's admission used to start.
+;; Every fixture below varies exactly one clause of
+;; opt-inline-hot-loop-leaf-ok?; the single-reference fixtures at the end of the
+;; family cover the class the reference clause opened.
 ;; Three in-loop callers of the call-free leaf: every site takes a copy, and
 ;; the leaf stays in the program only while sites remain (here: none do).
 (define (compiler-optimize-inline-hot-loop-leaf-three-site-ok?) : bool
@@ -17655,6 +17696,113 @@
         "inline_switch")
       1)))
 
+;; --- the single-reference sites the band now takes ---------------------------
+;;
+;; The reference clause used to read `> opt-inline-dup-max-refcount`, so this
+;; band began at three references; it now begins at one. The clause's own
+;; comment carries the history and both measurements; what these fixtures pin is
+;; that the widening opened exactly one thing -- the reference class -- and left
+;; every other clause of the band binding.
+;;
+;; ONE in-loop caller of the big-tier leaf. Nothing else can take it: absorption
+;; is refused because the site is in a loop (and the leaf is under the arity
+;; floor), the legacy bounds-loop absorb band is refused because 41 instructions
+;; is past its 32, and the cost model's absorb bonus cannot help because the
+;; bounds-loop gate is what stands in the way. Before the widening the reference
+;; clause refused it too and the call survived; now this band is what takes it.
+(define (opt-inline-hot-loop-one-caller-names
+  [symbols : OptInlineMultiTestSymbols]) : compiler_optimize.OptSlotList
+  (compiler_optimize.OptSlotList.Cons
+    symbols.main
+    (box (compiler_optimize.OptSlotList.Nil))))
+
+(define (compiler-optimize-inline-hot-loop-leaf-single-reference-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-hot-loop-one-caller-names symbols)
+        callee-name
+        (opt-inline-hot-loop-mid-leaf callee-name))]
+    (=
+      (opt-count-direct-call-name-function-list
+        optimized
+        "main"
+        "inline_switch")
+      0)))
+
+;; The SIZE clause at the newly opened reference class: the same single in-loop
+;; site, the leaf one instruction past opt-inline-hot-loop-leaf-max-body. The
+;; band's size ceiling is not a function of the reference count, so the call
+;; stays.
+(define (compiler-optimize-inline-hot-loop-leaf-single-reference-too-big-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-hot-loop-one-caller-names symbols)
+        callee-name
+        (opt-inline-hot-loop-big-leaf callee-name))]
+    (=
+      (opt-count-direct-call-name-function-list
+        optimized
+        "main"
+        "inline_switch")
+      1)))
+
+;; The big-tier leaf with one call in its body: past the legacy absorb band on
+;; size, inside this band on size, and refused by the CALL-FREE clause. The pad
+;; chain ends in the call so the anchor mov keeps var 4 to itself.
+(define (opt-inline-hot-loop-mid-leaf-call-instrs [helper-name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (array.make-array compiler_ir_types.CompilerIrValue 1)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          39
+          helper-name
+          (compiler_ir_types.CompilerIrCallArgs.Array args)
+          (compiler_ast_types.AstType.I64))
+        (opt-inline-dup-leaf-jump-zero-instrs)))))
+
+(define (opt-inline-hot-loop-mid-leaf-calling
+  [callee-name : i64]
+  [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    callee-name
+    (+ 6 35)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        4
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-hot-loop-big-leaf-pad-from
+        5
+        34
+        (opt-inline-hot-loop-mid-leaf-call-instrs helper-name)))))
+
+(define (compiler-optimize-inline-hot-loop-leaf-single-reference-call-bearing-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-hot-loop-one-caller-names symbols)
+        callee-name
+        (opt-inline-hot-loop-mid-leaf-calling
+          callee-name
+          symbols.external-helper))]
+    (=
+      (opt-count-direct-call-name-function-list
+        optimized
+        "main"
+        "inline_switch")
+      1)))
+
 (define (opt-inline-phi-span-ok-instr-seq-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pos : i64]
@@ -17713,9 +17861,16 @@
         line
         col)]))
 
+;; The span cases run at a chosen optimizer LEVEL. The negative direction used
+;; to be supplied by a callee name the opt2 gate refused (`qs-partition`, when
+;; the acyclic gate's only escape was the `vm-run` name match); the hot-loop-leaf
+;; band admits that shape on its own terms now, so the refusing case is selected
+;; by level instead -- below opt2 the multiblock inliner does not run, the call
+;; survives, and its caller-side span must still be intact.
 (define (opt-inline-switch-span-case-code
   [callee-text : String]
-  [expect-inline? : bool]) : i64
+  [expect-inline? : bool]
+  [level : i64]) : i64
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 (opt-test-symbol callee-text)]
@@ -17741,7 +17896,7 @@
         (match (compiler_optimize.opt-inline-program-functions-with-spans
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (opt-inline-switch-functions-named symbols callee-name)
-          2
+          level
           spans)
           [(compiler_optimize.OptInlineSpanProgram.Program
               optimized

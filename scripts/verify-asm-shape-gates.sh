@@ -233,9 +233,14 @@ extract_function() {
     _asm=$1
     _label=$2
     _out=$3
+    # A body ends at the next `.globl` -- or at its own `.size`, which is what
+    # bounds the LAST emitted function: nothing follows it but the hand-written
+    # runtime prelude, which carries no `.globl` and would otherwise be read as
+    # part of that body.
     if ! awk -v label="$_label:" '
         $0 == label { in_fn = 1; print; next }
         in_fn && /^\.globl[[:space:]]/ { exit 0 }
+        in_fn && /^[[:space:]]*\.size[[:space:]]/ { exit 0 }
         in_fn { print }
         END { if (!in_fn) exit 2 }
     ' "$_asm" > "$_out"; then
@@ -297,7 +302,16 @@ check_hoist_priority() {
 
 check_lftr_counter_retire() {
     _asm=$(compile_gate lftr_counter_retire tests/integration/lftr_counter_retire.tl)
-    _body=$(function_body "$_asm" _tl_lftr_counter_retire_walk)
+    # `walk` is a one-reference, call-free, loop-bearing leaf whose only site
+    # sits in a loop-free `main`, which is the hot-loop-leaf band's loop-free
+    # tier -- so since that band's reference clause was widened to one reference
+    # the body is absorbed and `walk` has no label of its own. Read the loop
+    # where it now lives. Every shape assertion below is unchanged and still
+    # holds: `build-program` remains behind a call, so the length is still a
+    # runtime descriptor load and the end address is still materialised by
+    # scaling it. Pin the absorption too, so this stays honest if it reverses.
+    assert_not_contains "$_asm" '_tl_lftr_counter_retire_walk:' lftr-counter-retire-absorbed
+    _body=$(function_body "$_asm" main)
     # LFTR: induction turns `(array-ref prog i)` into a 16-byte-stride pointer
     # phi, after which `i` only feeds its own increment and the exit test. The
     # accumulator folds by register add/imul, so an `add $1` in this body could

@@ -74279,29 +74279,87 @@
     (opt-inline-bounds-loop-site-in-loop?)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
 
-;; --- hot loop leaves: admission past the duplication ceiling -------------
+;; --- hot loop leaves: the call-free cyclic leaf band -------------------------
 ;;
-;; The census above stops answering at two references: one is absorbed, two are
-;; duplicated, and past opt-inline-dup-max-refcount a loop-bearing callee kept
-;; its call at every site. The measured occupant of that class is gvn_table's
-;; hashmap probe, `gvn-facts-slot`: 114 instructions in 29 blocks as the inline
-;; stage sees it, call-free, one linear-probe loop, referenced from seven sites
-;; in six callers. C inlines the whole chain into one blob; this compiler kept
-;; the boundary at all seven, and the row prices the callee at 248.6M dynamic
-;; instructions, 18.4% of the benchmark, before any cross-boundary hoisting the
-;; barrier blocks.
+;; A call-free callee whose body holds a loop, admitted where the bands above
+;; refuse it. The measured occupant is gvn_table's hashmap probe,
+;; `gvn-facts-slot`: 114 instructions in 29 blocks as the inline stage sees it,
+;; call-free, one linear-probe loop, referenced from seven sites in six callers.
+;; C inlines the whole chain into one blob; this compiler kept the boundary at
+;; all seven, and the row prices the callee at 248.6M dynamic instructions,
+;; 18.4% of the benchmark, before any cross-boundary hoisting the barrier
+;; blocks.
 ;;
 ;; Admission asks, in cost order:
 ;;
-;;   1. the census places the callee past the duplication ceiling -- three or
-;;      more references. Absorption and duplication keep their own bands;
-;;      widening THIS class to single- and two-reference callees was measured
-;;      and loses exactly the way the legacy bands document: absorbing the
-;;      53-88 instruction loop leaves into their loop callers (it-slice-eq?
-;;      and it-hash-words into it-intern-slice, the peephole scanner leaves,
-;;      qs-checksum into main) regressed intern_table +22%, peephole_lines
-;;      +14%, opt_quicksort +6%, and cfg_domloops +2% through caller
-;;      allocation churn, so the reference clause stays;
+;;   1. the census knows the callee -- at least one reference.
+;;
+;;      THIS CLAUSE USED TO READ `> opt-inline-dup-max-refcount`: three
+;;      references and up, so that absorption (one reference) and duplication
+;;      (two) kept the class to themselves and this band began past them. That
+;;      was not taste, it was measured. Widening the band to single- and
+;;      two-reference callees absorbed the 53-88 instruction loop leaves into
+;;      their loop callers -- `it-slice-eq?` and `it-hash-words` into
+;;      `it-intern-slice`, the peephole scanner leaves, `qs-checksum` into
+;;      `main` -- and regressed intern_table +22%, peephole_lines +14%,
+;;      opt_quicksort +6% and cfg_domloops +2%. The mechanism the autopsy named
+;;      was CALLER ALLOCATION CHURN: the imported loop brings its own working
+;;      set into a caller loop that is already allocating tightly, and what the
+;;      copy costs in spills exceeds the boundary it retires.
+;;
+;;      That mechanism has since been repaired by work with no connection to
+;;      this gate, which is why the ceiling is gone:
+;;
+;;        - LOOP-REGION RESCUE AND SEGMENT-PRECISE INTERVALS (#6485) attack the
+;;          named cost directly: an interval that used to hold a register
+;;          across a whole loop region is now described by the segments it is
+;;          really live in, so a second working set inside a caller loop no
+;;          longer prices as if it were live throughout;
+;;        - SINGLE-USE LOAD SINKING and DOMINATING-LOAD SUBSTITUTION shorten the
+;;          ranges an imported body opens in the first place, which is the same
+;;          pressure measured from the other end;
+;;        - GUARD-FACT IMPLICATION (#6480) and CHECK-DOMAIN FUSION (#6485)
+;;          retire the dominated checks a copied loop lands among, and COMPARE
+;;          DUPLICATION with FLAGS-REUSE branch emission keeps the survivors
+;;          folded into their branches instead of materialising booleans -- the
+;;          de-fusion that used to make an imported guard cost more than it
+;;          reads;
+;;        - EXIT-JOIN PHI-ESCAPE VERSIONING (6264441d6) lets the versioner keep
+;;          an imported loop's checks out of the loop body rather than giving
+;;          up on the escape.
+;;
+;;      Re-measured on this tree, not one of the four historical regressions
+;;      reproduces. All 22 rows are non-regressing and five improve:
+;;      liveness_scan -1,363,343 (-0.244%), peephole_lines -51,197,
+;;      hashmap_grow -647, opt_crc32 -10, opt_quicksort -10; the other 17 rows
+;;      are byte-identical. The named historical callees are NOT what moves:
+;;      intern_table's assembly is unchanged to the byte, and neither
+;;      `qs-checksum` nor the peephole scanner leaves appear in the diff. The
+;;      bands below still claim those first, and this band only ever sees the
+;;      single- and two-reference sites those bands REFUSE, which is why the
+;;      newly BAND-admitted population is four callees across the whole corpus:
+;;      `ln-set-count` (liveness_scan), `get-value-or` (hashmap_grow),
+;;      `pl-owners-find-reg` (peephole_lines) and stdlib's `>int` (crc32,
+;;      quicksort, peephole). Compiler-wide a self-compile retires 62 more call
+;;      instructions and absorbs 74 more callees outright.
+;;
+;;      `>= 1` rather than dropping the clause outright: a zero from the census
+;;      means it has no entry for the callee at all (no slot in the function
+;;      index), which is not the same fact as "referenced once". Admitting that
+;;      is a widening nothing has measured, so the clause keeps the floor it can
+;;      justify -- the same floor the measured tier below already asks for
+;;      (opt-inline-checked-ok?'s own `>= refs 1`). opt-inline-dup-max-refcount
+;;      itself is untouched and still classifies absorption against duplication
+;;      for the census, which is the only other thing that reads it.
+;;
+;;      One interaction is worth recording because it is where the corpus win
+;;      comes from. The measured tier is asked only about sites NO band takes,
+;;      so every site this clause newly admits leaves that tier's candidate
+;;      pool -- and the tier is budgeted in VERDICTS. On liveness_scan the base
+;;      tree spent liveness's verdict pricing `ln-set-count` and rejected it;
+;;      with `ln-set-count` band-admitted, the freed verdict reaches
+;;      `ln-fold-live-in`, which is accepted at both its sites. The row's
+;;      -0.244% is that reallocation, not the newly admitted body itself;
 ;;   2. the body is not address-taken;
 ;;   3. the caller does not balloon: the copy spends the gate's OWN per-caller
 ;;      block fuel (opt-inline-hot-loop-leaf-block-fuel), and the heavy gate
@@ -74387,7 +74445,7 @@
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
   (and
-    (> refs (opt-inline-dup-max-refcount))
+    (>= refs 1)
     (not (opt-inline-census-address-taken? index census callee-name))
     ;; The heavy gate is asked about TOTAL caller growth, shared and
     ;; gate-specific alike; the block fuel is the gate's own accumulator.
@@ -75854,10 +75912,11 @@
                     added-blocks
                     caller-blocks
                     added-so-far)]
-                ;; A call-free cyclic leaf past the duplication ceiling is
-                ;; admitted on its own terms too: it keeps its own body
-                ;; wherever this gate does not take it, so no absorb credit is
-                ;; claimed.
+                ;; A call-free cyclic leaf is admitted on its own terms too: it
+                ;; keeps its own body wherever this gate does not take it, so no
+                ;; absorb credit is claimed -- which is what lets the gate span
+                ;; every reference class, single-reference sites included,
+                ;; without owing the census an absorption it did not perform.
                 [hot-loop-leaf? : bool
                   (opt-inline-hot-loop-leaf-ok?
                     index

@@ -3624,16 +3624,16 @@
     "absorbable acyclic bounds+switch callee inlines with fresh CFG/phi labels"))
 
 (test
-  inline-multiblock-cyclic-bounds-switch-refusal
+  inline-multiblock-cyclic-bounds-switch-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-multiblock-cyclic-bounds-switch-refusal-ok?)
-    "cyclic bounds+switch callee remains behind the acyclic admission gate"))
+    (compiler_optimize_tests.compiler-optimize-inline-multiblock-cyclic-bounds-switch-admission-ok?)
+    "a one-reference cyclic bounds+switch callee is taken in a loop-free caller, bounds check and cloned CFG intact"))
 
 (test
   inline-vm-run-bounds-loop-exception
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-vm-run-bounds-loop-ok?)
-    "only exact vm-run bounds loop inlines at opt2; qs-partition and opt1 stay refused"))
+    "vm-run and the same-shaped qs-partition both inline at opt2 on shape, not on name; opt1 still refuses both"))
 
 (test
   inline-bounds-loop-in-loop-site
@@ -3642,10 +3642,10 @@
     "small absorbable bounds loop leaf inlines at an in-loop call site"))
 
 (test
-  inline-bounds-loop-cold-site-refusal
+  inline-bounds-loop-cold-site-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cold-site-refusal-ok?)
-    "the same leaf stays refused at a straight-line call site"))
+    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cold-site-admission-ok?)
+    "the same leaf is taken at a straight-line site of a loop-free caller: no caller loop is there to tax"))
 
 (test
   inline-checked-depth-weighting
@@ -3829,6 +3829,24 @@
     "five copies fit the per-caller block fuel; the sixth site keeps its call"))
 
 (test
+  inline-hot-loop-leaf-single-reference
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-ok?)
+    "a one-reference big-tier loop leaf is taken at its in-loop site: the band starts at one reference, not three"))
+
+(test
+  inline-hot-loop-leaf-single-reference-too-big-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-too-big-refusal-ok?)
+    "the size ceiling still binds at one reference: a leaf one instruction past the band keeps its call"))
+
+(test
+  inline-hot-loop-leaf-single-reference-call-bearing-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-single-reference-call-bearing-refusal-ok?)
+    "the call-free clause still binds at one reference: a big-tier leaf carrying a call keeps its boundary (#6307)"))
+
+(test
   inline-shared-accessor-floor
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-floor-ok?)
@@ -3905,18 +3923,30 @@
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code
       "bench.tl::vm-run"
-      true)
+      true
+      2)
     15
     "span-aware inliner admits exact vm-run and preserves cloned spans"))
+
+(test
+  inline-qs-partition-bounds-loop-span-positive
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-switch-span-case-code
+      "bench.tl::qs-partition"
+      true
+      2)
+    15
+    "the similarly shaped qs-partition loop is admitted on its shape now, not on a name, and its cloned spans survive"))
 
 (test
   inline-vm-run-bounds-loop-span-negative
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code
-      "bench.tl::qs-partition"
-      false)
+      "bench.tl::vm-run"
+      false
+      1)
     15
-    "span-aware inliner refuses the similarly shaped qs-partition loop"))
+    "below opt2 the multiblock inliner does not run: the call survives with its caller-side span intact"))
 
 (test
   inline-multiblock-switch-cost-refusal

@@ -32615,6 +32615,364 @@
         11]
       [else 42])))
 
+;; --- merged-body exit-join versioning -----------------------------------------
+;;
+;; The shape INLINING leaves behind, and the reason a loop that versions
+;; standalone refused once absorbed. Standalone, the loop's exit arms fan into
+;; the callee's own exit block and THAT block reads the loop's result, which the
+;; direct-use wiring handles (the `mb2` fixture above). Absorbed, the callee's
+;; exit block becomes a jump-only forwarder into the SITE's continuation, and
+;; the continuation's phi reads the result on the forwarder's edge -- so the
+;; escape test saw a loop def read on a non-loop edge and refused the whole
+;; loop, with nothing about the loop itself having changed. `it-slice-eq?`
+;; absorbed into `it-intern-slice` is the measured case.
+;;
+;; Layout (variant 0): `entry` branches to the loop's dedicated preheader or to
+;; `calt`, the absorbed callee's early-out arm; the loop's two exits `gexit`
+;; (flag) and `hexit` (counter compare) fan into `cjoin`, the callee's exit
+;; block; `cjoin` and `calt` both jump to `cont`, whose phi merges the flag with
+;; the early-out's literal.
+;;
+;; Variants:
+;;   0 the merged body: `cjoin` is a pure join of the loop's exits and versions;
+;;   1 the header exits STRAIGHT to `cjoin`, so a loop edge reaches the join --
+;;     the ordinary exit shape, deliberately not admitted here;
+;;   2 `cjoin` carries a BoundsCheck, so it is not clonable as a forwarder;
+;;   3 the flag arm `gexit` carries a BoundsCheck, so one of the join's
+;;     predecessors is not clonable as a forwarder.
+(define opt-bce-mb3-test-frame : i64
+  24)
+
+(define (opt-bce-mb3-test-entry-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        10
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.compiler-ir-label "pre")
+          (compiler_ir_types.compiler-ir-label "calt"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-bce-mb3-test-header-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "header")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "pre")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          4
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Bool true)
+            (compiler_ir_types.compiler-ir-label "pre")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "merge")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "gate")
+              (if (= variant 1)
+                ;; a LOOP edge straight into the join
+                (compiler_ir_types.compiler-ir-label "cjoin")
+                (compiler_ir_types.compiler-ir-label "hexit")))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-bce-mb3-test-gexit-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "gexit")
+    (let
+      [tail : compiler_ir_types.CompilerIrInstrList
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "cjoin"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))]
+      (if (= variant 3)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "mb3_gexit_ok"))
+          tail)
+        tail))))
+
+(define (opt-bce-mb3-test-gate-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "gate")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.compiler-ir-label "body")
+        (compiler_ir_types.compiler-ir-label "gexit"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb3-test-body-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "mb3_ok0"))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          6
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb3-test-merge-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "merge")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          9
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb3-test-join-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "cjoin")
+    (let
+      [tail : compiler_ir_types.CompilerIrInstrList
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "cont"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))]
+      (if (= variant 2)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "mb3_join_ok"))
+          tail)
+        tail))))
+
+(define (opt-bce-mb3-test-cont-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "cont")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        11
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.compiler-ir-label "cjoin")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Bool false)
+            (compiler_ir_types.compiler-ir-label "calt")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "ret1")
+          (compiler_ir_types.compiler-ir-label "ret0"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-bce-mb3-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bce-mb3-test-entry-block)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-mb-test-jump-block
+        (compiler_ir_types.compiler-ir-label "pre")
+        (compiler_ir_types.compiler-ir-label "header"))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb3-test-header-block variant)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb3-test-gate-block)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-mb3-test-body-block)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bce-mb3-test-merge-block)
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-bce-mb3-test-gexit-block variant)
+                (opt-bce-mb3-test-tail-blocks variant)))))))))
+
+(define (opt-bce-mb3-test-tail-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [rest : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb3-test-join-block variant)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb-test-jump-block
+            (compiler_ir_types.compiler-ir-label "calt")
+            (compiler_ir_types.compiler-ir-label "cont"))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-mb3-test-cont-block)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bce-mb2-test-return-block "ret1" 1)
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-bce-mb2-test-return-block "ret0" 0)
+                compiler_ir_types.CompilerIrBlockList.Nil)))))]
+    (if (= variant 1)
+      rest
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb-test-jump-block
+          (compiler_ir_types.compiler-ir-label "hexit")
+          (compiler_ir_types.compiler-ir-label "cjoin"))
+        rest))))
+
+(define (opt-bce-mb3-test-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb3_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    opt-bce-mb3-test-frame
+    blocks))
+
+(define (opt-bce-mb3-test-versioned-fn [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-bce-version-function
+    (opt-bce-mb3-test-function (opt-bce-mb3-test-blocks variant))))
+
+(define (opt-bce-mb3-test-versioned [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (opt-bce-mb3-test-versioned-fn variant)))
+
+(define (opt-bce-mb3-test-verify-ok? [variant : i64]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (opt-bce-mb3-test-versioned-fn variant))))
+
+(define (opt-bce-mb3-test-versioned? [variant : i64]) : bool
+  (opt-block-list-has-label?
+    (opt-bce-mb3-test-versioned variant)
+    (compiler_ir_types.compiler-ir-label "header__bce_fast")))
+
+;; Running the versioner on its own output must change nothing: the generated
+;; fast labels are what make the loop ineligible to both scans.
+(define (opt-bce-mb3-test-refixed-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-bce-version-function
+      (opt-bce-mb3-test-versioned-fn variant))))
+
+(define (compiler-optimize-bce-version-mb-merged-body-self-test) : i64
+  (let
+    [merged : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb3-test-versioned 0)]
+    (cond
+      [(not (opt-bce-mb3-test-verify-ok? 0)) 1]
+      [(not (opt-bce-mb3-test-versioned? 0)) 2]
+      ;; the guard sits on the preheader edge and the whole loop clones
+      [(not
+          (opt-block-list-has-label?
+            merged
+            (compiler_ir_types.compiler-ir-label "header__bce_guard")))
+        3]
+      [(not
+          (opt-block-list-has-label?
+            merged
+            (compiler_ir_types.compiler-ir-label "gate__bce_fast")))
+        4]
+      ;; both exit arms AND the callee's exit join joined the clone group
+      [(not
+          (opt-block-list-has-label?
+            merged
+            (compiler_ir_types.compiler-ir-label "gexit__bce_fast")))
+        5]
+      [(not
+          (opt-block-list-has-label?
+            merged
+            (compiler_ir_types.compiler-ir-label "hexit__bce_fast")))
+        6]
+      [(not
+          (opt-block-list-has-label?
+            merged
+            (compiler_ir_types.compiler-ir-label "cjoin__bce_fast")))
+        7]
+      ;; check-free clone, checked original
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              merged
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        8]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              merged
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        9]
+      ;; the continuation's phi gained exactly one parallel fast-edge input
+      ;; (cjoin, calt, cjoin__bce_fast) and stayed a single phi
+      [(not
+          (=
+            (opt-bce-mb2-test-block-phis
+              merged
+              (compiler_ir_types.compiler-ir-label "cont"))
+            1))
+        10]
+      [(not
+          (=
+            (opt-bce-version-test-exit-phi-inputs
+              merged
+              (compiler_ir_types.compiler-ir-label "cont"))
+            3))
+        11]
+      ;; idempotent: a second run is a no-op
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (opt-bce-mb3-test-refixed-blocks 0))
+            (compiler_ir_types.compiler-ir-block-list-count merged)))
+        12]
+      [else 42])))
+
+;; The boundaries of the exit-join admission.
+(define (compiler-optimize-bce-version-mb-merged-body-refusal-self-test) : i64
+  (cond
+    ;; a loop edge into the join is the ordinary exit shape, not an absorbed
+    ;; continuation: not admitted here
+    [(not (opt-bce-mb3-test-verify-ok? 1)) 1]
+    [(opt-bce-mb3-test-versioned? 1) 2]
+    ;; a join carrying a check is not clonable as a forwarder
+    [(not (opt-bce-mb3-test-verify-ok? 2)) 3]
+    [(opt-bce-mb3-test-versioned? 2) 4]
+    ;; a join predecessor that is not clonable as a forwarder refuses
+    [(not (opt-bce-mb3-test-verify-ok? 3)) 5]
+    [(opt-bce-mb3-test-versioned? 3) 6]
+    [else 42]))
+
 ;; --- cross-array check-domain fusion ------------------------------------------
 ;;
 ;; A counted multi-block loop walking THREE arrays through one opaque index.

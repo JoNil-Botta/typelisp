@@ -3491,6 +3491,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-merged-body-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-merged-body-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-negative-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
       42)
@@ -3929,6 +3937,20 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
     42
     "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
+
+(test
+  bce-version-multiblock-merged-body
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
+    42
+    "multi-block versioning admits an absorbed body's exit join and clones it"))
+
+(test
+  bce-version-multiblock-merged-body-boundaries
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-refusal-self-test)
+    42
+    "exit-join admission refuses loop-edge joins, checked joins and outside arms"))
 
 (test
   bce-version-cross-array-fusion

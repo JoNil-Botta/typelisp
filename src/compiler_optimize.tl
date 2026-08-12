@@ -54036,14 +54036,13 @@
         (opt-bce-mb-labels-all-in? (opt-label-tail labels) set)
         false)]))
 
-;; A forwarding-stub predecessor: an outside block whose only successor is the
-;; using block (an explicit Jump), check-free, clonable by the same whitelist
-;; the loop blocks pass, every one of whose own predecessors is a loop block,
-;; and whose fast twin label is fresh.
-(define (opt-bce-mb-stub-ok?
-  [pred-map : OptPredMap]
+;; The SHAPE half of a forwarding stub: an outside block whose only successor is
+;; the using block (an explicit Jump), check-free, clonable by the same
+;; whitelist the loop blocks pass, and whose fast twin label is fresh. Split out
+;; because the exit-join admission below reuses the shape with a different
+;; predecessor rule.
+(define (opt-bce-mb-stub-shape-ok?
   [blocks : ir.CompilerIrBlockList]
-  [body-labels : OptLabelSet]
   [stub : i64]
   [user : i64]) : bool
   (match (opt-cfg-find-block blocks stub)
@@ -54072,13 +54071,20 @@
                     "__bce_fast"))))
               false
               (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
-                [(ir.CompilerIrInstr.Jump target)
-                  (if (not (= target user))
-                    false
-                    (opt-bce-mb-labels-all-in?
-                      (opt-pred-map-lookup pred-map stub)
-                      body-labels))]
+                [(ir.CompilerIrInstr.Jump target) (= target user)]
                 [_ false])))])]))
+
+;; A forwarding-stub predecessor: the shape above, every one of whose own
+;; predecessors is a loop block.
+(define (opt-bce-mb-stub-ok?
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [stub : i64]
+  [user : i64]) : bool
+  (and
+    (opt-bce-mb-stub-shape-ok? blocks stub user)
+    (opt-bce-mb-labels-all-in? (opt-pred-map-lookup pred-map stub) body-labels)))
 
 ;; Classify every predecessor of the using block: loop blocks wire directly,
 ;; anything else must be a forwarding stub. Returns the stub labels found.
@@ -54426,6 +54432,249 @@
                       (OptBceMbWiring.Some
                         (ir.compiler-ir-block-cons wired-block wired-tail)
                         wired-stubs)])])))])]))
+
+;; --- exit-stub phi escapes ----------------------------------------------------
+;;
+;; The escape test counts a loop def read by a phi OUTSIDE the loop as an escape
+;; whenever the input's edge is not a clone-group edge. On a STANDALONE callee
+;; the loop's own exit block is the reader, its inputs sit on loop edges, and
+;; the ordinary exit-phi extension carries them to the fast clone. INLINING
+;; breaks exactly that and nothing else: the absorbed body's exit joins into the
+;; site's `cont` merge, so the callee's own exit block becomes a jump-only
+;; FORWARDER between the loop and the phi that reads the loop's result, and the
+;; input is keyed on the forwarder. The measured case is `it-slice-eq?`'s byte
+;; compare, which versions to a check-free clone standing alone and refuses the
+;; instant it is absorbed into `it-intern-slice` -- same loop, same counter, same
+;; invariant bound, same two derivable checks. The refusal was POSITIONAL.
+;;
+;; What absorption adds, and only absorption, is an EXIT JOIN: the callee's exit
+;; arms fan into the callee's own exit block, which then forwards into the
+;; site's continuation. So the block the phi input is keyed on is a join of the
+;; loop's exits and is reached by NO loop edge of its own. That is the exact
+;; admission here, and it is narrow on purpose. A block keyed directly off a
+;; loop edge is the ordinary exit-phi case the extension already handles; a
+;; block with BOTH a loop edge and a forwarder edge is one CFG simplification
+;; away from it, and taking it costs the rotated version the pass builds a
+;; pipeline round later from the same loop -- measured on lex_source's
+;; `ls-tokenize` newline scan, where admitting that shape versions the
+;; pre-rotation top-tested form and gives up the rotated clone's register
+;; assignment for +0.118%.
+;;
+;; Every level is the forwarding stub the direct-use wiring already defines: an
+;; outside block that only Jumps to its user, check-free, phi-free, clonable by
+;; the loop's own whitelist, with a fresh fast-twin label. Pulling the join and
+;; its arms into the clone group makes the phi's edge a clone edge, and the
+;; ordinary extension then gives that phi a parallel input carrying the fast
+;; clone's remapped value on the join's fast twin. No new construction, no block
+;; gains a predecessor the loop did not already reach, and the slow blocks stay
+;; instruction-for-instruction the original -- the guard and clone rules are the
+;; unchanged ones.
+;;
+;; Every phi input on a non-group edge is accounted for: an input whose value is
+;; not a group def cannot carry an escape and is left alone (the `false` arm of
+;; the absorbed `(if (= name-length len) ... false)` is exactly that), and an
+;; input whose value IS a group def must sit on an admissible join or the whole
+;; attempt keeps the original rejection. The escape test then reruns over the
+;; widened group, so a def escaping any OTHER way still refuses.
+(define (opt-bce-mb-value-group-def?
+  [value : ir.CompilerIrValue]
+  [defs : opt_i64_i64_map.Map]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var id) (opt-used-contains defs id)]
+    [_ false]))
+
+;; Every predecessor of the join is a forwarding stub out of the clone group --
+;; never a group block itself. Returns the arms to pull in with the join.
+(define (opt-bce-mb-exit-join-arms
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [preds : OptLabelSet]
+  [join : i64]
+  [arms : OptLabelSet]) : OptBceMbMaybeLabels
+  (match preds
+    [(OptLabelSet.Nil) (OptBceMbMaybeLabels.Some arms)]
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred : i64 (opt-label-ref preds 0)]
+        (if (or
+          (opt-label-contains clone-labels pred)
+          (not (opt-bce-mb-stub-ok? pred-map all-blocks clone-labels pred join)))
+          (OptBceMbMaybeLabels.No)
+          (opt-bce-mb-exit-join-arms
+            pred-map
+            all-blocks
+            clone-labels
+            (opt-label-tail preds)
+            join
+            (opt-label-add arms pred))))]))
+
+;; The join block itself plus its arms, or No.
+(define (opt-bce-mb-exit-join-labels
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [join : i64]
+  [user : i64]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (if (not (opt-bce-mb-stub-shape-ok? all-blocks join user))
+    (OptBceMbMaybeLabels.No)
+    (let
+      [preds : OptLabelSet (opt-pred-map-lookup pred-map join)]
+      (if (< (opt-label-count preds) 1)
+        (OptBceMbMaybeLabels.No)
+        (match (opt-bce-mb-exit-join-arms
+          pred-map
+          all-blocks
+          clone-labels
+          preds
+          join
+          (OptLabelSet.Nil))
+          [(OptBceMbMaybeLabels.No) (OptBceMbMaybeLabels.No)]
+          [(OptBceMbMaybeLabels.Some arms)
+            (OptBceMbMaybeLabels.Some
+              (opt-bce-mb-labels-union arms (opt-label-add stubs join)))])))))
+
+(define (opt-bce-mb-phi-stub-inputs
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [defs : opt_i64_i64_map.Map]
+  [user : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (OptBceMbMaybeLabels.Some stubs)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-phi-stub-inputs
+        pred-map
+        all-blocks
+        clone-labels
+        defs
+        user
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        stubs)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (if (or
+        (opt-label-contains clone-labels label)
+        (not (opt-bce-mb-value-group-def? value defs)))
+        (opt-bce-mb-phi-stub-inputs
+          pred-map
+          all-blocks
+          clone-labels
+          defs
+          user
+          (__tl-box-place rest)
+          stubs)
+        (match (opt-bce-mb-exit-join-labels
+          pred-map
+          all-blocks
+          clone-labels
+          label
+          user
+          stubs)
+          [(OptBceMbMaybeLabels.No) (OptBceMbMaybeLabels.No)]
+          [(OptBceMbMaybeLabels.Some next)
+            (opt-bce-mb-phi-stub-inputs
+              pred-map
+              all-blocks
+              clone-labels
+              defs
+              user
+              (__tl-box-place rest)
+              next)]))]))
+
+(define (opt-bce-mb-phi-stub-labels-seq
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [defs : opt_i64_i64_map.Map]
+  [user : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (OptBceMbMaybeLabels.Some stubs)
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (match (opt-bce-mb-phi-stub-inputs
+          pred-map
+          all-blocks
+          clone-labels
+          defs
+          user
+          inputs
+          stubs)
+          [(OptBceMbMaybeLabels.No) (OptBceMbMaybeLabels.No)]
+          [(OptBceMbMaybeLabels.Some next)
+            (opt-bce-mb-phi-stub-labels-seq
+              pred-map
+              all-blocks
+              clone-labels
+              defs
+              user
+              instrs
+              (+ index 1)
+              next)])]
+      [_
+        (opt-bce-mb-phi-stub-labels-seq
+          pred-map
+          all-blocks
+          clone-labels
+          defs
+          user
+          instrs
+          (+ index 1)
+          stubs)])))
+
+;; Every forwarding stub the outside phis need pulled into the clone group, or
+;; No when one of those edges is not an admissible stub.
+(define (opt-bce-mb-phi-stub-labels
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [all-blocks : ir.CompilerIrBlockList]
+  [clone-labels : OptLabelSet]
+  [defs : opt_i64_i64_map.Map]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptBceMbMaybeLabels.Some stubs)]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-phi-stub-labels
+        pred-map
+        (ir.compiler-ir-block-seq-to-list seq)
+        all-blocks
+        clone-labels
+        defs
+        stubs)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (if (opt-label-contains clone-labels label)
+            (opt-bce-mb-phi-stub-labels
+              pred-map
+              (__tl-box-place rest)
+              all-blocks
+              clone-labels
+              defs
+              stubs)
+            (match (opt-bce-mb-phi-stub-labels-seq
+              pred-map
+              all-blocks
+              clone-labels
+              defs
+              label
+              instrs
+              0
+              stubs)
+              [(OptBceMbMaybeLabels.No) (OptBceMbMaybeLabels.No)]
+              [(OptBceMbMaybeLabels.Some next)
+                (opt-bce-mb-phi-stub-labels
+                  pred-map
+                  (__tl-box-place rest)
+                  all-blocks
+                  clone-labels
+                  defs
+                  next)]))])]))
 
 ;; --- far exit uses ------------------------------------------------------------
 ;;
@@ -59268,6 +59517,41 @@
             (array-ref cell 0)
             true))])))
 
+;; Apply with a settled clone group: the loop's own blocks plus every stub the
+;; wiring or the exit-phi widening pulled in. The escape test has already been
+;; answered for this exact group by the caller.
+(define (opt-bce-mb-apply-group
+  [doms : OptDomInfo]
+  [descriptor : OptBceMbDescriptor]
+  [write-free? : bool]
+  [wired-blocks : ir.CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [clone-labels : OptLabelSet]
+  [clone-blocks : ir.CompilerIrBlockList]
+  [cell : (__tl_dyn-array i64)]
+  [frame : i64]) : OptUnrollResult
+  (opt-bce-mb-apply-wired
+    doms
+    descriptor
+    write-free?
+    wired-blocks
+    (OptBceMbShape
+      shape.header
+      shape.latch
+      shape.preheader
+      clone-labels
+      clone-blocks
+      shape.iphi
+      shape.seed
+      shape.bound
+      shape.step
+      shape.uncovered
+      shape.inner
+      shape.region?)
+    (opt-bce-mb-collect-defs clone-blocks (opt_i64_i64_map.with-capacity 64))
+    cell
+    frame))
+
 ;; `blocks` is the function as the far-use repair left it; `original` is what
 ;; the caller keeps when the attempt fails, so a repair that the wiring then
 ;; refuses costs nothing.
@@ -59327,29 +59611,57 @@
                 (opt_i64_i64_map.with-capacity 64)
                 wired-blocks
                 clone-labels)]
-            (if (opt-bce-mb-defs-escape? clone-blocks clone-outside)
-              (OptUnrollResult.Result original frame false)
-              (opt-bce-mb-apply-wired
+            (if (not (opt-bce-mb-defs-escape? clone-blocks clone-outside))
+              (opt-bce-mb-apply-group
                 doms
                 descriptor
                 (opt-bce-mb-write-free-blocks? body-blocks)
                 wired-blocks
-                (OptBceMbShape
-                  shape.header
-                  shape.latch
-                  shape.preheader
-                  clone-labels
-                  clone-blocks
-                  shape.iphi
-                  shape.seed
-                  shape.bound
-                  shape.step
-                  shape.uncovered
-                  shape.inner
-                  shape.region?)
-                clone-defs
+                shape
+                clone-labels
+                clone-blocks
                 cell
-                frame)))]))))
+                frame)
+              ;; What is left may be nothing but a phi keyed on a jump-only
+              ;; exit forwarder -- the shape inlining leaves behind. Widen the
+              ;; clone group by those stubs and rerun the escape test over it;
+              ;; a def escaping any other way still keeps the rejection.
+              (match (opt-bce-mb-phi-stub-labels
+                pred-map
+                wired-blocks
+                wired-blocks
+                clone-labels
+                clone-defs
+                (OptLabelSet.Nil))
+                [(OptBceMbMaybeLabels.No)
+                  (OptUnrollResult.Result original frame false)]
+                [(OptBceMbMaybeLabels.Some phi-stubs)
+                  (if (= (opt-label-count phi-stubs) 0)
+                    (OptUnrollResult.Result original frame false)
+                    (let
+                      [wide-labels : OptLabelSet
+                        (opt-bce-mb-labels-union phi-stubs clone-labels)]
+                      [wide-blocks : ir.CompilerIrBlockList
+                        (opt-bce-mb-blocks-append
+                          clone-blocks
+                          (opt-bce-mb-stub-blocks-from wired-blocks phi-stubs))]
+                      [wide-outside : opt_i64_i64_map.Map
+                        (opt-bce-mb-outside-uses
+                          (opt_i64_i64_map.with-capacity 64)
+                          wired-blocks
+                          wide-labels)]
+                      (if (opt-bce-mb-defs-escape? wide-blocks wide-outside)
+                        (OptUnrollResult.Result original frame false)
+                        (opt-bce-mb-apply-group
+                          doms
+                          descriptor
+                          (opt-bce-mb-write-free-blocks? body-blocks)
+                          wired-blocks
+                          shape
+                          wide-labels
+                          wide-blocks
+                          cell
+                          frame))))])))]))))
 
 (define (opt-bce-mb-apply
   [descriptor : OptBceMbDescriptor]

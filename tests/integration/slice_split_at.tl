@@ -32,11 +32,10 @@
           (+ (array-ref left 1) (+ (array-ref middle 0) (array-ref tail 1)))))]
     (and
       (= split-score 42)
-      (and
-        (= slice-split-mid-calls 1)
-        (and
-          (= (array-ref items 1) 2)
-          (and (= (array-ref items 2) 3) (= (array-ref items 4) 37)))))))
+      (= slice-split-mid-calls 1)
+      (= (array-ref items 1) 2)
+      (= (array-ref items 2) 3)
+      (= (array-ref items 4) 37))))
 
 (define (slice-split-boundary-case) : bool
   (let
@@ -58,19 +57,13 @@
       (slice-split-at empty-view 1)]
     (and
       (= (array-length zero-left) 0)
-      (and
-        (= (array-length zero-right) 4)
-        (and
-          (= (array-length end-left) 4)
-          (and
-            (= (array-length end-right) 0)
-            (and
-              (= (array-ref zero-right 2) 15)
-              (and
-                (= (array-ref end-left 3) 16)
-                (and
-                  (= (array-length (tuple-ref empty-halves 0)) 1)
-                  (= (array-length (tuple-ref empty-halves 1)) 1))))))))))
+      (= (array-length zero-right) 4)
+      (= (array-length end-left) 4)
+      (= (array-length end-right) 0)
+      (= (array-ref zero-right 2) 15)
+      (= (array-ref end-left 3) 16)
+      (= (array-length (tuple-ref empty-halves 0)) 1)
+      (= (array-length (tuple-ref empty-halves 1)) 1))))
 
 (define (slice-split-return-case) : bool
   (let
@@ -86,9 +79,7 @@
           (set! (array-ref left 0) 7)
           (set! (array-ref right 0) 35)
           (+ (array-ref left 0) (array-ref right 0))))]
-    (and
-      (= score 42)
-      (and (= (array-ref items 0) 7) (= (array-ref items 2) 35)))))
+    (and (= score 42) (= (array-ref items 0) 7) (= (array-ref items 2) 35))))
 
 (define (slice-split-shared-from-mut-case) : bool
   (let
@@ -106,8 +97,8 @@
 (define (main) : i64
   (if (and
     (slice-split-nested-case)
-    (and
-      (slice-split-boundary-case)
-      (and (slice-split-return-case) (slice-split-shared-from-mut-case))))
+    (slice-split-boundary-case)
+    (slice-split-return-case)
+    (slice-split-shared-from-mut-case))
     42
     1))

@@ -139,9 +139,9 @@
           (+ (array-ref left 6) (array-ref right 6))))]
     (and
       (= score 33)
-      (and
-        (= (array-ref items 0) 1)
-        (and (= (array-ref items 7) 20) (= (array-ref items 13) 26))))))
+      (= (array-ref items 0) 1)
+      (= (array-ref items 7) 20)
+      (= (array-ref items 13) 26))))
 
 (define (fixed-slice-case) : bool
   (let

@@ -15998,6 +15998,9 @@
 (define (opt-loop-body-contains-id? [body : OptLoopBody] [id : i64]) : bool
   (opt-loop-body-member-array-contains-id? body.members id))
 
+(define (opt-loop-body-members [body : OptLoopBody]) : (__tl_dyn-array bool)
+  body.members)
+
 (define (opt-loop-body-label-member?
   [body : OptLoopBody]
   [index : OptCfgIndex]
@@ -16051,6 +16054,12 @@
 
 (define (opt-natural-loop-body-contains-id? [loop : OptNaturalLoop] [id : i64]) : bool
   (opt-loop-body-contains-id? (opt-natural-loop-body-info loop) id))
+
+;; The body's per-block-id membership bits, for callers that want to test many
+;; ids against one loop without rebuilding the block list.
+(define (opt-natural-loop-body-members [loop : OptNaturalLoop]) : (__tl_dyn-array
+    bool)
+  (opt-loop-body-members (opt-natural-loop-body-info loop)))
 
 (define (opt-natural-loop-current-body-blocks
   [loop : OptNaturalLoop]
@@ -88119,17 +88128,34 @@
 ;; A CALL is rejected even when the per-callee summary proves it writes no
 ;; descriptor field (element-only or write-free), which
 ;; opt-load-table-filter-element-call is happy to act on at an ordinary call
-;; site. Measurement is why. Carrying a descriptor entry across a loop back edge
-;; does not DELETE the loop body's load, it rewrites it to a copy of a var
-;; defined outside the loop -- and that copy's source stays live around the back
-;; edge, so register allocation cannot coalesce the copy away. LICM already
-;; hoists the un-rewritten load into the preheader, where it runs once per loop
-;; ENTRY; the rewrite trades that for one move per ITERATION. Measured on
-;; benchmarks/gvn_table (gvn-scan-ints, whose outer loop's only call is the
-;; element-only vector setter): descriptor-field loads fell 5,369,431 ->
-;; 2,684,716 Ir per round and the function still grew 80,342,627 -> 82,683,001,
-;; because the digit-scan inner loop gained `mov %r12,%r9` at 2,064,917
-;; executions in exchange for a preheader load at 1,275,750.
+;; site. Measurement is why, and it stayed why after substitution mode landed.
+;;
+;; The first measurement was made against the Mov form of the rewrite. Carrying
+;; a descriptor entry across a loop back edge did not DELETE the loop body's
+;; load, it rewrote it to a copy of a var defined outside the loop -- and that
+;; copy's source stays live around the back edge, so register allocation cannot
+;; coalesce the copy away. LICM already hoists the un-rewritten load into the
+;; preheader, where it runs once per loop ENTRY; the rewrite traded that for one
+;; move per ITERATION. Measured on benchmarks/gvn_table (gvn-scan-ints, whose
+;; outer loop's only call is the element-only vector setter): descriptor-field
+;; loads fell 5,369,431 -> 2,684,716 Ir per round and the function still grew
+;; 80,342,627 -> 82,683,001, because the digit-scan inner loop gained
+;; `mov %r12,%r9` at 2,064,917 executions in exchange for a preheader load at
+;; 1,275,750.
+;;
+;; RE-TESTED under substitution mode (opt-load-gvn-subst-pair), which was
+;; expected to rescue the widening by deleting the load instead of copying it.
+;; The rewrite half worked exactly as predicted -- with the call arm admitted,
+;; gvn-scan-ints lost all three carried `gep %0, 8` + `load` pairs outright and
+;; every use read the preheader load directly, the LICM shape with zero copies
+;; -- and the benchmark still LOST. Admitting the call arm on top of
+;; substitution mode moved gvn_table 1,179,567,963 -> 1,181,908,337 Ir
+;; (+2,340,374, +0.20%) and cfg_domloops +834,661 (measured against the
+;; then-current substitution build, before the loop-escape gate below); no other
+;; row moved. +2,340,374 is the SAME delta the Mov form paid, which is the
+;; result: the copy was never the cost. The cost is the carried value's live
+;; range spanning the digit-scan inner loop, and deleting the copy does not
+;; shorten it. The carry stays rejected; substitution mode ships without it.
 (define (opt-load-gvn-loop-safe-instr?
   [hs : OptLoadHeaderSet]
   [blocks : ir.CompilerIrBlockList]
@@ -88541,6 +88567,431 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-load-gvn-block-seq-has-load? seq 0)]))
 
+;; --- load-GVN substitution mode ---------------------------------------------
+;;
+;; opt-load-cse-core-load rewrites a redundant load to `Mov dst earlier`: a COPY
+;; that only pays once register allocation coalesces it away, and that cannot
+;; coalesce when the two live ranges overlap (the loop case documented at
+;; opt-load-gvn-loop-safe-instr?). Substitution mode removes the copy instead of
+;; hoping for a coalesce: rewrite every USE of `dst` to `earlier` and delete the
+;; copy, which for loop-carried reuse equals the LICM outcome (one def outside,
+;; uses inside, zero copies).
+;;
+;; Legality. `earlier` was available at the load, so its def dominates the load;
+;; the load dominates every SSA use of `dst`; so the def dominates every
+;; substituted use. Both vars are required single-source (opt-gvn-stable-var?)
+;; so no intervening redefinition can break that chain -- the cross-block pass
+;; already demands it of `dst`, this adds the same demand on `earlier`.
+;;
+;; Phi uses are the one position where the transitivity argument fails: a phi
+;; input's use position is the incoming EDGE's predecessor end, not the phi's
+;; block, and the load need not dominate that predecessor. opt-copy-subst-instr
+;; already refuses phi inputs (and AddrOf storage names, and the private vector
+;; aggregates), so those uses survive substitution -- and a surviving use is
+;; exactly what keeps the copy alive here: the copy is deleted only when the
+;; substituted function has ZERO remaining uses of `dst`, the same use-count
+;; test DCE deletes a Mov on. A load whose value reaches a phi therefore falls
+;; back to today's Mov form, with no dominance query needed.
+;;
+;; PRESSURE, and the one profitability gate. Against the Mov form substitution
+;; never costs a register: from the copy to `dst`'s last use the Mov form keeps
+;; `dst` live and `earlier` live too wherever `earlier` has a later use, so the
+;; merged range is never the wider one. Against NOT eliminating the load it can,
+;; because a load re-reads memory and holds nothing in between -- and the pass
+;; feeds itself, so a substitution that canonicalizes one address exposes a
+;; second redundant load the Mov form never reached. The shape that loses is a
+;; dominating def INSIDE a loop feeding a load OUTSIDE it: the value then has to
+;; survive every later block instead of dying at its loop's exit. Measured on
+;; benchmarks/cfg_domloops (cfg-idom-iterate): the `%96 = load` in one inner
+;; loop's header forwarded to the sibling inner loop's header two blocks later,
+;; deleting a gep+load pair per iteration but pinning %96 across the second loop
+;; -- 798,103,345 -> 801,917,881 Ir (+0.48%). The register the second loop lost
+;; pushed its data pointer into %rbp, which the backend cannot spell as a SIB
+;; base (see #rbp-base at compiler-backend-address-base-register-ok?), so each
+;; indexed read grew a `movq %rbp,%rN` -- four of them across the loop's two
+;; clones. So the gate: a substitution may shorten a value's live range or
+;; extend it WITHIN the loops it already lives in, never carry it out of one.
+;; Literals are exempt (no live range at all), which is the store-to-load
+;; forwarded constant that folds a bounds guard away in the spmd rows.
+(define (opt-load-gvn-subst-escapes-loop?
+  [loop-masks : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [load-id : i64]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (or (< var 0) (>= var (array-length def-blocks)))
+        true
+        (let
+          ;; def-blocks stores id+1, so 0 is "no def recorded in this function"
+          ;; -- a parameter or an entry-live var, neither of which is in a loop.
+          [def-id : i64 (- (array-ref def-blocks var) 1)]
+          (if (< def-id 0)
+            false
+            (if (or
+              (< load-id 0)
+              (>= load-id (array-length loop-masks))
+              (>= def-id (array-length loop-masks)))
+              true
+              (not
+                (=
+                  (bit-and
+                    (array-ref loop-masks def-id)
+                    (bit-not (array-ref loop-masks load-id)))
+                  0))))))]
+    [_ false]))
+
+;; The gate-free half of the candidate test, shared by the pre-scan and the
+;; gated walk.
+(define (opt-load-gvn-subst-candidate?
+  [sources : opt_i64_i64_map.Map]
+  [original : ir.CompilerIrInstr]
+  [rewritten : ir.CompilerIrInstr]) : bool
+  (match original
+    [(ir.CompilerIrInstr.Load load-dst _ _)
+      (match rewritten
+        [(ir.CompilerIrInstr.Mov mov-dst src _)
+          (and
+            (= load-dst mov-dst)
+            (opt-gvn-stable-var? sources mov-dst)
+            (opt-gvn-value-stable? sources src)
+            (not (opt-value-is-var? src mov-dst)))]
+        [_ false])]
+    [_ false]))
+
+(define (opt-load-gvn-subst-pair
+  [sources : opt_i64_i64_map.Map]
+  [loop-masks : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [load-id : i64]
+  [original : ir.CompilerIrInstr]
+  [rewritten : ir.CompilerIrInstr]
+  [env : OptCopyEnv]) : OptCopyEnv
+  (if (not (opt-load-gvn-subst-candidate? sources original rewritten))
+    env
+    (match rewritten
+      [(ir.CompilerIrInstr.Mov mov-dst src _)
+        (let
+          [resolved : ir.CompilerIrValue (opt-copy-resolve env src)]
+          (if (opt-load-gvn-subst-escapes-loop?
+            loop-masks
+            def-blocks
+            load-id
+            resolved)
+            env
+            (OptCopyEnv.Cons mov-dst resolved (box env))))]
+      [_ env])))
+
+;; Record where each var is defined, as block id + 1. The walk is in RPO, and a
+;; substituted value's def dominates its load, so the def is always already
+;; recorded when the load is reached.
+(define (opt-load-gvn-record-def
+  [def-blocks : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [dst : i64 (opt-gvn-instr-dst instr)]
+    (if (or (< dst 0) (>= dst (array-length def-blocks)))
+      unit
+      (begin
+        (set! (array-ref def-blocks dst) (+ block-id 1))
+        unit))))
+
+;; Pair the pass input block with its rewrite. The rewrite is 1:1 in index and
+;; order, so an index whose input is a Load and whose output is a Mov to the
+;; same dst is exactly one redundant-load rewrite.
+(define (opt-load-gvn-subst-block-env
+  [sources : opt_i64_i64_map.Map]
+  [loop-masks : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [original : ir.CompilerIrBlock]
+  [rewritten : ir.CompilerIrBlock]
+  [env : OptCopyEnv]) : OptCopyEnv
+  (match original
+    [(ir.CompilerIrBlock.Block _ original-instrs)
+      (match rewritten
+        [(ir.CompilerIrBlock.Block _ rewritten-instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count original-instrs)]
+            [paired? : bool
+              (= count (ir.compiler-ir-instr-seq-count rewritten-instrs))]
+            [index : i64 0]
+            [acc : OptCopyEnv env]
+            (begin
+              (while (< index count)
+                (begin
+                  (if paired?
+                    (set!
+                      acc
+                      (opt-load-gvn-subst-pair
+                        sources
+                        loop-masks
+                        def-blocks
+                        block-id
+                        (ir.compiler-ir-instr-seq-ref original-instrs index)
+                        (ir.compiler-ir-instr-seq-ref rewritten-instrs index)
+                        acc))
+                    unit)
+                  (opt-load-gvn-record-def
+                    def-blocks
+                    block-id
+                    (ir.compiler-ir-instr-seq-ref original-instrs index))
+                  (set! index (+ index 1))))
+              acc))])]))
+
+;; Allocation-free pre-scan: does any rewrite in this function clear the
+;; gate-free half of the candidate test? A function with none skips the frame
+;; walk and the two per-block-id arrays entirely.
+(define (opt-load-gvn-subst-block-any?
+  [sources : opt_i64_i64_map.Map]
+  [original : ir.CompilerIrBlock]
+  [rewritten : ir.CompilerIrBlock]) : bool
+  (match original
+    [(ir.CompilerIrBlock.Block _ original-instrs)
+      (match rewritten
+        [(ir.CompilerIrBlock.Block _ rewritten-instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count original-instrs)]
+            [index : i64 0]
+            [found : bool false]
+            (begin
+              (if (= count (ir.compiler-ir-instr-seq-count rewritten-instrs))
+                (while (and (not found) (< index count))
+                  (begin
+                    (if (opt-load-gvn-subst-candidate?
+                      sources
+                      (ir.compiler-ir-instr-seq-ref original-instrs index)
+                      (ir.compiler-ir-instr-seq-ref rewritten-instrs index))
+                      (set! found true)
+                      unit)
+                    (set! index (+ index 1))))
+                unit)
+              found))])]))
+
+(define (opt-load-gvn-subst-any?
+  [index : OptCfgIndex]
+  [sources : opt_i64_i64_map.Map]
+  [out : (__tl_dyn-array OptGvnBlockResult)]) : bool
+  (let
+    [count : i64 (array-length out)]
+    [id : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< id count))
+        (begin
+          (match (array-ref out id)
+            [(OptGvnBlockResult.SomeBlock rewritten)
+              (match (opt-cfg-index-block index id)
+                [(OptMaybeBlock.Some original)
+                  (if (opt-load-gvn-subst-block-any? sources original rewritten)
+                    (set! found true)
+                    unit)]
+                [(OptMaybeBlock.No) unit])]
+            [(OptGvnBlockResult.NoBlock) unit])
+          (set! id (+ id 1))))
+      found)))
+
+;; Natural-loop membership per block id, one bit per loop. Loops past bit 61
+;; share the sentinel bit, which only ever makes the escape test coarser (two
+;; loops that share a bit read as one), never unsound: the gate is a
+;; profitability rule, not a legality rule.
+(define (opt-load-gvn-loop-mask-bit [loop-index : i64]) : i64
+  (if (< loop-index 62)
+    (shl 1 loop-index)
+    (shl 1 62)))
+
+(define (opt-load-gvn-loop-mask-mark
+  [loop-masks : (__tl_dyn-array i64)]
+  [members : (__tl_dyn-array bool)]
+  [bit : i64]) : unit
+  (let
+    [count : i64 (array-length loop-masks)]
+    [id : i64 0]
+    (begin
+      (while (< id count)
+        (begin
+          (if (opt-loop-body-member-array-contains-id? members id)
+            (begin
+              (set!
+                (array-ref loop-masks id)
+                (bit-or (array-ref loop-masks id) bit))
+              unit)
+            unit)
+          (set! id (+ id 1))))
+      unit)))
+
+(define (opt-load-gvn-loop-masks-fill
+  [loop-masks : (__tl_dyn-array i64)]
+  [loops : OptNaturalLoopList]
+  [loop-index : i64]) : unit
+  (match loops
+    [(OptNaturalLoopList.Nil) unit]
+    [(OptNaturalLoopList.Cons loop rest)
+      (begin
+        (opt-load-gvn-loop-mask-mark
+          loop-masks
+          (opt-natural-loop-body-members loop)
+          (opt-load-gvn-loop-mask-bit loop-index))
+        (opt-load-gvn-loop-masks-fill
+          loop-masks
+          (__tl-box-place rest)
+          (+ loop-index 1)))]))
+
+(define (opt-load-gvn-subst-env
+  [index : OptCfgIndex]
+  [sources : opt_i64_i64_map.Map]
+  [loop-masks : (__tl_dyn-array i64)]
+  [frame : i64]
+  [out : (__tl_dyn-array OptGvnBlockResult)]) : OptCopyEnv
+  (let
+    [def-blocks : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [reach-count : i64 index.reach-count]
+    [slot : i64 0]
+    [env : OptCopyEnv (OptCopyEnv.Nil)]
+    (begin
+      (while (< slot reach-count)
+        (begin
+          (let
+            [id : i64 (opt-cfg-index-rpo-id index slot)]
+            (match (array-ref out id)
+              [(OptGvnBlockResult.SomeBlock rewritten)
+                (match (opt-cfg-index-block index id)
+                  [(OptMaybeBlock.Some original)
+                    (begin
+                      (set!
+                        env
+                        (opt-load-gvn-subst-block-env
+                          sources
+                          loop-masks
+                          def-blocks
+                          id
+                          original
+                          rewritten
+                          env))
+                      unit)]
+                  [(OptMaybeBlock.No) unit])]
+              [(OptGvnBlockResult.NoBlock) unit]))
+          (set! slot (+ slot 1))))
+      env)))
+
+;; Substitute the env through one block's instructions and count the operand
+;; uses of the RESULT, so the surviving-use test below sees post-substitution
+;; counts.
+(define (opt-load-gvn-subst-seq
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (let
+            [next : ir.CompilerIrInstr
+              (opt-copy-subst-instr
+                env
+                (ir.compiler-ir-instr-seq-ref instrs index))]
+            (begin
+              (set! (array-ref slots index) next)
+              (opt-collect-instr-uses-array used next)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
+
+(define (opt-load-gvn-subst-blocks
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-load-gvn-subst-seq env used instrs))
+            (opt-load-gvn-subst-blocks env used (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-load-gvn-subst-blocks
+        env
+        used
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; A rewritten load's copy is dead exactly when substitution reached every use
+;; of its destination.
+(define (opt-load-gvn-dead-copy?
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst _ _)
+      (if (opt-used-array-contains used dst)
+        false
+        (match (opt-copy-lookup env dst)
+          [(ir.CompilerIrMaybeValue.Some _) true]
+          [(ir.CompilerIrMaybeValue.No) false]))]
+    [_ false]))
+
+;; Compaction runs over the slot arrays opt-load-gvn-subst-seq just allocated,
+;; so it may write them in place; the returned seq re-lengths the same storage.
+(define (opt-load-gvn-drop-copies-seq
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (begin
+          (if (opt-load-gvn-dead-copy? env used (array-ref slots read))
+            unit
+            (begin
+              (if (not (= read write))
+                (set! (array-ref slots write) (array-ref slots read))
+                unit)
+              (set! write (+ write 1))))
+          (set! read (+ read 1))))
+      (ir.CompilerIrInstrSeq slots write))))
+
+(define (opt-load-gvn-drop-copies-blocks
+  [env : OptCopyEnv]
+  [used : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-load-gvn-drop-copies-seq env used instrs))
+            (opt-load-gvn-drop-copies-blocks env used (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-load-gvn-drop-copies-blocks
+        env
+        used
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-load-gvn-substitute
+  [frame : i64]
+  [env : OptCopyEnv]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    ;; Substitution never mints a var, so the pre-substitution frame bounds the
+    ;; result's var ids.
+    [used : (__tl_dyn-array i64) (opt-used-array-new frame)]
+    [substituted : ir.CompilerIrBlockList
+      (opt-load-gvn-subst-blocks env used blocks)]
+    (opt-load-gvn-drop-copies-blocks env used substituted)))
+
 (define (opt-load-gvn-blocks-with-context
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
@@ -88562,11 +89013,9 @@
       [processed : (__tl_dyn-array bool) (array.make-array bool count)]
       [out : (__tl_dyn-array OptGvnBlockResult)
         (array.make-array OptGvnBlockResult count)]
-      [loop-safe : OptLabelSet
-        (opt-load-gvn-loop-safe-collect
-          hs
-          blocks
-          (opt-cfg-natural-loops-with-context blocks context))]
+      [loops : OptNaturalLoopList
+        (opt-cfg-natural-loops-with-context blocks context)]
+      [loop-safe : OptLabelSet (opt-load-gvn-loop-safe-collect hs blocks loops)]
       [empty-state : OptLoadCseState
         (opt-load-cse-state-with-caps-and-facts
           profile-state
@@ -88589,4 +89038,30 @@
           out
           empty-state
           0)
-        (opt-gvn-materialize-blocks context.doms out blocks)))))
+        ;; Substitution mode: where the rewrite's uses can all be redirected to
+        ;; the dominating def, redirect them and delete the copy. The env is
+        ;; read from the input/output instruction pairing, so the streaming
+        ;; rewrite above needs no extra plumbing; an empty env (no rewrite
+        ;; fired, or every rewrite was gated out) keeps the materialized blocks
+        ;; untouched.
+        (let
+          [materialized : ir.CompilerIrBlockList
+            (opt-gvn-materialize-blocks context.doms out blocks)]
+          (if (not (opt-load-gvn-subst-any? index sources out))
+            materialized
+            (let
+              [frame : i64
+                (+
+                  1
+                  (opt-sccp-max-var-params
+                    params
+                    (opt-sccp-max-var-blocks blocks (- 0 1))))]
+              [loop-masks : (__tl_dyn-array i64) (array.make-array i64 count)]
+              (begin
+                (opt-load-gvn-loop-masks-fill loop-masks loops 0)
+                (let
+                  [subst : OptCopyEnv
+                    (opt-load-gvn-subst-env index sources loop-masks frame out)]
+                  (match subst
+                    [(OptCopyEnv.Nil) materialized]
+                    [_ (opt-load-gvn-substitute frame subst materialized)]))))))))))

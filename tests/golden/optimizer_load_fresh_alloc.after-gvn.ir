@@ -29,15 +29,12 @@ make_array_len_ok.2:
   %15 = mov 0 : i64
   %16 = mov 0 : i64
   %17 = gep %11, 1 : i64
-  %18 = mov %4 : i64
-  bounds_check 0, %18 message "bounds_ok.3"
+  bounds_check 0, %4 message "bounds_ok.3"
   %19 = gep %11, 0 : i64
-  %20 = mov %9 : u64
-  %21 = gep %20, 0 : i64
+  %21 = gep %9, 0 : i64
   store_ptr %21, %3 : i64
   %22 = gep %0, 1 : i64
-  %23 = mov %2 : i64
-  %24 = add %3, %23 : i64
+  %24 = add %3, %2 : i64
   return %24
 }
 

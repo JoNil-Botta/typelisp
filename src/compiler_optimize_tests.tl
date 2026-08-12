@@ -19326,6 +19326,74 @@
   [fallback : i64]) : i64
   (opt-mov-src-var-instr-seq-from instrs.slots 0 instrs.len dst fallback))
 
+;; The var a `return` reads, or `fallback` when no block returns a var. Used to
+;; pin which value a substituted use ends up reading.
+(define (opt-return-var-instr-seq-from
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [fallback : i64]) : i64
+  (if (>= index count)
+    fallback
+    (match (array-ref slots index)
+      [(compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var var)))
+        var]
+      [_ (opt-return-var-instr-seq-from slots (+ index 1) count fallback)])))
+
+(define (opt-return-i64-instr-seq-from
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [fallback : i64]) : i64
+  (if (>= index count)
+    fallback
+    (match (array-ref slots index)
+      [(compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.I64 value)))
+        value]
+      [_ (opt-return-i64-instr-seq-from slots (+ index 1) count fallback)])))
+
+(define (opt-blocks-return-i64
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [fallback : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) fallback]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [value : i64
+              (opt-return-i64-instr-seq-from instrs.slots 0 instrs.len fallback)]
+            (if (= value fallback)
+              (opt-blocks-return-i64 (__tl-box-place rest) fallback)
+              value))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-blocks-return-i64
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        fallback)]))
+
+(define (opt-blocks-return-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [fallback : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) fallback]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [value : i64
+              (opt-return-var-instr-seq-from instrs.slots 0 instrs.len fallback)]
+            (if (= value fallback)
+              (opt-blocks-return-var (__tl-box-place rest) fallback)
+              value))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-blocks-return-var
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        fallback)]))
+
 (define (opt-cfg-test-function [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "cfg")
@@ -20465,6 +20533,234 @@
       [(not (= (opt-wide-literal-lhs-var same-block 4) (- 0 1))) 6]
       [else 42])))
 
+;; --- load-GVN substitution mode ---------------------------------------------
+;;
+;; Every fixture below reads the same `ptr` parameter (var 1) twice, so the
+;; second read is redundant with the first and opt-load-cse-core-load rewrites
+;; it to `Mov 4 <- Var 3`. Only the shape around the reads changes, which is
+;; what decides whether substitution mode deletes that copy.
+(define (opt-load-subst-read [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Load
+    dst
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-load-subst-double [dst : i64] [src : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    (compiler_ir_types.CompilerIrValue.Var src)
+    (compiler_ir_types.CompilerIrValue.Var src)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-load-subst-jump [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Jump
+    (compiler_ir_types.compiler-ir-label label)))
+
+(define (opt-load-subst-branch [on-true : String] [on-false : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.compiler-ir-label on-true)
+    (compiler_ir_types.compiler-ir-label on-false)))
+
+(define (opt-load-subst-return [var : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Return
+    (compiler_ir_types.CompilerIrMaybeValue.Some
+      (compiler_ir_types.CompilerIrValue.Var var))))
+
+;; Diamond: the join's read is redundant with the entry's, and its only use is
+;; an ordinary operand, so the copy goes and the operand reads the entry load.
+(define (opt-load-subst-diamond-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-subst-read 3)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-subst-branch "then" "else")
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "then")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-subst-jump "join")
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "else")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-subst-jump "join")
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-subst-read 4)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-subst-double 5 4)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-load-subst-return 5)
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; Phi-carried: the redundant read's ONLY use is a phi input, whose use position
+;; is the incoming edge rather than the phi's block. The substituter refuses phi
+;; inputs, so the use survives and the copy stays -- today's Mov form.
+(define (opt-load-subst-phi-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-subst-read 3)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-subst-branch "then" "else")
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "then")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-subst-read 4)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-subst-jump "join")
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "else")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-subst-jump "join")
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Phi
+                5
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.compiler-ir-label "then")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Var 3)
+                    (compiler_ir_types.compiler-ir-label "else")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-subst-return 5)
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; Loop escape: the dominating read is INSIDE the loop and the redundant read is
+;; after it, so substituting would pin the loop's value across every later
+;; block. The profitability gate refuses; the copy stays.
+(define (opt-load-subst-loop-escape-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-subst-jump "header")
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-subst-read 3)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-subst-branch "body" "exit")
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-subst-jump "header")
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-subst-read 4)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-subst-double 5 4)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-load-subst-return 5)
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; Same loop: both reads live in the same loop body, so substitution extends the
+;; value only where it already lives. The gate allows it and the copy goes.
+(define (opt-load-subst-loop-inner-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-subst-jump "header")
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-subst-read 3)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-subst-branch "inner" "exit")
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "inner")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-subst-read 4)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-subst-double 5 4)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-subst-jump "header")
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-subst-return 3)
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-load-subst-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-gvn-blocks
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-gvn-pointer-cond-params)
+    blocks))
+
+(define (compiler-optimize-load-gvn-substitution-self-test) : i64
+  (let
+    [diamond : compiler_ir_types.CompilerIrBlockList
+      (opt-load-subst-run (opt-load-subst-diamond-blocks))]
+    [diamond-again : compiler_ir_types.CompilerIrBlockList
+      (opt-load-subst-run (opt-load-subst-run (opt-load-subst-diamond-blocks)))]
+    [phi : compiler_ir_types.CompilerIrBlockList
+      (opt-load-subst-run (opt-load-subst-phi-blocks))]
+    [loop-escape : compiler_ir_types.CompilerIrBlockList
+      (opt-load-subst-run (opt-load-subst-loop-escape-blocks))]
+    [loop-inner : compiler_ir_types.CompilerIrBlockList
+      (opt-load-subst-run (opt-load-subst-loop-inner-blocks))]
+    (cond
+      ;; Diamond: one load left, no copy, and the operand reads the dominating
+      ;; load directly.
+      [(not (= (opt-count-load-blocks diamond) 1)) 1]
+      [(not (= (opt-count-mov-dst-blocks diamond 4) 0)) 2]
+      [(not (= (opt-blocks-binop-lhs-var diamond 5 (- 0 1)) 3)) 3]
+      ;; Idempotent: a second pass over the substituted blocks changes nothing.
+      [(not (= (opt-count-load-blocks diamond-again) 1)) 4]
+      [(not (= (opt-count-mov-dst-blocks diamond-again 4) 0)) 5]
+      [(not (= (opt-blocks-binop-lhs-var diamond-again 5 (- 0 1)) 3)) 6]
+      ;; Phi-carried use: the copy survives as the Mov form, phi input intact.
+      [(not (= (opt-count-load-blocks phi) 1)) 7]
+      [(not (= (opt-blocks-mov-src-var phi 4 (- 0 1)) 3)) 8]
+      ;; Loop escape: rewritten, but left as a copy rather than pinning the
+      ;; loop's value across the exit.
+      [(not (= (opt-count-load-blocks loop-escape) 1)) 9]
+      [(not (= (opt-blocks-mov-src-var loop-escape 4 (- 0 1)) 3)) 10]
+      [(not (= (opt-blocks-binop-lhs-var loop-escape 5 (- 0 1)) 4)) 11]
+      ;; Same loop: substituted, exactly like the diamond.
+      [(not (= (opt-count-load-blocks loop-inner) 1)) 12]
+      [(not (= (opt-count-mov-dst-blocks loop-inner 4) 0)) 13]
+      [(not (= (opt-blocks-binop-lhs-var loop-inner 5 (- 0 1)) 3)) 14]
+      [else 42])))
+
 (define (compiler-optimize-global-value-number-self-test) : i64
   (let
     [dominated : compiler_ir_types.CompilerIrBlockList
@@ -20592,10 +20888,14 @@
       [(not (= (opt-count-arith-blocks sibling) 2)) 4]
       [(not (= (opt-count-arith-blocks loop) 1)) 5]
       [(not (= (opt-blocks-mov-src-var loop 4 (- 0 1)) (- 0 1))) 6]
+      ;; The forwarded read's only use is the return value, which substitution
+      ;; mode redirects to the dominating load before deleting the copy.
       [(not (= (opt-count-load-blocks load-safe) 1)) 7]
-      [(not (= (opt-blocks-mov-src-var load-safe 4 (- 0 1)) 3)) 8]
+      [(not (= (opt-count-mov-dst-blocks load-safe 4) 0)) 8]
+      [(not (= (opt-blocks-return-var load-safe (- 0 1)) 3)) 43]
       [(not (= (opt-count-load-blocks load-join-safe) 1)) 9]
-      [(not (= (opt-blocks-mov-src-var load-join-safe 4 (- 0 1)) 3)) 10]
+      [(not (= (opt-count-mov-dst-blocks load-join-safe 4) 0)) 10]
+      [(not (= (opt-blocks-return-var load-join-safe (- 0 1)) 3)) 44]
       [(not (= (opt-count-load-blocks load-store-path) 2)) 11]
       [(not (= (opt-blocks-mov-src-var load-store-path 4 (- 0 1)) (- 0 1))) 12]
       [(not (= (opt-count-load-blocks load-call-path) 2)) 13]
@@ -20630,17 +20930,17 @@
           [(compiler_optimize.OptMaybeGlobalExprKey.No) false])
         28]
       [(not (= (opt-count-load-blocks checked-ref-store-path) 1)) 29]
-      [(not (= (opt-blocks-mov-src-var checked-ref-store-path 4 (- 0 1)) 3)) 30]
+      [(not (= (opt-count-mov-dst-blocks checked-ref-store-path 4) 0)) 30]
+      [(not (= (opt-blocks-return-var checked-ref-store-path (- 0 1)) 3)) 45]
       [(not (= (opt-count-load-blocks checked-ref-root-loss) 2)) 31]
       [(not
           (= (opt-blocks-mov-src-var checked-ref-root-loss 4 (- 0 1)) (- 0 1)))
         32]
+      ;; The forwarded value is a literal, so substitution mode puts the 9 in
+      ;; the return operand and drops the copy entirely.
       [(not (= (opt-count-load-blocks single-load-store-forward) 0)) 33]
-      [(not
-          (=
-            (opt-blocks-mov-dst-i64-value single-load-store-forward 3 (- 0 1))
-            9))
-        34]
+      [(not (= (opt-count-mov-dst-blocks single-load-store-forward 3) 0)) 34]
+      [(not (= (opt-blocks-return-i64 single-load-store-forward (- 0 1)) 9)) 46]
       [(not (= (opt-blocks-binop-lhs-var pack-word 4 (- 0 1)) 1)) 35]
       [(not (= (opt-count-words-blocks pack-word) 0)) 36]
       [(not (= (opt-count-packs-blocks pack-word) 0)) 37]

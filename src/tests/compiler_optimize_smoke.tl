@@ -2706,6 +2706,10 @@
       (compiler_optimize_tests.compiler-optimize-global-value-number-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-load-gvn-substitution-self-test"
+      (compiler_optimize_tests.compiler-optimize-load-gvn-substitution-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-wide-literal-operand-self-test"
       (compiler_optimize_tests.compiler-optimize-wide-literal-operand-self-test)
       42)

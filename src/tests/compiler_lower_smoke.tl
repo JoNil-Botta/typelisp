@@ -320,6 +320,70 @@
         [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _) true]
         [(compiler_driver_core.ResultCompilerDriverLowered.Err _) false]))))
 
+(define (compiler-lower-smoke-macro-prepass-diagnostic-path-ok?) : bool
+  (let
+    [dir : String "target/lower_macro_prepass_diagnostic"]
+    [leaf : String (load.compiler-load-join-root-path dir "issue6339_leaf.tl")]
+    [entry : String (load.compiler-load-join-root-path dir "issue6339_root.tl")]
+    [roots : svec.Vec
+      (let
+        [items : svec.Vec (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    (begin
+      (load.compiler-load-test-mkdir dir)
+      (compiler-lower-smoke-write-text
+        leaf
+        "(module issue6339_leaf)
+(import stdlib.core_macros)
+(import stdlib.fs as fs)
+(define bad-path : String
+  (fs.path-join-many missing))")
+      (compiler-lower-smoke-write-text
+        entry
+        "(import issue6339_leaf as leaf)
+(define (main) : i64
+  (__tl_string_length leaf.bad-path))")
+      (compiler_driver_core.compiler-driver-reset-file-state!)
+      (let
+        [ok : bool
+          (match (compiler_driver_core.compiler-driver-load-and-lower-escaping
+            entry
+            (backend.CompilerBackendTarget.Linux)
+            roots
+            (backend.CompilerBackendMode.Scalar)
+            (compiler_driver_core.compiler-driver-target-cfgs
+              (backend.CompilerBackendTarget.Linux)
+              (parser.compiler-cfg-empty)))
+            [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _)
+              false]
+            [(compiler_driver_core.ResultCompilerDriverLowered.Err diag-box)
+              (let
+                [diag : diagnostic.CompilerDiagnostic (__tl-box-place diag-box)]
+                [labels : diagnostic.CompilerDiagnosticLabelList
+                  (diagnostic.compiler-diagnostic-secondary-spans diag)]
+                [rendered : String (diagnostic.compiler-diagnostic-render diag)]
+                (and
+                  (string.eq (diagnostic.compiler-diagnostic-path diag) leaf)
+                  (= (diagnostic.compiler-diagnostic-line diag) 5)
+                  (= (diagnostic.compiler-diagnostic-col diag) 22)
+                  (string.contains
+                    (diagnostic.compiler-diagnostic-message diag)
+                    "typecheck: unbound name missing")
+                  (= (diagnostic.compiler-diagnostic-label-list-count labels) 1)
+                  (let
+                    [label : diagnostic.CompilerDiagnosticLabel
+                      (diagnostic.compiler-diagnostic-label-list-get labels 0)]
+                    (string.eq
+                      (diagnostic.compiler-diagnostic-span-path (& label.span))
+                      leaf))
+                  (string.contains rendered leaf)
+                  (not (string.contains rendered entry))))])]
+        (begin
+          (compiler_driver_core.compiler-driver-reset-file-state!)
+          ok)))))
+
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source) : String
   "(defmacro (vector-user) : Module
   `(begin
@@ -1026,6 +1090,9 @@
     (unless
       (compiler-lower-smoke-issue3494-ok?)
       (io.panic "lower: issue3494 smoke failed"))
+    (unless
+      (compiler-lower-smoke-macro-prepass-diagnostic-path-ok?)
+      (io.panic "lower: macro-prepass diagnostic path smoke failed"))
     (unless
       (compiler-lower-smoke-c43-typecheck-completeness-ok?)
       (io.panic "lower: C4.3 typecheck-completeness smoke failed"))

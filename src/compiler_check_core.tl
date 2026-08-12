@@ -55,9 +55,7 @@
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : cdiag.CompilerDiagnostic]
   [path : String]) : cdiag.CompilerDiagnostic
-  (if (string.eq (cdiag.compiler-diagnostic-path diag) "")
-    (cdiag.compiler-diagnostic-with-path diag path)
-    diag))
+  (cdiag.compiler-diagnostic-with-fallback-path diag path))
 
 (define (compiler-check-diagnostics-with-fallback-path
   [diagnostics : cdiag.CompilerDiagnosticList]

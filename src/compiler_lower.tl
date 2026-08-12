@@ -2463,10 +2463,10 @@
       (cdiag.compiler-diagnostic-from-ast-span "" span message)]
     [(ir.CompilerMaybeSourceSpan.No) (lower-diagnostic message)]))
 
-(define (lower-diagnostic-with-path
+(define (lower-diagnostic-with-fallback-path
   [diag : cdiag.CompilerDiagnostic]
   [path : String]) : cdiag.CompilerDiagnostic
-  (cdiag.compiler-diagnostic-with-path diag path))
+  (cdiag.compiler-diagnostic-with-fallback-path diag path))
 
 (define (lower-resetting-entry-in-live-session?) : bool
   (load.compiler-load-active-session-live?))
@@ -2476,7 +2476,7 @@
   [path : String]) : ResultCompilerLower
   (ResultCompilerLower.Err
     (box
-      (lower-diagnostic-with-path
+      (lower-diagnostic-with-fallback-path
         (lower-diagnostic
           (str_cat.str-cat
             entry
@@ -65761,7 +65761,7 @@
     [(ResultCompilerLower.Ok ir spans) (ResultCompilerLower.Ok ir spans)]
     [(ResultCompilerLower.Err diag)
       (ResultCompilerLower.Err
-        (box (lower-diagnostic-with-path (__tl-box-place diag) path)))]))
+        (box (lower-diagnostic-with-fallback-path (__tl-box-place diag) path)))]))
 
 (define (lower-compiler-program-with-path-mode
   [path : String]
@@ -65974,7 +65974,7 @@
                                 (compiler-lower-profile-finish "decls"))
                               (ResultCompilerLower.Err
                                 (box
-                                  (lower-diagnostic-with-path
+                                  (lower-diagnostic-with-fallback-path
                                     (__tl-box-place diag)
                                     entry-path))))]))))]
                 [(ResultLowerCheckedContext.Err message)
@@ -66241,7 +66241,9 @@
                 (compiler-lower-profile-specialization-counters))
               (ResultCompilerLower.Err
                 (box
-                  (lower-diagnostic-with-path (__tl-box-place diag) entry-path))))])))))
+                  (lower-diagnostic-with-fallback-path
+                    (__tl-box-place diag)
+                    entry-path))))])))))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
   [lower-state : CompilerLowerState]
@@ -66570,7 +66572,7 @@
                           (ResultCompilerLower.Err
                             (box
                               (cdiag.compiler-diagnostic-copy
-                                (lower-diagnostic-with-path
+                                (lower-diagnostic-with-fallback-path
                                   (__tl-box-place diag)
                                   macro-entry-path)))))])))))]
           [(spec.ResultGenProgramWithPaths.Err diag)
@@ -66580,7 +66582,9 @@
                 (compiler-lower-profile-finish "macro_handoff"))
               (ResultCompilerLower.Err
                 (box
-                  (lower-diagnostic-with-path (__tl-box-place diag) entry-path))))])))))
+                  (lower-diagnostic-with-fallback-path
+                    (__tl-box-place diag)
+                    entry-path))))])))))
 
 ;; Serial/test compatibility adapter for callers that already provide the
 ;; explicit loader/prefix/job state but still rely on the active interner.
@@ -67163,7 +67167,10 @@
             mode))]
       [(parser.ResultAstProgram.Err message)
         (ResultCompilerLower.Err
-          (box (lower-diagnostic-with-path (lower-diagnostic message) path)))])))
+          (box
+            (lower-diagnostic-with-fallback-path
+              (lower-diagnostic message)
+              path)))])))
 
 (define (lower-compiler-source-with-path-mode
   [path : String]

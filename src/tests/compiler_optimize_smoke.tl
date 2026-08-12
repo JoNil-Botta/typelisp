@@ -3640,6 +3640,36 @@
     "the same leaf stays refused at a straight-line call site"))
 
 (test
+  inline-checked-depth-weighting
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-depth-weighting-ok?)
+    "the measured tier prices a body at the depth an inline would put it, and the weight ladder saturates"))
+
+(test
+  inline-checked-window
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-window-ok?)
+    "the accept window is two-sided: the model must agree with a free inline within a factor of two"))
+
+(test
+  inline-checked-budget
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-budget-ok?)
+    "the program budget counts verdicts and the tier arms and disarms"))
+
+(test
+  inline-checked-band-exclusion
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-band-exclusion-ok?)
+    "a band-admitted site never reaches the check, so a banked program spends no budget"))
+
+(test
+  inline-checked-rollback-verifies
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-rollback-verifies-ok?)
+    "arming the tier over a program outside its class changes nothing and every function still verifies"))
+
+(test
   inline-bounds-loop-cascade-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)

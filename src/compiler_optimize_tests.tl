@@ -15144,6 +15144,209 @@
 ;; both sites: a duplicated body is bounded by its own size only while nothing
 ;; inside it can bring another body along, and the multiblock clone path
 ;; miscompiles call-carrying clones (#6307).
+;; --- the measured-plan inline check -----------------------------------------
+;;
+;; The tier itself (compiler_optimize.tl, opt-inline-checked-*) admits one site
+;; per caller from the class every band refuses, rebuilds the caller both ways,
+;; prices both plans, and keeps the inline only when the measured plan agrees
+;; with what a free inline would predict. These pin the pieces that decide that:
+;; the depth model both sides are priced in, the accept window, the program
+;; budget that bounds the tier's compile-time cost, and the two structural
+;; guarantees -- a caller with no candidate pays nothing, and whichever side of
+;; the rollback is kept verifies.
+;; A two-block function: an entry that jumps into a self-loop. The loop block
+;; carries `loop-instrs` instructions, the entry carries one.
+(define (opt-inline-checked-depth-fixture [name : i64] [loop-instrs : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (opt-inline-checked-depth-loop-instrs loop-instrs))
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-inline-checked-depth-loop-instrs [remaining : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (<= remaining 1)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "loop"))
+      compiler_ir_types.CompilerIrInstrList.Nil)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        0
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-checked-depth-loop-instrs (- remaining 1)))))
+
+;; The currency both sides of the check are priced in. A block inside one loop
+;; weighs opt-inline-census-depth-base; `offset` is the depth the body would
+;; land at in its caller, and the ladder SATURATES at
+;; opt-inline-census-depth-cap, which is the whole reason the callee is priced
+;; through an offset instead of by multiplying two weights.
+(define (compiler-optimize-inline-checked-depth-weighting-ok?) : bool
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-inline-checked-depth-fixture (opt-test-symbol "checked_depth") 4)]
+    [base : i64 (compiler_optimize.opt-inline-census-depth-base)]
+    [at0 : i64 (compiler_optimize.opt-inline-checked-weighted-instrs-at func 0)]
+    [at1 : i64 (compiler_optimize.opt-inline-checked-weighted-instrs-at func 1)]
+    [at2 : i64 (compiler_optimize.opt-inline-checked-weighted-instrs-at func 2)]
+    [at3 : i64 (compiler_optimize.opt-inline-checked-weighted-instrs-at func 3)]
+    (and
+      ;; one entry instruction at depth 0 plus four loop instructions at depth 1
+      (= at0 (+ 1 (* base 4)))
+      ;; one level down: the entry joins depth 1, the loop reaches depth 2
+      (= at1 (+ base (* base (* base 4))))
+      ;; and the ladder saturates, so a third level costs nothing more
+      (= at2 at3)
+      (= at2 (compiler_optimize.opt-inline-checked-weighted-instrs-at func 9)))))
+
+;; The accept window. A free inline saves exactly `boundary`; the tier keeps a
+;; site only when the model lands within a factor of two of that in BOTH
+;; directions -- too little and the inline did not repay, too much and the two
+;; sides were not measured in the same currency.
+(define (compiler-optimize-inline-checked-window-ok?) : bool
+  (and
+    ;; exactly what a free inline predicts
+    (compiler_optimize.opt-inline-checked-window-ok? 64 64)
+    ;; the two edges of the window
+    (compiler_optimize.opt-inline-checked-window-ok? 32 64)
+    (compiler_optimize.opt-inline-checked-window-ok? 128 64)
+    ;; below it: the boundary was retired and the merged body ate the saving
+    (not (compiler_optimize.opt-inline-checked-window-ok? 31 64))
+    (not (compiler_optimize.opt-inline-checked-window-ok? 0 64))
+    (not (compiler_optimize.opt-inline-checked-window-ok? (- 0 400) 64))
+    ;; above it: the model claims more than an inline can produce, which is what
+    ;; every documented loser looks like here (pl-line-end models 1,193 against
+    ;; a boundary of 64)
+    (not (compiler_optimize.opt-inline-checked-window-ok? 129 64))
+    (not (compiler_optimize.opt-inline-checked-window-ok? 1193 64))
+    ;; the boundary itself scales with arity, which is the part of a call
+    ;; sequence that does
+    (>
+      (compiler_optimize.opt-inline-checked-boundary-cost 14)
+      (compiler_optimize.opt-inline-checked-boundary-cost 2))))
+
+;; The program budget counts VERDICTS, not accepts, because a rejected
+;; candidate costs the same work an accepted one does. The level-2 inline
+;; driver arms the tier and resets the budget; the test hook disarms it.
+(define (compiler-optimize-inline-checked-budget-ok?) : bool
+  (begin
+    (compiler_optimize.opt-inline-checked-set-active! false)
+    (compiler_optimize.opt-inline-checked-program-begin!)
+    (if (compiler_optimize.opt-inline-checked-armed?)
+      false
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (if (not (compiler_optimize.opt-inline-checked-armed?))
+          (begin
+            (compiler_optimize.opt-inline-checked-set-active! false)
+            false)
+          (let
+            [budget-reset? : bool
+              (=
+                (compiler_optimize.opt-inline-checked-budget-current)
+                (compiler_optimize.opt-inline-checked-program-budget))]
+            (begin
+              ;; every fixture leaves the tier as it found it: the optimizer
+              ;; unit tests share one process, and the band fixtures below
+              ;; assert what the BANDS do
+              (compiler_optimize.opt-inline-checked-set-active! false)
+              budget-reset?)))))))
+
+;; Two structural guarantees on the whole-program pass, asserted on the
+;; multiblock fixtures the bands already own:
+;;
+;;   1. a program whose sites the BANDS admit spends no budget. The tier is
+;;      asked only about sites no band takes, so a band-admitted site never
+;;      reaches a verdict -- which is both the correctness rule (the cheaper
+;;      admitter wins) and the reason the tier costs nothing on ordinary code;
+;;   2. whatever the rollback keeps verifies. The accepted side is the walk's
+;;      own rewrite and the reverted side is the banked-band-only rewrite, and
+;;      both go through the same structural verifier the pass already runs.
+(define (compiler-optimize-inline-checked-band-exclusion-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-two-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-plain callee-name))]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (and
+      ;; the duplication band takes both sites, so the measured tier is never
+      ;; asked and the budget is untouched
+      (= spent 0)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        0)
+      (opt-inline-mb2-main-verified? optimized "main")
+      (opt-inline-mb2-main-verified? optimized "inline_nonleaf"))))
+
+;; The tier armed over a program it cannot claim leaves that program exactly
+;; where the bands left it, and every function still verifies. This is the
+;; rollback's safety property stated where it can be checked without a fixture
+;; the size of a benchmark kernel: arming the tier must never change a program
+;; whose only sites belong to a band.
+(define (compiler-optimize-inline-checked-rollback-verifies-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [_disarm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-program-begin!)
+        (compiler_optimize.opt-inline-checked-set-active! false))]
+    [banked : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-three-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
+    [banked-main : i64
+      (opt-count-direct-call-name-function-list banked "main" "inline_switch")]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [armed : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-three-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
+    [armed-main : i64
+      (opt-count-direct-call-name-function-list armed "main" "inline_switch")]
+    [_disarm-after : unit
+      (compiler_optimize.opt-inline-checked-set-active! false)]
+    (and
+      ;; a call-carrying callee is outside the tier's class (#6307), so the
+      ;; armed run reproduces the disarmed one exactly
+      (= armed-main banked-main)
+      (= armed-main 1)
+      (opt-inline-mb2-main-verified? armed "main")
+      (opt-inline-mb2-main-verified? armed "inline_nonleaf")
+      (opt-inline-mb2-main-verified? armed "inline_loop"))))
+
 (define (compiler-optimize-inline-dup-call-bearing-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -18532,6 +18735,21 @@
                     (unless
                       (compiler-optimize-inline-bounds-callee-ok?)
                       (return 29))
+                    (unless
+                      (compiler-optimize-inline-checked-depth-weighting-ok?)
+                      (return 101))
+                    (unless
+                      (compiler-optimize-inline-checked-window-ok?)
+                      (return 102))
+                    (unless
+                      (compiler-optimize-inline-checked-budget-ok?)
+                      (return 103))
+                    (unless
+                      (compiler-optimize-inline-checked-band-exclusion-ok?)
+                      (return 104))
+                    (unless
+                      (compiler-optimize-inline-checked-rollback-verifies-ok?)
+                      (return 105))
                     (unless
                       (compiler-optimize-inline-bounds-labels-distinct-ok?)
                       (return 46))

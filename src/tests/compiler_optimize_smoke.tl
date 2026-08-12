@@ -3678,6 +3678,36 @@
     "arming the tier over a program outside its class changes nothing and every function still verifies"))
 
 (test
+  inline-checked-sequence-two-sites
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-sequence-two-sites-ok?)
+    "two sites of one callee are priced richest-first and both kept, each against the state before it"))
+
+(test
+  inline-checked-sequence-partial
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-sequence-partial-ok?)
+    "a caller keeps its first site and reverts its second: the rollback is per site, not per caller"))
+
+(test
+  inline-checked-richness
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-richness-ok?)
+    "sites are ordered by what a free inline is worth, per unit of the caller's growth budget it spends"))
+
+(test
+  inline-checked-caller-cap
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-caller-cap-ok?)
+    "one caller cannot drain the program's verdict budget"))
+
+(test
+  inline-checked-one-callee
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-one-callee-ok?)
+    "a caller's later sites are restricted to the callee its first accept named"))
+
+(test
   inline-bounds-loop-cascade-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)

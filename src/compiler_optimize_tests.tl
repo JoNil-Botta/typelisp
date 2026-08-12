@@ -15347,6 +15347,237 @@
       (opt-inline-mb2-main-verified? armed "inline_nonleaf")
       (opt-inline-mb2-main-verified? armed "inline_loop"))))
 
+;; --- the sequence: one caller, one site at a time ---------------------------
+;;
+;; The tier prices a caller's sites in SEQUENCE: a scan walk ranks them, and
+;; then one round per verdict rebuilds the caller with the sites already kept
+;; plus one new one and prices exactly that difference. These drive the round
+;; bookkeeping directly -- the scan table, the ranking, the accepted table and
+;; the caps -- because that bookkeeping is what decides which sites a caller is
+;; offered and in which order, and it is decidable without a fixture the size of
+;; a benchmark kernel.
+;;
+;; The end-to-end behaviour these encode was measured on the corpus and is
+;; recorded at the tier: two sites of one map lookup accepted in sequence in one
+;; caller (hashmap_get -11.40%), a first site refused and a second accepted in
+;; the same caller (gvn_table's invalidate-var), and a caller whose second site
+;; names a different callee refused (opt_quicksort, which regressed +2.01% when
+;; it was allowed).
+(define (opt-inline-checked-seq-callee-a) : i64
+  (opt-test-symbol "seq_callee_a"))
+
+(define (opt-inline-checked-seq-callee-b) : i64
+  (opt-test-symbol "seq_callee_b"))
+
+;; Two sites of ONE callee, offered richest-first, both kept: the second round
+;; arms the second site because the caller's first accept named that callee, and
+;; both end up in the accepted table -- which is what makes a later walk rebuild
+;; both.
+(define (compiler-optimize-inline-checked-sequence-two-sites-ok?) : bool
+  (let
+    [callee : i64 (opt-inline-checked-seq-callee-a)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    ;; the poorer site first in walk order, so only the ranking can order them
+    [_scan : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-scan-record! callee 10 1 100)
+        (compiler_optimize.opt-inline-checked-scan-record! callee 11 2 900))]
+    [armed-first? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [first-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
+    [_keep-first : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    [armed-second? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [second-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
+    [_keep-second : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    [armed-third? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    ;; read the tables before the reset puts them back
+    [rich-kept? : bool
+      (compiler_optimize.opt-inline-checked-accepted? callee 11 2)]
+    [poor-kept? : bool
+      (compiler_optimize.opt-inline-checked-accepted? callee 10 1)]
+    [verdicts : i64
+      (compiler_optimize.opt-inline-checked-caller-verdicts-current)]
+    [accepted : i64 (compiler_optimize.opt-inline-checked-accepted-current)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      armed-first?
+      armed-second?
+      ;; RICHEST FIRST: the second-recorded site is worth nine times the first
+      ;; and is priced first, against the state the scan walk built
+      (= first-pos 2)
+      (= second-pos 1)
+      ;; and the caller has nothing left to arm
+      (not armed-third?)
+      ;; both sites are in the accepted table, so every later walk of this
+      ;; caller rebuilds both
+      rich-kept?
+      poor-kept?
+      ;; two verdicts, two accepts
+      (= verdicts 2)
+      (= accepted 2))))
+
+;; The partial state. One site of a caller is kept and the next REVERTED: the
+;; reverted site never enters the accepted table, so the state the caller ends
+;; on carries the first site and not the second -- which is the whole reason the
+;; rollback is per site rather than per caller.
+(define (compiler-optimize-inline-checked-sequence-partial-ok?) : bool
+  (let
+    [callee : i64 (opt-inline-checked-seq-callee-a)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    [_scan : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-scan-record! callee 20 0 900)
+        (compiler_optimize.opt-inline-checked-scan-record! callee 21 3 100))]
+    [_first : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-arm-next-target!)
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    ;; the second verdict reverts: spent, never accepted
+    [_second : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-arm-next-target!)
+        (compiler_optimize.opt-inline-checked-spend-verdict!))]
+    [kept? : bool (compiler_optimize.opt-inline-checked-accepted? callee 20 0)]
+    [dropped? : bool
+      (compiler_optimize.opt-inline-checked-accepted? callee 21 3)]
+    [verdicts : i64
+      (compiler_optimize.opt-inline-checked-caller-verdicts-current)]
+    [accepted : i64 (compiler_optimize.opt-inline-checked-accepted-current)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      kept?
+      (not dropped?)
+      ;; both sites were priced, one survived
+      (= verdicts 2)
+      (= accepted 1))))
+
+;; RICHNESS, and the growth in its denominator. Two sites worth the same by the
+;; free-inline prediction alone are ordered by what they cost the caller's
+;; growth budget, because that budget is a CEILING ON THEIR SUM and the order
+;; decides which of them fit. Measured: the interner's three equally-predicted
+;; candidates left to the block walk put a 35-block grow routine first and the
+;; comparison leaf third, where the ceiling refused it for fifteen blocks.
+(define (compiler-optimize-inline-checked-richness-ok?) : bool
+  (and
+    ;; the prediction still dominates: a site worth ten times as much outranks
+    ;; a slightly cheaper one
+    (>
+      (compiler_optimize.opt-inline-checked-richness 640 6 60)
+      (compiler_optimize.opt-inline-checked-richness 64 6 50))
+    ;; equal predictions: the smaller body first
+    (>
+      (compiler_optimize.opt-inline-checked-richness 8 6 59)
+      (compiler_optimize.opt-inline-checked-richness 8 6 276))
+    ;; and arity still moves the prediction it divides
+    (>
+      (compiler_optimize.opt-inline-checked-richness 8 14 59)
+      (compiler_optimize.opt-inline-checked-richness 8 2 59))
+    ;; a degenerate body cannot divide by zero
+    (> (compiler_optimize.opt-inline-checked-richness 8 6 0) 0)))
+
+;; Fill the scan table to its cap with distinct sites of one callee, richest
+;; first so the drain order is the record order.
+(define (opt-inline-checked-seq-fill-scan [callee : i64] [row : i64]) : unit
+  (if (>= row (compiler_optimize.opt-inline-checked-scan-cap))
+    unit
+    (begin
+      (compiler_optimize.opt-inline-checked-scan-record!
+        callee
+        (+ 100 row)
+        row
+        (- 1000 row))
+      (opt-inline-checked-seq-fill-scan callee (+ row 1)))))
+
+;; Arm and spend verdicts until the caller is refused one, and report how many.
+(define (opt-inline-checked-seq-drain [taken : i64]) : i64
+  (if (compiler_optimize.opt-inline-checked-arm-next-target!)
+    (begin
+      (compiler_optimize.opt-inline-checked-spend-verdict!)
+      (opt-inline-checked-seq-drain (+ taken 1)))
+    taken))
+
+;; THE PER-CALLER CAP. Verdicts are bounded per caller as well as per program,
+;; so one caller holding many candidates cannot drain the program's budget and
+;; leave every later caller unmeasured.
+(define (compiler-optimize-inline-checked-caller-cap-ok?) : bool
+  (let
+    [callee : i64 (opt-inline-checked-seq-callee-a)]
+    [cap : i64 (compiler_optimize.opt-inline-checked-max-caller-verdicts)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    [_scan : unit (opt-inline-checked-seq-fill-scan callee 0)]
+    [armed : i64 (opt-inline-checked-seq-drain 0)]
+    [budget-left : i64 (compiler_optimize.opt-inline-checked-budget-current)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      ;; the scan ranked more candidates than the caller may price
+      (> (compiler_optimize.opt-inline-checked-scan-cap) cap)
+      (= armed cap)
+      ;; and the program keeps the rest of its budget for later callers
+      (=
+        budget-left
+        (- (compiler_optimize.opt-inline-checked-program-budget) cap)))))
+
+;; ONE CALLEE PER CALLER. Once a caller has KEPT a site, its later sites are
+;; restricted to that callee. The rule is measured: the sequence's corpus wins
+;; are all one body landing at the sites that share it, and its losses are all a
+;; caller absorbing different bodies -- opt_quicksort took a fill loop and then
+;; a checksum loop and regressed +2.01%, intern_table took a map insert and then
+;; a hash and regressed +1.60%.
+(define (compiler-optimize-inline-checked-one-callee-ok?) : bool
+  (let
+    [a : i64 (opt-inline-checked-seq-callee-a)]
+    [b : i64 (opt-inline-checked-seq-callee-b)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    ;; the OTHER callee's site is the richer of the two
+    [_scan : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-scan-record! a 30 0 100)
+        (compiler_optimize.opt-inline-checked-scan-record! b 31 1 900))]
+    ;; before any accept, the richest wins outright
+    [armed-first? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [first-callee : i64
+      (compiler_optimize.opt-inline-checked-target-callee-current)]
+    ;; that first site REVERTS, which claims nothing...
+    [_revert : unit (compiler_optimize.opt-inline-checked-spend-verdict!)]
+    [armed-second? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [second-callee : i64
+      (compiler_optimize.opt-inline-checked-target-callee-current)]
+    ;; ...and this one is KEPT, which claims the caller for callee `a`
+    [_keep : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    ;; a fresh caller-scan holding both callees now offers only `a`
+    [_next : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-scan-record! b 32 2 900)
+        (compiler_optimize.opt-inline-checked-scan-record! a 33 3 100))]
+    [armed-third? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [third-callee : i64
+      (compiler_optimize.opt-inline-checked-target-callee-current)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      armed-first?
+      armed-second?
+      armed-third?
+      (= first-callee b)
+      (= second-callee a)
+      ;; the richer site names the other callee and is passed over for the
+      ;; poorer site of the one this caller kept
+      (= third-callee a))))
+
 (define (compiler-optimize-inline-dup-call-bearing-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]

@@ -74501,10 +74501,19 @@
 ;;
 ;; THE BUDGETS are what keep the check's own cost bounded, and they are not
 ;; taste: this check runs DURING COMPILATION, and it re-optimizes and re-plans
-;; the caller twice and the callee once per accepted candidate. One site per
-;; caller and opt-inline-checked-program-budget accepted sites per program cap
-;; the tier at a fixed number of extra per-function optimizer runs, and every
-;; clause above them is an integer test or a scan the bands already run.
+;; the caller twice and the callee once per candidate. opt-inline-checked-
+;; program-budget verdicts per program and opt-inline-checked-max-caller-
+;; verdicts per caller cap the tier at a fixed number of extra per-function
+;; optimizer runs, and every clause above them is an integer test or a scan the
+;; bands already run.
+;;
+;; SITES ARE PRICED ONE AT A TIME, IN SEQUENCE. A caller may hold more than one
+;; site of this class, and the fusion prizes are exactly the callers that do --
+;; a kernel's inner routine absorbing its comparison leaf AND its hash leaf.
+;; Each verdict prices ONE site against the caller's current state, and the
+;; state that a verdict keeps or restores is what the next site is priced
+;; against. See the round driver (opt-inline-checked-rounds) for why that is the
+;; only way one caller can accept one callee and refuse another.
 ;;
 ;; ORDERING. The pass is already bottom-up (Tarjan pops a callee's component
 ;; before any caller's), so a chain is processed leaf-upward with no ordering
@@ -74561,17 +74570,118 @@
 (define (opt-inline-checked-program-budget) : i64
   24)
 
+;; ...and per CALLER, because the sites are priced in sequence and one caller
+;; would otherwise be able to drain the program's whole budget: a caller holding
+;; nine candidates would spend a verdict apiece and leave every later caller
+;; unmeasured. Four is what the measured fusion chains need -- an interner
+;; absorbing a comparison leaf and a hash leaf, each reachable through one
+;; helper -- with a round to spare.
+(define (opt-inline-checked-max-caller-verdicts) : i64
+  4)
+
+;; How many candidate sites one caller's SCAN walk ranks. Only the richest
+;; opt-inline-checked-max-caller-verdicts of them can ever be priced, so the
+;; table only has to be deep enough that the richest are certainly in it; past
+;; that, a longer table is a longer linear scan for nothing.
+(define (opt-inline-checked-scan-cap) : i64
+  8)
+
 ;; The retired boundary, per call: the call and the return, the callee's frame
 ;; setup, and one argument move per parameter.
 (define (opt-inline-checked-boundary-cost [np : i64]) : i64
   (+ 6 np))
 
+;; A candidate's RICHNESS, which is the order the caller's sites are priced in.
+;;
+;; The numerator is what a free inline of the site would be worth: how often the
+;; site runs times what its boundary costs. The denominator is the BODY the site
+;; would copy, and it is there because the sites of one caller compete for a
+;; shared allowance -- opt-inline-checked-max-blocks caps this tier's total
+;; growth in a caller, so the order the sites are offered in decides which of
+;; them still fit. Worth per unit of that allowance is the greedy a shared
+;; ceiling makes correct.
+;;
+;; Measured twice over. The interner this tier exists for holds three candidates
+;; in one routine that are worth exactly the same by the numerator alone (each
+;; an in-loop site of a six-parameter callee: 96 apiece), so the numerator alone
+;; leaves the order to the block walk -- which put a 35-block, 276-instruction
+;; grow routine first and the 59-instruction comparison leaf last, where 49 of
+;; the 64 blocks were spent and the leaf needed 16. And lex_source's tokenizer
+;; holds four, of which only the 56-instruction digit test repays: by the
+;; numerator alone it ranks last behind three larger scanners, and every one of
+;; those is refused -- under the one-site cap the tokenizer's whole chance was
+;; spent on the first of them. Ranking by worth per instruction copied puts the
+;; digit test first and takes it: lex_source -1.16%.
+;;
+;; The scale keeps the ratio in integers with enough resolution that two sites
+;; differing only slightly in body size still order.
+(define (opt-inline-checked-richness
+  [frequency : i64]
+  [np : i64]
+  [callee-instrs : i64]) : i64
+  (/
+    (* 64 (* frequency (opt-inline-checked-boundary-cost np)))
+    (if (< callee-instrs 1)
+      1
+      callee-instrs)))
+
 (define opt-inline-checked-active? : bool
   false)
 (define opt-inline-checked-budget : i64
   0)
-(define opt-inline-checked-suppressed? : bool
+
+;; SCAN or TARGET, the two modes a caller walk runs in. A scan walk admits no
+;; new site -- so its result is exactly the caller's banked-band-only rewrite,
+;; the baseline the first verdict is priced against -- and records every
+;; candidate it passes over. A target walk admits the sites already kept plus
+;; the one new site named by the target key below.
+(define opt-inline-checked-scanning? : bool
+  true)
+
+;; The target key: (callee name, caller block label, site position), the same
+;; triple a site prefix is built from, so it names ONE call site of ONE callee
+;; in the caller. A target walk admits the site that matches it and no other.
+(define opt-inline-checked-target-callee : i64
+  0)
+(define opt-inline-checked-target-block : i64
+  0)
+(define opt-inline-checked-target-pos : i64
+  (- 0 1))
+
+;; The ACCEPTED table: the caller's sites that have already been priced and
+;; kept, three columns per row (callee name, block label, site position), room
+;; for opt-inline-checked-max-caller-verdicts rows.
+(define opt-inline-checked-accepted : (__tl_dyn-array i64)
+  (array.make-array i64 12))
+(define opt-inline-checked-accepted-count : i64
+  0)
+
+;; The SCAN table: one row per candidate the scan walk found, four columns --
+;; callee name, block label, site position, and the site's RICHNESS, which is
+;; what a free inline of it would be worth (how often the site runs times what
+;; its boundary costs). Room for opt-inline-checked-scan-cap rows. A row whose
+;; richness has been set negative has already been armed as a target.
+(define opt-inline-checked-scan : (__tl_dyn-array i64)
+  (array.make-array i64 32))
+(define opt-inline-checked-scan-count : i64
+  0)
+
+;; Verdicts spent on the caller being walked, against the per-caller cap.
+(define opt-inline-checked-caller-verdicts : i64
+  0)
+
+;; Set by the admission test to say which kind of site it just admitted: a NEW
+;; candidate, which consumes the walk's one new-site slot, or a re-admission of
+;; an already-accepted site, which does not.
+(define opt-inline-checked-new-site? : bool
   false)
+
+;; The plan cost of the state a verdict leaves behind -- the accepted body's
+;; cost when it keeps, the previous state's when it reverts -- so the next round
+;; prices its site against a baseline it does not have to re-optimize. Negative
+;; means "not known", which is what the first round starts from.
+(define opt-inline-checked-next-state-cost : i64
+  (- 0 1))
 (define opt-inline-caller-checked-blocks : i64
   0)
 (define opt-inline-caller-checked-taken? : bool
@@ -74606,11 +74716,21 @@
 ;; shape, ever takes the same site. Arming at the optimizer entries keeps every
 ;; band fixture testing its band, and keeps the tier live on every path that
 ;; actually compiles a program.
+;; Per-caller reset, run by the walk entries before a caller's scan walk. It
+;; empties the accepted and scan tables, returns the tier to scan mode and
+;; refunds the per-caller verdict allowance.
+(define (opt-inline-checked-caller-begin!) : unit
+  (begin
+    (set! opt-inline-checked-accepted-count 0)
+    (set! opt-inline-checked-scan-count 0)
+    (set! opt-inline-checked-caller-verdicts 0)
+    (set! opt-inline-checked-scanning? true)))
+
 (define (opt-inline-checked-program-begin!) : unit
   (begin
     (set! opt-inline-checked-budget (opt-inline-checked-program-budget))
-    (set! opt-inline-checked-suppressed? false)
-    (set! opt-inline-caller-checked-taken? false)))
+    (set! opt-inline-caller-checked-taken? false)
+    (opt-inline-checked-caller-begin!)))
 
 ;; Arm (or disarm) the tier. The whole-program optimizer entries arm it; a
 ;; fixture disarms it to assert the banked-band-only rewrite against the
@@ -74626,6 +74746,188 @@
 ;; band-admitted site never reaches the check.
 (define (opt-inline-checked-budget-current) : i64
   opt-inline-checked-budget)
+
+;; Verdicts spent on, and sites kept in, the caller most recently walked. Both
+;; are what a fixture reads to assert the SEQUENCE: how many sites one caller
+;; was allowed to price, and how many of them survived their own verdict.
+(define (opt-inline-checked-caller-verdicts-current) : i64
+  opt-inline-checked-caller-verdicts)
+
+(define (opt-inline-checked-accepted-current) : i64
+  opt-inline-checked-accepted-count)
+
+;; --- the per-site key tables ------------------------------------------------
+(define (opt-inline-checked-accepted-row-eq?
+  [base : i64]
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]) : bool
+  (and
+    (= (array-ref opt-inline-checked-accepted base) callee-name)
+    (= (array-ref opt-inline-checked-accepted (+ base 1)) block-label)
+    (= (array-ref opt-inline-checked-accepted (+ base 2)) site-pos)))
+
+(define (opt-inline-checked-accepted-from?
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]
+  [row : i64]) : bool
+  (if (>= row opt-inline-checked-accepted-count)
+    false
+    (if (opt-inline-checked-accepted-row-eq?
+      (* row 3)
+      callee-name
+      block-label
+      site-pos)
+      true
+      (opt-inline-checked-accepted-from?
+        callee-name
+        block-label
+        site-pos
+        (+ row 1)))))
+
+;; Is this site one the caller already priced and kept?
+(define (opt-inline-checked-accepted?
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]) : bool
+  (and
+    (> opt-inline-checked-accepted-count 0)
+    (opt-inline-checked-accepted-from? callee-name block-label site-pos 0)))
+
+;; Is this site the ONE new site the current target walk may admit?
+(define (opt-inline-checked-target-match?
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]) : bool
+  (and
+    (= callee-name opt-inline-checked-target-callee)
+    (= block-label opt-inline-checked-target-block)
+    (= site-pos opt-inline-checked-target-pos)))
+
+;; The armed target, for a fixture that drives the sequence by hand.
+(define (opt-inline-checked-target-callee-current) : i64
+  opt-inline-checked-target-callee)
+
+(define (opt-inline-checked-target-pos-current) : i64
+  opt-inline-checked-target-pos)
+
+(define (opt-inline-checked-scan-record!
+  [callee-name : i64]
+  [block-label : i64]
+  [site-pos : i64]
+  [richness : i64]) : unit
+  (if (>= opt-inline-checked-scan-count (opt-inline-checked-scan-cap))
+    unit
+    (let
+      [base : i64 (* opt-inline-checked-scan-count 4)]
+      (begin
+        (set! (array-ref opt-inline-checked-scan base) callee-name)
+        (set! (array-ref opt-inline-checked-scan (+ base 1)) block-label)
+        (set! (array-ref opt-inline-checked-scan (+ base 2)) site-pos)
+        (set! (array-ref opt-inline-checked-scan (+ base 3)) richness)
+        (set! opt-inline-checked-scan-count (+ opt-inline-checked-scan-count 1))))))
+
+;; ONE CALLEE PER CALLER, and it is a measured rule rather than a budget.
+;;
+;; A caller's later sites are restricted to the callee its first ACCEPT named.
+;; The sequence's wins across the corpus are all one body landing at the several
+;; sites that share it -- a map lookup at two probe sites of one caller
+;; (hashmap_get -11.40%), a line copy at two sites of a chunk runner -- and its
+;; losses are all a caller absorbing DIFFERENT bodies: a sort harness taking a
+;; fill loop and then a checksum loop (opt_quicksort +2.01%), an interner taking
+;; a map insert and then a hash (intern_table +1.60%). The mechanism is the one
+;; the site-depth clause already records: the plan prices an allocation once per
+;; invocation and cannot see the tax a merged body lays on the caller's OTHER
+;; loops. Two copies of one body make one demand on the caller's frame twice
+;; over; two different bodies make two independent demands, and the second is
+;; what pushes the caller's own loops into spilling.
+;;
+;; A refused candidate does not claim the caller: only an accept does.
+(define (opt-inline-checked-callee-allowed? [callee-name : i64]) : bool
+  (or
+    (= opt-inline-checked-accepted-count 0)
+    (= (array-ref opt-inline-checked-accepted 0) callee-name)))
+
+;; The richest allowed row still unarmed, or -1. Ties go to the earlier row, so
+;; the ordering is the scan's walk order refined by richness and never depends
+;; on anything but the caller's own text.
+(define (opt-inline-checked-scan-best-from
+  [row : i64]
+  [best : i64]
+  [best-richness : i64]) : i64
+  (if (>= row opt-inline-checked-scan-count)
+    best
+    (let
+      [base : i64 (* row 4)]
+      [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
+      (if (and
+        (> richness best-richness)
+        (opt-inline-checked-callee-allowed?
+          (array-ref opt-inline-checked-scan base)))
+        (opt-inline-checked-scan-best-from (+ row 1) row richness)
+        (opt-inline-checked-scan-best-from (+ row 1) best best-richness)))))
+
+;; Arm the next round's target: the richest candidate the caller has left, if
+;; the caller and the program can still afford a verdict. The row is spent here
+;; rather than at the verdict, so a target the current state can no longer place
+;; is never retried.
+(define (opt-inline-checked-arm-next-target!) : bool
+  (if (or
+    (>=
+      opt-inline-checked-caller-verdicts
+      (opt-inline-checked-max-caller-verdicts))
+    (<= opt-inline-checked-budget 0))
+    false
+    (let
+      [row : i64 (opt-inline-checked-scan-best-from 0 (- 0 1) 0)]
+      (if (< row 0)
+        false
+        (let
+          [base : i64 (* row 4)]
+          (begin
+            (set!
+              opt-inline-checked-target-callee
+              (array-ref opt-inline-checked-scan base))
+            (set!
+              opt-inline-checked-target-block
+              (array-ref opt-inline-checked-scan (+ base 1)))
+            (set!
+              opt-inline-checked-target-pos
+              (array-ref opt-inline-checked-scan (+ base 2)))
+            (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
+            (set! opt-inline-checked-scanning? false)
+            true))))))
+
+;; Move the armed target into the accepted table: from here on every walk of
+;; this caller rebuilds the site.
+(define (opt-inline-checked-accept-target!) : unit
+  (if (>=
+    opt-inline-checked-accepted-count
+    (opt-inline-checked-max-caller-verdicts))
+    unit
+    (let
+      [base : i64 (* opt-inline-checked-accepted-count 3)]
+      (begin
+        (set!
+          (array-ref opt-inline-checked-accepted base)
+          opt-inline-checked-target-callee)
+        (set!
+          (array-ref opt-inline-checked-accepted (+ base 1))
+          opt-inline-checked-target-block)
+        (set!
+          (array-ref opt-inline-checked-accepted (+ base 2))
+          opt-inline-checked-target-pos)
+        (set!
+          opt-inline-checked-accepted-count
+          (+ opt-inline-checked-accepted-count 1))))))
+
+(define (opt-inline-checked-spend-verdict!) : unit
+  (begin
+    (set! opt-inline-checked-budget (- opt-inline-checked-budget 1))
+    (set!
+      opt-inline-checked-caller-verdicts
+      (+ opt-inline-checked-caller-verdicts 1))))
 
 ;; The loop depth of the caller block the walk is standing in, as a census
 ;; weight. Built from the caller's current blocks with the census's own
@@ -74676,9 +74978,20 @@
         1
         caller-hot))))
 
-;; Ordered cheapest-first: the tier's own state, then the integer size clauses,
-;; then the growth budgets, then the call-free scan, and last the site weight,
-;; which builds a depth table over the caller.
+;; An ALREADY-ACCEPTED site skips every clause below. Its growth was priced in
+;; the round that kept it, and the two clauses that could refuse it now -- the
+;; block ceiling and the heavy gate, both of which count this tier's own blocks
+;; -- have only tightened since, because the accepted sites' blocks are exactly
+;; what they count. Re-refusing one would drop a kept inline out of the state
+;; the next verdict is priced against, and that verdict would then be pricing
+;; two changes rather than one, which is the whole thing this tier exists to
+;; avoid.
+;;
+;; A NEW candidate is ordered cheapest-first: the tier's own state and the
+;; target key, then the integer size clauses, then the growth budgets, then the
+;; call-free scan, and last the site weight, which builds a depth table over the
+;; caller. In scan mode the last step RECORDS the site and refuses it; in target
+;; mode it admits the one site the round is pricing.
 (define (opt-inline-checked-ok?
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -74689,54 +75002,86 @@
   [blocks : ir.CompilerIrBlockList]
   [added-blocks : i64]
   [caller-blocks : i64]
-  [added-so-far : i64]) : bool
-  (and
-    opt-inline-checked-active?
-    (not opt-inline-checked-suppressed?)
-    (not opt-inline-caller-checked-taken?)
-    (> opt-inline-checked-budget 0)
-    (>= refs 1)
-    (<= callee-instrs (opt-inline-checked-max-body))
-    (<=
-      (ir.compiler-ir-block-list-count blocks)
-      (opt-inline-checked-max-blocks))
-    (not (opt-inline-census-address-taken? index census callee-name))
-    ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
-    ;; included; the block ceiling above is also this tier's own fuel, so a
-    ;; checked import never spends the fuel the caller's banked absorptions
-    ;; draw on.
-    (not
-      (opt-inline-cost-crosses-heavy-gate?
-        caller-blocks
-        (+ added-so-far opt-inline-caller-checked-blocks)
-        added-blocks))
-    (<=
-      (+ opt-inline-caller-checked-blocks added-blocks)
-      (opt-inline-checked-max-blocks))
-    ;; A clone is bounded by the callee's own size only while nothing inside it
-    ;; brings another body along, and the multiblock clone path miscompiles
-    ;; call-carrying clones (#6307). The check prices a body; it cannot price
-    ;; one that is not all there.
-    (opt-inline-blocks-call-free? blocks)
-    (let
-      [site-depth : i64 (opt-inline-checked-site-depth-now)]
-      [site-weight : i64 (opt-inline-census-depth-weight site-depth)]
-      (if (and
-        (>= site-depth (opt-inline-checked-min-site-depth))
-        (>=
-          (opt-inline-checked-site-frequency index census site-weight)
-          (opt-inline-checked-min-frequency)))
-        (begin
-          (set! opt-inline-checked-site-depth site-depth)
-          (set! opt-inline-checked-site-weight site-weight)
-          (set! opt-inline-checked-callee-params np)
-          (set!
-            opt-inline-checked-callee-slot
-            (match (opt-function-index-slot index callee-name)
-              [(option_i64.Some slot) slot]
-              [(option_i64.None) (- 0 1)]))
-          true)
-        false))))
+  [added-so-far : i64]
+  [site-pos : i64]) : bool
+  (if (not opt-inline-checked-active?)
+    false
+    (if (opt-inline-checked-accepted?
+      callee-name
+      opt-inline-current-block-label
+      site-pos)
+      (begin
+        (set! opt-inline-checked-new-site? false)
+        true)
+      (and
+        (not opt-inline-caller-checked-taken?)
+        (> opt-inline-checked-budget 0)
+        (<
+          opt-inline-checked-caller-verdicts
+          (opt-inline-checked-max-caller-verdicts))
+        (or
+          opt-inline-checked-scanning?
+          (opt-inline-checked-target-match?
+            callee-name
+            opt-inline-current-block-label
+            site-pos))
+        (opt-inline-checked-callee-allowed? callee-name)
+        (>= refs 1)
+        (<= callee-instrs (opt-inline-checked-max-body))
+        (<=
+          (ir.compiler-ir-block-list-count blocks)
+          (opt-inline-checked-max-blocks))
+        (not (opt-inline-census-address-taken? index census callee-name))
+        ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
+        ;; included; the block ceiling above is also this tier's own fuel, so a
+        ;; checked import never spends the fuel the caller's banked absorptions
+        ;; draw on.
+        (not
+          (opt-inline-cost-crosses-heavy-gate?
+            caller-blocks
+            (+ added-so-far opt-inline-caller-checked-blocks)
+            added-blocks))
+        (<=
+          (+ opt-inline-caller-checked-blocks added-blocks)
+          (opt-inline-checked-max-blocks))
+        ;; A clone is bounded by the callee's own size only while nothing inside
+        ;; it brings another body along, and the multiblock clone path
+        ;; miscompiles call-carrying clones (#6307). The check prices a body; it
+        ;; cannot price one that is not all there.
+        (opt-inline-blocks-call-free? blocks)
+        (let
+          [site-depth : i64 (opt-inline-checked-site-depth-now)]
+          [site-weight : i64 (opt-inline-census-depth-weight site-depth)]
+          [frequency : i64
+            (opt-inline-checked-site-frequency index census site-weight)]
+          (if (and
+            (>= site-depth (opt-inline-checked-min-site-depth))
+            (>= frequency (opt-inline-checked-min-frequency)))
+            (if opt-inline-checked-scanning?
+              ;; RICHNESS: what a free inline of this site would be worth --
+              ;; how often the site runs times what its boundary costs. It is
+              ;; the `boundary` term of the verdict itself, scaled by the
+              ;; caller's own hot reference count, which is the only ranking
+              ;; that puts the biggest claim in front of the smallest state.
+              (begin
+                (opt-inline-checked-scan-record!
+                  callee-name
+                  opt-inline-current-block-label
+                  site-pos
+                  (opt-inline-checked-richness frequency np callee-instrs))
+                false)
+              (begin
+                (set! opt-inline-checked-site-depth site-depth)
+                (set! opt-inline-checked-site-weight site-weight)
+                (set! opt-inline-checked-callee-params np)
+                (set!
+                  opt-inline-checked-callee-slot
+                  (match (opt-function-index-slot index callee-name)
+                    [(option_i64.Some slot) slot]
+                    [(option_i64.None) (- 0 1)]))
+                (set! opt-inline-checked-new-site? true)
+                true))
+            false))))))
 
 ;; --- pricing one function's plan --------------------------------------------
 (define (opt-inline-checked-weighted-instrs-from
@@ -74895,6 +75240,13 @@
 
 ;; The verdict. Both sides priced per invocation of the caller; see the tier
 ;; comment for the model and the margin.
+;;
+;; `banked-cost-in` is the priced state's cost when a previous round in this
+;; caller already computed it -- the sequence prices site after site against
+;; states it built itself, and re-optimizing a function this tier has already
+;; optimized to read the same integer back is a third of the check's cost for
+;; nothing. Negative means "not known". Whichever cost the verdict settles on
+;; for the state it leaves behind is published for the next round.
 (define (opt-inline-checked-verdict
   [type-segment-bases : i64]
   [checked : ir.CompilerIrFunction]
@@ -74902,13 +75254,16 @@
   [callee : ir.CompilerIrFunction]
   [site-depth : i64]
   [site-weight : i64]
-  [np : i64]) : bool
+  [np : i64]
+  [banked-cost-in : i64]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
     [after : i64
       (opt-inline-checked-plan-cost pools type-segment-bases checked)]
     [banked-cost : i64
-      (opt-inline-checked-plan-cost pools type-segment-bases banked)]
+      (if (>= banked-cost-in 0)
+        banked-cost-in
+        (opt-inline-checked-plan-cost pools type-segment-bases banked))]
     ;; The callee priced where the inline would put it: its instructions at the
     ;; site's depth, its prologue and its spill traffic once per site
     ;; execution.
@@ -74943,7 +75298,14 @@
     ;; not, the model is not trusted in either direction and the site reverts.
     ;; This is the clear-margin discipline read as a confidence interval, which
     ;; is the only honest reading of a two-sided estimate.
-    (opt-inline-checked-window-ok? (- before after) boundary)))
+    [keep? : bool (opt-inline-checked-window-ok? (- before after) boundary)]
+    [_publish : unit
+      (set!
+        opt-inline-checked-next-state-cost
+        (if keep?
+          after
+          banked-cost))]
+    keep?))
 
 ;; The check allocates three optimizer generations and three allocation plans
 ;; per candidate and reads one bool out of them. Run it in the inline stage's
@@ -74956,7 +75318,8 @@
   [callee : ir.CompilerIrFunction]
   [site-depth : i64]
   [site-weight : i64]
-  [np : i64]) : bool
+  [np : i64]
+  [banked-cost-in : i64]) : bool
   (if (= opt-inline-verify-scratch-arena 0)
     (opt-inline-checked-verdict
       type-segment-bases
@@ -74965,7 +75328,8 @@
       callee
       site-depth
       site-weight
-      np)
+      np
+      banked-cost-in)
     (let
       [enclosing : i64 (arena.tl_arena_current)]
       [scratch : i64 opt-inline-verify-scratch-arena]
@@ -74981,7 +75345,8 @@
           callee
           site-depth
           site-weight
-          np)]
+          np
+          banked-cost-in)]
       [scratch-head : i64 (arena.tl_arena_current)]
       (begin
         (unsafe
@@ -75602,7 +75967,8 @@
                       cblocks
                       added-blocks
                       caller-blocks
-                      added-so-far))]
+                      added-so-far
+                      site-pos))]
                 [inline? : bool (or band-admits? checked?)]
                 ;; True only when the hot-loop-leaf gate is what admits this
                 ;; site: its blocks spend the gate's own fuel, not the shared
@@ -75670,10 +76036,14 @@
                               opt-inline-caller-accessor-blocks
                               (+ opt-inline-caller-accessor-blocks added-blocks))
                             unit)]
-                        ;; The measured tier's own accounting: its blocks and
-                        ;; its one-site-per-caller flag. The program budget is
-                        ;; spent by the VERDICT, not here, because a rejected
-                        ;; candidate costs the same work an accepted one does.
+                        ;; The measured tier's own accounting: its blocks, and
+                        ;; the flag that says THIS walk placed its one new site.
+                        ;; A re-admitted accepted site adds its blocks -- a
+                        ;; later candidate is budgeted against the caller's
+                        ;; whole checked growth -- but does not consume the
+                        ;; walk's new-site slot. The program budget is spent by
+                        ;; the VERDICT, not here, because a rejected candidate
+                        ;; costs the same work an accepted one does.
                         [_checked-bump : unit
                           (if checked?
                             (begin
@@ -75682,7 +76052,9 @@
                                 (+
                                   opt-inline-caller-checked-blocks
                                   added-blocks))
-                              (set! opt-inline-caller-checked-taken? true))
+                              (if opt-inline-checked-new-site?
+                                (set! opt-inline-caller-checked-taken? true)
+                                unit))
                             unit)]
                         ;; A hot-loop, chain, accessor or checked import's
                         ;; blocks stay out of the shared accumulator; each gate
@@ -76429,7 +76801,8 @@
                       cblocks
                       added-blocks
                       caller-blocks
-                      added-so-far))]
+                      added-so-far
+                      site-pos))]
                 [inline? : bool (or band-admits? checked?)]
                 ;; Same hot-import accounting as the non-span path.
                 [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
@@ -76498,10 +76871,14 @@
                               opt-inline-caller-accessor-blocks
                               (+ opt-inline-caller-accessor-blocks added-blocks))
                             unit)]
-                        ;; The measured tier's own accounting: its blocks and
-                        ;; its one-site-per-caller flag. The program budget is
-                        ;; spent by the VERDICT, not here, because a rejected
-                        ;; candidate costs the same work an accepted one does.
+                        ;; The measured tier's own accounting: its blocks, and
+                        ;; the flag that says THIS walk placed its one new site.
+                        ;; A re-admitted accepted site adds its blocks -- a
+                        ;; later candidate is budgeted against the caller's
+                        ;; whole checked growth -- but does not consume the
+                        ;; walk's new-site slot. The program budget is spent by
+                        ;; the VERDICT, not here, because a rejected candidate
+                        ;; costs the same work an accepted one does.
                         [_checked-bump : unit
                           (if checked?
                             (begin
@@ -76510,7 +76887,9 @@
                                 (+
                                   opt-inline-caller-checked-blocks
                                   added-blocks))
-                              (set! opt-inline-caller-checked-taken? true))
+                              (if opt-inline-checked-new-site?
+                                (set! opt-inline-caller-checked-taken? true)
+                                unit))
                             unit)]
                         ;; Same import accounting as the non-span path.
                         [added2 : i64
@@ -77100,19 +77479,39 @@
           next)
         fallback)]))
 
-;; The measured tier's rollback, shared by both walk entries.
+;; The measured tier's SEQUENTIAL per-site pricing, shared by both walk entries.
 ;;
-;; A caller that took no checked site never enters here, so the ordinary path
-;; pays nothing: the tier's cost is one extra walk plus three
-;; optimize-and-replan runs, and only for a caller that actually admitted a
-;; candidate. The second walk reproduces the caller's banked-band-only rewrite
-;; exactly -- same input function, same census, same caller facts, the checked
-;; band suppressed -- which is what makes the rollback a restore rather than an
-;; approximation of one.
+;; A caller is walked once in SCAN mode. The checked band admits nothing there,
+;; so that walk's result is exactly the caller's banked-band-only rewrite --
+;; same input function, same census, same caller facts -- which is what makes
+;; the baseline a restore rather than an approximation of one; and the same walk
+;; ranks every candidate it passes over. A caller with no candidate stops there
+;; and pays nothing.
 ;;
-;; The program budget is refunded around the suppressed walk and re-spent by
-;; whichever walk the verdict keeps, so a REJECTED candidate leaves the budget
-;; where it found it and a later caller still gets measured.
+;; Then one ROUND per verdict, richest candidate first. A target walk rebuilds
+;; the caller with every site already kept PLUS the round's one new site, and
+;; the verdict prices exactly that difference against the state that preceded
+;; it. Keep, and the new state carries the site into the next round; revert, and
+;; the previous state is what the next round is priced against.
+;;
+;; WHY THE SEQUENCE. The all-or-nothing alternative -- admit every candidate in
+;; one walk and price the lot -- can only accept or lose the whole set, and a
+;; caller's sites are not all worth the same: the measured case is an interner
+;; whose two leaves both belong in it and a third caller whose one accepted leaf
+;; would be dragged out by a sibling that does not repay. Per-site rollback is
+;; the only shape in which one caller can keep one callee and refuse another.
+;;
+;; WHY RICHEST FIRST, and it is load-bearing rather than tidiness: a verdict
+;; prices its site against the state that precedes it, so a poor site taken
+;; first spends a round AND leaves the rich site to be priced against a caller
+;; already carrying the poor one's blocks -- both of which cost the rich site
+;; its verdict. Ranking by the site's own free-inline worth puts the biggest
+;; claim in front of the smallest state.
+;;
+;; The program budget is spent by the VERDICT, so a round whose target the
+;; current state can no longer place -- the block ceiling counts the accepted
+;; sites' blocks, and that is the ceiling doing its job -- costs one walk and no
+;; budget, and the next candidate down the ranking is still measured.
 (define (opt-inline-checked-callee-at [index : OptFunctionIndex] [slot : i64]) : OptMaybeFunction
   (if (or (< slot 0) (>= slot (opt-function-index-count index)))
     (OptMaybeFunction.No)
@@ -77122,7 +77521,8 @@
   [type-segment-bases : i64]
   [index : OptFunctionIndex]
   [checked : ir.CompilerIrFunction]
-  [banked : ir.CompilerIrFunction]) : bool
+  [banked : ir.CompilerIrFunction]
+  [banked-cost : i64]) : bool
   (match (opt-inline-checked-callee-at index opt-inline-checked-callee-slot)
     [(OptMaybeFunction.Some callee)
       (opt-inline-checked-verdict-reclaiming
@@ -77132,9 +77532,14 @@
         callee
         opt-inline-checked-site-depth
         opt-inline-checked-site-weight
-        opt-inline-checked-callee-params)]
-    ;; No callee to price against: the site cannot be justified, so it goes.
-    [(OptMaybeFunction.No) false]))
+        opt-inline-checked-callee-params
+        banked-cost)]
+    ;; No callee to price against: the site cannot be justified, so it goes --
+    ;; and the state the next round is priced against is unchanged.
+    [(OptMaybeFunction.No)
+      (begin
+        (set! opt-inline-checked-next-state-cost banked-cost)
+        false)]))
 
 (define (opt-inline-function-walk
   [type-segment-bases : i64]
@@ -77194,6 +77599,68 @@
                           opt-inline-caller-accessor-blocks)))
                     0))))]))]))
 
+;; One round: arm the richest remaining candidate, rebuild the caller with it,
+;; price it against `state`, and recurse on whichever side the verdict names.
+;; The recursion terminates because arming a target spends its scan row whether
+;; or not the walk can still place it.
+(define (opt-inline-checked-rounds
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [state : ir.CompilerIrFunction]
+  [state-cost : i64]) : ir.CompilerIrFunction
+  (if (not (opt-inline-checked-arm-next-target!))
+    state
+    (let
+      [candidate : ir.CompilerIrFunction
+        (opt-inline-function-walk
+          type-segment-bases
+          func
+          index
+          census
+          scc-result
+          caller-scc)]
+      (if (not opt-inline-caller-checked-taken?)
+        ;; The state that precedes this site no longer admits it. Nothing was
+        ;; priced, so nothing is spent.
+        (opt-inline-checked-rounds
+          type-segment-bases
+          func
+          index
+          census
+          scc-result
+          caller-scc
+          state
+          state-cost)
+        (let
+          [_spend : unit (opt-inline-checked-spend-verdict!)]
+          [keep? : bool
+            (opt-inline-checked-keep?
+              type-segment-bases
+              index
+              candidate
+              state
+              state-cost)]
+          [next-cost : i64 opt-inline-checked-next-state-cost]
+          [_accept : unit
+            (if keep?
+              (opt-inline-checked-accept-target!)
+              unit)]
+          (opt-inline-checked-rounds
+            type-segment-bases
+            func
+            index
+            census
+            scc-result
+            caller-scc
+            (if keep?
+              candidate
+              state)
+            next-cost))))))
+
 (define (opt-inline-function
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -77202,7 +77669,8 @@
   [scc-result : OptSccResult]
   [caller-scc : i64]) : ir.CompilerIrFunction
   (let
-    [checked : ir.CompilerIrFunction
+    [_begin : unit (opt-inline-checked-caller-begin!)]
+    [banked : ir.CompilerIrFunction
       (opt-inline-function-walk
         type-segment-bases
         func
@@ -77210,37 +77678,17 @@
         census
         scc-result
         caller-scc)]
-    (if (not opt-inline-caller-checked-taken?)
-      checked
-      (let
-        [slot : i64 opt-inline-checked-callee-slot]
-        [site-depth : i64 opt-inline-checked-site-depth]
-        [site-weight : i64 opt-inline-checked-site-weight]
-        [np : i64 opt-inline-checked-callee-params]
-        [_suppress : unit
-          (begin
-            (set! opt-inline-checked-budget (- opt-inline-checked-budget 1))
-            (set! opt-inline-checked-suppressed? true))]
-        [banked : ir.CompilerIrFunction
-          (opt-inline-function-walk
-            type-segment-bases
-            func
-            index
-            census
-            scc-result
-            caller-scc)]
-        [_restore : unit
-          (begin
-            (set! opt-inline-checked-suppressed? false)
-            (set! opt-inline-checked-callee-slot slot)
-            (set! opt-inline-checked-site-depth site-depth)
-            (set! opt-inline-checked-site-weight site-weight)
-            (set! opt-inline-checked-callee-params np))]
-        [keep? : bool
-          (opt-inline-checked-keep? type-segment-bases index checked banked)]
-        (if keep?
-          checked
-          banked)))))
+    (if (= opt-inline-checked-scan-count 0)
+      banked
+      (opt-inline-checked-rounds
+        type-segment-bases
+        func
+        index
+        census
+        scc-result
+        caller-scc
+        banked
+        (- 0 1)))))
 
 (define (opt-inline-function-with-spans-walk
   [type-segment-bases : i64]
@@ -77331,11 +77779,75 @@
             (ir.compiler-ir-function-seq-ref seq 0)
             fallback)])]))
 
-;; Same rollback as the span-free entry. Re-walking is safe on the spans side
-;; because a spans value is (slots, len) by value: the suppressed walk starts
-;; from the SAME `out-spans` value the admitted walk started from, so it appends
-;; over the admitted walk's entries rather than after them, and the value this
-;; entry returns is the one belonging to the walk it keeps.
+;; Same sequence as the span-free entry. Re-walking is safe on the spans side
+;; because a spans value is (slots, len) by value: every round's walk starts
+;; from the SAME `out-spans` value the scan walk started from, so it appends
+;; over the previous round's entries rather than after them, and the value this
+;; entry returns is the one belonging to the walk whose state survived.
+(define (opt-inline-checked-span-rounds
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]
+  [state : OptInlineSpanProgram]
+  [state-cost : i64]) : OptInlineSpanProgram
+  (if (not (opt-inline-checked-arm-next-target!))
+    state
+    (let
+      [candidate : OptInlineSpanProgram
+        (opt-inline-function-with-spans-walk
+          type-segment-bases
+          func
+          index
+          census
+          scc-result
+          caller-scc
+          source-spans
+          out-spans)]
+      (if (not opt-inline-caller-checked-taken?)
+        (opt-inline-checked-span-rounds
+          type-segment-bases
+          func
+          index
+          census
+          scc-result
+          caller-scc
+          source-spans
+          out-spans
+          state
+          state-cost)
+        (let
+          [_spend : unit (opt-inline-checked-spend-verdict!)]
+          [keep? : bool
+            (opt-inline-checked-keep?
+              type-segment-bases
+              index
+              (opt-inline-span-program-function candidate func)
+              (opt-inline-span-program-function state func)
+              state-cost)]
+          [next-cost : i64 opt-inline-checked-next-state-cost]
+          [_accept : unit
+            (if keep?
+              (opt-inline-checked-accept-target!)
+              unit)]
+          (opt-inline-checked-span-rounds
+            type-segment-bases
+            func
+            index
+            census
+            scc-result
+            caller-scc
+            source-spans
+            out-spans
+            (if keep?
+              candidate
+              state)
+            next-cost))))))
+
 (define (opt-inline-function-with-spans
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -77346,7 +77858,8 @@
   [source-spans : ir.CompilerSourceSpans]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
   (let
-    [checked : OptInlineSpanProgram
+    [_begin : unit (opt-inline-checked-caller-begin!)]
+    [banked : OptInlineSpanProgram
       (opt-inline-function-with-spans-walk
         type-segment-bases
         func
@@ -77356,43 +77869,19 @@
         caller-scc
         source-spans
         out-spans)]
-    (if (not opt-inline-caller-checked-taken?)
-      checked
-      (let
-        [slot : i64 opt-inline-checked-callee-slot]
-        [site-depth : i64 opt-inline-checked-site-depth]
-        [site-weight : i64 opt-inline-checked-site-weight]
-        [np : i64 opt-inline-checked-callee-params]
-        [_suppress : unit
-          (begin
-            (set! opt-inline-checked-budget (- opt-inline-checked-budget 1))
-            (set! opt-inline-checked-suppressed? true))]
-        [banked : OptInlineSpanProgram
-          (opt-inline-function-with-spans-walk
-            type-segment-bases
-            func
-            index
-            census
-            scc-result
-            caller-scc
-            source-spans
-            out-spans)]
-        [_restore : unit
-          (begin
-            (set! opt-inline-checked-suppressed? false)
-            (set! opt-inline-checked-callee-slot slot)
-            (set! opt-inline-checked-site-depth site-depth)
-            (set! opt-inline-checked-site-weight site-weight)
-            (set! opt-inline-checked-callee-params np))]
-        [keep? : bool
-          (opt-inline-checked-keep?
-            type-segment-bases
-            index
-            (opt-inline-span-program-function checked func)
-            (opt-inline-span-program-function banked func))]
-        (if keep?
-          checked
-          banked)))))
+    (if (= opt-inline-checked-scan-count 0)
+      banked
+      (opt-inline-checked-span-rounds
+        type-segment-bases
+        func
+        index
+        census
+        scc-result
+        caller-scc
+        source-spans
+        out-spans
+        banked
+        (- 0 1)))))
 
 (define (opt-function-index-to-list [index : OptFunctionIndex]) : ir.CompilerIrFunctionList
   (ir.CompilerIrFunctionList.Array

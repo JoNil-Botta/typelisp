@@ -263,7 +263,7 @@ spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.t
 spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/linux/spmd_gather_oob/spmd_gather_oob.tl:31:33: array index out of bounds: index=9223372036854775807 length=8\n
 spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/linux/spmd_gather_lane_offset_oob/spmd_gather_lane_offset_oob.tl:28:33: array index out of bounds: index=-9223372036854775808 length=8\n
 spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl spmd_vec_support.tl
-spmd_scalar_for_native|tests/integration/spmd_scalar_for_native.tl|42|-|-|-
+spmd_scalar_for_native|tests/integration/spmd_scalar_for_native.tl|42|-|-|spmd_vec_support.tl
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|spmd_vec_support.tl
 spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|spmd_vec_support.tl
 spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|spmd_vec_support.tl

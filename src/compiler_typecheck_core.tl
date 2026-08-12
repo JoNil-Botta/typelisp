@@ -70235,6 +70235,14 @@
         [raw-ty : ast.AstType
           (ast.ty-node-get
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        [value-ty : ast.AstType
+          (match (tc-body-type-fact-expr-id
+            "move.aggregate_arg_value"
+            ctx
+            env
+            head)
+            [(ResultTcType.Ok actual) actual]
+            [(ResultTcType.Err _) raw-ty])]
         [ty : ast.AstType
           (ast.ast-type-strip-consuming-param-with-pools
             (tc-context-pools ctx)
@@ -70250,30 +70258,46 @@
               moved
               effective-head)
               [(TcMoveResult.Ok moved1)
-                (match (if (and
-                  (tc-type-move-only? ctx (tc-resolve-type ctx raw-ty))
-                  (tc-type-contains-reference? (tc-resolve-type ctx raw-ty)))
-                  (tc-move-after-move-only-value
-                    ctx
-                    expr-bases
-                    env
-                    locals
-                    loop-carried
-                    moved1
-                    effective-head
-                    raw-ty)
-                  (TcMoveResult.Ok moved1))
+                ;; Keep the ordinary `(:owned)` constructor-field transfer,
+                ;; then add aggregate-only transfer for a non-consuming
+                ;; reference handle that would otherwise remain reusable.
+                (match (tc-move-after-consuming-value
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  loop-carried
+                  moved1
+                  effective-head
+                  raw-ty
+                  value-ty)
                   [(TcMoveResult.Ok moved2)
-                    (tc-move-check-aggregate-exprs-with-types-at
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      loop-carried
-                      moved2
-                      exprs
-                      types
-                      (+ index 1))]
+                    (match (if (and
+                      (not (tc-call-param-consuming-now? ctx raw-ty))
+                      (tc-type-move-only? ctx (tc-resolve-type ctx raw-ty))
+                      (tc-type-contains-reference? (tc-resolve-type ctx raw-ty)))
+                      (tc-move-after-move-only-value
+                        ctx
+                        expr-bases
+                        env
+                        locals
+                        loop-carried
+                        moved2
+                        effective-head
+                        raw-ty)
+                      (TcMoveResult.Ok moved2))
+                      [(TcMoveResult.Ok moved3)
+                        (tc-move-check-aggregate-exprs-with-types-at
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          loop-carried
+                          moved3
+                          exprs
+                          types
+                          (+ index 1))]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(ResultTcExpr.Err message) (TcMoveResult.Err message)])))))

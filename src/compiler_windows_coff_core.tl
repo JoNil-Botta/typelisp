@@ -132,7 +132,7 @@
   [diag : (Box compiler_diagnostic.CompilerDiagnostic)]) : (Box
     compiler_diagnostic.CompilerDiagnostic)
   (box
-    (compiler_diagnostic.compiler-diagnostic-with-path
+    (compiler_diagnostic.compiler-diagnostic-with-fallback-path
       (__tl-box-place diag)
       input-path)))
 

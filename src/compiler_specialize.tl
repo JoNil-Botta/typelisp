@@ -3499,7 +3499,7 @@
                       result
                       (ResultGenDeclsWithPaths.Err
                         (box
-                          (cdiag.compiler-diagnostic-with-path
+                          (cdiag.compiler-diagnostic-with-fallback-path
                             (__tl-box-place diag)
                             decl-path))))
                     (set! done true))]))]))

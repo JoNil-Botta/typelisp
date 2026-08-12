@@ -86,6 +86,37 @@
         (compiler_diagnostic.compiler-diagnostic-message rewritten)
         "new message"))))
 
+(define (compiler-diagnostic-fallback-path-ok?) : bool
+  (let
+    [unlocated : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-simple "" 4 9 "synthetic")]
+    [located : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-simple "leaf.tl" 7 22 "source")]
+    [fallback : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+        unlocated
+        "root.tl")]
+    [preserved : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+        located
+        "root.tl")]
+    [empty-fallback : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-with-fallback-path unlocated "")]
+    (and
+      (string.eq
+        (compiler_diagnostic.compiler-diagnostic-path fallback)
+        "root.tl")
+      (= (compiler_diagnostic.compiler-diagnostic-line fallback) 4)
+      (= (compiler_diagnostic.compiler-diagnostic-col fallback) 9)
+      (string.eq
+        (compiler_diagnostic.compiler-diagnostic-path preserved)
+        "leaf.tl")
+      (= (compiler_diagnostic.compiler-diagnostic-line preserved) 7)
+      (= (compiler_diagnostic.compiler-diagnostic-col preserved) 22)
+      (string.eq
+        (compiler_diagnostic.compiler-diagnostic-path empty-fallback)
+        ""))))
+
 (define (compiler-diagnostic-source-render-ok?) : bool
   (let
     [diag : compiler_diagnostic.CompilerDiagnostic
@@ -403,6 +434,7 @@
     (unless (compiler-diagnostic-flat-secondary-ok?) (return 1))
     (unless (compiler-diagnostic-source-error-ok?) (return 2))
     (unless (compiler-diagnostic-rewrite-ok?) (return 3))
+    (unless (compiler-diagnostic-fallback-path-ok?) (return 3))
     (unless (compiler-diagnostic-source-render-ok?) (return 4))
     (unless (compiler-diagnostic-source-render-minimal-ok?) (return 4))
     (unless (compiler-diagnostic-note-render-ok?) (return 4))

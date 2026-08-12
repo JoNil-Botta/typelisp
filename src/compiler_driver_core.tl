@@ -1817,7 +1817,7 @@
                           "backend"))
                       (ResultCompilerDriver.Err
                         (box
-                          (compiler_diagnostic.compiler-diagnostic-with-path
+                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (__tl-box-place diag)
                             input-path))))]))))]))))
 
@@ -1911,7 +1911,7 @@
                         backend-state)
                       (ResultCompilerDriverBuffer.Err
                         (box
-                          (compiler_diagnostic.compiler-diagnostic-with-path
+                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (__tl-box-place diag)
                             input-path))))]))))]))))
 
@@ -2012,7 +2012,7 @@
                                 "backend"))
                             (ResultCompilerDriverObject.Err
                               (box
-                                (compiler_diagnostic.compiler-diagnostic-with-path
+                                (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                                   (__tl-box-place diag)
                                   input-path))))]))]))))]))))
 
@@ -2129,7 +2129,7 @@
                           "backend"))
                       (ResultCompilerDriverPic.Err
                         (box
-                          (compiler_diagnostic.compiler-diagnostic-with-path
+                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (__tl-box-place diag)
                             input-path))))]))))]))))
 

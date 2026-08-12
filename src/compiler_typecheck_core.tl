@@ -94894,13 +94894,9 @@
 (define (macro-diagnostic-with-active-path
   [ctx : TcContext]
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
-  (let
-    [path : String (macro-active-decl-path ctx)]
-    (if (or
-      (string.eq path "")
-      (not (string.eq (cdiag.compiler-diagnostic-path diag) "")))
-      diag
-      (cdiag.compiler-diagnostic-with-path diag path))))
+  (cdiag.compiler-diagnostic-with-fallback-path
+    diag
+    (macro-active-decl-path ctx)))
 
 (define (macro-resolve-signature-type-id
   [ctx : TcContext]
@@ -100604,7 +100600,11 @@
                       (ast.ast-decl-with-meta (ast.ast-decl-meta decl) expanded)
                       decl-path)]
                   [(ResultMacroDecl.Err diag)
-                    (ResultMacroDeclExpansion.Err diag)]))))])]
+                    (ResultMacroDeclExpansion.Err
+                      (box
+                        (cdiag.compiler-diagnostic-with-fallback-path
+                          (__tl-box-place diag)
+                          decl-path)))]))))])]
     (begin
       (tc-macro-call-site-state-restore-active-decl! site-state previous-active)
       result)))
@@ -106498,11 +106498,7 @@
   (let
     [diag : cdiag.CompilerDiagnostic
       (tc-decl-diag-with-maybe-origin origin decl message)]
-    (if (or
-      (string.eq path "")
-      (not (string.eq (cdiag.compiler-diagnostic-path diag) "")))
-      diag
-      (cdiag.compiler-diagnostic-with-path diag path))))
+    (cdiag.compiler-diagnostic-with-fallback-path diag path)))
 
 (define (tc-typecheck-diag-with-path
   [decls : (& decls ast.AstDeclList)]

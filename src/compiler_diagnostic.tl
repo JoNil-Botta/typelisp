@@ -795,6 +795,15 @@
     (compiler-diagnostic-notes diag)
     (compiler-diagnostic-repath-fix-list (compiler-diagnostic-fixes diag) path)))
 
+(define (compiler-diagnostic-with-fallback-path
+  [diag : CompilerDiagnostic]
+  [path : String]) : CompilerDiagnostic
+  (if (and
+    (not (string.eq path ""))
+    (string.eq (compiler-diagnostic-path diag) ""))
+    (compiler-diagnostic-with-path diag path)
+    diag))
+
 (define (compiler-diagnostic-with-level
   [diag : CompilerDiagnostic]
   [level : CompilerDiagnosticLevel]) : CompilerDiagnostic

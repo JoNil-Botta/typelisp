@@ -20,10 +20,10 @@
   31)
 
 (define (compiler-embedded-stdlib-tlci-codec-lookup-bits) : i64
-  12)
+  16)
 
 (define (compiler-embedded-stdlib-tlci-codec-lookup-size) : i64
-  4096)
+  65536)
 
 (define (compiler-embedded-stdlib-tlci-codec-prefix) : String
   "__typelisp_embedded_stdlib_tlch_v1__")
@@ -54,6 +54,13 @@
 (defenum ResultCompilerEmbeddedStdlibTlciHuffmanSymbol
   (Err String)
   (Ok i64))
+
+(defstruct CompilerEmbeddedStdlibTlciBitReader
+  (next-byte i64)
+  ;; Only the low `available` bits are live; consumed high bits are ignored.
+  (buffer i64)
+  (available i64)
+  (consumed i64))
 
 (define (compiler-embedded-stdlib-tlci-codec-prefix?
   [payload : (& payload (__tl_dyn-array u8))]
@@ -256,9 +263,9 @@
                               (set! (array-ref next length) (+ position 1))))
                           unit)
                         (set! symbol (+ symbol 1)))))
-                  ;; Directly expand all codes up to 12 bits. Main and length
-                  ;; symbols always fit; over 90% of real distance tokens do as
-                  ;; well. Longer rare distances retain the canonical fallback.
+                  ;; Directly expand all codes up to 16 bits. Main and length
+                  ;; symbols always fit and effectively all real distance tokens
+                  ;; do too. Longer malformed/rare tables retain the fallback.
                   (set! code-bits 1)
                   (while (and
                     (<= code-bits max-bits)
@@ -308,39 +315,49 @@
 
 (define (compiler-embedded-stdlib-tlci-codec-decode-symbol
   [payload : (& payload (__tl_dyn-array u8))]
-  [bit-start : i64]
   [bit-len : i64]
-  [bit-index : (&mut bit-index i64)]
+  [reader : (&mut reader CompilerEmbeddedStdlibTlciBitReader)]
   [table : (& table CompilerEmbeddedStdlibTlciHuffmanTable)]) : ResultCompilerEmbeddedStdlibTlciHuffmanSymbol
   (if (= table.active 0)
     (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
       "embedded stdlib tlci envelope: missing huffman table")
     (begin
       (if (>=
-        (- bit-len (deref bit-index))
+        (- bit-len reader.consumed)
         (compiler-embedded-stdlib-tlci-codec-lookup-bits))
-        (let
-          [absolute : i64 (deref bit-index)]
-          [byte-index : i64 (+ bit-start (/ absolute 8))]
-          [offset : i64 (% absolute 8)]
-          [first : i64 (cast (array-ref payload byte-index) : i64)]
-          [second : i64 (cast (array-ref payload (+ byte-index 1)) : i64)]
-          [third : i64
-            (if (> offset 4)
-              (cast (array-ref payload (+ byte-index 2)) : i64)
-              0)]
-          [window : i64 (bit-or (shl first 16) (bit-or (shl second 8) third))]
-          [prefix : i64 (bit-and (shr window (- 12 offset)) 4095)]
-          [entry : i64 (array-ref table.lookup prefix)]
-          (if (> entry 0)
-            (let
-              [length : i64 (shr entry 13)]
-              [symbol : i64 (- (bit-and entry 8191) 1)]
-              (begin
-                (set! (deref bit-index) (+ absolute length))
-                (return
-                  (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok symbol))))
-            unit))
+        (begin
+          (while (<
+            reader.available
+            (compiler-embedded-stdlib-tlci-codec-lookup-bits))
+            (begin
+              (set!
+                reader.buffer
+                (bit-or
+                  (shl reader.buffer 8)
+                  (cast (array-ref payload reader.next-byte) : i64)))
+              (set! reader.next-byte (+ reader.next-byte 1))
+              (set! reader.available (+ reader.available 8))))
+          (let
+            [prefix : i64
+              (bit-and
+                (shr
+                  reader.buffer
+                  (-
+                    reader.available
+                    (compiler-embedded-stdlib-tlci-codec-lookup-bits)))
+                65535)]
+            [entry : i64 (array-ref table.lookup prefix)]
+            (when
+              (> entry 0)
+              (let
+                [length : i64 (shr entry 13)]
+                [symbol : i64 (- (bit-and entry 8191) 1)]
+                [remaining : i64 (- reader.available length)]
+                (begin
+                  (set! reader.available remaining)
+                  (set! reader.consumed (+ reader.consumed length))
+                  (return
+                    (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok symbol)))))))
         unit)
       (let
         [code : i64 0]
@@ -349,17 +366,25 @@
           (while (<= bits table.max-bits)
             (begin
               (when
-                (>= (deref bit-index) bit-len)
+                (>= reader.consumed bit-len)
                 (return
                   (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
                     "embedded stdlib tlci envelope: truncated huffman code")))
               (let
-                [absolute : i64 (deref bit-index)]
-                [byte : i64
-                  (cast (array-ref payload (+ bit-start (/ absolute 8))) : i64)]
-                [bit : i64 (bit-and (shr byte (- 7 (% absolute 8))) 1)]
+                [bit : i64 0]
                 (begin
-                  (set! (deref bit-index) (+ absolute 1))
+                  (when
+                    (= reader.available 0)
+                    (set!
+                      reader.buffer
+                      (cast (array-ref payload reader.next-byte) : i64))
+                    (set! reader.next-byte (+ reader.next-byte 1))
+                    (set! reader.available 8))
+                  (set!
+                    bit
+                    (bit-and (shr reader.buffer (- reader.available 1)) 1))
+                  (set! reader.available (- reader.available 1))
+                  (set! reader.consumed (+ reader.consumed 1))
                   (set! code (bit-or (shl code 1) bit))))
               (let
                 [first : i64 (array-ref table.first-codes bits)]
@@ -417,14 +442,14 @@
         (let
           [out : (__tl_dyn-array u8) (array.make-array u8 raw-len)]
           [out-index : i64 0]
-          [bit-index : i64 0]
+          [reader : CompilerEmbeddedStdlibTlciBitReader
+            (CompilerEmbeddedStdlibTlciBitReader bit-start 0 0 0)]
           (begin
             (while (< out-index raw-len)
               (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
                 payload
-                bit-start
                 bit-len
-                (&mut bit-index)
+                (&mut reader)
                 (& main-table))
                 [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err message)
                   (return (CompilerEmbeddedStdlibTlciCodecBytes.Err message))]
@@ -437,9 +462,8 @@
                       [distance-symbol : i64
                         (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
                           payload
-                          bit-start
                           bit-len
-                          (&mut bit-index)
+                          (&mut reader)
                           (& distance-table))
                           [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
                               message)
@@ -451,9 +475,8 @@
                       [length-symbol : i64
                         (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
                           payload
-                          bit-start
                           bit-len
-                          (&mut bit-index)
+                          (&mut reader)
                           (& length-table))
                           [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
                               message)
@@ -483,7 +506,7 @@
                                   (array-ref out (- out-index distance)))
                                 (set! out-index (+ out-index 1))
                                 (set! copied (+ copied 1)))))])))]))
-            (if (!= bit-index bit-len)
+            (if (!= reader.consumed bit-len)
               (CompilerEmbeddedStdlibTlciCodecBytes.Err
                 "embedded stdlib tlci envelope: trailing huffman bits")
               (CompilerEmbeddedStdlibTlciCodecBytes.Ok out))))])))

@@ -18570,7 +18570,18 @@
   ;; exactly when it sets `call-or-unknown?` or `header-or-unknown-store?`, so
   ;; the only decisions that move are the ones a per-callee summary newly
   ;; proves.
-  (global-write? bool))
+  (global-write? bool)
+  ;; Did the body contain a direct call that keeps globals clean ONLY because
+  ;; the callee is proven to write no memory at all? That class is priced
+  ;; separately from the rest -- a loop whose only call is memory-clean has
+  ;; every load, address and descriptor word in it already hoistable, so its
+  ;; preheader is the one that is already full -- and this flag is what tells
+  ;; the two apart at the loop site. `global-write?` is left alone by such a
+  ;; call, so the OLDER verdict is recovered exactly as
+  ;; `(and (not global-write?) (not mem-clean-call?))` and nothing outside the
+  ;; newly priced class moves. See
+  ;; opt-licm-direct-call-keeps-globals-clean?.
+  (mem-clean-call? bool))
 
 (define (opt-licm-root-env-with-capacity [capacity : i64]) : OptLicmRootEnv
   (OptLicmRootEnv (opt_i64_i64_map.with-capacity capacity)))
@@ -18784,7 +18795,10 @@
 ;; baseline, while buying peephole_lines 7.59M). What a `Global` operand's
 ;; invariance costs is not a live range that crosses the call -- the promoted
 ;; cell load lands in the PREHEADER, outside every loop-spanning range that gate
-;; is pricing -- so that verdict never applied to this question.
+;; is pricing -- so that verdict never applied to this question. The preheader
+;; copy is not free either, though: it is one more value live across the loop,
+;; which is priced where it is created rather than here
+;; (opt-licm-global-promote-live-in-budget).
 ;;
 ;; Non-returning trap helpers contribute nothing here for the same reason they
 ;; contribute no call boundary: the continuing path never resumes after one
@@ -19241,6 +19255,7 @@
     roots
     (opt-licm-store-roots-new)
     false
+    false
     false))
 
 ;; The part of a store summary that can reach a global cell: an unknown call and
@@ -19260,7 +19275,8 @@
     state.roots
     state.store-roots
     state.any-call?
-    state.global-write?))
+    state.global-write?
+    state.mem-clean-call?))
 
 (define (opt-licm-store-state-add-summary
   [state : OptLicmStoreState]
@@ -19272,7 +19288,8 @@
     state.roots
     state.store-roots
     state.any-call?
-    (or state.global-write? (opt-licm-store-summary-global-write? summary))))
+    (or state.global-write? (opt-licm-store-summary-global-write? summary))
+    state.mem-clean-call?))
 
 (define (opt-licm-store-state-bind-ptr
   [state : OptLicmStoreState]
@@ -19285,7 +19302,8 @@
     state.roots
     state.store-roots
     state.any-call?
-    state.global-write?))
+    state.global-write?
+    state.mem-clean-call?))
 
 (define (opt-licm-store-state-bind-root
   [state : OptLicmStoreState (:consume)]
@@ -19306,7 +19324,8 @@
     state.roots
     (opt-licm-store-roots-add state.store-roots root)
     state.any-call?
-    (or state.global-write? (opt-licm-store-summary-global-write? summary))))
+    (or state.global-write? (opt-licm-store-summary-global-write? summary))
+    state.mem-clean-call?))
 
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -19316,7 +19335,8 @@
     state.roots
     state.store-roots
     true
-    state.global-write?))
+    state.global-write?
+    state.mem-clean-call?))
 
 (define (opt-licm-store-state-mark-global-write [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
@@ -19326,6 +19346,18 @@
     state.roots
     state.store-roots
     state.any-call?
+    true
+    state.mem-clean-call?))
+
+(define (opt-licm-store-state-mark-mem-clean-call [state : OptLicmStoreState]) : OptLicmStoreState
+  (OptLicmStoreState
+    state.summary
+    state.rooted-summary
+    state.ptrs
+    state.roots
+    state.store-roots
+    state.any-call?
+    state.global-write?
     true))
 
 ;; Fold a DIRECT call (`Call` or `TailCall`) into the body state: the call
@@ -19349,43 +19381,54 @@
 ;; the `any-call?` boundary the register-pressure interlock prices, the store
 ;; summary the memory proofs read -- is unchanged.
 ;;
-;; A MEMORY-clean callee is deliberately NOT relaxed, even though it is the
-;; stronger fact. That is the one case the P6 hoist/allocate interlock already
-;; measured, and it still loses: a body whose only call writes no memory has
-;; every load, address, and descriptor word in it already hoistable, so the
-;; preheader is already holding the loop's register budget and the cell copies
-;; are what tips it over. Measured here, one cachegrind run each: relaxing both
-;; tiers put gvn_table at 1,224,971,833 against 1,216,261,789 for this tier
-;; alone -- the same +7M shape the earlier all-calls experiment recorded -- for
-;; a further 7.6M on peephole_lines. Where the callee DOES write memory those
-;; hoists are all still refused, the budget the interlock prices is untouched,
-;; and the only thing that moves is a cell read whose copy lands in the
-;; preheader. peephole_lines takes 15.2M from that tier on its own.
+;; A MEMORY-clean callee -- the stronger fact, and the one this predicate used
+;; to REFUSE with an explicit `(not (memory-clean? name))` clause -- is admitted
+;; here, but only to the loop-scope cell PROMOTION and only under a live-in
+;; budget. The refusal was never a soundness claim; it was an unpaid trade, and
+;; the two halves of that trade turn out to be separable.
 ;;
-;; RE-MEASURED, because the clause reads like an inversion and keeps being
-;; re-proposed as one: a callee that writes NO memory is marked `global-write?`
-;; by the arm below, which is the opposite of what its proof says. Replacing
-;; the clause with the shape it "should" have --
+;; WHAT THE OLD CLAUSE COST AND BOUGHT. Dropping it outright (one cachegrind run
+;; each) gives peephole_lines 667,587,443 -> 647,836,877 (-2.96%) and takes
+;; gvn_table 1,165,315,557 -> 1,174,025,601 (+0.75%), intern_table 611,002,492
+;; -> 614,441,836 (+0.56%), cfg_domloops 768,935,005 -> 769,279,945 (+0.04%).
 ;;
-;;   (or (memory-clean? name)
-;;       (and (global-clean? name) (args-global-addr-free? args)))
+;; THE TRADE SPLITS IN TWO. `globals-clean?` drives two unrelated things: the
+;; INVARIANCE question opt-licm-candidate? asks of a `Global` operand, and the
+;; loop-scope cell promotion (opt-licm-global-promote). Measured separately on
+;; this corpus:
 ;;
-;; -- and rebuilding gives peephole_lines 667,587,443 -> 647,836,877 (-2.96%)
-;; and takes gvn_table 1,165,315,557 -> 1,174,025,601 (+0.75%), intern_table
-;; 611,002,492 -> 614,441,836 (+0.56%), cfg_domloops 768,935,005 ->
-;; 769,279,945 (+0.04%). Same verdict as the original measurement, with a
-;; bigger prize on the winning side than it recorded. The clause is therefore
-;; not a bug but an unpaid trade: the memory-clean tier's cell copies land in a
-;; preheader that is already holding the whole loop's hoists, and the two
-;; interners are where that shows up. Taking it needs the preheader pressure
-;; priced, not the proof relaxed.
+;;   relaxed invariance only:  peephole -10.9M, gvn +8.7M, intern +3.4M
+;;   relaxed promotion only:   peephole -19.7M, gvn  0.0M, intern +3.4M
+;;
+;; The whole peephole prize is the PROMOTION's; the whole gvn_table loss is the
+;; INVARIANCE relaxation's. So invariance keeps the old refusal (see
+;; `globals-clean-strict?` at the loop site) and only promotion is relaxed.
+;;
+;; WHY INVARIANCE LOSES. Relaxing it opens a whole hoist CHAIN rooted at the
+;; cell read -- the cell load, the descriptor it designates, that descriptor's
+;; length and data words -- and every link is a new loop-spanning value.
+;; _tl_bench_gvn_table_lookup is the shape: a hash-chain walk over two array
+;; globals, two links each, whose preheader grows from 2 callee-saved pushes to
+;; 6. The loop saves 2-3 instructions per iteration and pays 8 for the extra
+;; push/pop pairs on every CALL, and the chain it walks is one or two nodes
+;; long. The promotion cannot do this: it rewrites `@g` operands in place and
+;; moves no dependent load, so it adds exactly one loop-spanning value per cell.
+;;
+;; WHY THE PROMOTION STILL NEEDS A BUDGET. That one value per cell still has to
+;; live across the whole loop, and in a body that already enters with more live
+;; values than the register file can hold it does not get a register: it lands
+;; in a frame slot, the preheader pays a load AND a spill store on every loop
+;; ENTRY, each use trades a rip-relative load for an equal-length frame load,
+;; and the frame grows. That is the entire intern_table regression, in one loop
+;; -- it_intern_slice's probe loop, frame 264 -> 280 bytes, promoted
+;; `it_state_capacity` homed at 192(%rsp), +2 instructions and +2 frame
+;; accesses. opt-licm-global-promote-live-in-budget is what refuses it.
 (define (opt-licm-direct-call-keeps-globals-clean?
   [direct-call-clean : opt_i64_i64_map.Map]
   [global-cells : OptGlobalCellSummary]
   [name : i64]) : bool
   (and
     (opt-direct-call-global-clean? direct-call-clean name)
-    (not (opt-direct-call-memory-clean? direct-call-clean name))
     (or
       (opt-direct-call-clean-has-bit?
         direct-call-clean
@@ -19408,7 +19451,11 @@
         direct-call-clean
         global-cells
         name)
-        (opt-licm-store-state-add-summary-keeping-globals called summary)
+        (opt-licm-store-state-add-summary-keeping-globals
+          (if (opt-direct-call-memory-clean? direct-call-clean name)
+            (opt-licm-store-state-mark-mem-clean-call called)
+            called)
+          summary)
         ;; Unproven: the flag is set here rather than left to the summary,
         ;; because a memory-clean callee contributes the EMPTY summary and would
         ;; otherwise sail through. `any-call?` used to be what closed that case.
@@ -19426,7 +19473,8 @@
     state.roots
     state.store-roots
     state.any-call?
-    state.global-write?))
+    state.global-write?
+    state.mem-clean-call?))
 
 (define (opt-licm-store-state-invalidate-ptr-instr
   [state : OptLicmStoreState]
@@ -19812,6 +19860,7 @@
           (OptLicmPtrEnv.Nil)
           (opt-licm-root-env-with-capacity 17)
           (opt-licm-store-roots-new)
+          false
           false
           false))]
     (opt-licm-store-summary-merge state.summary state.rooted-summary)))
@@ -20783,9 +20832,11 @@
 ;; loads THROUGH pointers, where a zero-trip loop can leave the pointer
 ;; unallocated -- LICM keeps its memory gates for those.
 ;;
-;; The gate is the loop-wide `globals-clean?`, the same predicate the Load and
-;; Gep arms of opt-licm-candidate? already ask, so a body that writes any cell
-;; promotes nothing. Only single-word cells qualify, for the reason the
+;; The gate is the loop-wide `globals-promote-clean?`, which is the same
+;; `globals-clean?` the Load and Gep arms of opt-licm-candidate? ask plus the
+;; memory-clean call tier those arms still refuse, admitted under a live-in
+;; budget (opt-licm-global-promote-live-in-budget). A body that writes any cell
+;; promotes nothing either way. Only single-word cells qualify, for the reason the
 ;; function-scope pass gives (opt-global-cell-word-type?): the Mov's declared
 ;; type drives the backend's load width, so a wider cell would silently load
 ;; only its first word. Declared types come from the program-wide
@@ -20804,6 +20855,55 @@
   (blocks ir.CompilerIrBlockList)
   (loads ir.CompilerIrInstrList)
   (changed? bool))
+
+;; Live-in budget for the memory-clean call tier's promotions (see
+;; opt-licm-direct-call-keeps-globals-clean? for why that tier alone is
+;; priced). A promoted cell copy is one value that must stay live across the
+;; whole loop, so it competes for the loop's steady-state register budget, and
+;; the loop's LIVE-IN count -- values entering from outside, which is
+;; opt-unroll-mb-live-in-count, the multiblock unroller's own pressure proxy
+;; reused verbatim -- is how loaded that budget already is. Loop-local defs are
+;; excluded there for the reason that proxy gives: they die inside the body and
+;; do not consume steady-state headroom.
+;;
+;; WHY SIX. Every loop this tier prices contains a returning direct call --
+;; that is what the tier IS -- so a value live across the loop is live across a
+;; call, and the only registers that survive one are the callee-saved GP file:
+;; five on the fixed Linux ABI this backend plans against
+;; (compiler-abi-callee-saved-gp-register-count) plus %rbp when it is not pinned
+;; as a frame pointer, which the backend does allocate (the rbp_sixth_csr
+;; shape). Six is therefore the most values this loop can carry across its call
+;; without touching the frame, and a promoted copy that does not fit there is
+;; not a saved load -- it is a frame slot, which costs a preheader store on
+;; every loop ENTRY and makes each use a frame load instead of a rip-relative
+;; one, for no instruction saved. It is also, and for the same reason on the
+;; same proxy, the multiblock unroller's own live-in constant.
+;;
+;; PINNED TWO-SIDED, one cachegrind run per budget. Both neighbours are loops
+;; this tier newly admits and both have only return-shaped side exits, so no
+;; cheaper structural class separates them -- refusing the whole return-shaped
+;; class was measured and it takes the win with the loss (intern_table returns
+;; to baseline and peephole_lines keeps 0.1M of its 19.7M).
+;;
+;;   ADMITTED: every loop whose promotion is worth anything on this corpus sits
+;;     at live-in 4 or below -- peephole_lines' line scanner
+;;     (_tl_bench_pl_first_rsp_read, where the promoted `pl_text`/`pl_len`
+;;     copies keep registers and a long text scan drops a rip-relative cell load
+;;     at eight distinct use sites) and cfg_domloops' loop. Budgets 4, 6, 8, 10
+;;     and 12 all measure identically: peephole_lines 647,839,245 (-2.96%),
+;;     cfg_domloops 769,279,945 (+0.04%), gvn_table and intern_table exactly at
+;;     baseline.
+;;   REFUSED, nearest: live-in 13 -- intern_table's probe loop
+;;     (it_intern_slice), whose promoted `it_state_capacity` copy spills to
+;;     192(%rsp) and grows the frame 264 -> 280 bytes while the loop itself runs
+;;     one or two probes. Raising the budget to 13 restores exactly that
+;;     regression and nothing else: intern_table 611,002,492 -> 614,441,836
+;;     (+0.56%), every other row unmoved.
+;;
+;; So the whole measured corpus lies outside [5, 12] and six sits inside that
+;; gap on the side the register file argues for.
+(define (opt-licm-global-promote-live-in-budget) : i64
+  6)
 
 ;; Allocate one fresh var per promotable cell referenced by the body. Unlike
 ;; the function-scope plan (opt-global-cell-plan-build) this filters on neither
@@ -21012,8 +21112,25 @@
         ;; close is the one whose per-iteration cost (a rip-relative cell load
         ;; plus the descriptor words re-derived from it) the preheader copy
         ;; removes outright rather than merely relocating.
-        [globals-clean? : bool
+        ;; The memory-clean direct-call tier reaches the PROMOTION only, and
+        ;; only under a live-in budget; the INVARIANCE question keeps the older
+        ;; refusal. See opt-licm-direct-call-keeps-globals-clean? for the split
+        ;; and opt-licm-global-promote-live-in-budget for the budget. A loop
+        ;; that was already globals-clean without that tier takes the strict
+        ;; flag on both sides, so it is byte-identical to before.
+        [globals-clean-relaxed? : bool
           (opt-licm-globals-clean? store-state.global-write?)]
+        [globals-clean-strict? : bool
+          (and globals-clean-relaxed? (not store-state.mem-clean-call?))]
+        [globals-clean? : bool globals-clean-strict?]
+        [globals-promote-clean? : bool
+          (and
+            globals-clean-relaxed?
+            (or
+              globals-clean-strict?
+              (<=
+                (opt-unroll-mb-live-in-count body-blocks)
+                (opt-licm-global-promote-live-in-budget))))]
         (match (opt-licm-filter-body-blocks
           type-segment-bases
           loop-defs
@@ -21042,7 +21159,7 @@
             ;; the gate is closed, which keeps this byte-identical there).
             (let
               [promotion : OptLicmGlobalPromotion
-                (if globals-clean?
+                (if globals-promote-clean?
                   (opt-licm-global-promote
                     global-cells
                     frame-cell

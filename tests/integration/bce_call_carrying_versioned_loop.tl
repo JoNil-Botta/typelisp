@@ -164,9 +164,9 @@
       (set! wc (walk (& items) (& other) (& extra) (&mut marks-c) (- len 3) 7))
       (set! td (twin (& items) (& other) (& extra) (&mut marks-d) (- len 3) 7))
       (if (and
-        (and (= wa tb) (= wc td))
-        (and
-          (= wa (expected (& extra) len 7))
-          (= wc (expected (& extra) (- len 3) 7))))
+        (= wa tb)
+        (= wc td)
+        (= wa (expected (& extra) len 7))
+        (= wc (expected (& extra) (- len 3) 7)))
         42
         1))))

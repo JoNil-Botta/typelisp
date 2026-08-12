@@ -120,6 +120,7 @@ global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl std
 scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+licm_memclean_global_promote|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
 licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl stdlib/array.tl

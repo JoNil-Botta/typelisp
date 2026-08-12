@@ -51507,6 +51507,143 @@
           (opt-licm-loop-finish-instrs))))
     9))
 
+;; The same call body under REGISTER PRESSURE. `opt-licm-global-promote-live-in-budget`
+;; refuses a memory-clean callee's promotion when the loop already enters with
+;; more live values than the budget, because the promoted copy would land in a
+;; frame slot instead of a register. These two builders make that loop: twelve
+;; extra values are defined before the loop and threaded through the body on a
+;; chain rooted at the induction phi, so none of them is loop-invariant and all
+;; twelve are live-ins.
+(define (opt-lp-pressure-entry-defs [var : i64] [stop : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (>= var stop)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "loop"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        var
+        (compiler_ir_types.CompilerIrValue.I64 var)
+        (compiler_ast_types.AstType.I64))
+      (opt-lp-pressure-entry-defs (+ var 1) stop))))
+
+(define (opt-lp-pressure-body-uses
+  [var : i64]
+  [stop : i64]
+  [src : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if (>= var stop)
+    tail
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        (+ var 20)
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var src)
+        (compiler_ir_types.CompilerIrValue.Var var)
+        (compiler_ast_types.AstType.I64))
+      (opt-lp-pressure-body-uses (+ var 1) stop (+ var 20) tail))))
+
+(define (opt-lp-pressure-live-in-floor) : i64
+  20)
+
+(define (opt-lp-pressure-live-in-ceiling) : i64
+  32)
+
+(define (opt-lp-test-pressure-call-body-blocks
+  [symbols : OptLpTestSymbols]
+  [args : compiler_ir_types.CompilerIrCallArgs]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (opt-lp-pressure-entry-defs
+          (opt-lp-pressure-live-in-floor)
+          (opt-lp-pressure-live-in-ceiling))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "body")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (opt-lp-pressure-body-uses
+            (opt-lp-pressure-live-in-floor)
+            (opt-lp-pressure-live-in-ceiling)
+            4
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                8
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.Global symbols.g1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Call
+                  11
+                  symbols.callee
+                  args
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    9
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (compiler_ir_types.CompilerIrValue.Global symbols.g2)
+                    (compiler_ast_types.AstType.I64))
+                  (opt-licm-loop-finish-instrs)))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 9)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; Same as opt-lp-promoted-with-clean, but the function declares enough vars for
+;; the pressure body's extra values.
+(define (opt-lp-promoted-with-clean-wide
+  [symbols : OptLpTestSymbols]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [bits : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "licm")
+        (opt-licm-params)
+        (compiler_ast_types.AstType.I64)
+        64
+        blocks)]
+    (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (opt-lp-test-clean-map symbols bits)
+      (opt-lp-test-cells symbols)
+      false
+      func)
+      [(compiler_optimize.OptFunctionCtxResult.Result next _)
+        (compiler_optimize.opt-function-blocks next)])))
+
 ;; A one-entry `direct-call-clean` map for `lp_callee`, carrying exactly `bits`.
 (define (opt-lp-test-clean-map [symbols : OptLpTestSymbols] [bits : i64]) : opt_i64_i64_map.Map
   (let
@@ -51597,20 +51734,33 @@
     ;; whole-program rather than operand-local: that address could reach this
     ;; call through a copy, Phi, caller parameter, or returned reference.
     [addr-taken : compiler_ir_types.CompilerIrBlockList
-      (opt-lp-promoted-with-clean-map-and-cells
-        addr-blocks
-        (opt-lp-test-clean-map symbols global-bit)
-        (compiler_optimize.opt-global-cell-summary-build
-          (opt-lp-test-globals symbols)
-          (opt-gc-test-functions1 (opt-licm-test-function addr-blocks))))]
-    ;; (d) a memory-clean callee keeps the older verdict: the hoist/allocate
-    ;; interlock measured that tier and it still loses (see
-    ;; opt-licm-store-state-direct-call)
+      (opt-lp-promoted-with-clean
+        symbols
+        (opt-lp-test-call-body-blocks symbols addr-args)
+        global-bit)]
+    ;; (d) a MEMORY-clean callee is admitted to the promotion too, under the
+    ;; live-in budget. This loop is small, so it promotes.
     [memory-clean : compiler_ir_types.CompilerIrBlockList
       (opt-lp-promoted-with-clean
         symbols
         (opt-lp-test-call-body-blocks symbols plain-args)
         (bit-or memory-bit global-bit))]
+    ;; (e) the SAME memory-clean callee in a loop whose live-in count is over
+    ;; opt-licm-global-promote-live-in-budget: the promoted copy would spill, so
+    ;; the tier refuses and both cell operands stay in the body.
+    [memory-clean-pressured : compiler_ir_types.CompilerIrBlockList
+      (opt-lp-promoted-with-clean-wide
+        symbols
+        (opt-lp-test-pressure-call-body-blocks symbols plain-args)
+        (bit-or memory-bit global-bit))]
+    ;; (f) the pressure body under a GLOBAL-clean-only callee, which never
+    ;; needed the budget: it promotes at any live-in count, so the refusal above
+    ;; is the budget's and not the pressure body's own shape.
+    [global-clean-pressured : compiler_ir_types.CompilerIrBlockList
+      (opt-lp-promoted-with-clean-wide
+        symbols
+        (opt-lp-test-pressure-call-body-blocks symbols plain-args)
+        global-bit)]
     (cond
       [(not (= (opt-lp-loop-body-cell-operands proven) 0)) 1]
       [(not (= (opt-lp-preheader-cell-loads proven) 2)) 2]
@@ -51618,8 +51768,20 @@
       [(not (= (opt-lp-preheader-cell-loads unproven) 0)) 4]
       [(not (= (opt-lp-loop-body-cell-operands addr-taken) 2)) 5]
       [(not (= (opt-lp-preheader-cell-loads addr-taken) 0)) 6]
-      [(not (= (opt-lp-loop-body-cell-operands memory-clean) 2)) 7]
-      [(not (= (opt-lp-preheader-cell-loads memory-clean) 0)) 8]
+      [(not (= (opt-lp-loop-body-cell-operands memory-clean) 0)) 7]
+      [(not (= (opt-lp-preheader-cell-loads memory-clean) 2)) 8]
+      [(not (= (opt-lp-loop-body-cell-operands memory-clean-pressured) 2)) 16]
+      [(not (= (opt-lp-preheader-cell-loads memory-clean-pressured) 0)) 17]
+      [(not (= (opt-lp-loop-body-cell-operands global-clean-pressured) 0)) 18]
+      [(not (= (opt-lp-preheader-cell-loads global-clean-pressured) 2)) 19]
+      ;; the budget itself, and the two live-in counts it sits between
+      [(not
+          (>
+            (-
+              (opt-lp-pressure-live-in-ceiling)
+              (opt-lp-pressure-live-in-floor))
+            (compiler_optimize.opt-licm-global-promote-live-in-budget)))
+        20]
       ;; the decision itself, spelled directly
       [(not
           (compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
@@ -51639,6 +51801,19 @@
           (opt-lp-test-cells symbols)
           symbols.callee)
         11]
+      ;; memory-clean implies global-clean, so the predicate itself now says yes
+      ;; and the budget is what prices it (see the (e) case above)
+      [(not
+          (compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
+            (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))
+            symbols.callee
+            plain-args))
+        21]
+      [(compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
+          (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))
+          symbols.callee
+          addr-args)
+        22]
       ;; a callee whose summary sets the global-write bit earns neither bit
       [(not
           (=
@@ -52398,7 +52573,7 @@
   (test.assert-i64-eq
     (compiler-optimize-licm-global-clean-call-self-test)
     42
-    "a parameter-writing callee proven free of direct global writes permits cell promotion only when the whole program takes no cell addresses; unresolved and memory-clean callees still refuse"))
+    "a callee the call-memory fixpoint proves writes no global storage stops blocking cell promotion, and a memory-clean one is admitted under the live-in budget; an unresolved callee, a GlobalAddr argument, and a memory-clean callee in an over-budget loop each still refuse"))
 
 (test
   call-memory-element-write-attribution

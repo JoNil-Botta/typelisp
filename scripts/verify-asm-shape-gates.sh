@@ -486,6 +486,25 @@ check_alu_mem_operand_tie() {
         '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 2 alu-mem-operand-tie
 }
 
+check_alu_mem_operand_sink() {
+    _asm=$(compile_gate alu_mem_operand_sink tests/integration/alu_mem_operand_tie.tl)
+    _body=$(function_body "$_asm" _tl_alu_mem_operand_tie_fold_nested)
+    # `load_sink`: the same four commutative ops, written as ONE nested
+    # expression. Source evaluation order lowers all four element reads first,
+    # so without the pass only the innermost op's load is adjacent to its
+    # consumer and only that one fold fires. Sunk, every pair lands in the slot
+    # before ITS consumer and all four ops become one memory-operand ALU line --
+    # in BOTH loop clones, the bounds-check-eliminated fast body and the checked
+    # slow body whose loads cross three unrelated bounds checks to get there.
+    assert_regex_count_eq "$_body"         '^[[:space:]]+(andq|orq|xorq) \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 8         alu-mem-operand-sink
+    # No element load survives: the fold consumed all eight.
+    assert_not_matches "$_body"         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' alu-mem-operand-sink
+    # The only register-to-register copies left are the seed's entry home and
+    # the accumulator's move into the return register, one each and both
+    # outside the loops.
+    assert_regex_count_eq "$_body"         '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 2 alu-mem-operand-sink
+}
+
 check_const_global_mask_unroll() {
     _asm=$(compile_gate         const_global_mask_unroll         tests/integration/const_global_mask_unroll.tl)
     _global=$(function_body "$_asm" _tl_const_global_mask_unroll_mask_sum)
@@ -799,6 +818,7 @@ check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
 check_alu_mem_operand_tie
+check_alu_mem_operand_sink
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

@@ -3543,6 +3543,10 @@
       (compiler_optimize_tests.compiler-optimize-cmp-sink-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-load-sink-self-test"
+      (compiler_optimize_tests.compiler-optimize-load-sink-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-cmp-dup-self-test"
       (compiler_optimize_tests.compiler-optimize-cmp-dup-self-test)
       42)
@@ -3996,6 +4000,13 @@
     (compiler_optimize_tests.compiler-optimize-cmp-sink-self-test)
     42
     "Sinking a loop-closing compare next to its branch"))
+
+(test
+  load-sink-to-alu-consumer
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-load-sink-self-test)
+    42
+    "Sinking single-use gep;load pairs next to their consuming ALU ops"))
 
 (test
   cmp-dup-per-branch-copies

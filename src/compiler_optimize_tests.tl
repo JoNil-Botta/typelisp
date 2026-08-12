@@ -6743,6 +6743,323 @@
                 [_ 5])])]
         [_ 6])]))
 
+;; --- single-use load sinking -----------------------------------------------
+;;
+;; Fixtures use vars 0/1/2 as array bases, 3 as the shared index, 5 as a spare
+;; scalar and 6 as a spare length. Pairs are `gep 1x; load 1x+1`.
+(define (opt-load-sink-gep [dst : i64] [base : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Gep
+    dst
+    (compiler_ir_types.CompilerIrValue.Var base)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-load-sink-load [dst : i64] [address : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Load
+    dst
+    (compiler_ir_types.CompilerIrValue.Var address)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-load-sink-binop
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    lhs
+    rhs
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-load-sink-var [var : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var var))
+
+(define (opt-load-sink-return [var : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Return
+    (compiler_ir_types.CompilerIrMaybeValue.Some (opt-load-sink-var var))))
+
+(define (opt-load-sink-block-of
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "loop")
+      instrs)
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; benchmarks/liveness_scan's flagship body: three element reads lowered first,
+;; then the `xor`/`and`/`or` chain that consumes them in reverse order. Every
+;; load must end up immediately before ITS consumer.
+(define (opt-load-sink-chain-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-sink-gep 12 1)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-load 13 12)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-gep 14 2)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-sink-load 15 14)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-load-sink-binop
+                    16
+                    (compiler_ir_types.CompilerIrBinOp.BitXor)
+                    (opt-load-sink-var 15)
+                    (compiler_ir_types.CompilerIrValue.I64 (- 0 1)))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (opt-load-sink-binop
+                      17
+                      (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                      (opt-load-sink-var 13)
+                      (opt-load-sink-var 16))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (opt-load-sink-binop
+                        18
+                        (compiler_ir_types.CompilerIrBinOp.BitOr)
+                        (opt-load-sink-var 11)
+                        (opt-load-sink-var 17))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (opt-load-sink-return 18)
+                        compiler_ir_types.CompilerIrInstrList.Nil))))))))))))
+
+;; A StorePtr between the load and its consumer may alias the loaded cell.
+(define (opt-load-sink-store-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-sink-gep 12 1)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (opt-load-sink-var 12)
+              (opt-load-sink-var 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-binop
+                18
+                (compiler_ir_types.CompilerIrBinOp.BitOr)
+                (opt-load-sink-var 11)
+                (opt-load-sink-var 5))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-sink-return 18)
+                compiler_ir_types.CompilerIrInstrList.Nil))))))))
+
+;; A call between the load and its consumer may store anywhere.
+(define (opt-load-sink-call-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Call
+            21
+            (opt-test-symbol "load_sink_callee")
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-binop
+              18
+              (compiler_ir_types.CompilerIrBinOp.BitOr)
+              (opt-load-sink-var 11)
+              (opt-load-sink-var 21))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-return 18)
+              compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; The gep's base is redefined before the consumer. SSA forbids this, so the
+;; guard is belt and braces -- but it is the guard that makes the pass safe
+;; without a dominance query, so it gets a fixture.
+(define (opt-load-sink-rebase-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-binop
+              18
+              (compiler_ir_types.CompilerIrBinOp.BitOr)
+              (opt-load-sink-var 11)
+              (opt-load-sink-var 0))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-return 18)
+              compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; The first load has a second reader, so the backend fold could never fire on
+;; it and the pair must not move.
+(define (opt-load-sink-double-use-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-load-sink-gep 12 1)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-load 13 12)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-binop
+                17
+                (compiler_ir_types.CompilerIrBinOp.BitAnd)
+                (opt-load-sink-var 13)
+                (opt-load-sink-var 5))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-sink-binop
+                  18
+                  (compiler_ir_types.CompilerIrBinOp.BitOr)
+                  (opt-load-sink-var 11)
+                  (opt-load-sink-var 17))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    19
+                    (opt-load-sink-var 11)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (opt-load-sink-return 18)
+                    compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+
+;; An UNRELATED bounds check sits between the first load and its consumer.
+;; Crossing it is allowed: the check only aborts, and a load that no longer
+;; runs on the aborting path has no observable effect (see the pass note).
+(define (opt-load-sink-bounds-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-load-sink-block-of
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-load-sink-gep 10 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-load-sink-load 11 10)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (opt-load-sink-var 3)
+            (opt-load-sink-var 6)
+            (compiler_ir_types.compiler-ir-label "bounds_ok"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-load-sink-gep 12 1)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (opt-load-sink-load 13 12)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-load-sink-binop
+                  18
+                  (compiler_ir_types.CompilerIrBinOp.BitOr)
+                  (opt-load-sink-var 11)
+                  (opt-load-sink-var 13))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-load-sink-return 18)
+                  compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
+(define (opt-load-sink-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-load-sink-blocks 32 blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Cons block _) block]
+    [_
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "empty")
+        compiler_ir_types.CompilerIrInstrList.Nil)]))
+
+(define (opt-load-sink-instr-dst?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]) : bool
+  (= (compiler_optimize.opt-gvn-instr-dst instr) dst))
+
+;; `dsts` names the expected definition at each index, using -1 for the
+;; terminator.
+(define (opt-load-sink-order?
+  [block : compiler_ir_types.CompilerIrBlock]
+  [dsts : (__tl_dyn-array i64)]) : bool
+  (let
+    [count : i64 (array-length dsts)]
+    [index : i64 0]
+    [ok : bool (= (opt-block-instr-count block) count)]
+    (begin
+      (while (and ok (< index count))
+        (begin
+          (unless
+            (opt-load-sink-instr-dst?
+              (opt-block-instr-at block index)
+              (array-ref dsts index))
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
+;; A refused pair is still the block's first two instructions; a sunk one is
+;; not, because whatever followed it takes index 0.
+(define (opt-load-sink-pair-stayed?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-load-sink-run blocks)]
+    (and
+      (opt-load-sink-instr-dst? (opt-block-instr-at block 0) 10)
+      (opt-load-sink-instr-dst? (opt-block-instr-at block 1) 11))))
+
+;; Returns 42 only when the flagship chain re-orders into three adjacent
+;; `gep; load; binop` triples, every refusal fixture stays byte-identical, the
+;; bounds-check fixture sinks, and a second run is a no-op.
+(define (compiler-optimize-load-sink-self-test) : i64
+  (let
+    [chain : compiler_ir_types.CompilerIrBlock
+      (opt-load-sink-run (opt-load-sink-chain-blocks))]
+    [expected : (__tl_dyn-array i64) (array.make-array i64 10)]
+    [bounds-expected : (__tl_dyn-array i64) (array.make-array i64 7)]
+    (begin
+      (set! (array-ref expected 0) 14)
+      (set! (array-ref expected 1) 15)
+      (set! (array-ref expected 2) 16)
+      (set! (array-ref expected 3) 12)
+      (set! (array-ref expected 4) 13)
+      (set! (array-ref expected 5) 17)
+      (set! (array-ref expected 6) 10)
+      (set! (array-ref expected 7) 11)
+      (set! (array-ref expected 8) 18)
+      (set! (array-ref expected 9) (- 0 1))
+      (unless (opt-load-sink-order? chain expected) (return 1))
+      ;; Idempotence: the sunk block is already at its fixpoint.
+      (unless
+        (opt-load-sink-order?
+          (opt-load-sink-run
+            (compiler_ir_types.compiler-ir-block-cons
+              chain
+              compiler_ir_types.CompilerIrBlockList.Nil))
+          expected)
+        (return 2))
+      ;; Refusals: an aliasing store, a call, a redefined base, a second use.
+      (unless
+        (opt-load-sink-pair-stayed? (opt-load-sink-store-blocks))
+        (return 3))
+      (unless
+        (opt-load-sink-pair-stayed? (opt-load-sink-call-blocks))
+        (return 4))
+      (unless
+        (opt-load-sink-pair-stayed? (opt-load-sink-rebase-blocks))
+        (return 5))
+      (unless
+        (opt-load-sink-pair-stayed? (opt-load-sink-double-use-blocks))
+        (return 6))
+      ;; The bounds check is not a barrier: the pair lands past it, ahead of
+      ;; the second pair, so both reach the consumer adjacent.
+      (set! (array-ref bounds-expected 0) (- 0 1))
+      (set! (array-ref bounds-expected 1) 10)
+      (set! (array-ref bounds-expected 2) 11)
+      (set! (array-ref bounds-expected 3) 12)
+      (set! (array-ref bounds-expected 4) 13)
+      (set! (array-ref bounds-expected 5) 18)
+      (set! (array-ref bounds-expected 6) (- 0 1))
+      (unless
+        (opt-load-sink-order?
+          (opt-load-sink-run (opt-load-sink-bounds-blocks))
+          bounds-expected)
+        (return 7))
+      42)))
+
 ;; --- late compare duplication ----------------------------------------------
 ;;
 ;; Fixtures share two i64 parameters (vars 0 and 1) plus a spare var 2 that

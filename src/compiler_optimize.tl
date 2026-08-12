@@ -62588,6 +62588,388 @@
   (match (opt-cmp-sink-blocks-pass blocks)
     [(OptBlockListPassResult.Result next _) next]))
 
+;; --- single-use load sinking -----------------------------------------------
+;;
+;; Sink a single-use `gep; load` pair down to the slot immediately before its
+;; unique consumer in the same block. The backend folds a fused `gep; load`
+;; straight into the consuming ALU op's memory operand -- `movq (b,i,8), %t;
+;; andq %t, %acc` becomes `andq (b,i,8), %acc`, one instruction and one
+;; register shorter -- but every probe in that family reads the instruction at
+;; `load index + 1`: the fold requires ADJACENCY, and source evaluation order
+;; does not supply it. `(bit-or (ln-ref uses k) (bit-and (ln-ref scratch-out i)
+;; (bit-xor (ln-ref defs k) -1)))` -- benchmarks/liveness_scan's flagship loop,
+;; 11.8M iterations -- lowers its three element reads first and its three ALU
+;; ops after, so the `and`'s load sits four slots back and the `or`'s eight.
+;; Only the innermost `xor` is adjacent, and only the `xor` folds; the loop
+;; pays ten instructions where eight would do.
+;;
+;; The move is pure scheduling. It fires when the load's dst and the gep's dst
+;; are each single-use across the whole function, the unique use is a BinOp
+;; later in the SAME block, nothing between the load and that BinOp writes
+;; memory or calls, and nothing between them redefines the gep's base or index
+;; (SSA already forbids the last one; the check is belt and braces). Pairs are
+;; planned bottom-up and flushed at their consumer in ascending original order,
+;; so a chain of loads feeding a chain of ALU ops cascades -- each load lands
+;; next to ITS consumer -- while a pair that was already in place, including
+;; the `gep; load; gep; load; binop` shape the two-operand fold wants, keeps
+;; its exact position and the block is returned untouched.
+;;
+;; ORDERING SAFETY. Two motions happen here and both are sound:
+;;
+;;   * A load passes another load. Reads commute; neither has an effect.
+;;
+;;   * A load moves LATER past a non-memory instruction. The only thing in
+;;     that window that can do anything observable is one that ABORTS -- a
+;;     BoundsCheck, or a checked divide. Moving a load from before an abort
+;;     point to after it means that, on the aborting path, the load no longer
+;;     runs. A load has no observable effect and its result is dead on that
+;;     path, so the two programs produce identical output and identical exit
+;;     status. The unsound direction is the mirror image (a load hoisted ABOVE
+;;     its guard can fault); this pass never moves a load earlier, and a
+;;     load's own guarding check already dominates it, so that check is never
+;;     inside the window. Anything that writes memory -- Store, StorePtr,
+;;     CopyBytes, the vector stores -- or that can write memory indirectly --
+;;     any call form -- is a hard barrier, as is any shape not on the
+;;     crossable list below.
+;; Instructions a sunk load may cross: pure value producers plus BoundsCheck,
+;; which only aborts (see the ORDERING SAFETY note). Everything else, memory
+;; writers and calls included, is a barrier.
+(define (opt-load-sink-crossable? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ _ _ _) true]
+    [(ir.CompilerIrInstr.Load _ _ _) true]
+    [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(ir.CompilerIrInstr.Mov _ _ _) true]
+    [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [_ false]))
+
+;; Operand-position use test over exactly the shapes `opt-load-sink-crossable?`
+;; admits; anything else is a barrier and never reaches here, so the catch-all
+;; answers conservatively.
+(define (opt-load-sink-instr-uses-var? [instr : ir.CompilerIrInstr] [var : i64]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (or (opt-value-is-var? base var) (opt-value-is-var? offset var))]
+    [(ir.CompilerIrInstr.Load _ src _) (opt-value-is-var? src var)]
+    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]
+    [(ir.CompilerIrInstr.BoundsCheck index length _)
+      (or (opt-value-is-var? index var) (opt-value-is-var? length var))]
+    [(ir.CompilerIrInstr.Mov _ src _) (opt-value-is-var? src var)]
+    [(ir.CompilerIrInstr.UnOp _ _ src _) (opt-value-is-var? src var)]
+    [(ir.CompilerIrInstr.Cast _ src _ _) (opt-value-is-var? src var)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _) (opt-value-is-var? src var)]
+    [_ true]))
+
+(define (opt-load-sink-single-use?
+  [use-counts : (__tl_dyn-array i64)]
+  [var : i64]) : bool
+  (if (< var 0)
+    false
+    (if (>= var (array-length use-counts))
+      false
+      (= (array-ref use-counts var) 1))))
+
+;; Index of the BinOp that consumes `load-dst`, or -1 when the pair may not
+;; sink. `load-dst` is single-use by the caller's test, so the first crossable
+;; instruction that reads it IS the unique consumer: either it is a BinOp
+;; reading it as an operand (the fold's shape) or the pair stays put.
+(define (opt-load-sink-find-consumer
+  [instrs : ir.CompilerIrInstrSeq]
+  [start : i64]
+  [count : i64]
+  [load-dst : i64]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]) : i64
+  (let
+    [index : i64 start]
+    [answer : i64 (- 0 1)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index count))
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          (if (not (opt-load-sink-crossable? instr))
+            (set! done true)
+            (if (opt-load-sink-instr-uses-var? instr load-dst)
+              (begin
+                (match instr
+                  [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+                    (if (or
+                      (opt-value-is-var? lhs load-dst)
+                      (opt-value-is-var? rhs load-dst))
+                      (set! answer index)
+                      unit)]
+                  [_ unit])
+                (set! done true))
+              (let
+                [dst : i64 (opt-gvn-instr-dst instr)]
+                (if (or
+                  (opt-value-is-var? base dst)
+                  (opt-value-is-var? offset dst))
+                  (set! done true)
+                  (set! index (+ index 1))))))))
+      answer)))
+
+;; The sink target for the `gep; load` pair ending at `index`, or -1 when the
+;; pair does not qualify. Both dsts must be single-use: the gep's because the
+;; pair moves as a unit, the load's because the fold consumes the value.
+(define (opt-load-sink-pair-target
+  [use-counts : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]) : i64
+  (match (array-ref slots index)
+    [(ir.CompilerIrInstr.Load load-dst (ir.CompilerIrValue.Var gep-dst) _)
+      (match (array-ref slots (- index 1))
+        [(ir.CompilerIrInstr.Gep gep base offset _)
+          (if (and
+            (= gep gep-dst)
+            (opt-load-sink-single-use? use-counts gep-dst)
+            (opt-load-sink-single-use? use-counts load-dst))
+            (opt-load-sink-find-consumer
+              instrs
+              (+ index 1)
+              count
+              load-dst
+              base
+              offset)
+            (- 0 1))]
+        [_ (- 0 1)])]
+    [_ (- 0 1)]))
+
+;; Cheap first look: is there a qualifying pair whose consumer is not already
+;; the next instruction? Only then does the block pay for the plan arrays. A
+;; pair that is merely part of an already-contiguous run still answers yes
+;; here; the plan below then reproduces the original order exactly and the
+;; block is returned untouched.
+(define (opt-load-sink-block-moves?
+  [use-counts : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [count : i64]) : bool
+  (let
+    [index : i64 1]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index (- count 1)))
+        (begin
+          (if (>
+            (opt-load-sink-pair-target use-counts instrs slots index count)
+            (+ index 1))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (opt-load-sink-reorder
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [order : (__tl_dyn-array i64)]
+  [count : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [out : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref out index) (array-ref slots (array-ref order index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq out count))))
+
+;; `head`/`link` are zero-initialised, so both encodings bias by one to keep
+;; zero meaning "absent": `head[target] = first + 1` names the first pair
+;; instruction flushed at `target`, and `link[i] = next + 2` names the pair
+;; instruction after `i` in that chain (1 = end of chain, 0 = `i` does not
+;; move). Planning walks BOTTOM-UP and pushes each pair onto the front of its
+;; consumer's chain, so the chain comes out in ascending original order and a
+;; run of pairs that already sits against its consumer is reproduced verbatim.
+(define (opt-load-sink-block
+  [use-counts : (__tl_dyn-array i64)]
+  [block : ir.CompilerIrBlock]) : OptBlockPassResult
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 instrs.len]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+        (if (or
+          (< count 4)
+          (not (opt-load-sink-block-moves? use-counts instrs slots count)))
+          (OptBlockPassResult.Result block false)
+          (let
+            [head : (__tl_dyn-array i64) (array.make-array i64 count)]
+            [link : (__tl_dyn-array i64) (array.make-array i64 count)]
+            [order : (__tl_dyn-array i64) (array.make-array i64 count)]
+            [index : i64 (- count 2)]
+            [write : i64 0]
+            [changed : bool false]
+            (begin
+              (while (>= index 1)
+                (begin
+                  (let
+                    [target : i64
+                      (opt-load-sink-pair-target
+                        use-counts
+                        instrs
+                        slots
+                        index
+                        count)]
+                    (if (>= target 0)
+                      (begin
+                        (set!
+                          (array-ref link index)
+                          (+ (array-ref head target) 1))
+                        (set! (array-ref head target) (+ index 1))
+                        (set!
+                          (array-ref link (- index 1))
+                          (+ (array-ref head target) 1))
+                        (set! (array-ref head target) index))
+                      unit))
+                  (set! index (- index 1))))
+              (set! index 0)
+              (while (< index count)
+                (begin
+                  (if (= (array-ref link index) 0)
+                    (let
+                      [cursor : i64 (- (array-ref head index) 1)]
+                      (begin
+                        (while (>= cursor 0)
+                          (begin
+                            (set! (array-ref order write) cursor)
+                            (if (!= cursor write)
+                              (set! changed true)
+                              unit)
+                            (set! write (+ write 1))
+                            (set! cursor (- (array-ref link cursor) 2))))
+                        (set! (array-ref order write) index)
+                        (if (!= index write)
+                          (set! changed true)
+                          unit)
+                        (set! write (+ write 1))))
+                    unit)
+                  (set! index (+ index 1))))
+              (if changed
+                (OptBlockPassResult.Result
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-load-sink-reorder slots order count))
+                  true)
+                (OptBlockPassResult.Result block false))))))]))
+
+(define (opt-load-sink-blocks-pass
+  [use-counts : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptBlockListPassResult.Result blocks false)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (opt-load-sink-block use-counts block)
+        [(OptBlockPassResult.Result next-block block-changed)
+          (match (opt-load-sink-blocks-pass use-counts (__tl-box-place rest))
+            [(OptBlockListPassResult.Result next-rest rest-changed)
+              (if (or block-changed rest-changed)
+                (OptBlockListPassResult.Result
+                  (ir.compiler-ir-block-cons next-block next-rest)
+                  true)
+                (OptBlockListPassResult.Result blocks false))])])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 seq.len]
+        [source : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+        [out : (__tl_dyn-array ir.CompilerIrBlock)
+          (array.make-array ir.CompilerIrBlock count)]
+        [index : i64 0]
+        [changed : bool false]
+        (begin
+          (while (< index count)
+            (begin
+              (match (opt-load-sink-block use-counts (array-ref source index))
+                [(OptBlockPassResult.Result next-block block-changed)
+                  (begin
+                    (set! (array-ref out index) next-block)
+                    (if block-changed
+                      (set! changed true)
+                      unit))])
+              (set! index (+ index 1))))
+          (if changed
+            (OptBlockListPassResult.Result
+              (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq out count))
+              true)
+            (OptBlockListPassResult.Result blocks false))))]))
+
+;; Structural pre-gate, cheaper than the use-count table the plan needs: a
+;; `gep; load` pair whose NEXT instruction is crossable and does not consume
+;; the load. Every pair that can actually move satisfies this (its consumer is
+;; at least two slots away, so the slot between is in the crossable window and
+;; is not the use), so the gate has no false negatives; it merely spares the
+;; overwhelming majority of functions the whole-function use tally.
+(define (opt-load-sink-block-wants-pass? [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 instrs.len]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+        [index : i64 1]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< index (- count 1)))
+            (begin
+              (match (array-ref slots index)
+                [(ir.CompilerIrInstr.Load
+                    load-dst
+                    (ir.CompilerIrValue.Var gep-dst)
+                    _)
+                  (match (array-ref slots (- index 1))
+                    [(ir.CompilerIrInstr.Gep gep _ _ _)
+                      (if (= gep gep-dst)
+                        (let
+                          [next : ir.CompilerIrInstr
+                            (array-ref slots (+ index 1))]
+                          (if (and
+                            (opt-load-sink-crossable? next)
+                            (not (opt-load-sink-instr-uses-var? next load-dst)))
+                            (set! found true)
+                            unit))
+                        unit)]
+                    [_ unit])]
+                [_ unit])
+              (set! index (+ index 1))))
+          found))]))
+
+(define (opt-load-sink-blocks-want-pass? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-load-sink-block-wants-pass? block)
+        true
+        (opt-load-sink-blocks-want-pass? (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 seq.len]
+        [slots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< index count))
+            (begin
+              (if (opt-load-sink-block-wants-pass? (array-ref slots index))
+                (set! found true)
+                unit)
+              (set! index (+ index 1))))
+          found))]))
+
+(define (opt-load-sink-blocks [frame : i64] [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (if (not (opt-load-sink-blocks-want-pass? blocks))
+    blocks
+    (match (opt-load-sink-blocks-pass
+      (opt-collect-blocks-uses-array frame blocks)
+      blocks)
+      [(OptBlockListPassResult.Result next _) next])))
+
 ;; --- late compare duplication ----------------------------------------------
 ;;
 ;; GVN unifies textually identical comparisons, so one compare can end up
@@ -67689,12 +68071,39 @@
                             name
                             _t-dce)
                           unit)]
+                      ;; Pure scheduling, and last on purpose: it exists only
+                      ;; to satisfy the backend's ADJACENCY requirement for the
+                      ;; gep-load memory-operand folds, so nothing may run
+                      ;; below it that could separate a pair again. Running it
+                      ;; under `dce` also means the use tally it needs sees no
+                      ;; dead readers, so a load whose only surviving consumer
+                      ;; is the fold's BinOp is recognised as single-use.
+                      [_t-load-sink : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [load-sink : ir.CompilerIrBlockList
+                        (compiler-opt-debug-observe-blocks
+                          type-segment-bases
+                          "load_sink"
+                          name
+                          params
+                          ret-ty
+                          cmp-dup-frame
+                          (opt-load-sink-blocks cmp-dup-frame dced))]
+                      [_p-load-sink : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            summaries.profile-state
+                            "load_sink"
+                            name
+                            _t-load-sink)
+                          unit)]
                       (ir.CompilerIrFunction.Function
                         name
                         params
                         ret-ty
                         cmp-dup-frame
-                        dced))]))]))])))
+                        load-sink))]))]))])))
 
 (define (optimize-function-once
   [pools : ast.AstNodePoolContext]

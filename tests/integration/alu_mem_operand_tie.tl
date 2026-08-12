@@ -44,6 +44,39 @@
           (set! i (+ i 1))))
       acc)))
 
+;; The UNFORCED spelling of the same four folds, and the forcing test for the
+;; `load_sink` scheduling pass. Written as ONE nested expression, source
+;; evaluation order lowers all four element reads FIRST and the four ALU ops
+;; after, so only the innermost op's load is adjacent to its consumer and only
+;; that one fold fires -- the backend's memory-operand probes all read the
+;; instruction at `load index + 1`. `load_sink` moves each single-use `gep;
+;; load` pair down to the slot before ITS consumer, and all four fold again.
+;;
+;; This is benchmarks/liveness_scan's flagship loop shape (a `bit-or` over a
+;; `bit-and` over a `bit-xor`, each with a fresh element read on one side and
+;; the running value on the other), one op wider.
+(define (fold-nested
+  [a : (Array i64)]
+  [b : (Array i64)]
+  [c : (Array i64)]
+  [d : (Array i64)]
+  [seed : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 seed]
+    (begin
+      (while (< i (array-length a))
+        (begin
+          (set!
+            acc
+            (bit-or
+              (array-ref d i)
+              (bit-and
+                (array-ref c i)
+                (bit-xor (array-ref b i) (bit-and (array-ref a i) acc)))))
+          (set! i (+ i 1))))
+      acc)))
+
 (define (main) : i64
   (let
     [a : (Array i64) (make-array i64 8)]
@@ -56,8 +89,8 @@
         (begin
           (set! (array-ref a i) -1)
           (set! i (+ i 1))))
-      (if (= (fold-words a b c d -1) -1)
-        (if (= (fold-words a b c d 0) 0)
-          42
-          1)
-        1))))
+      (unless (= (fold-words a b c d -1) -1) (return 1))
+      (unless (= (fold-words a b c d 0) 0) (return 1))
+      (unless (= (fold-nested a b c d -1) 0) (return 1))
+      (unless (= (fold-nested a b c d 0) 0) (return 1))
+      42)))

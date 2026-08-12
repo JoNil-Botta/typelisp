@@ -23222,36 +23222,6 @@
       [(option_i64.None) instr])
     instr))
 
-(define (opt-induction-rewrite-instr-seq-from
-  [type-segment-bases : i64]
-  [fact : OptInductionFact]
-  [offsets : opt_i64_i64_map.Map]
-  [scaled : opt_i64_i64_map.Map]
-  [derived : OptInductionDerived]
-  [derived-phi : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    ir.CompilerIrInstrList.Nil
-    (ir.compiler-ir-instr-cons
-      (opt-induction-rewrite-instr
-        type-segment-bases
-        fact
-        offsets
-        scaled
-        derived
-        derived-phi
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (opt-induction-rewrite-instr-seq-from
-        type-segment-bases
-        fact
-        offsets
-        scaled
-        derived
-        derived-phi
-        instrs
-        (+ index 1)))))
-
 (define (opt-induction-rewrite-instr-seq
   [type-segment-bases : i64]
   [fact : OptInductionFact]
@@ -23259,16 +23229,27 @@
   [scaled : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
-  (opt-induction-rewrite-instr-seq-from
-    type-segment-bases
-    fact
-    offsets
-    scaled
-    derived
-    derived-phi
-    instrs
-    0))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-induction-rewrite-instr
+              type-segment-bases
+              fact
+              offsets
+              scaled
+              derived
+              derived-phi
+              (ir.compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-induction-rewrite-blocks
   [type-segment-bases : i64]
@@ -23290,7 +23271,7 @@
             (if (and
               (opt-loop-body-label-member? body index label)
               (not (opt-induction-switch-arm? index all-blocks label instrs)))
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 label
                 (opt-induction-rewrite-instr-seq
                   type-segment-bases
@@ -23445,22 +23426,6 @@
         (ir.CompilerIrValue.Var (- seed-var 1))
         ty)]))
 
-(define (opt-induction-seed-instrs-for-derived
-  [fact : OptInductionFact]
-  [derived : OptInductionDerived]
-  [frame : i64]) : ir.CompilerIrInstrList
-  (let
-    [seed-var : i64 (opt-induction-derived-seed-var derived frame)]
-    (if (= (opt-induction-derived-offset derived) 0)
-      (ir.compiler-ir-instr-cons
-        (opt-induction-final-seed-instr fact derived seed-var)
-        ir.CompilerIrInstrList.Nil)
-      (ir.compiler-ir-instr-cons
-        (opt-induction-offset-seed-instr fact derived frame)
-        (ir.compiler-ir-instr-cons
-          (opt-induction-final-seed-instr fact derived seed-var)
-          ir.CompilerIrInstrList.Nil)))))
-
 (define (opt-induction-next-instr
   [fact : OptInductionFact]
   [derived : OptInductionDerived]
@@ -23516,67 +23481,101 @@
         (ir.CompilerIrPhiInputList.Nil)))
     (opt-induction-derived-phi-type derived)))
 
-(define (opt-induction-seed-instrs
-  [fact : OptInductionFact]
-  [deriveds : OptInductionDerivedList]
-  [frame : i64]) : ir.CompilerIrInstrList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) ir.CompilerIrInstrList.Nil]
-    [(OptInductionDerivedList.Cons derived rest)
-      (opt-aggregate-instr-list-append
-        (opt-induction-seed-instrs-for-derived fact derived frame)
-        (opt-induction-seed-instrs
-          fact
-          (__tl-box-place rest)
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+(defstruct OptInductionSupportInstrs
+  (seed-instrs ir.CompilerIrInstrSeq)
+  (phi-instrs ir.CompilerIrInstrSeq)
+  (next-instrs ir.CompilerIrInstrSeq))
 
-(define (opt-induction-phi-instrs
+;; Build the three support streams in one derived-value walk. The former shape
+;; built and appended three cons chains, then immediately counted and copied
+;; them into the destination block builders. refs #5726
+(define (opt-induction-push-support-instrs!
+  [fact : OptInductionFact]
   [deriveds : OptInductionDerivedList]
   [preheader : i64]
   [latch : i64]
-  [frame : i64]) : ir.CompilerIrInstrList
+  [frame : i64]
+  [seed-builder : (&mut seed-builder ir.CompilerIrInstrBuilder)]
+  [phi-builder : (&mut phi-builder ir.CompilerIrInstrBuilder)]
+  [next-builder : (&mut next-builder ir.CompilerIrInstrBuilder)]) : unit
   (match deriveds
-    [(OptInductionDerivedList.Nil) ir.CompilerIrInstrList.Nil]
+    [(OptInductionDerivedList.Nil) unit]
     [(OptInductionDerivedList.Cons derived rest)
-      (ir.compiler-ir-instr-cons
-        (opt-induction-phi-instr
-          derived
-          preheader
-          latch
-          (opt-induction-derived-seed-var derived frame)
-          (opt-induction-derived-phi-var derived frame)
-          (opt-induction-derived-next-var derived frame))
-        (opt-induction-phi-instrs
-          (__tl-box-place rest)
-          preheader
-          latch
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+      (let
+        [seed-var : i64 (opt-induction-derived-seed-var derived frame)]
+        (begin
+          (if (= (opt-induction-derived-offset derived) 0)
+            unit
+            (ir.compiler-ir-instr-builder-push!
+              (&mut seed-builder)
+              (opt-induction-offset-seed-instr fact derived frame)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut seed-builder)
+            (opt-induction-final-seed-instr fact derived seed-var))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut phi-builder)
+            (opt-induction-phi-instr
+              derived
+              preheader
+              latch
+              seed-var
+              (opt-induction-derived-phi-var derived frame)
+              (opt-induction-derived-next-var derived frame)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut next-builder)
+            (opt-induction-next-instr
+              fact
+              derived
+              (opt-induction-derived-phi-var derived frame)
+              (opt-induction-derived-next-var derived frame)))
+          (opt-induction-push-support-instrs!
+            fact
+            (__tl-box-place rest)
+            preheader
+            latch
+            (+ frame (opt-induction-derived-slot-count derived))
+            (&mut seed-builder)
+            (&mut phi-builder)
+            (&mut next-builder))))]))
 
-(define (opt-induction-next-instrs
+(define (opt-induction-support-instrs
   [fact : OptInductionFact]
   [deriveds : OptInductionDerivedList]
-  [frame : i64]) : ir.CompilerIrInstrList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) ir.CompilerIrInstrList.Nil]
-    [(OptInductionDerivedList.Cons derived rest)
-      (ir.compiler-ir-instr-cons
-        (opt-induction-next-instr
-          fact
-          derived
-          (opt-induction-derived-phi-var derived frame)
-          (opt-induction-derived-next-var derived frame))
-        (opt-induction-next-instrs
-          fact
-          (__tl-box-place rest)
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+  [preheader : i64]
+  [latch : i64]
+  [frame : i64]
+  [derived-count : i64]
+  [derived-slot-count : i64]) : OptInductionSupportInstrs
+  (let
+    [seed-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (- derived-slot-count (* 2 derived-count)))]
+    [phi-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity derived-count)]
+    [next-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity derived-count)]
+    (begin
+      (opt-induction-push-support-instrs!
+        fact
+        deriveds
+        preheader
+        latch
+        frame
+        (&mut seed-builder)
+        (&mut phi-builder)
+        (&mut next-builder))
+      (OptInductionSupportInstrs
+        (ir.compiler-ir-instr-builder-to-seq seed-builder)
+        (ir.compiler-ir-instr-builder-to-seq phi-builder)
+        (ir.compiler-ir-instr-builder-to-seq next-builder)))))
 
 (define (opt-induction-insert-support-blocks
   [header : i64]
   [preheader : i64]
   [latch : i64]
-  [seed-instrs : ir.CompilerIrInstrList]
-  [phi-instrs : ir.CompilerIrInstrList]
-  [next-instrs : ir.CompilerIrInstrList]
+  [seed-instrs : ir.CompilerIrInstrSeq]
+  [phi-instrs : ir.CompilerIrInstrSeq]
+  [next-instrs : ir.CompilerIrInstrSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
@@ -23604,22 +23603,26 @@
                   (opt-licm-first-terminator-index instrs 0 original-count)]
                 [phi-count : i64
                   (if is-header
-                    (ir.compiler-ir-instr-list-count phi-instrs)
+                    (ir.compiler-ir-instr-seq-count phi-instrs)
                     0)]
                 [seed-count : i64
                   (if is-preheader
-                    (ir.compiler-ir-instr-list-count seed-instrs)
+                    (ir.compiler-ir-instr-seq-count seed-instrs)
                     0)]
                 [next-count : i64
                   (if is-latch
-                    (ir.compiler-ir-instr-list-count next-instrs)
+                    (ir.compiler-ir-instr-seq-count next-instrs)
                     0)]
                 [builder : ir.CompilerIrInstrBuilder
                   (ir.compiler-ir-instr-builder-with-capacity
                     (+ original-count (+ phi-count (+ seed-count next-count))))]
                 (begin
                   (if is-header
-                    (opt-instr-builder-append-list! (&mut builder) phi-instrs)
+                    (ir.compiler-ir-instr-builder-append-seq-range!
+                      (&mut builder)
+                      phi-instrs
+                      0
+                      phi-count)
                     unit)
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut builder)
@@ -23627,10 +23630,18 @@
                     0
                     terminator-index)
                   (if is-preheader
-                    (opt-instr-builder-append-list! (&mut builder) seed-instrs)
+                    (ir.compiler-ir-instr-builder-append-seq-range!
+                      (&mut builder)
+                      seed-instrs
+                      0
+                      seed-count)
                     unit)
                   (if is-latch
-                    (opt-instr-builder-append-list! (&mut builder) next-instrs)
+                    (ir.compiler-ir-instr-builder-append-seq-range!
+                      (&mut builder)
+                      next-instrs
+                      0
+                      next-count)
                     unit)
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut builder)
@@ -23702,6 +23713,8 @@
                     (OptInductionDerivedList.Nil))]
                 [derived-count : i64
                   (opt-induction-derived-list-count deriveds)]
+                [derived-slot-count : i64
+                  (opt-induction-derived-list-slot-count deriveds)]
                 (if (= derived-count 0)
                   (OptInductionApplyResult.Result blocks frame false)
                   (let
@@ -23716,26 +23729,25 @@
                         deriveds
                         frame
                         blocks)]
-                    [seed-instrs : ir.CompilerIrInstrList
-                      (opt-induction-seed-instrs fact deriveds frame)]
-                    [phi-instrs : ir.CompilerIrInstrList
-                      (opt-induction-phi-instrs
+                    [support : OptInductionSupportInstrs
+                      (opt-induction-support-instrs
+                        fact
                         deriveds
                         preheader
                         (opt-natural-loop-latch loop)
-                        frame)]
-                    [next-instrs : ir.CompilerIrInstrList
-                      (opt-induction-next-instrs fact deriveds frame)]
+                        frame
+                        derived-count
+                        derived-slot-count)]
                     (OptInductionApplyResult.Result
                       (opt-induction-insert-support-blocks
                         (opt-natural-loop-header loop)
                         preheader
                         (opt-natural-loop-latch loop)
-                        seed-instrs
-                        phi-instrs
-                        next-instrs
+                        support.seed-instrs
+                        support.phi-instrs
+                        support.next-instrs
                         rewritten)
-                      (+ frame (opt-induction-derived-list-slot-count deriveds))
+                      (+ frame derived-slot-count)
                       true))))]
             [(OptMaybeInductionFact.No)
               (OptInductionApplyResult.Result blocks frame false)])))]

@@ -263,6 +263,18 @@
             (set! compiler-ir-label-count (+ id 1))
             id)))]))
 
+;: The id `name` already has, or -1 when it was never interned. Unlike
+;: `compiler-ir-label` this never creates an id: a query that asks about a
+;: spelling the program may not contain must not grow the table, because ids
+;: are dense in [0, count) and side tables are sized from
+;: `compiler-ir-label-count-value` before the query runs.
+(define (compiler-ir-label-existing [name : String]) : i64
+  (if (not compiler-ir-label-seeded)
+    -1
+    (match (ir_label_map.get (& compiler-ir-label-ids) name)
+      [(ir_label_map.LookupFound id) id]
+      [(ir_label_map.LookupMissing) -1])))
+
 ;: Number of distinct labels interned so far. Ids are dense in [0, count),
 ;: so a side table indexed by label id needs exactly this many slots.
 (define (compiler-ir-label-count-value) : i64
@@ -5736,6 +5748,119 @@
                 inserted)])])
       inserted)))
 
+;; --- bounds-check clone-suffix fallback -----------------------------------
+;; A BoundsCheck carries no destination value, so its span is keyed by its
+;; fresh ok-label. Every clone family in the optimizer that copies a KEPT
+;; check must uniquify that label -- two blocks may not define the same
+;; assembly symbol -- by APPENDING a suffix to the original spelling:
+;;   `__bce_fast`    opt-bce-mb-fast-label / opt-bce-mb-clone-instr (the
+;;                   multi-block bounds-check versioner's fast clone)
+;;   `__licm_false`  opt-licm-unswitch-clone-label (the unswitched false clone)
+;;   `__u<digits>`   opt-unroll-copy-suffix (unroll trip copies; the
+;;                   single-block versioner clones its kept checks through the
+;;                   same helper with copy 0, spelling `__u0`)
+;; The copy then misses the span table and the backend silently degrades
+;; `tl_oob_abort_at` (file:line:col plus index/length) to the bare
+;; `tl_oob_abort`. A clone's kept check traps at exactly the source check its
+;; original was lowered from, so stripping the suffix and retrying yields the
+;; right span. The passes stack (a versioned clone can be unrolled), hence the
+;; loop; a bounded fuel keeps a pathological user label from spinning.
+(define (compiler-source-spans-label-suffix-len
+  [text : String]
+  [suffix : String]) : i64
+  (let
+    [n : i64 (string.string-length (& text))]
+    [m : i64 (string.string-length (& suffix))]
+    (if (and (> n m) (string.is-string-prefix-at (& text) (& suffix) (- n m)))
+      m
+      0)))
+
+(define (compiler-source-spans-label-digit-at? [text : String] [index : i64]) : bool
+  (let
+    [c : char (string.string-ref (& text) index)]
+    (and (>= c '0') (<= c '9'))))
+
+;; Length of a trailing `__u<digits>` unroll-copy suffix, or 0.
+(define (compiler-source-spans-label-unroll-suffix-len [text : String]) : i64
+  (let
+    [marker : String "__u"]
+    [n : i64 (string.string-length (& text))]
+    [digits : i64 n]
+    (begin
+      (while (and
+        (> digits 0)
+        (compiler-source-spans-label-digit-at? text (- digits 1)))
+        (set! digits (- digits 1)))
+      (if (or (= digits n) (< digits 4))
+        0
+        (if (string.is-string-prefix-at (& text) (& marker) (- digits 3))
+          (- n (- digits 3))
+          0)))))
+
+;; Length of the one trailing clone suffix `text` carries, or 0.
+(define (compiler-source-spans-bounds-clone-suffix-len [text : String]) : i64
+  (let
+    [fast : String "__bce_fast"]
+    [fast-len : i64 (compiler-source-spans-label-suffix-len text fast)]
+    (if (> fast-len 0)
+      fast-len
+      (let
+        [unswitch : String "__licm_false"]
+        [unswitch-len : i64
+          (compiler-source-spans-label-suffix-len text unswitch)]
+        (if (> unswitch-len 0)
+          unswitch-len
+          (compiler-source-spans-label-unroll-suffix-len text))))))
+
+(define (compiler-source-spans-lookup-bounds-with-fuel
+  [instr-entries : CompilerSourceSpansInstrEntryList]
+  [function : i64]
+  [ok-label : i64]
+  [fuel : i64]) : CompilerMaybeSourceLocation
+  (match (compiler-source-spans-instr-entry-list-lookup
+    instr-entries
+    (CompilerSourceSpansInstrKey.Bounds function ok-label))
+    [(CompilerMaybeSourceLocation.Some found)
+      (CompilerMaybeSourceLocation.Some found)]
+    [(CompilerMaybeSourceLocation.No)
+      (if (<= fuel 0)
+        (CompilerMaybeSourceLocation.No)
+        (let
+          [text : String (compiler-ir-label-text ok-label)]
+          [drop : i64 (compiler-source-spans-bounds-clone-suffix-len text)]
+          (if (= drop 0)
+            (CompilerMaybeSourceLocation.No)
+            (let
+              [base : i64
+                (compiler-ir-label-existing
+                  (string.substring
+                    (& text)
+                    0
+                    (- (string.string-length (& text)) drop)))]
+              (if (< base 0)
+                (CompilerMaybeSourceLocation.No)
+                (compiler-source-spans-lookup-bounds-with-fuel
+                  instr-entries
+                  function
+                  base
+                  (- fuel 1)))))))]))
+
+(define (compiler-source-spans-lookup-bounds
+  [instr-entries : CompilerSourceSpansInstrEntryList]
+  [function : i64]
+  [ok-label : i64]) : CompilerMaybeSourceLocation
+  ;; An empty table can never answer, and the abort-site probe runs on every
+  ;; bounds check of a self-build whose instruction spans were dropped
+  ;; wholesale (`opt-remap-spans-fast-path?`); short-circuit before any label
+  ;; text is touched.
+  (if (= instr-entries.len 0)
+    (CompilerMaybeSourceLocation.No)
+    (compiler-source-spans-lookup-bounds-with-fuel
+      instr-entries
+      function
+      ok-label
+      8)))
+
 (define (compiler-source-spans-lookup-instr-location
   [spans : CompilerSourceSpans]
   [function : i64]
@@ -5890,9 +6015,7 @@
             instr-entries
             (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.BoundsCheck _ _ ok-label)
-          (compiler-source-spans-instr-entry-list-lookup
-            instr-entries
-            (CompilerSourceSpansInstrKey.Bounds function ok-label))]
+          (compiler-source-spans-lookup-bounds instr-entries function ok-label)]
         [(CompilerIrInstr.CallCAbiStoreResult payload-box)
           (CompilerMaybeSourceLocation.No)]
         [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)

@@ -2706,6 +2706,10 @@
       (compiler_optimize_tests.compiler-optimize-global-value-number-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-wide-literal-operand-self-test"
+      (compiler_optimize_tests.compiler-optimize-wide-literal-operand-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-cfg-self-test"
       (compiler_optimize_tests.compiler-optimize-cfg-self-test)
       42)
@@ -3403,6 +3407,10 @@
       (compiler_optimize_tests.compiler-optimize-inline-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-inline-two-multiblock-self-test"
+      (compiler_optimize_tests.compiler-optimize-inline-two-multiblock-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-inline-phi-predecessor-self-test"
       (smoke-inline-phi-predecessor-self-test)
       42)
@@ -3533,6 +3541,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-cmp-sink-self-test"
       (compiler_optimize_tests.compiler-optimize-cmp-sink-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-cmp-dup-self-test"
+      (compiler_optimize_tests.compiler-optimize-cmp-dup-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-successor-sink-self-test"
@@ -3935,6 +3947,13 @@
     (compiler_optimize_tests.compiler-optimize-cmp-sink-self-test)
     42
     "Sinking a loop-closing compare next to its branch"))
+
+(test
+  cmp-dup-per-branch-copies
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-cmp-dup-self-test)
+    42
+    "Late compare duplication gives each branch its own fusable compare"))
 
 (test
   single-predecessor-successor-sink

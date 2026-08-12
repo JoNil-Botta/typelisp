@@ -4,14 +4,13 @@
 ;; session can own admitted catalogs without introducing an import cycle.
 (import stdlib.arena)
 (import stdlib.byte_buf)
-(import stdlib.fs)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_load as load)
 (import package_source_core as package_source)
 (import tlci_core as tlci)
-(import tlci_loader as loader)
+(cfg embedded-stdlib-tlci (import tlci_loader as loader))
 (cfg
   embedded-stdlib-tlci
   (import compiler_embedded_stdlib_tlci as comptime_host))
@@ -114,13 +113,13 @@
         (compiler-dependency-tlci-own-text message)))))
 
 (define (compiler-dependency-tlci-map-status
-  [owner : i64]
-  [bytes : (__tl_dyn-array u8)]) : load.CompilerLoadDependencyCatalogStatus
+  [_owner : i64]
+  [_bytes : (__tl_dyn-array u8)]) : load.CompilerLoadDependencyCatalogStatus
   (cfg
     embedded-stdlib-tlci
     (match (loader.tlci-loader-load-from-bytes-with-host
-      owner
-      bytes
+      _owner
+      _bytes
       (comptime_host.compiler-comptime-host-table))
       [(loader.ResultTlciLoadedImage.Ok loaded)
         (load.CompilerLoadDependencyCatalogStatus.TrustedCode loaded)]

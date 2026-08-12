@@ -75232,8 +75232,26 @@
               [_ 0])]
           [(reg.CompilerRegMaybeLocation.No) 0])))))
 
+;; The plan is read STANDALONE: this tier runs the allocator on one IR function
+;; from inside the optimizer, and the backend of this compile has not run yet.
+;; The allocator's program maps -- aggregate group word counts, their SSE class
+;; masks, and the private-memory C call names -- are facts about the IMAGE the
+;; backend is emitting, installed from its program index and owned by that
+;; image's arena. A standalone plan has no image, so those queries must answer
+;; the way they answer in a fresh process: missing.
+;;
+;; That is not merely tidy. `compile --batch` reuses one process across entries,
+;; so on the second entry onward those globals still name the PREVIOUS entry's
+;; arena, which has been torn down -- and this tier is the first reader in the
+;; compile that reaches them, arriving before the backend re-installs. Reading
+;; them there dereferences freed storage: it segfaulted the build-invariance
+;; corpus on generated_hashmap_global_mutation, the third entry of its first
+;; opt2 chunk, inside compiler-reg-type-register-group?. Suppressing the maps
+;; for the duration of the measurement gives every entry the answers the first
+;; entry already gets, so the verdict stops depending on batch position as well.
 (define (opt-inline-checked-alloc-cost [func : ir.CompilerIrFunction]) : i64
   (let
+    [_suppress-image-maps : unit (reg.compiler-reg-suppress-program-maps! true)]
     [plan : reg.CompilerRegPlan (reg.compiler-reg-plan-function-scalar func)]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-plan-assignments plan)]
@@ -75242,16 +75260,19 @@
     [vars : i64
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
-    (+
-      (*
-        2
-        (opt-inline-checked-csr-count-from
-          assignments
-          0
-          (cabi.compiler-abi-callee-saved-gp-register-count
-            (cabi.CompilerRegTargetAbi.Linux))
-          0))
-      (opt-inline-checked-spill-cost-from assignments weights 0 vars 0))))
+    [cost : i64
+      (+
+        (*
+          2
+          (opt-inline-checked-csr-count-from
+            assignments
+            0
+            (cabi.compiler-abi-callee-saved-gp-register-count
+              (cabi.CompilerRegTargetAbi.Linux))
+            0))
+        (opt-inline-checked-spill-cost-from assignments weights 0 vars 0))]
+    [_restore-image-maps : unit (reg.compiler-reg-suppress-program-maps! false)]
+    cost))
 
 ;; `offset` and `entry-weight` place the body: `offset` is the loop depth its
 ;; instructions would sit at, and `entry-weight` is how often the body is
@@ -77838,11 +77859,26 @@
             (ir.compiler-ir-function-seq-ref seq 0)
             fallback)])]))
 
-;; Same sequence as the span-free entry. Re-walking is safe on the spans side
-;; because a spans value is (slots, len) by value: every round's walk starts
-;; from the SAME `out-spans` value the scan walk started from, so it appends
-;; over the previous round's entries rather than after them, and the value this
-;; entry returns is the one belonging to the walk whose state survived.
+;; Same sequence as the span-free entry. Re-walking is safe on the spans side,
+;; but not for the reason the shape first suggests, so the argument is written
+;; out here.
+;;
+;; A spans value is (slots, len) by value, and every round's walk starts from
+;; the SAME `out-spans` value. Rounds therefore write their entries over each
+;; other's slots rather than after them, and the survivor's `len` can end up
+;; covering slots the LAST round wrote. What makes that harmless is that the
+;; instruction table is a KEY->span map, not a positional record, and the round
+;; ordering makes the last writer's key set a SUPERSET of the survivor's: a
+;; round rebuilds the accepted sites and adds at most the one armed target, so
+;; every key the survivor owns is also written by the last round, carrying the
+;; same span for the same instruction. A lookup of a survivor key therefore
+;; finds the survivor's span whichever round physically wrote the slot.
+;;
+;; That superset property is the invariant to preserve. A future round that can
+;; REMOVE an accepted site, or a walk that renumbers the caller's own values so
+;; the same instruction changes key between rounds, would break it -- and then
+;; the survivor would have to be rebuilt by a final disarmed walk rather than
+;; read back out of shared slots.
 (define (opt-inline-checked-span-rounds
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]

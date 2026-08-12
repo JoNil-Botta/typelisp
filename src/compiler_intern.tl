@@ -1082,9 +1082,10 @@
   (persistent-arena-floor-mark (__tl_dyn-array i64))
   (structural-table-cell (__tl_dyn-array InternStructuralTable)))
 
-;; An immutable source-name lookup capability. The arrays are owned by one
-;; intern state; the cells let resolution reject a capability after that state
-;; is reset without consulting whichever compatibility table is active.
+;; An immutable compile-intern capability. Source lookup and structural-key
+;; ownership share one reset generation and one-word handle; the cells let
+;; consumers reject stale identities without consulting whichever compatibility
+;; table is active.
 (defstruct InternSourceNameSession
   (table-id-cell (__tl_dyn-array i64))
   (reset-generation-cell (__tl_dyn-array i64))
@@ -1092,9 +1093,15 @@
   (map-id-slots (__tl_dyn-array InternSlotId))
   (map-hash-slots (__tl_dyn-array i64))
   (map-ready-cell (__tl_dyn-array bool))
+  ;; The source-name boundary is also the compile job's immutable structural
+  ;; capability. These owner cells let later phases canonicalize and validate
+  ;; structural keys without installing whichever table is active globally.
+  (persistent-arena-cell (__tl_dyn-array i64))
+  (structural-table-cell (__tl_dyn-array InternStructuralTable))
   (table-id i64)
   (reset-generation i64)
-  (source-count i64))
+  (source-count i64)
+  (structural-owner i64))
 
 (defstruct InternSourceNameSessionHandle
   (address i64))
@@ -3043,31 +3050,17 @@
     state.map-id-slots
     state.map-hash-slots
     state.map-ready
+    state.persistent-arena
+    state.structural-table-cell
     (intern-compat-state-table-id state)
     (intern-compat-state-generation state)
-    (intern-compat-state-pool-len state)))
+    (intern-compat-state-pool-len state)
+    (__tl-project-field (array-ref state.structural-table-cell 0) owner)))
 
 ;; Compatibility adapter for standalone compiler APIs. Production driver jobs
 ;; pass `intern-source-name-session-from-state` explicitly.
 (define (intern-source-name-session-capture-active) : InternSourceNameSession
-  (let
-    [table-id-cell : (__tl_dyn-array i64) (make-array i64 1)]
-    [generation-cell : (__tl_dyn-array i64) (make-array i64 1)]
-    [map-ready-cell : (__tl_dyn-array bool) (make-array bool 1)]
-    (begin
-      (set! (array-ref table-id-cell 0) (intern-active-table-id))
-      (set! (array-ref generation-cell 0) intern-reset-generation)
-      (set! (array-ref map-ready-cell 0) intern-map-ready)
-      (InternSourceNameSession
-        table-id-cell
-        generation-cell
-        (intern-global-shared-view intern-pool-slots)
-        (intern-global-shared-view intern-map-id-slots)
-        (intern-global-shared-view intern-map-hash-slots)
-        map-ready-cell
-        (intern-active-table-id)
-        intern-reset-generation
-        intern-pool-count))))
+  (intern-source-name-session-from-state (intern-compat-state-capture-active)))
 
 (define (intern-source-name-session-handle [session : InternSourceNameSession]) : InternSourceNameSessionHandle
   (let
@@ -3113,7 +3106,7 @@
       (int->ptr (cast handle.address : u64) : (Ptr InternSourceNameSession)))))
 
 ;; Hot provenance checks need only these scalar identity fields. Reading them
-;; through focused accessors avoids copying the full session's six array views.
+;; through focused accessors avoids copying the full combined session.
 (define (intern-source-name-session-handle-table-id
   [handle : InternSourceNameSessionHandle]) : i64
   (unsafe

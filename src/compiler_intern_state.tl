@@ -11,6 +11,216 @@
 (defmacro (intern-state-structural-key-raw [key : Expr]) : i64
   `(__tl-project-field-name ,key "value"))
 
+;; Nominal one-word structural view of the compile-intern session. Its address
+;; points at compiler_intern's combined source-name/structural owner record.
+(defstruct InternStructuralSessionHandle
+  (address i64))
+
+(define (intern-structural-session-handle-from-source-names
+  [session : ci.InternSourceNameSessionHandle]) : InternStructuralSessionHandle
+  (InternStructuralSessionHandle session.address))
+
+(define (intern-structural-session-handle-from-state
+  [state : ci.InternCompatState]) : InternStructuralSessionHandle
+  (let
+    [session : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-handle-from-state state)]
+    (intern-structural-session-handle-from-source-names session)))
+
+;; Serial/test compatibility adapter. Production compile jobs derive their
+;; capability from the explicit InternCompatState passed at the driver edge.
+(define (intern-structural-session-capture-active-handle) : InternStructuralSessionHandle
+  (let
+    [session : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-capture-active-handle)]
+    (intern-structural-session-handle-from-source-names session)))
+
+(define (intern-structural-session-handle-session
+  [handle : InternStructuralSessionHandle]) : ci.InternSourceNameSession
+  (ci.intern-source-name-session-handle-session
+    (ci.InternSourceNameSessionHandle handle.address)))
+
+(define (intern-structural-session-valid?
+  [handle : InternStructuralSessionHandle]) : bool
+  (if (<= handle.address 0)
+    false
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      (if (not (= (array-ref session.table-id-cell 0) session.table-id))
+        false
+        (if (not
+          (=
+            (array-ref session.reset-generation-cell 0)
+            session.reset-generation))
+          false
+          (=
+            (__tl-project-field
+              (array-ref session.structural-table-cell 0)
+              owner)
+            session.structural-owner))))))
+
+(define (intern-structural-session-handle-owned-by-state?
+  [handle : InternStructuralSessionHandle]
+  [state : ci.InternCompatState]) : bool
+  (if (not (intern-structural-session-valid? handle))
+    false
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      (and
+        (= session.table-id (ci.intern-compat-state-table-id state))
+        (= session.reset-generation (ci.intern-compat-state-generation state))
+        (=
+          session.structural-owner
+          (__tl-project-field (array-ref state.structural-table-cell 0) owner))))))
+
+(define (intern-structural-session-same-owner?
+  [left : InternStructuralSessionHandle]
+  [right : InternStructuralSessionHandle]) : bool
+  (if (or
+    (not (intern-structural-session-valid? left))
+    (not (intern-structural-session-valid? right)))
+    false
+    (let
+      [left-session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session left)]
+      [right-session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session right)]
+      (and
+        (= left-session.table-id right-session.table-id)
+        (= left-session.reset-generation right-session.reset-generation)
+        (= left-session.structural-owner right-session.structural-owner)))))
+
+(define (intern-structural-session-key
+  [handle : InternStructuralSessionHandle]
+  [kind : i64]
+  [left-id : i64]
+  [middle-id : i64]
+  [right-id : i64]) : InternStructuralKey
+  ;; #6468 owns widening the raw handle beyond the current two non-overlapping
+  ;; kind lanes. Keep this capability honest until that representation lands.
+  (if (or
+    (not (intern-structural-session-valid? handle))
+    (and
+      (not (= kind (ci.intern-structural-kind-pair)))
+      (not (= kind (ci.intern-structural-kind-triple)))))
+    (ci.tl_oob_abort)
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      [raw : i64
+        (ci.intern-structural-table-intern
+          session.structural-table-cell
+          (array-ref session.persistent-arena-cell 0)
+          kind
+          left-id
+          middle-id
+          right-id)]
+      (InternStructuralKey raw))))
+
+(define (intern-structural-session-composite-pair-key
+  [handle : InternStructuralSessionHandle]
+  [left-id : i64]
+  [right-id : i64]) : InternStructuralKey
+  (intern-structural-session-key
+    handle
+    (ci.intern-structural-kind-pair)
+    left-id
+    0
+    right-id))
+
+(define (intern-structural-session-composite-triple-key
+  [handle : InternStructuralSessionHandle]
+  [left-id : i64]
+  [middle-id : i64]
+  [right-id : i64]) : InternStructuralKey
+  (intern-structural-session-key
+    handle
+    (ci.intern-structural-kind-triple)
+    left-id
+    middle-id
+    right-id))
+
+(define (intern-structural-session-key-owned?
+  [handle : InternStructuralSessionHandle]
+  [key : InternStructuralKey]) : bool
+  (if (not (intern-structural-session-valid? handle))
+    false
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      [table : ci.InternStructuralTable
+        (array-ref session.structural-table-cell 0)]
+      [raw : i64 (intern-state-structural-key-raw key)]
+      [encoded-index : i64 (bit-and raw (ci.intern-structural-key-index-mask))]
+      (and
+        (>= raw (ci.intern-structural-key-base))
+        (> encoded-index 0)
+        (=
+          (/
+            (- raw (ci.intern-structural-key-base))
+            (ci.intern-structural-key-owner-stride))
+          session.structural-owner)
+        (<= encoded-index table.len)))))
+
+(define (intern-structural-session-key-index [key : InternStructuralKey]) : i64
+  (-
+    (bit-and
+      (intern-state-structural-key-raw key)
+      (ci.intern-structural-key-index-mask))
+    1))
+
+(define (intern-structural-session-key-kind
+  [handle : InternStructuralSessionHandle]
+  [key : InternStructuralKey]) : i64
+  (if (intern-structural-session-key-owned? handle key)
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      (cast
+        (array-ref
+          (__tl-project-field (array-ref session.structural-table-cell 0) kinds)
+          (intern-structural-session-key-index key))
+        : i64))
+    (ci.tl_oob_abort)))
+
+(define (intern-structural-session-key-left
+  [handle : InternStructuralSessionHandle]
+  [key : InternStructuralKey]) : i64
+  (if (intern-structural-session-key-owned? handle key)
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      (array-ref
+        (__tl-project-field (array-ref session.structural-table-cell 0) lefts)
+        (intern-structural-session-key-index key)))
+    (ci.tl_oob_abort)))
+
+(define (intern-structural-session-key-middle
+  [handle : InternStructuralSessionHandle]
+  [key : InternStructuralKey]) : i64
+  (if (intern-structural-session-key-owned? handle key)
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      (array-ref
+        (__tl-project-field (array-ref session.structural-table-cell 0) middles)
+        (intern-structural-session-key-index key)))
+    (ci.tl_oob_abort)))
+
+(define (intern-structural-session-key-right
+  [handle : InternStructuralSessionHandle]
+  [key : InternStructuralKey]) : i64
+  (if (intern-structural-session-key-owned? handle key)
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      (array-ref
+        (__tl-project-field (array-ref session.structural-table-cell 0) rights)
+        (intern-structural-session-key-index key)))
+    (ci.tl_oob_abort)))
+
 (defstruct InternState
   (compat ci.InternCompatState))
 
@@ -196,6 +406,8 @@
 
 (define (intern-state-isolation-tests-ok?) : bool
   (let
+    [installed-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
     [state-a : InternState (intern-state-new)]
     [state-b : InternState (intern-state-new)]
     [a-alpha : i64 (intern-state-intern state-a "alpha")]
@@ -212,8 +424,18 @@
       (intern-state-composite-pair-key state-a 131073 262147)]
     [b-pair : InternStructuralKey
       (intern-state-composite-pair-key state-b 131073 262147)]
+    [session-a : InternStructuralSessionHandle
+      (intern-structural-session-handle-from-state state-a.compat)]
+    [session-b : InternStructuralSessionHandle
+      (intern-structural-session-handle-from-state state-b.compat)]
     [ok : bool true]
     (begin
+      (unless
+        (= (comptime (size-of (type InternStructuralKey))) 8)
+        (set! ok false))
+      (unless
+        (= (comptime (size-of (type InternStructuralSessionHandle))) 8)
+        (set! ok false))
       (unless (= a-alpha 0) (set! ok false))
       (unless (= b-bravo 0) (set! ok false))
       (unless (= b-alpha 1) (set! ok false))
@@ -243,26 +465,70 @@
       (unless
         (= (intern-state-structural-key-right state-a a-pair) 262147)
         (set! ok false))
+      ;; Make B the compatibility-global owner, then grow and decode A only
+      ;; through its explicit structural session. Equal record indexes and
+      ;; components in the two states must remain owner-distinct.
+      (ci.intern-compat-state-install! state-b.compat)
+      (let
+        [session-a-pair : InternStructuralKey
+          (intern-structural-session-composite-pair-key session-a 131073 262147)]
+        [session-b-pair : InternStructuralKey
+          (intern-structural-session-composite-pair-key session-b 131073 262147)]
+        (begin
+          (unless
+            (=
+              (intern-state-structural-key-raw session-a-pair)
+              (intern-state-structural-key-raw a-pair))
+            (set! ok false))
+          (unless
+            (=
+              (intern-state-structural-key-raw session-b-pair)
+              (intern-state-structural-key-raw b-pair))
+            (set! ok false))
+          (unless
+            (not
+              (=
+                (intern-state-structural-key-raw session-a-pair)
+                (intern-state-structural-key-raw session-b-pair)))
+            (set! ok false))
+          (unless
+            (intern-structural-session-key-owned? session-a session-a-pair)
+            (set! ok false))
+          (unless
+            (not
+              (intern-structural-session-key-owned? session-b session-a-pair))
+            (set! ok false))
+          (unless
+            (=
+              (intern-structural-session-key-kind session-a session-a-pair)
+              (ci.intern-structural-kind-pair))
+            (set! ok false))))
       (let
         [index : i64 0]
         (while (< index 700)
           (let
             [key : InternStructuralKey
-              (intern-state-composite-triple-key
-                state-a
+              (intern-structural-session-composite-triple-key
+                session-a
                 (+ 131073 index)
                 (+ 262147 index)
                 (+ 524309 index))]
             (begin
               (unless
-                (intern-state-structural-key-owned? state-a key)
+                (intern-structural-session-key-owned? session-a key)
                 (set! ok false))
               (unless
                 (=
-                  (intern-state-structural-key-middle state-a key)
+                  (intern-structural-session-key-middle session-a key)
                   (+ 262147 index))
                 (set! ok false))
               (set! index (+ index 1))))))
+      (unless
+        (=
+          (ci.intern-active-table-id)
+          (ci.intern-compat-state-table-id state-b.compat))
+        (set! ok false))
+      (ci.intern-compat-state-install! installed-state)
       (unless
         (= (intern-state-structural-record-count state-a) 701)
         (set! ok false))
@@ -279,6 +545,9 @@
           "name")
         (set! ok false))
       (intern-state-reset! state-a)
+      (unless
+        (not (intern-structural-session-valid? session-a))
+        (set! ok false))
       (unless
         (not (intern-state-structural-key-owned? state-a a-pair))
         (set! ok false))
@@ -305,6 +574,9 @@
         [(ci.InternLookupFound found) (unless (= found b-mark) (set! ok false))]
         [(ci.InternLookupMissing) (set! ok false)])
       (intern-state-reset-to! state-b b-mark)
+      (unless
+        (not (intern-structural-session-valid? session-b))
+        (set! ok false))
       (unless (= (intern-state-pool-len state-b) b-mark) (set! ok false))
       (match (intern-state-lookup state-b "drop")
         [(ci.InternLookupMissing) unit]

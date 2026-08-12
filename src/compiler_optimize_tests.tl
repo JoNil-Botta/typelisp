@@ -43935,6 +43935,126 @@
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstrList.Nil))))))))
 
+;; REGION-STABLE CELL, granular `Store` kill: a write to a DIFFERENT named cell
+;; cannot reach this one, so the chain root re-derivation folds instead of
+;; re-walking. This is the shape the descriptor chain takes between two writes
+;; to unrelated global scalars (a length or a deleted counter).
+(define (opt-load-cse-global-cell-other-store-instrs
+  [global : i64]
+  [other : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      1
+      (compiler_ir_types.CompilerIrValue.Global global)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        2
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          other
+          (compiler_ir_types.CompilerIrValue.I64 9)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            3
+            (compiler_ir_types.CompilerIrValue.Global global)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              4
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; A named-cell write leaves DESCRIPTOR HEADER words alone: the cell holds the
+;; handle, the header lives in the object the handle points at. Var 0 is a
+;; header-typed param (opt-load-cse-run-with-array-param), so the len re-load
+;; folds across the `Store`.
+(define (opt-load-cse-global-cell-header-store-instrs [global : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          global
+          (compiler_ir_types.CompilerIrValue.I64 9)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            4
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              5
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; An ELEMENT store writes data-buffer payload, which no named cell overlaps, so
+;; the cell word survives it. Var 0 is a header-typed param whose data pointer
+;; roots the element address; the cell entry belongs to an unrelated global.
+(define (opt-load-cse-global-cell-element-store-instrs [global : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Global global)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            5
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Gep
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.CompilerIrValue.I64 2)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.StorePtr
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  7
+                  (compiler_ir_types.CompilerIrValue.Global global)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Load
+                    8
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+
 ;; The two spellings are DIFFERENT addresses -- `Global g` is [g]+8, `GlobalAddr
 ;; g` is &g+8 -- so one offset off one symbol must not fold across them.
 (define (opt-load-cse-global-base-form-mismatch-instrs [global : i64]) : compiler_ir_types.CompilerIrInstrList
@@ -44585,6 +44705,18 @@
     [global-base-form-mismatch : compiler_ir_types.CompilerIrInstrList
       (opt-load-cse-run
         (opt-load-cse-global-base-form-mismatch-instrs global-tokens))]
+    [global-offsets : i64 (opt-test-symbol "gvn_offsets")]
+    [global-cell-other-store : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run
+        (opt-load-cse-global-cell-other-store-instrs
+          global-tokens
+          global-offsets))]
+    [global-cell-header-store : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-array-param
+        (opt-load-cse-global-cell-header-store-instrs global-tokens))]
+    [global-cell-element-store : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-array-param
+        (opt-load-cse-global-cell-element-store-instrs global-tokens))]
     [global-store : bool
       (opt-load-cse-barrier-blocked?
         (compiler_ir_types.CompilerIrInstr.Store
@@ -44931,6 +45063,41 @@
       [(not (= (opt-count-mov-dst-instrs global-value-base-store 5) 0)) 95]
       [(not (= (opt-count-load-instrs global-base-form-mismatch) 2)) 96]
       [(not (= (opt-count-mov-dst-instrs global-base-form-mismatch 4) 0)) 97]
+      ;; Region-stable descriptor chain roots. A named-cell `Store` kills only
+      ;; the cell it names: a write to an unrelated global folds the chain-root
+      ;; re-derivation, a descriptor header word survives one outright, and an
+      ;; element store (data-buffer payload) leaves every cell word alone. The
+      ;; same-cell case stays refused above (global-value-base-store, code 93).
+      [(not (= (opt-count-load-instrs global-cell-other-store) 1)) 98]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              global-cell-other-store
+              4
+              2
+              (compiler_ast_types.AstType.I64))
+            1))
+        99]
+      [(not (= (opt-count-load-instrs global-cell-header-store) 1)) 100]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              global-cell-header-store
+              5
+              3
+              (compiler_ast_types.AstType.I64))
+            1))
+        101]
+      [(not (= (opt-count-load-instrs global-cell-element-store) 2)) 102]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              global-cell-element-store
+              8
+              3
+              (compiler_ast_types.AstType.I64))
+            1))
+        103]
       [else 44])))
 
 ;; --- constant-trip full unroll + byte-compose load combining fixtures -----------

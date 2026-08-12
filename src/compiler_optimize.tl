@@ -19472,6 +19472,22 @@
         (opt-licm-store-state-add-summary
           provenance
           (opt-licm-store-summary-header-or-unknown-store))]
+      ;; A named global-cell write is the one write whose target is a SYMBOL
+      ;; rather than a pointer, so it can be classified by name instead of by
+      ;; may-alias. A cell holds a descriptor HANDLE (or a scalar); the two
+      ;; header words a handle points at live in the object, never in the cell,
+      ;; so `Store G` cannot invalidate a descriptor data/length load -- the
+      ;; same allocation-layer argument the load table's granular kill makes
+      ;; (see opt-load-entry-survives-global-cell-store?). It therefore
+      ;; contributes the element-only class, which leaves
+      ;; opt-licm-store-summary-header-load-safe? true and the descriptor-header
+      ;; hoist available, while the global-write flag is raised EXPLICITLY so
+      ;; `Global` operand promotion still refuses: that pass reasons about cell
+      ;; CONTENTS, which is exactly what this instruction changes.
+      [(ir.CompilerIrInstr.Store _ _ _)
+        (opt-licm-store-state-add-summary-keeping-globals
+          (opt-licm-store-state-mark-global-write provenance)
+          (opt-licm-store-summary-element-only-store))]
       [_
         (opt-licm-store-state-add-summary
           provenance
@@ -86717,9 +86733,21 @@
   (match class
     [(OptLoadStoreElement)
       ;; Element stores write data-buffer memory; only descriptor-field
-      ;; entries (header-typed base) are provably outside every buffer.
+      ;; entries (header-typed base) and named global CELLS are provably
+      ;; outside every buffer.
+      ;;
+      ;; The global-cell arm is the same allocation-layer argument the header
+      ;; arm makes, one level up the descriptor chain: an element address is
+      ;; derived from a data pointer LOADED out of a descriptor slot, so it
+      ;; addresses that allocation's payload, while a `GlobalField` key
+      ;; addresses a named cell in the static data segment, which no payload
+      ;; allocation overlaps. An inline global array cannot produce the key
+      ;; either -- a variable-offset gep off a global drops its global-base
+      ;; binding (opt-load-global-bases-step), so only constant-offset cell
+      ;; words are ever keyed this way.
       (match (opt-load-entry-key entry)
         [(OptLoadKey.Field _ _ _ header?) header?]
+        [(OptLoadKey.GlobalField _ _ _ _) true]
         [_ false])]
     [(OptLoadStoreField sbase slo swidth sheader?)
       (match (opt-load-entry-key entry)
@@ -86774,6 +86802,47 @@
       (opt-load-key-alias-root facts (opt-load-entry-key entry)))
     (opt-load-entry-precedes-fresh-alloc? store-root entry)
     (opt-load-entry-survives-store-location? type-segment-bases class entry)))
+
+;; `CompilerIrInstr.Store G, v` is the one write form whose target is a SYMBOL
+;; instead of a pointer: it writes the cell named G and nothing else, so its
+;; kill set can be spelled by name rather than emptying the table. An entry
+;; survives when its location is provably not cell G:
+;;
+;;   * `GlobalField` on a DIFFERENT global -- distinct cells never overlap, and
+;;     for a descriptor-valued cell the key names the object the cell POINTS AT,
+;;     which `Store G` (a cell write) leaves untouched either way;
+;;   * a header-typed `Field` -- a descriptor header word lives in the heap
+;;     object a cell points at, never in the cell itself (a global of array or
+;;     string type holds the handle, not the two header words), the same
+;;     allocation-layer argument the element rule above makes;
+;;   * an element-typed `Raw` -- data-buffer payload, never a cell.
+;;
+;; Everything else is dropped. Same-global cell words are the store's own
+;; location; generic fields, scaled fields and unclassified `Raw` addresses may
+;; hold the cell's own address, because `(&mut G)` on a value-typed global
+;; lowers to a `Global G` operand, which the program's address-taken set (built
+;; from `GlobalAddr` operands) does not record.
+(define (opt-load-entry-survives-global-cell-store?
+  [global : i64]
+  [entry : OptLoadEntry]) : bool
+  (match (opt-load-entry-key entry)
+    [(OptLoadKey.GlobalField entry-global _ _ _) (not (= entry-global global))]
+    [(OptLoadKey.Field _ _ _ header?) header?]
+    [(OptLoadKey.ScaledField _ _ _ _) false]
+    [(OptLoadKey.Raw _ _ element?) element?]))
+
+(define (opt-load-table-filter-global-cell-store
+  [table : OptLoadTable]
+  [global : i64]) : OptLoadTable
+  (match table
+    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
+    [(OptLoadTable.Cons entry rest)
+      (let
+        [tail : OptLoadTable
+          (opt-load-table-filter-global-cell-store (__tl-box-place rest) global)]
+        (if (opt-load-entry-survives-global-cell-store? global entry)
+          (OptLoadTable.Cons entry (box tail))
+          tail))]))
 
 (define (opt-load-table-filter-store
   [type-segment-bases : i64]
@@ -87253,6 +87322,47 @@
             instr
             next-epoch)
           (OptLoadTable.Nil)
+          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
+          table-cap
+          next-epoch
+          (opt-load-global-bases-clear bases)
+          profile-state))]))
+
+;; A named global-cell write. Same transfer as the clear-for-memory arm above --
+;; the alias facts, the pointer kinds and the allocation counter all step
+;; identically, and the global bases still CLEAR, because a binding formed
+;; before the store names `contents-of-G + off`, which this instruction is
+;; exactly what changes. Only the load table is treated granularly: the write
+;; lands on cell G alone, so entries proven to live elsewhere are kept (see
+;; opt-load-entry-survives-global-cell-store?). The cleared base map means a
+;; later re-derivation rebuilds its own `GlobalField` key from a fresh
+;; `Global`/`GlobalAddr` operand, so a kept entry is only ever consulted under a
+;; key the walk re-proved, exactly as before this arm existed.
+(define (opt-load-cse-state-global-store
+  [type-segment-bases : i64]
+  [hs : OptLoadHeaderSet]
+  [state : OptLoadCseState]
+  [global : i64]
+  [instr : ir.CompilerIrInstr]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
+      (let
+        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        (OptLoadCseState.State
+          (opt-load-alias-update-facts
+            type-segment-bases
+            facts
+            kinds
+            instr
+            next-epoch)
+          (opt-load-table-filter-global-cell-store table global)
           (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
           table-cap
           next-epoch
@@ -87771,6 +87881,15 @@
           args
           instr)
         instr)]
+    [(ir.CompilerIrInstr.Store name _ _)
+      (OptLoadCseResult.Result
+        (opt-load-cse-state-global-store
+          type-segment-bases
+          hs
+          state
+          (ir.compiler-ir-symbol-id name)
+          instr)
+        instr)]
     [_
       (if (opt-alias-instr-clears-all? instr)
         (OptLoadCseResult.Result
@@ -88024,6 +88143,22 @@
             (if (and header? (opt-gvn-stable-var? sources base))
               (OptLoadTable.Cons entry (box tail))
               tail)]
+          ;; A named cell word is NOT carried, even though a loop-safe body (no
+          ;; call, no clear-all, no `Store G`, element stores only) provably
+          ;; leaves every cell alone, so the key would still name the same
+          ;; location holding the same value. Measured: carrying it is a
+          ;; register-pressure loss, because the carried handle drags the
+          ;; descriptor words derived from it into the same loop-spanning live
+          ;; range. One cachegrind run each, against this tier alone --
+          ;; gvn_table 1,173,199,923 -> 1,169,328,223 (-3,871,700, the post-loop
+          ;; re-derivation in gvn-facts-remove/-insert folding onto the
+          ;; pre-loop walk) but peephole_lines 668,397,310 -> 670,418,364
+          ;; (+2,021,054, +0.30%), all of it in pl_parse_line: its `pl-text`
+          ;; cell, data pointer and length stop being re-derived per scan and
+          ;; start being spilled and reloaded around the loop instead
+          ;; (`movq %r9, 160(%rsp)` / `movq 152(%rsp), %rsi` appear where three
+          ;; rip-relative loads used to be). Same shape as the call-arm carry
+          ;; refusal above: the copy was never the cost, the live range is.
           [_ tail]))]))
 
 ;; Find the (single, SSA) instruction defining `var` anywhere in the function.

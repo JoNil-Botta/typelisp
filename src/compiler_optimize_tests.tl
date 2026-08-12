@@ -10768,6 +10768,177 @@
       [(not (= (opt-rule-a-count-compares after-redef) 2)) 8]
       [else 42])))
 
+;; --- rule (phi): a compare every joining edge already decided ---------------
+;;
+;; One rotated-loop fixture in three shapes, driven through the same pass entry
+;; the rule-a fixtures use. `mode` selects:
+;;
+;;   0 ADMITTED. The entry test enters the landing pad on its TRUE edge and the
+;;     latch re-tests the same predicate of the values it carries, so both edges
+;;     into the header decide `lo < hi` the same way and the header's own copy
+;;     folds to a constant. The landing pad is the one-hop shape: it does not
+;;     branch itself, so its own sole entry edge is what answers.
+;;   1 REFUSED, edges disagree. The only change is that the entry test enters
+;;     the landing pad on its FALSE edge: that edge now proves `lo >= hi` while
+;;     the latch still proves `lo < hi`, so the two verdicts conflict.
+;;   2 REFUSED, one edge decides nothing. The only change is the latch testing
+;;     the stepped value against a DIFFERENT bound.
+;;
+;; vars: 0 lo (param), 1 hi (param), 8 other (param), 2 entry test, 3 header
+;; phi, 5 stepped, 6 header test (the fold's target), 7 latch test.
+(define (opt-phi-carried-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "lo"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "hi"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "other"
+          (compiler_ast_types.AstType.I64)
+          8)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+(define (opt-phi-carried-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          2
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label
+              (if (= mode 1)
+                "exit"
+                "land"))
+            (compiler_ir_types.compiler-ir-label
+              (if (= mode 1)
+                "land"
+                "exit")))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "land")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "header")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              3
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "land")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                6
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  7
+                  (compiler_ir_types.CompilerIrBinOp.Lt)
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.CompilerIrValue.Var
+                    (if (= mode 2)
+                      8
+                      1))
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (compiler_ir_types.compiler-ir-label "header")
+                    (compiler_ir_types.compiler-ir-label "exit"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 1)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-phi-carried-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-bounds-dom-blocks-with-context
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    (opt-phi-carried-params)
+    12
+    blocks))
+
+(define (compiler-optimize-dom-cmp-phi-carried-self-test) : i64
+  (let
+    [admitted : compiler_ir_types.CompilerIrBlockList
+      (opt-phi-carried-blocks 0)]
+    [after : compiler_ir_types.CompilerIrBlockList
+      (opt-phi-carried-run admitted)]
+    ;; IDEMPOTENCE: the rewritten function is a fixed point of the same pass.
+    [again : compiler_ir_types.CompilerIrBlockList (opt-phi-carried-run after)]
+    [disagree : compiler_ir_types.CompilerIrBlockList
+      (opt-phi-carried-blocks 1)]
+    [after-disagree : compiler_ir_types.CompilerIrBlockList
+      (opt-phi-carried-run disagree)]
+    [undecided : compiler_ir_types.CompilerIrBlockList
+      (opt-phi-carried-blocks 2)]
+    [after-undecided : compiler_ir_types.CompilerIrBlockList
+      (opt-phi-carried-run undecided)]
+    (cond
+      ;; four BinOps go in: the entry test, the header test, the step, the
+      ;; latch test.
+      [(not (= (opt-rule-a-count-compares admitted) 4)) 1]
+      ;; ADMITTED: the header test became a Mov; nothing else moved.
+      [(not (= (opt-rule-a-count-compares after) 3)) 2]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count after) 5)) 3]
+      [(not (compiler_optimize.opt-cfg-successor-targets-known? after)) 4]
+      [(not (= (opt-rule-a-count-compares again) 3)) 5]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count again) 5)) 6]
+      ;; REFUSED (edges disagree): all four survive.
+      [(not (= (opt-rule-a-count-compares disagree) 4)) 7]
+      [(not (= (opt-rule-a-count-compares after-disagree) 4)) 8]
+      ;; REFUSED (one edge decides nothing): all four survive.
+      [(not (= (opt-rule-a-count-compares undecided) 4)) 9]
+      [(not (= (opt-rule-a-count-compares after-undecided) 4)) 10]
+      [else 42])))
+
 (define (compiler-optimize-bounds-self-test) : i64
   (let
     [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]

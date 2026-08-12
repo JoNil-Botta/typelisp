@@ -2196,8 +2196,18 @@
   13)
 (define compiler-backend-function-bool-gep-fold-drift : i64
   14)
-(define compiler-backend-function-bool-count : i64
+
+;; A frame reference the FPO push prologue does NOT absorb. The callee-save
+;; slot region is spelled through compiler-backend-callee-save-slot, and in FPO
+;; push mode every line that names it is deleted (the mov save/restore pairs) or
+;; rewritten (the pop-run leaq) by the rsp-rebase pass, so a function whose only
+;; frame references are those slots ends up with no frame reference at all.
+;; This flag is the one the slot region's liveness is decided by; bit 9 stays
+;; the "any frame reference at all" fact its own readers were written for.
+(define compiler-backend-function-bool-nonsave-frame-slot-referenced : i64
   15)
+(define compiler-backend-function-bool-count : i64
+  16)
 (define compiler-backend-function-string-shrinkwrap-bare-label : i64
   0)
 (define compiler-backend-function-string-abort-site-path : i64
@@ -13082,10 +13092,15 @@
 ;; never correctness.
 (define (compiler-backend-frame-slot-referenced-reset!
   [function-state : CompilerBackendFunctionState]) : unit
-  (compiler-backend-function-state-set-bool!
-    function-state
-    compiler-backend-function-bool-frame-slot-referenced
-    false))
+  (begin
+    (compiler-backend-function-state-set-bool!
+      function-state
+      compiler-backend-function-bool-frame-slot-referenced
+      false)
+    (compiler-backend-function-state-set-bool!
+      function-state
+      compiler-backend-function-bool-nonsave-frame-slot-referenced
+      false)))
 
 ;; Window size shared by the state-owned retained operand render caches.
 ;; Var-ids/offsets outside this window fall back to rendering fresh.
@@ -13415,7 +13430,7 @@
   [vars : i64]
   [idx : i64]
   [backend-state : CompilerBackendState]) : String
-  (compiler-backend-frame-offset-with-backend-state
+  (compiler-backend-callee-save-frame-offset
     backend-state
     (- 0 (* 8 (+ vars (+ idx 1))))))
 
@@ -15650,6 +15665,10 @@
       (compiler-backend-state-function-state state)
       compiler-backend-function-bool-frame-slot-referenced
       true)
+    (compiler-backend-function-state-set-bool!
+      (compiler-backend-state-function-state state)
+      compiler-backend-function-bool-nonsave-frame-slot-referenced
+      true)
     (if (and (>= var-id 0) (< var-id compiler-backend-slot-cache-capacity))
       (begin
         (compiler-backend-state-slot-frame-cache-storage-ensure! state)
@@ -15681,6 +15700,48 @@
                 text)))))
       (str_cat.str-cat (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)"))))
 
+;; The rendering alone. Both wrappers below record the reference first; nothing
+;; else may call this, or the frame would be sized as if the slot were dead.
+(define (compiler-backend-frame-offset-render
+  [state : CompilerBackendState]
+  [offset : i64]) : String
+  (let
+    [magnitude : i64 (- 0 offset)]
+    (if (and
+      (> magnitude 0)
+      (= (% magnitude 8) 0)
+      (<= magnitude (* 8 compiler-backend-slot-cache-capacity)))
+      (let
+        [idx : i64 (- (/ magnitude 8) 1)]
+        (begin
+          (compiler-backend-state-slot-frame-cache-storage-ensure! state)
+          (let
+            [data : CompilerBackendStateData
+              (compiler-backend-state-data state)]
+            [epoch : i64 data.slot-cache-epoch]
+            [epochs : (__tl_dyn-array i64) data.frame-offset-cache-epochs]
+            [values : (__tl_dyn-array String) data.frame-offset-cache-values]
+            (if (= (array-ref epochs idx) epoch)
+              (array-ref values idx)
+              (let
+                [previous : i64 (arena.tl_arena_current)]
+                [owner : i64
+                  (compiler-backend-state-lazy-table-arena-ensure! state)]
+                [_set-owner : unit
+                  (unsafe
+                    (arena.tl_arena_set owner))]
+                [text : String
+                  (str_cat.str-cat (string.int->string offset) "(%rbp)")]
+                (begin
+                  (compiler-backend-state-lazy-table-arena-finish!
+                    state
+                    previous
+                    owner)
+                  (set! (array-ref values idx) text)
+                  (set! (array-ref epochs idx) epoch)
+                  text))))))
+      (str_cat.str-cat (string.int->string offset) "(%rbp)"))))
+
 (define (compiler-backend-frame-offset-with-backend-state
   [state : CompilerBackendState]
   [offset : i64]) : String
@@ -15689,42 +15750,25 @@
       (compiler-backend-state-function-state state)
       compiler-backend-function-bool-frame-slot-referenced
       true)
-    (let
-      [magnitude : i64 (- 0 offset)]
-      (if (and
-        (> magnitude 0)
-        (= (% magnitude 8) 0)
-        (<= magnitude (* 8 compiler-backend-slot-cache-capacity)))
-        (let
-          [idx : i64 (- (/ magnitude 8) 1)]
-          (begin
-            (compiler-backend-state-slot-frame-cache-storage-ensure! state)
-            (let
-              [data : CompilerBackendStateData
-                (compiler-backend-state-data state)]
-              [epoch : i64 data.slot-cache-epoch]
-              [epochs : (__tl_dyn-array i64) data.frame-offset-cache-epochs]
-              [values : (__tl_dyn-array String) data.frame-offset-cache-values]
-              (if (= (array-ref epochs idx) epoch)
-                (array-ref values idx)
-                (let
-                  [previous : i64 (arena.tl_arena_current)]
-                  [owner : i64
-                    (compiler-backend-state-lazy-table-arena-ensure! state)]
-                  [_set-owner : unit
-                    (unsafe
-                      (arena.tl_arena_set owner))]
-                  [text : String
-                    (str_cat.str-cat (string.int->string offset) "(%rbp)")]
-                  (begin
-                    (compiler-backend-state-lazy-table-arena-finish!
-                      state
-                      previous
-                      owner)
-                    (set! (array-ref values idx) text)
-                    (set! (array-ref epochs idx) epoch)
-                    text))))))
-        (str_cat.str-cat (string.int->string offset) "(%rbp)")))))
+    (compiler-backend-function-state-set-bool!
+      (compiler-backend-state-function-state state)
+      compiler-backend-function-bool-nonsave-frame-slot-referenced
+      true)
+    (compiler-backend-frame-offset-render state offset)))
+
+;; A reference to the CALLEE-SAVE slot region. The FPO push prologue absorbs
+;; every such line (the rebase deletes the mov save/restore pairs and rewrites
+;; the pop-run leaq), so it does not by itself keep the slot region alive; it
+;; still counts as a frame reference for every reader of bit 9.
+(define (compiler-backend-callee-save-frame-offset
+  [state : CompilerBackendState]
+  [offset : i64]) : String
+  (begin
+    (compiler-backend-function-state-set-bool!
+      (compiler-backend-state-function-state state)
+      compiler-backend-function-bool-frame-slot-referenced
+      true)
+    (compiler-backend-frame-offset-render state offset)))
 
 (define (compiler-backend-state-immediate-render
   [state : CompilerBackendState]
@@ -61992,15 +62036,23 @@
                         (if tail
                           (set! ok false)
                           (begin
-                            (set!
-                              buf
-                              (compiler-backend-peephole-append-line
+                            ;; `addq $0` would point rsp where it already is:
+                            ;; with a dead slot region the pushed area starts at
+                            ;; the current rsp, so the pop run needs no rebase
+                            ;; line at all. (The rewrite already replaces a
+                            ;; flag-free `leaq` with a flag-setting `addq`, so
+                            ;; dropping the line cannot lose a live flag.)
+                            (if (= (+ sub-s delta) 0)
+                              unit
+                              (set!
                                 buf
-                                (str_cat.str-cat
-                                  "    addq $"
-                                  (string.int->string (+ sub-s delta))
-                                  ", %rsp")
-                                nl))
+                                (compiler-backend-peephole-append-line
+                                  buf
+                                  (str_cat.str-cat
+                                    "    addq $"
+                                    (string.int->string (+ sub-s delta))
+                                    ", %rsp")
+                                  nl)))
                             (set! tail true)
                             (set! delta (- 0 sub-s))))
                         (if (= csr-kind 3)
@@ -65907,10 +65959,63 @@
                                 (not
                                   (compiler-backend-blocks-have-call?
                                     emit-blocks-list))))]
+                          ;; GAP1 corollary: in PUSH mode the callee-save slot
+                          ;; region is never written -- the rebase deletes the
+                          ;; mov save/restore pairs and rewrites the pop-run
+                          ;; leaq, so the pushes carry those registers instead.
+                          ;; A function whose ONLY frame references were those
+                          ;; slots therefore names nothing in the frame at all,
+                          ;; and its slot region is as dead as a frameless
+                          ;; leaf's. The alignment the region used to supply is
+                          ;; not lost: `S = frame + (n odd ? 0 : 8)` still holds
+                          ;; the total displacement at `D % 16 == 8` for any
+                          ;; frame, so every call in the body stays aligned.
+                          ;; Every other frame consumer must be absent for the
+                          ;; region to be droppable outright: outgoing stack
+                          ;; args and the dynamic emergency/cycle-temp/const-
+                          ;; hoist reservations are %rsp- or bottom-of-frame
+                          ;; relative and are sized into `frame` separately, and
+                          ;; Win64 XMM callee slots are real frame words the
+                          ;; push prologue does not absorb.
+                          ;; This value is used ONLY on the FPO path: the
+                          ;; keep-rbp fallback below re-renders from
+                          ;; `post-prologue` with the full `frame`, where the
+                          ;; mov saves are still present and still need slots.
+                          [fpo-frame : i64
+                            (if (and
+                              fpo-attempt
+                              (> push-count 0)
+                              (not
+                                (compiler-backend-function-state-bool?
+                                  function-state
+                                  compiler-backend-function-bool-nonsave-frame-slot-referenced))
+                              (= outgoing-frame-space 0)
+                              (= dynamic-frame-extra 0)
+                              (=
+                                (compiler-backend-function-scratch-i64
+                                  function-state
+                                  compiler-backend-scratch-i64-const-hoist-frame-count)
+                                0)
+                              (not
+                                (compiler-backend-function-scratch-bool?
+                                  function-state
+                                  compiler-backend-scratch-bool-emergency-used))
+                              (=
+                                (compiler-backend-function-scratch-i64
+                                  function-state
+                                  compiler-backend-scratch-i64-cycle-temp-used-count)
+                                0)
+                              (<
+                                (compiler-backend-win64-xmm-callee-highest
+                                  assignments
+                                  program-index.backend-state)
+                                0))
+                              0
+                              frame)]
                           [rebased : String
                             (compiler-backend-rsp-rebase-full
                               post-prologue
-                              frame
+                              fpo-frame
                               fpo-attempt
                               push-regs
                               push-count
@@ -65976,7 +66081,7 @@
                                     (compiler-backend-emit-function-entry-fpo-windows
                                       backend-state
                                       entry-symbol
-                                      frame
+                                      fpo-frame
                                       assignments
                                       slot-vars
                                       push-regs
@@ -65985,13 +66090,13 @@
                                       (compiler-backend-emit-function-entry-fpo-push
                                         backend-state
                                         entry-symbol
-                                        frame
+                                        fpo-frame
                                         push-regs
                                         push-count)
                                       (compiler-backend-emit-function-entry-fpo
                                         backend-state
                                         entry-symbol
-                                        frame)))
+                                        fpo-frame)))
                                   (compiler-backend-emit-function-entry
                                     target
                                     entry-symbol

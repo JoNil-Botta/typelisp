@@ -37052,6 +37052,13 @@
                   (&mut builder)
                   (opt-bounds-dom-fold-compare
                     type-segment-bases
+                    doms
+                    cfg-index
+                    terms
+                    defs
+                    phi-defs
+                    sources
+                    block-id
                     cur-cmp-facts
                     copies
                     instr))])
@@ -37061,31 +37068,447 @@
         cur-facts
         cur-cmp-facts))))
 
+;; --- a compare every joining edge already decided ----------------------------
+;;
+;; The facts above flow DOWN the dominator tree, so a compare over a JOIN's phis
+;; sees nothing: no single edge into a join dominates it. Yet every edge may
+;; decide the same question of the values it carries, and then so is the phi's.
+;; A rotated loop leaves exactly that shape -- rotation copies the entry test
+;; into the latch, so both the preheader edge and the backedge prove the header's
+;; own guard -- and a top-tested loop nested directly under it (an inlined
+;; `while` whose first index is the enclosing test's operand) recomputes it once
+;; per outer trip:
+;;
+;;   header:  lo = phi [lo0, preheader], [lo1, latch]
+;;            hi = phi [hi0, preheader], [hi1, latch]
+;;   body:    t  = lt lo, hi                    ; <- decided, both ways
+;;   latch:   c  = lt lo1, hi1
+;;            branch c, header, exit            ; proves it of the latch inputs
+;;   (preheader is entered only from `branch (lt lo0, hi0), preheader, ...`,
+;;    which proves it of the preheader inputs)
+;;
+;; RULE. `op(a, b)` is decided when at least one operand is a Phi of one block H
+;; that dominates the compare, every operand that is a Phi of H is replaced on
+;; each edge by that edge's own phi input, and EVERY reachable predecessor edge
+;; of H decides the substituted compare the SAME way. An operand that is not a
+;; phi of H is carried unchanged: it is then only ever matched by SSA identity
+;; against an operand of the deciding branch, which is a use at that branch and
+;; so denotes the same runtime value there.
+;;
+;; The per-edge verdict is read through exactly the implication masks a
+;; dominating fact is read through (opt-dom-cmp-edge-fact + opt-dom-cmp-lookup),
+;; so no arithmetic, no range join, and no new spelling rule enters -- only the
+;; place the fact is read from is new. The substituted operands must be
+;; GVN-stable, the same condition the edge facts themselves already carry.
+;;
+;; WHY A PHI INPUT MAY USE ITS OWN EDGE'S FACT. The phi selects that input only
+;; when control arrived along that edge, and arriving along it is precisely what
+;; the branch selecting it decided. Nothing is required of H's OTHER edges for
+;; one input, which is what separates this from the dominator walk; agreement
+;; across all of them is what makes the phi itself decided.
+;;
+;; AN EDGE WHOSE PREDECESSOR DOES NOT BRANCH inherits the fact of its own sole
+;; entry edge: a block whose every other reachable predecessor sits inside its
+;; own dominator subtree is entered only through that edge (control reaching a
+;; backedge already passed through the block, hence through that edge), and an
+;; SSA fact once established stays true. That is the same argument
+;; opt-bounds-dom-child-entered-only-via? makes for the downward walk. The hop
+;; is bounded by a small fuel; the shapes it closes are one or two hops -- a
+;; rotation landing pad, a short-circuit and-chain block.
+(define (opt-dom-phi-carried-fuel) : i64
+  4)
+
+;; A value's defining Phi: its input list and the block it lives in.
+(defenum OptDomPhiCarrier
+  (No)
+  (Some ir.CompilerIrPhiInputList i64))
+
+(defenum OptDomPhiHome
+  (No)
+  (Some i64))
+
+(defenum OptDomPhiInput
+  (No)
+  (Some ir.CompilerIrValue))
+
+(define (opt-bounds-dom-phi-carrier
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : OptDomPhiCarrier
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (not (opt-gvn-stable-var? sources var))
+        (OptDomPhiCarrier.No)
+        (match (opt-bool-branch-def phi-defs var)
+          [(OptBoolBranchDef.No) (OptDomPhiCarrier.No)]
+          [(OptBoolBranchDef.Some instr label)
+            (match instr
+              [(ir.CompilerIrInstr.Phi dst inputs _)
+                (if (= dst var)
+                  (OptDomPhiCarrier.Some inputs label)
+                  (OptDomPhiCarrier.No))]
+              [_ (OptDomPhiCarrier.No)])]))]
+    [_ (OptDomPhiCarrier.No)]))
+
+;; The block whose edges are asked. Two phi operands must share it -- only then
+;; does one edge select both inputs -- and at least one operand must be a phi,
+;; or the ordinary dominating lookup already covered the query.
+(define (opt-bounds-dom-phi-home
+  [carrier-lhs : OptDomPhiCarrier]
+  [carrier-rhs : OptDomPhiCarrier]) : OptDomPhiHome
+  (match carrier-lhs
+    [(OptDomPhiCarrier.Some _ left-label)
+      (match carrier-rhs
+        [(OptDomPhiCarrier.Some _ right-label)
+          (if (= left-label right-label)
+            (OptDomPhiHome.Some left-label)
+            (OptDomPhiHome.No))]
+        [(OptDomPhiCarrier.No) (OptDomPhiHome.Some left-label)])]
+    [(OptDomPhiCarrier.No)
+      (match carrier-rhs
+        [(OptDomPhiCarrier.Some _ right-label) (OptDomPhiHome.Some right-label)]
+        [(OptDomPhiCarrier.No) (OptDomPhiHome.No)])]))
+
+;; The single input this phi carries on `label`. Two inputs on one label mean
+;; the edge does not name one value, so the walk refuses.
+(define (opt-bounds-dom-phi-input-for
+  [inputs : ir.CompilerIrPhiInputList]
+  [label : i64]
+  [found : OptDomPhiInput]) : OptDomPhiInput
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) found]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bounds-dom-phi-input-for
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        label
+        found)]
+    [(ir.CompilerIrPhiInputList.Cons value input-label rest)
+      (if (= input-label label)
+        (match found
+          [(OptDomPhiInput.Some _) (OptDomPhiInput.No)]
+          [(OptDomPhiInput.No)
+            (opt-bounds-dom-phi-input-for
+              (__tl-box-place rest)
+              label
+              (OptDomPhiInput.Some value))])
+        (opt-bounds-dom-phi-input-for (__tl-box-place rest) label found))]))
+
+(define (opt-bounds-dom-phi-edge-operand
+  [carrier : OptDomPhiCarrier]
+  [value : ir.CompilerIrValue]
+  [pred-label : i64]) : OptDomPhiInput
+  (match carrier
+    [(OptDomPhiCarrier.No) (OptDomPhiInput.Some value)]
+    [(OptDomPhiCarrier.Some inputs _)
+      (opt-bounds-dom-phi-input-for inputs pred-label (OptDomPhiInput.No))]))
+
+;; The one reachable predecessor of `id` that is not a backedge from inside
+;; `id`'s own dominator subtree, or -1 when there is not exactly one. Every
+;; other reachable predecessor being such a backedge is what makes this edge the
+;; only way in.
+(define (opt-bounds-dom-sole-entry-pred
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [id : i64]) : i64
+  (let
+    [preds : OptCfgCsr index.preds]
+    [offsets : (__tl_dyn-array i64) preds.offsets]
+    [edges : (__tl_dyn-array i64) preds.edges]
+    (if (or (< id 0) (>= (+ id 1) (array-length offsets)))
+      (- 0 1)
+      (let
+        [edge : i64 (array-ref offsets id)]
+        [end : i64 (array-ref offsets (+ id 1))]
+        [only : i64 (- 0 1)]
+        [ok : bool true]
+        (begin
+          (while (< edge end)
+            (begin
+              (let
+                [pred : i64 (array-ref edges edge)]
+                (cond
+                  [(or
+                      (not (array-ref index.reachable pred))
+                      (opt-dom-info-dominates-id? info id pred))
+                    unit]
+                  [(< only 0) (set! only pred)]
+                  [(= only pred) unit]
+                  [else (set! ok false)]))
+              (set! edge (+ edge 1))))
+          (if ok
+            only
+            (- 0 1)))))))
+
+;; What the edge `pred-id -> to-label` proves about `op(lhs, rhs)`.
+(define (opt-bounds-dom-edge-cmp-verdict
+  [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [pred-id : i64]
+  [to-label : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [fuel : i64]) : OptDomCmpLookup
+  (if (or (<= fuel 0) (< pred-id 0) (>= pred-id (array-length terms)))
+    (OptDomCmpLookup.No)
+    (let
+      [direct : OptDomCmpLookup
+        (match (array-ref terms pred-id)
+          [(OptBoolBranchDef.No) (OptDomCmpLookup.No)]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.Branch cond true-label false-label)
+                ;; A branch whose edges share one label decides nothing.
+                (if (or
+                  (= true-label false-label)
+                  (and
+                    (not (= true-label to-label))
+                    (not (= false-label to-label))))
+                  (OptDomCmpLookup.No)
+                  (opt-dom-cmp-lookup
+                    type-segment-bases
+                    (opt-dom-cmp-edge-fact
+                      defs
+                      copies
+                      sources
+                      cond
+                      (= true-label to-label)
+                      pred-id
+                      (OptDomCmpFacts.Nil))
+                    op
+                    lhs
+                    rhs
+                    ty))]
+              [_ (OptDomCmpLookup.No)])])]
+      (match direct
+        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
+        [(OptDomCmpLookup.No)
+          (let
+            [up : i64 (opt-bounds-dom-sole-entry-pred info index pred-id)]
+            (if (< up 0)
+              (OptDomCmpLookup.No)
+              (opt-bounds-dom-edge-cmp-verdict
+                type-segment-bases
+                info
+                index
+                terms
+                defs
+                sources
+                copies
+                up
+                (array-ref index.labels pred-id)
+                op
+                lhs
+                rhs
+                ty
+                (- fuel 1))))]))))
+
+;; Every reachable edge into `header-id`, each asked about its own phi inputs.
+;; Verdict codes: 0 none seen yet, 1 true, 2 false.
+(define (opt-bounds-dom-phi-carried-scan
+  [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [carrier-lhs : OptDomPhiCarrier]
+  [carrier-rhs : OptDomPhiCarrier]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [op : ir.CompilerIrBinOp]
+  [ty : ast.AstType]
+  [header-id : i64]) : OptDomCmpLookup
+  (let
+    [preds : OptCfgCsr index.preds]
+    [offsets : (__tl_dyn-array i64) preds.offsets]
+    [edges : (__tl_dyn-array i64) preds.edges]
+    (if (or (< header-id 0) (>= (+ header-id 1) (array-length offsets)))
+      (OptDomCmpLookup.No)
+      (let
+        [header-label : i64 (array-ref index.labels header-id)]
+        [edge : i64 (array-ref offsets header-id)]
+        [end : i64 (array-ref offsets (+ header-id 1))]
+        [verdict : i64 0]
+        [ok : bool true]
+        (begin
+          (while (and ok (< edge end))
+            (begin
+              (let
+                [pred : i64 (array-ref edges edge)]
+                (if (not (array-ref index.reachable pred))
+                  unit
+                  (let
+                    [pred-label : i64 (array-ref index.labels pred)]
+                    [edge-lhs : OptDomPhiInput
+                      (opt-bounds-dom-phi-edge-operand
+                        carrier-lhs
+                        lhs
+                        pred-label)]
+                    [edge-rhs : OptDomPhiInput
+                      (opt-bounds-dom-phi-edge-operand
+                        carrier-rhs
+                        rhs
+                        pred-label)]
+                    (match edge-lhs
+                      [(OptDomPhiInput.No) (set! ok false)]
+                      [(OptDomPhiInput.Some raw-lhs)
+                        (match edge-rhs
+                          [(OptDomPhiInput.No) (set! ok false)]
+                          [(OptDomPhiInput.Some raw-rhs)
+                            (let
+                              [clhs : ir.CompilerIrValue
+                                (opt-bounds-dom-resolve copies raw-lhs)]
+                              [crhs : ir.CompilerIrValue
+                                (opt-bounds-dom-resolve copies raw-rhs)]
+                              (if (not
+                                (and
+                                  (opt-gvn-value-stable? sources clhs)
+                                  (opt-gvn-value-stable? sources crhs)))
+                                (set! ok false)
+                                (match (opt-bounds-dom-edge-cmp-verdict
+                                  type-segment-bases
+                                  info
+                                  index
+                                  terms
+                                  defs
+                                  sources
+                                  copies
+                                  pred
+                                  header-label
+                                  op
+                                  clhs
+                                  crhs
+                                  ty
+                                  (opt-dom-phi-carried-fuel))
+                                  [(OptDomCmpLookup.No) (set! ok false)]
+                                  [(OptDomCmpLookup.Some decided)
+                                    (let
+                                      [code : i64
+                                        (if decided
+                                          1
+                                          2)]
+                                      (if (= verdict 0)
+                                        (set! verdict code)
+                                        (if (= verdict code)
+                                          unit
+                                          (set! ok false))))])))])]))))
+              (set! edge (+ edge 1))))
+          (if (and ok (> verdict 0))
+            (OptDomCmpLookup.Some (= verdict 1))
+            (OptDomCmpLookup.No)))))))
+
+(define (opt-bounds-dom-phi-carried-verdict
+  [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [block-id : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (let
+    [carrier-lhs : OptDomPhiCarrier
+      (opt-bounds-dom-phi-carrier phi-defs sources lhs)]
+    [carrier-rhs : OptDomPhiCarrier
+      (opt-bounds-dom-phi-carrier phi-defs sources rhs)]
+    (match (opt-bounds-dom-phi-home carrier-lhs carrier-rhs)
+      [(OptDomPhiHome.No) (OptDomCmpLookup.No)]
+      [(OptDomPhiHome.Some header-label)
+        (match (opt-cfg-index-id index header-label)
+          [(option_i64.None) (OptDomCmpLookup.No)]
+          [(option_i64.Some header-id)
+            ;; SSA already guarantees the phi's block dominates every use; the
+            ;; test keeps the pass's documented non-SSA fallback honest.
+            (if (not
+              (and
+                (>= header-id 0)
+                (< header-id (opt-cfg-index-block-count index))
+                (array-ref index.reachable header-id)
+                (opt-dom-info-dominates-id? info header-id block-id)))
+              (OptDomCmpLookup.No)
+              (opt-bounds-dom-phi-carried-scan
+                type-segment-bases
+                info
+                index
+                terms
+                defs
+                sources
+                copies
+                carrier-lhs
+                carrier-rhs
+                lhs
+                rhs
+                op
+                ty
+                header-id))])])))
+
 ;; Replace a comparison a dominating branch already decided with its constant.
 ;; The move keeps the destination and bool type, so every consumer -- branch,
 ;; select, phi input -- sees an ordinary constant and the later fold/cfg passes
 ;; collapse the control flow.
 (define (opt-bounds-dom-fold-compare
   [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [copies : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match instr
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       (if (and (opt-dom-cmp-foldable-op? op) (opt-integer-type? ty))
-        (match (opt-dom-cmp-lookup-chained
-          type-segment-bases
-          cmp-facts
-          (opt-dom-cmp-canon-op op)
-          (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))
-          (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))
-          ty)
-          [(OptDomCmpLookup.No) instr]
-          [(OptDomCmpLookup.Some value)
-            (ir.CompilerIrInstr.Mov
-              dst
-              (ir.CompilerIrValue.Bool value)
-              (ast.AstType.Bool))])
+        (let
+          [canon-op : ir.CompilerIrBinOp (opt-dom-cmp-canon-op op)]
+          [canon-lhs : ir.CompilerIrValue
+            (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))]
+          [canon-rhs : ir.CompilerIrValue
+            (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))]
+          (match (match (opt-dom-cmp-lookup-chained
+            type-segment-bases
+            cmp-facts
+            canon-op
+            canon-lhs
+            canon-rhs
+            ty)
+            [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
+            [(OptDomCmpLookup.No)
+              (opt-bounds-dom-phi-carried-verdict
+                type-segment-bases
+                info
+                index
+                terms
+                defs
+                phi-defs
+                sources
+                copies
+                block-id
+                canon-op
+                canon-lhs
+                canon-rhs
+                ty)])
+            [(OptDomCmpLookup.No) instr]
+            [(OptDomCmpLookup.Some value)
+              (ir.CompilerIrInstr.Mov
+                dst
+                (ir.CompilerIrValue.Bool value)
+                (ast.AstType.Bool))]))
         instr)]
     [_ instr]))
 

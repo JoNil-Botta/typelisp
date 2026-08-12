@@ -29201,6 +29201,244 @@
           origin
           "lower: slice-view expects exactly three arguments")))))
 
+(define (lower-slice-split-half-type
+  [ctx : tc_core.TcContext]
+  [result-ty : ast.AstType]) : tc_core.ResultTcType
+  (match (tc_core.tc-resolve-type ctx result-ty)
+    [(ast.AstType.Tuple elems-box)
+      (let
+        [elems : ast.AstTypeList (__tl-box-place elems-box)]
+        (if (= (ast.ast-type-list-len (& elems)) 2)
+          (tc_core.ResultTcType.Ok
+            (tc_core.tc-context-type-get
+              ctx
+              (ast.ast-type-list-get (& elems) 0 (ast.ast-type-id-fallback))))
+          (tc_core.ResultTcType.Err
+            "lower: slice-split-at result must contain two Slice references")))]
+    [_
+      (tc_core.ResultTcType.Err
+        "lower: slice-split-at result must be a two-element tuple")]))
+
+(define (lower-slice-split-pack-result
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [src-ptr : ir.CompilerIrValue]
+  [right-ptr : ir.CompilerIrValue]
+  [mid : ir.CompilerIrValue]
+  [remaining : ir.CompilerIrValue]
+  [half-ty : ast.AstType]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-slice-view-pack state src-ptr mid half-ty)
+    [(LowerExpr.Expr left-state left-value _)
+      (match (lower-slice-view-pack left-state right-ptr remaining half-ty)
+        [(LowerExpr.Expr right-state right-value _)
+          (match (lower-reserve-inline-storage
+            right-state
+            (lower-type-size ctx result-ty)
+            result-ty)
+            [(LowerExpr.Expr tuple-state tuple-ptr _)
+              (let
+                [half-size : i64 (lower-type-size ctx half-ty)]
+                [with-left : LowerState
+                  (lower-store-inline-value-at-offset
+                    ctx
+                    tuple-state
+                    tuple-ptr
+                    0
+                    left-value
+                    half-ty
+                    half-size)]
+                [with-right : LowerState
+                  (lower-store-inline-value-at-offset
+                    ctx
+                    with-left
+                    tuple-ptr
+                    half-size
+                    right-value
+                    half-ty
+                    half-size)]
+                (ResultLowerExpr.Ok
+                  (LowerExpr.Expr with-right tuple-ptr result-ty)))])])]))
+
+(define (lower-slice-split-finish
+  [ctx : tc_core.TcContext]
+  [state : LowerState (:consume)]
+  [src-ptr : ir.CompilerIrValue]
+  [src-len : ir.CompilerIrValue]
+  [mid : ir.CompilerIrValue]
+  [mid-ok-var : i64]
+  [fail-label : i64]
+  [ok-label : i64]
+  [elem-ty : ast.AstType]
+  [half-ty : ast.AstType]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (let
+    [fail-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit
+          state
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var mid-ok-var)
+            ok-label
+            fail-label))
+        fail-label)]
+    [ok-start : LowerState
+      (lower-state-record-latest-bounds-check-named-at-expr
+        (lower-state-finish-block
+          (lower-state-emit
+            (lower-oob-abort fail-start)
+            (ir.CompilerIrInstr.Jump ok-label))
+          ok-label)
+        "slice_split_at_ok"
+        origin)]
+    (match (lower-emit-binop
+      ok-start
+      ir.CompilerIrBinOp.Sub
+      src-len
+      mid
+      (ast.AstType.I64))
+      [(LowerExpr.Expr remaining-state remaining _)
+        (if (= (lower-type-size ctx elem-ty) 0)
+          (lower-slice-split-pack-result
+            ctx
+            remaining-state
+            src-ptr
+            src-ptr
+            mid
+            remaining
+            half-ty
+            result-ty)
+          (match (lower-emit-elem-addr-gep
+            ctx
+            remaining-state
+            src-ptr
+            mid
+            elem-ty)
+            [(LowerExpr.Expr ptr-state right-ptr _)
+              (lower-slice-split-pack-result
+                ctx
+                ptr-state
+                src-ptr
+                right-ptr
+                mid
+                remaining
+                half-ty
+                result-ty)]))])))
+
+(define (lower-slice-split-bounds-checked
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [src-ptr : ir.CompilerIrValue]
+  [src-len : ir.CompilerIrValue]
+  [mid : ir.CompilerIrValue]
+  [elem-ty : ast.AstType]
+  [half-ty : ast.AstType]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  ;; One unsigned comparison simultaneously rejects negative mids and values
+  ;; above the non-negative Slice length. Pointer arithmetic happens only in
+  ;; the success block.
+  (match (lower-cast-value state mid (ast.AstType.I64) (ast.AstType.U64))
+    [(LowerExpr.Expr mid-u-state mid-u _)
+      (match (lower-cast-value
+        mid-u-state
+        src-len
+        (ast.AstType.I64)
+        (ast.AstType.U64))
+        [(LowerExpr.Expr len-u-state len-u _)
+          (match (lower-state-alloc-var len-u-state)
+            [(LowerAlloc.Alloc cmp-state mid-ok-var)
+              (match (lower-state-fresh-label cmp-state "slice_split_at_fail")
+                [(LowerLabel.Label fail-state fail-label)
+                  (match (lower-state-fresh-label
+                    fail-state
+                    "slice_split_at_ok")
+                    [(LowerLabel.Label labels-state ok-label)
+                      (lower-slice-split-finish
+                        ctx
+                        (lower-state-emit
+                          labels-state
+                          (ir.CompilerIrInstr.BinOp
+                            mid-ok-var
+                            ir.CompilerIrBinOp.Le
+                            mid-u
+                            len-u
+                            (ast.AstType.U64)))
+                        src-ptr
+                        src-len
+                        mid
+                        mid-ok-var
+                        fail-label
+                        ok-label
+                        elem-ty
+                        half-ty
+                        result-ty
+                        origin)])])])])]))
+
+(define (lower-slice-split-call
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [args : ast.AstExprList]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (if (= args.len 2)
+    (let
+      [source : ast.AstExpr
+        (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+      [mid-expr : ast.AstExpr
+        (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
+      (match (lower-slice-view-source-fields ctx state env type-env source)
+        [(ResultLowerSliceViewSourceFields.Ok fields)
+          (match fields
+            [(LowerSliceViewSourceFields.Fields
+                source-state
+                src-ptr
+                src-len
+                elem-ty)
+              (match (lower-integer-expr-with-expected-or-actual
+                ctx
+                source-state
+                env
+                type-env
+                mid-expr
+                (ast.AstType.I64)
+                "lower: slice-split-at midpoint must be integer")
+                [(ResultLowerExpr.Ok lowered-mid)
+                  (match lowered-mid
+                    [(LowerExpr.Expr mid-state mid-raw mid-ty)
+                      (match (lower-cast-value
+                        mid-state
+                        mid-raw
+                        mid-ty
+                        (ast.AstType.I64))
+                        [(LowerExpr.Expr mid-i-state mid _)
+                          (match (lower-slice-split-half-type ctx result-ty)
+                            [(tc_core.ResultTcType.Ok half-ty)
+                              (lower-slice-split-bounds-checked
+                                ctx
+                                mid-i-state
+                                src-ptr
+                                src-len
+                                mid
+                                elem-ty
+                                half-ty
+                                result-ty
+                                origin)]
+                            [(tc_core.ResultTcType.Err message)
+                              (ResultLowerExpr.Err
+                                (box (lower-diagnostic-at-expr origin message)))])])])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+        [(ResultLowerSliceViewSourceFields.Err message)
+          (ResultLowerExpr.Err message)]))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic-at-expr
+          origin
+          "lower: slice-split-at expects exactly two arguments")))))
+
 (define (lower-substring-call-runtime
   [state : LowerState]
   [src-ptr : ir.CompilerIrValue]
@@ -34432,6 +34670,15 @@
                                   "lower: "
                                   name
                                   " is compile-time only; wrap it in (comptime ...)"))))]
+                        [(tc_core.tc-slice-call-split? slice-call-kind)
+                          (lower-slice-split-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty
+                            origin)]
                         [(not
                             (= slice-call-kind tc_core.TcSliceViewCallKind.None))
                           (lower-slice-view-call

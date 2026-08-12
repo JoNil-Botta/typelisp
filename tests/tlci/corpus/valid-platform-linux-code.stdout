@@ -1,21 +1,21 @@
 tlci image
 format-version: 2
-host-platform: x86_64-legacy-ambiguous (1)
-image-classification: metadata-only
+host-platform: x86_64-linux (2)
+image-classification: code-bearing
 callback-abi-version: 2
-producer-compiler-identity: tlci-v2-corpus
+producer-compiler-identity: tlci-v2-platform-corpus
 source-set-binding-schema: missing-or-legacy
 source-set-digest: unavailable
-content-hash: 2142539760
-file-size: 286
+content-hash: 1863668805
+file-size: 4099
 metadata-version: v1
-package-name: corpus.empty
+package-name: corpus.platform-code
 package-version: 1.0.0
 sections:
-  compiler-build-hash: offset=176 bytes=14
-  metadata: offset=192 bytes=94
+  compiler-build-hash: offset=176 bytes=23
+  metadata: offset=200 bytes=102
   rodata: offset=0 bytes=0
-  code: offset=0 bytes=0
+  code: offset=4096 bytes=3
   fixups: offset=0 records=0 bytes=0
   entries: offset=0 records=0 bytes=0
   symbols: offset=0 records=0 bytes=0

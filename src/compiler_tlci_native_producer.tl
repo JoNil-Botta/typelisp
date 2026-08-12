@@ -7087,6 +7087,9 @@
                         (match (compiler_tlci_native_image.compiler-tlci-native-package
                           metadata-text
                           build-hash
+                          (if windows-target
+                            tlci_core.tlci-host-platform-x86-64-windows
+                            tlci_core.tlci-host-platform-x86-64-linux)
                           rodata
                           layout.bytes
                           imports

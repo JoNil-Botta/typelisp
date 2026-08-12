@@ -84,6 +84,10 @@ inspect_invalid() {
 inspect_valid valid-metadata-only
 inspect_valid valid-sections
 inspect_valid valid-imports
+inspect_valid valid-platform-linux-metadata
+inspect_valid valid-platform-windows-metadata
+inspect_valid valid-platform-linux-code
+inspect_valid valid-platform-windows-code
 
 for name in \
     malformed-bad-magic \
@@ -93,7 +97,8 @@ for name in \
     malformed-content-hash \
     malformed-metadata-alignment \
     malformed-metadata-overlap \
-    malformed-metadata
+    malformed-metadata \
+    malformed-platform-unknown
 do
     inspect_invalid "$name"
 done
@@ -118,4 +123,56 @@ compare_file "$CORPUS/valid-sections.tlci" "$EMITTED_SECTIONS" \
 compare_file "$CORPUS/valid-imports.tlci" "$EMITTED_IMPORTS" \
     "import-bearing emitter bytes"
 
-echo "TLCI format corpus passed (3 valid, 8 malformed)."
+EMITTED_PLATFORM_LINUX_METADATA="$WORKDIR/emitted-platform-linux-metadata.tlci"
+EMITTED_PLATFORM_WINDOWS_METADATA="$WORKDIR/emitted-platform-windows-metadata.tlci"
+EMITTED_PLATFORM_LINUX_CODE="$WORKDIR/emitted-platform-linux-code.tlci"
+EMITTED_PLATFORM_WINDOWS_CODE="$WORKDIR/emitted-platform-windows-code.tlci"
+EMITTED_PLATFORM_UNKNOWN="$WORKDIR/emitted-platform-unknown.tlci"
+if ! "$COMPILER" run tests/tlci/platform_corpus_emit.tl \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    -- \
+    "$EMITTED_PLATFORM_LINUX_METADATA" \
+    "$EMITTED_PLATFORM_WINDOWS_METADATA" \
+    "$EMITTED_PLATFORM_LINUX_CODE" \
+    "$EMITTED_PLATFORM_WINDOWS_CODE" \
+    "$EMITTED_PLATFORM_UNKNOWN" \
+    >"$WORKDIR/platform-emitter.stdout" \
+    2>"$WORKDIR/platform-emitter.stderr"; then
+    sed 's/^/  /' "$WORKDIR/platform-emitter.stderr" >&2 || true
+    fail "platform emitter witness failed"
+fi
+[ ! -s "$WORKDIR/platform-emitter.stdout" ] || \
+    fail "platform emitter witness wrote stdout"
+[ ! -s "$WORKDIR/platform-emitter.stderr" ] || \
+    fail "platform emitter witness wrote stderr"
+compare_file "$CORPUS/valid-platform-linux-metadata.tlci" \
+    "$EMITTED_PLATFORM_LINUX_METADATA" "Linux metadata platform emitter bytes"
+compare_file "$CORPUS/valid-platform-windows-metadata.tlci" \
+    "$EMITTED_PLATFORM_WINDOWS_METADATA" "Windows metadata platform emitter bytes"
+compare_file "$CORPUS/valid-platform-linux-code.tlci" \
+    "$EMITTED_PLATFORM_LINUX_CODE" "Linux code platform emitter bytes"
+compare_file "$CORPUS/valid-platform-windows-code.tlci" \
+    "$EMITTED_PLATFORM_WINDOWS_CODE" "Windows code platform emitter bytes"
+compare_file "$CORPUS/malformed-platform-unknown.tlci" \
+    "$EMITTED_PLATFORM_UNKNOWN" "unknown platform emitter bytes"
+
+assert_platform_only_delta() {
+    linux_image=$1
+    windows_image=$2
+    label=$3
+    delta=$(cmp -l "$linux_image" "$windows_image" | \
+        awk '{ printf "%s%s", sep, $1; sep=" " } END { print "" }')
+    [ "$delta" = "17 49 50 51 52" ] || \
+        fail "$label changed bytes outside platform field and content hash: $delta"
+}
+assert_platform_only_delta \
+    "$CORPUS/valid-platform-linux-metadata.tlci" \
+    "$CORPUS/valid-platform-windows-metadata.tlci" \
+    "metadata platform pair"
+assert_platform_only_delta \
+    "$CORPUS/valid-platform-linux-code.tlci" \
+    "$CORPUS/valid-platform-windows-code.tlci" \
+    "code platform pair"
+
+echo "TLCI format corpus passed (7 valid, 9 malformed)."

@@ -28,6 +28,19 @@ case "$HOST_TARGET" in
         ;;
 esac
 
+case "$(uname -s)" in
+    Linux*) ACTUAL_HOST_TARGET=linux ;;
+    MINGW* | MSYS* | CYGWIN*) ACTUAL_HOST_TARGET=windows ;;
+    *)
+        echo "embedded stdlib tlci build host is unsupported: $(uname -s)" >&2
+        exit 2
+        ;;
+esac
+if [ "$HOST_TARGET" != "$ACTUAL_HOST_TARGET" ]; then
+    echo "embedded stdlib tlci host target '$HOST_TARGET' does not match build host '$ACTUAL_HOST_TARGET'" >&2
+    exit 2
+fi
+
 case "$COMPILER" in
     /* | [A-Za-z]:[\\/]*) ;;
     *) COMPILER="$ROOT/$COMPILER" ;;

@@ -49,6 +49,49 @@ MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
 MANIFEST=target/embedded-stdlib-tlci/modules.txt
 mkdir -p "$WORKDIR"
 
+if [ "$HOST_TARGET" = windows ]; then
+    OTHER_HOST_TARGET=linux
+else
+    OTHER_HOST_TARGET=windows
+fi
+if scripts/build-embedded-stdlib-tlci.sh \
+    "$COMPILER" "$WORKDIR/wrong-host.tlci" "$OTHER_HOST_TARGET" \
+    >"$WORKDIR/wrong-host.stdout" 2>"$WORKDIR/wrong-host.stderr"; then
+    echo "embedded stdlib wrapper accepted the opposite host platform" >&2
+    exit 1
+fi
+[ ! -s "$WORKDIR/wrong-host.stdout" ] || {
+    echo "opposite-host wrapper rejection wrote stdout" >&2
+    exit 1
+}
+grep -F "does not match build host '$HOST_TARGET'" \
+    "$WORKDIR/wrong-host.stderr" >/dev/null || {
+    cat "$WORKDIR/wrong-host.stderr" >&2
+    echo "opposite-host wrapper rejection diagnostic mismatch" >&2
+    exit 1
+}
+if "$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$WORKDIR/missing-manifest" "$WORKDIR/missing-root" \
+    "$WORKDIR/wrong-host-direct.tlci" "$OTHER_HOST_TARGET" \
+    "0000000000000000000000000000000000000000" \
+    "$WORKDIR/missing-rodata" \
+    >"$WORKDIR/wrong-host-direct.stdout" \
+    2>"$WORKDIR/wrong-host-direct.stderr"; then
+    echo "embedded stdlib producer accepted the opposite host platform" >&2
+    exit 1
+fi
+[ ! -s "$WORKDIR/wrong-host-direct.stdout" ] || {
+    echo "opposite-host producer rejection wrote stdout" >&2
+    exit 1
+}
+grep -F "requested host target \`$OTHER_HOST_TARGET\` does not match build host \`$HOST_TARGET\`" \
+    "$WORKDIR/wrong-host-direct.stderr" >/dev/null || {
+    cat "$WORKDIR/wrong-host-direct.stderr" >&2
+    echo "opposite-host producer rejection diagnostic mismatch" >&2
+    exit 1
+}
+
 COVERAGE_FLOOR=tools/embedded-stdlib-tlci/coverage-floor.txt
 COVERAGE_LOG=$WORKDIR/coverage.txt
 

@@ -315,6 +315,7 @@ stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would es
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/vector_native_slice_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/vector_native_slice_grow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `items`
+stdlib/tests/vector_native_slice_split_grow_live.tl|fail|typecheck: cannot read mutably borrowed place `items`
 stdlib/tests/vector_native_slice_alias_reject.tl|fail|typecheck: cannot read mutably borrowed place `items`
 EOF
 }

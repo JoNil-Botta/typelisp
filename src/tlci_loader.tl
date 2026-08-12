@@ -898,40 +898,44 @@
   [bytes : (__tl_dyn-array u8)]
   [image : tlci.TlciImage]
   [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
-  (let
-    [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
-    [code-offset : i64 (tlci.tlci-read-u64 bytes 88)]
-    [code-len : i64 (array-length image.code)]
-    (if (= code-len 0)
-      (ResultTlciLoadedImage.Err "tlci loader: image has no code section")
-      (match (if (tlci-loader-native-image? image)
-        (ResultTlciLoaderI64.Ok 0)
-        (tlci-loader-find-entry-code-offset image))
-        [(ResultTlciLoaderI64.Err message) (ResultTlciLoadedImage.Err message)]
-        [(ResultTlciLoaderI64.Ok entry-code-offset)
-          (match (tlci-loader-validate-fixups image rodata-offset code-offset)
-            [(ResultTlciLoaderUnit.Err message)
-              (ResultTlciLoadedImage.Err message)]
-            [(ResultTlciLoaderUnit.Ok)
-              (match (tlci-loader-validate-imports
-                image
-                rodata-offset
-                code-offset)
-                [(ResultTlciLoaderUnit.Err message)
-                  (ResultTlciLoadedImage.Err message)]
-                [(ResultTlciLoaderUnit.Ok)
-                  (match (pages.tlci-pages-allocate-data (array-length bytes))
-                    [(pages.ResultTlciPageRegion.Err message)
-                      (ResultTlciLoadedImage.Err message)]
-                    [(pages.ResultTlciPageRegion.Ok image-region)
-                      (tlci-loader-load-mapped-region
-                        bytes
-                        image
-                        image-region
-                        entry-code-offset
-                        rodata-offset
-                        code-offset
-                        host-table)])])])]))))
+  (match (tlci.tlci-image-admit-host image (tlci.tlci-build-host-platform))
+    [(tlci.TlciImageHostAdmission.Rejected message)
+      (ResultTlciLoadedImage.Err message)]
+    [(tlci.TlciImageHostAdmission.MetadataOnly)
+      (ResultTlciLoadedImage.Err "tlci loader: image has no code section")]
+    [(tlci.TlciImageHostAdmission.CodeBearing)
+      (let
+        [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
+        [code-offset : i64 (tlci.tlci-read-u64 bytes 88)]
+        (match (if (tlci-loader-native-image? image)
+          (ResultTlciLoaderI64.Ok 0)
+          (tlci-loader-find-entry-code-offset image))
+          [(ResultTlciLoaderI64.Err message)
+            (ResultTlciLoadedImage.Err message)]
+          [(ResultTlciLoaderI64.Ok entry-code-offset)
+            (match (tlci-loader-validate-fixups image rodata-offset code-offset)
+              [(ResultTlciLoaderUnit.Err message)
+                (ResultTlciLoadedImage.Err message)]
+              [(ResultTlciLoaderUnit.Ok)
+                (match (tlci-loader-validate-imports
+                  image
+                  rodata-offset
+                  code-offset)
+                  [(ResultTlciLoaderUnit.Err message)
+                    (ResultTlciLoadedImage.Err message)]
+                  [(ResultTlciLoaderUnit.Ok)
+                    (match (pages.tlci-pages-allocate-data (array-length bytes))
+                      [(pages.ResultTlciPageRegion.Err message)
+                        (ResultTlciLoadedImage.Err message)]
+                      [(pages.ResultTlciPageRegion.Ok image-region)
+                        (tlci-loader-load-mapped-region
+                          bytes
+                          image
+                          image-region
+                          entry-code-offset
+                          rodata-offset
+                          code-offset
+                          host-table)])])])]))]))
 
 (define (tlci-loader-empty-host-table) : tlci.TlciHostCallbackTable
   (tlci.TlciHostCallbackTable
@@ -1962,7 +1966,7 @@
   [code : (__tl_dyn-array u8)]
   [imports : (__tl_dyn-array u8)]) : tlci.TlciImage
   (tlci.tlci-make-image
-    tlci.tlci-host-arch-x86-64
+    (tlci.tlci-build-host-platform)
     tlci.tlci-callback-abi-version
     "abcdef0"
     (tlci.tlci-test-metadata)
@@ -2250,6 +2254,42 @@
                   0))
               "tlci host ABI: unsupported callback ABI version 3"))))]))
 
+(define (tlci-loader-test-platform-admission-ok?) : bool
+  (let
+    [host-platform : i64 (tlci.tlci-build-host-platform)]
+    [other-platform : i64
+      (if (= host-platform tlci.tlci-host-platform-x86-64-windows)
+        tlci.tlci-host-platform-x86-64-linux
+        tlci.tlci-host-platform-x86-64-windows)]
+    (match (tlci.tlci-emit-image
+      (tlci.tlci-test-platform-image other-platform true))
+      [(tlci.ResultTlciBytes.Err _) false]
+      [(tlci.ResultTlciBytes.Ok mismatch-bytes)
+        (match (tlci.tlci-emit-image-v2-legacy-compatible
+          (tlci.tlci-test-platform-image
+            tlci.tlci-host-platform-x86-64-legacy
+            true))
+          [(tlci.ResultTlciBytes.Err _) false]
+          [(tlci.ResultTlciBytes.Ok legacy-bytes)
+            (match (tlci.tlci-emit-image
+              (tlci.tlci-test-platform-image other-platform false))
+              [(tlci.ResultTlciBytes.Err _) false]
+              [(tlci.ResultTlciBytes.Ok metadata-bytes)
+                (and
+                  (tlci-loader-test-rejects?
+                    (tlci-loader-load-from-bytes mismatch-bytes)
+                    (str_cat.str-cat
+                      "tlci: package `demo` code-bearing image host platform mismatch: image="
+                      (tlci.tlci-host-platform-name other-platform)
+                      ", host="
+                      (tlci.tlci-host-platform-name host-platform)))
+                  (tlci-loader-test-rejects?
+                    (tlci-loader-load-from-bytes legacy-bytes)
+                    "tlci: package `demo` code-bearing image uses legacy/ambiguous host platform")
+                  (tlci-loader-test-rejects?
+                    (tlci-loader-load-from-bytes metadata-bytes)
+                    "tlci loader: image has no code section"))])])])))
+
 ;; R3-P2d regression. The retained host callback table and registration block
 ;; must belong to `owner-arena`, NOT to the arena that happened to be current
 ;; when the image was mapped -- so an image loaded from inside a transient
@@ -2319,6 +2359,7 @@
       [(not (tlci-loader-test-registration-rejections-ok?)) 3]
       [(not (tlci-loader-test-macro-entry-validation-ok?)) 4]
       [(not (tlci-loader-test-macro-entry-index-state-ok?)) 5]
+      [(not (tlci-loader-test-platform-admission-ok?)) 6]
       [(not (= (tlci-loader-test-named-imports-status) 0))
         (+ 50 (tlci-loader-test-named-imports-status))]
       [else 0])))

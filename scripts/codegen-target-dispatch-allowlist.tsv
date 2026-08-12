@@ -34,6 +34,7 @@ src/compiler_lower_tests.tl	compiler-lower-internal-tuple-array-layout-ok?	test-
 src/compiler_lower_tests.tl	compiler-lower-internal-unsupported-diagnostics-ok?	test-only	CompilerLowerMode[.](Linux|Windows)Scalar|(linux|windows)-x86_64	12	Inline lowerer diagnostic test checks target-specific modes and diagnostic target names.
 src/compiler_lower_tests.tl	compiler-lower-internal-windows-byref-sret-shape-ok?	test-only	CompilerLowerMode[.]WindowsScalar	1	Inline lowerer Windows by-reference sret shape test selects the Win64 scalar lower mode.
 src/compiler_lower_tests.tl	compiler-lower-internal-windows-u8-three-shape-ok?	test-only	CompilerLowerMode[.]WindowsScalar	1	Inline lowerer Windows u8 aggregate shape test selects the Win64 scalar lower mode.
+src/compiler_lower_tests.tl	compiler-lower-slice-split-at-shape-ok?	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	2	Inline lowerer Slice split shape test checks target-independent lowering on Linux and Windows scalar modes.
 src/compiler_backend.tl	enum:CompilerBackendTarget	backend-mode	CompilerBackendTarget[.](Linux|Windows)	2	Backend target enum names the supported native codegen targets.
 src/compiler_backend.tl	compiler-backend-target-abi	abi	CompilerBackendTarget[.](Linux|Windows)	2	Central backend-target to shared ABI mapping feeds regalloc, call lowering, and ABI table helpers.
 src/compiler_backend.tl	compiler-backend-const-hoist-candidate-regs	abi	CompilerBackendTarget[.](Linux|Windows)	2	Constant-hoist candidates exclude Win64 callee-saved rsi/rdi while retaining ABI-safe register homes.

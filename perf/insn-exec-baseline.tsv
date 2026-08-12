@@ -7,7 +7,7 @@ benchmark/typelisp/borrowed_disjoint_store	1300000258
 benchmark/c-scalar/borrowed_disjoint_store	1400001545
 benchmark/typelisp/hashmap_churn	3773325
 benchmark/c-scalar/hashmap_churn	4369269
-benchmark/typelisp/hashmap_get	172685142
+benchmark/typelisp/hashmap_get	153005552
 benchmark/c-scalar/hashmap_get	209671160
 benchmark/typelisp/hashmap_grow	1535892
 benchmark/c-scalar/hashmap_grow	1983833
@@ -25,12 +25,12 @@ benchmark/typelisp/cfg_domloops	796350325
 benchmark/c-scalar/cfg_domloops	423136951
 benchmark/typelisp/gvn_table	1165315557
 benchmark/c-scalar/gvn_table	625075892
-benchmark/typelisp/intern_table	612135745
+benchmark/typelisp/intern_table	611790385
 benchmark/c-scalar/intern_table	296287351
-benchmark/typelisp/lex_source	669573094
+benchmark/typelisp/lex_source	661806662
 benchmark/c-scalar/lex_source	555172535
 benchmark/typelisp/liveness_scan	558484285
 benchmark/c-scalar/liveness_scan	433553439
-benchmark/typelisp/peephole_lines	668387586
+benchmark/typelisp/peephole_lines	667638640
 benchmark/c-scalar/peephole_lines	464527258
 self_compile/compile_cli_opt1	67144387039

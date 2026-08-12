@@ -52077,10 +52077,12 @@
     ;; whole-program rather than operand-local: that address could reach this
     ;; call through a copy, Phi, caller parameter, or returned reference.
     [addr-taken : compiler_ir_types.CompilerIrBlockList
-      (opt-lp-promoted-with-clean
-        symbols
-        (opt-lp-test-call-body-blocks symbols addr-args)
-        global-bit)]
+      (opt-lp-promoted-with-clean-map-and-cells
+        addr-blocks
+        (opt-lp-test-clean-map symbols global-bit)
+        (compiler_optimize.opt-global-cell-summary-build
+          (opt-lp-test-globals symbols)
+          (opt-gc-test-functions1 (opt-licm-test-function addr-blocks))))]
     ;; (d) a MEMORY-clean callee is admitted to the promotion too, under the
     ;; live-in budget. This loop is small, so it promotes.
     [memory-clean : compiler_ir_types.CompilerIrBlockList
@@ -52149,13 +52151,15 @@
       [(not
           (compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
             (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))
-            symbols.callee
-            plain-args))
+            (opt-lp-test-cells symbols)
+            symbols.callee))
         21]
       [(compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
           (opt-lp-test-clean-map symbols (bit-or memory-bit global-bit))
-          symbols.callee
-          addr-args)
+          (compiler_optimize.opt-global-cell-summary-build
+            (opt-lp-test-globals symbols)
+            (opt-gc-test-functions1 (opt-licm-test-function addr-blocks)))
+          symbols.callee)
         22]
       ;; a callee whose summary sets the global-write bit earns neither bit
       [(not

@@ -14,7 +14,7 @@
 ;;     descriptor word. `bump` writes only the element storage of the array it
 ;;     is handed -- a different allocation from the descriptor naming it -- so
 ;;     its call-memory summary carries the element bit alone and it earns
-;;     opt-direct-call-clean-element-bit.
+;;     opt-direct-call-clean-unconditional-global-bit.
 ;;
 ;; The guard decides at run time and both windows below satisfy it, so the
 ;; fast clone runs at two different trip counts. Each result is checked twice:

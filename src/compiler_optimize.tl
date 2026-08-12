@@ -49521,19 +49521,58 @@
 ;; Underivable checks kept in the fast clone, identified by instruction index:
 ;; guard derivation and cloning walk the same block instruction sequence in
 ;; the same order, so the index is a stable identity between the two.
-(defenum OptBceVersionKeep
-  (Nil)
-  (Cons i64 (Box OptBceVersionKeep)))
+(defstruct OptBceVersionKeep
+  (present (__tl_dyn-array bool))
+  (count i64))
+
+(define (opt-bce-version-keep-new [index-bound : i64]) : OptBceVersionKeep
+  (OptBceVersionKeep (array.make-array bool index-bound) 0))
+
+(define (opt-bce-version-keep-add [keep : OptBceVersionKeep] [index : i64]) : OptBceVersionKeep
+  (if (and
+    (>= index 0)
+    (< index (array-length keep.present))
+    (not (array-ref keep.present index)))
+    (begin
+      (set! (array-ref keep.present index) true)
+      (OptBceVersionKeep keep.present (+ keep.count 1)))
+    keep))
 
 (define (opt-bce-version-keep-contains?
   [keep : OptBceVersionKeep]
   [index : i64]) : bool
-  (match keep
-    [(OptBceVersionKeep.Nil) false]
-    [(OptBceVersionKeep.Cons item rest)
-      (if (= item index)
-        true
-        (opt-bce-version-keep-contains? (__tl-box-place rest) index))]))
+  (and
+    (>= index 0)
+    (< index (array-length keep.present))
+    (array-ref keep.present index)))
+
+(cfg
+  test
+  (test
+    optimizer-bce-version-keep-indexed-membership
+    (let
+      [keep : OptBceVersionKeep (opt-bce-version-keep-new 9)]
+      (begin
+        (set! keep (opt-bce-version-keep-add keep 0))
+        (set! keep (opt-bce-version-keep-add keep 8))
+        ;; Re-adding an index is set insertion, not another stored element.
+        (set! keep (opt-bce-version-keep-add keep 8))
+        (test.assert-true
+          (opt-bce-version-keep-contains? keep 0)
+          "BCE keep set preserves its first instruction index")
+        (test.assert-true
+          (opt-bce-version-keep-contains? keep 8)
+          "BCE keep set reaches the observed instruction bound")
+        (test.assert-true
+          (not (opt-bce-version-keep-contains? keep 4))
+          "BCE keep set leaves absent indexes clear")
+        (test.assert-true
+          (not (opt-bce-version-keep-contains? keep 9))
+          "BCE keep set rejects indexes outside its bound")
+        (test.assert-i64-eq
+          keep.count
+          2
+          "BCE keep set ignores duplicate insertion")))))
 
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
 ;; checks), the kept-check set, and how many checks derived -- partial
@@ -51287,7 +51326,7 @@
                   [(OptBceVersionGuardAcc.No)
                     (OptBceVersionDerive
                       state.guard
-                      (OptBceVersionKeep.Cons index (box state.keep))
+                      (opt-bce-version-keep-add state.keep index)
                       state.derived)]
                   [(OptBceVersionGuardAcc.Some _ _ _)
                     (OptBceVersionDerive
@@ -51297,7 +51336,7 @@
             [(ir.CompilerIrMaybeValue.No)
               (OptBceVersionDerive
                 state.guard
-                (OptBceVersionKeep.Cons index (box state.keep))
+                (opt-bce-version-keep-add state.keep index)
                 state.derived)])]
         [_ state]))))
 
@@ -51567,13 +51606,13 @@
         (ir.compiler-ir-instr-builder-to-seq builder)))))
 
 ;; The empty derivation state every scan starts from.
-(define (opt-bce-version-derive-start) : OptBceVersionDerive
+(define (opt-bce-version-derive-start [index-bound : i64]) : OptBceVersionDerive
   (OptBceVersionDerive
     (OptBceVersionGuardAcc.Some
       (ir.CompilerIrInstrList.Nil)
       (ir.CompilerIrValueList.Nil)
       false)
-    (OptBceVersionKeep.Nil)
+    (opt-bce-version-keep-new index-bound)
     0))
 
 ;; Assemble the single-block guard: derive the per-check conditions, then
@@ -51620,7 +51659,7 @@
         census-cell
         true
         (opt-bce-version-fan-new)
-        (opt-bce-version-derive-start))]
+        (opt-bce-version-derive-start last))]
     [allow-scale1 : bool (>= census.derived 2)]
     [fan : OptBceVersionFan (opt-bce-version-fan-new)]
     [state : OptBceVersionDerive
@@ -51638,7 +51677,7 @@
         cell
         allow-scale1
         fan
-        (opt-bce-version-derive-start))]
+        (opt-bce-version-derive-start last))]
     ;; Partial versioning still needs at least one REMOVED check to pay for
     ;; the clone; with none, the loop is left untouched.
     (if (= state.derived 0)
@@ -53787,9 +53826,42 @@
 ;; instruction-for-instruction the original. Blocks with a non-loop non-stub
 ;; predecessor, unreachable users, phi inputs on non-loop edges, and defs
 ;; without a simple result type keep the original rejection.
-(defenum OptBceMbVarList
-  (Nil)
-  (Cons i64 (Box OptBceMbVarList)))
+(defstruct OptBceMbVarList
+  (items opt_dense_i64_vec.Vec))
+
+(define (opt-bce-mb-var-list-new) : OptBceMbVarList
+  (OptBceMbVarList (opt_dense_i64_vec.with-capacity 4)))
+
+(define (opt-bce-mb-var-list-count [vars : OptBceMbVarList]) : i64
+  (opt_dense_i64_vec.len (& vars.items)))
+
+(define (opt-bce-mb-var-list-empty? [vars : OptBceMbVarList]) : bool
+  (= (opt-bce-mb-var-list-count vars) 0))
+
+;; Physical pushes preserve the old Cons/prepend operation. Logical readers
+;; therefore walk from the live end toward zero (newest first).
+(define (opt-bce-mb-var-list-prepend
+  [vars : OptBceMbVarList (:consume)]
+  [var : i64]) : OptBceMbVarList
+  (let
+    [items : opt_dense_i64_vec.Vec vars.items]
+    (begin
+      (opt_dense_i64_vec.push (&mut items) var)
+      (OptBceMbVarList items))))
+
+(define (opt-bce-mb-var-list-ref [vars : OptBceMbVarList] [index : i64]) : i64
+  (let
+    [items : opt_dense_i64_vec.Vec vars.items]
+    (array-ref
+      (opt_dense_i64_vec.slots (& items))
+      (- (- (opt_dense_i64_vec.len (& items)) index) 1))))
+
+(define (opt-bce-mb-var-list-physical-ref
+  [vars : OptBceMbVarList]
+  [index : i64]) : i64
+  (let
+    [items : opt_dense_i64_vec.Vec vars.items]
+    (array-ref (opt_dense_i64_vec.slots (& items)) index)))
 
 (defenum OptBceMbWireBlock
   (No)
@@ -53843,7 +53915,7 @@
         (+ index 1)
         uses
         (if (and (>= dst 0) (opt-used-contains uses dst))
-          (OptBceMbVarList.Cons dst (box acc))
+          (opt-bce-mb-var-list-prepend acc dst)
           acc)))))
 
 (define (opt-bce-mb-wire-vars-blocks
@@ -53867,13 +53939,77 @@
 
 (define (opt-bce-mb-var-list-append
   [first : OptBceMbVarList]
-  [second : OptBceMbVarList]) : OptBceMbVarList
-  (match first
-    [(OptBceMbVarList.Nil) second]
-    [(OptBceMbVarList.Cons var rest)
-      (OptBceMbVarList.Cons
-        var
-        (box (opt-bce-mb-var-list-append (__tl-box-place rest) second)))]))
+  [second : OptBceMbVarList (:consume)]) : OptBceMbVarList
+  (let
+    [items : opt_dense_i64_vec.Vec second.items]
+    [count : i64 (opt-bce-mb-var-list-count first)]
+    [index : i64 0]
+    (begin
+      ;; Logical append(first, second) is physical second followed by first.
+      ;; Grow the reusable second backing store once instead of copying a full
+      ;; array per element.
+      (while (< index count)
+        (begin
+          (opt_dense_i64_vec.push
+            (&mut items)
+            (opt-bce-mb-var-list-physical-ref first index))
+          (set! index (+ index 1))))
+      (OptBceMbVarList items))))
+
+(cfg
+  test
+  (test
+    optimizer-bce-mb-var-list-dense-storage-grows
+    (let
+      [first : OptBceMbVarList (opt-bce-mb-var-list-new)]
+      [second : OptBceMbVarList (opt-bce-mb-var-list-new)]
+      (begin
+        (set! first (opt-bce-mb-var-list-prepend first 0))
+        (set! first (opt-bce-mb-var-list-prepend first 1))
+        (set! first (opt-bce-mb-var-list-prepend first 2))
+        (set! first (opt-bce-mb-var-list-prepend first 3))
+        (set! first (opt-bce-mb-var-list-prepend first 4))
+        (set! first (opt-bce-mb-var-list-prepend first 5))
+        (set! first (opt-bce-mb-var-list-prepend first 6))
+        (set! first (opt-bce-mb-var-list-prepend first 7))
+        (set! first (opt-bce-mb-var-list-prepend first 8))
+        (set! second (opt-bce-mb-var-list-prepend second 100))
+        (set! second (opt-bce-mb-var-list-prepend second 101))
+        (let
+          [joined : OptBceMbVarList (opt-bce-mb-var-list-append first second)]
+          (begin
+            (test.assert-i64-eq
+              (opt-bce-mb-var-list-count joined)
+              11
+              "BCE variable storage grows and concatenates all entries")
+            (test.assert-i64-eq
+              (opt-bce-mb-var-list-ref joined 0)
+              8
+              "BCE variable concatenation keeps the first newest entry")
+            (test.assert-i64-eq
+              (opt-bce-mb-var-list-ref joined 8)
+              0
+              "BCE variable concatenation keeps the first oldest entry")
+            (test.assert-i64-eq
+              (opt-bce-mb-var-list-ref joined 9)
+              101
+              "BCE variable concatenation begins the second sequence in order")
+            (test.assert-i64-eq
+              (opt-bce-mb-var-list-ref joined 10)
+              100
+              "BCE variable concatenation keeps the second oldest entry")
+            (let
+              [duplicate : OptBceMbVarList
+                (opt-bce-mb-var-list-prepend joined 8)]
+              (begin
+                (test.assert-i64-eq
+                  (opt-bce-mb-var-list-count duplicate)
+                  12
+                  "BCE variable storage preserves duplicates")
+                (test.assert-i64-eq
+                  (opt-bce-mb-var-list-ref duplicate 1)
+                  8
+                  "BCE variable duplicate leaves prior order intact")))))))))
 
 (define (opt-bce-mb-labels-all-in? [labels : OptLabelSet] [set : OptLabelSet]) : bool
   (match labels
@@ -54031,6 +54167,55 @@
 
 ;; Materialize one exit phi per wireable var and the copy env rewriting its
 ;; non-phi uses to the phi's var.
+(define (opt-bce-mb-wire-phis-from
+  [vars : OptBceMbVarList]
+  [index : i64]
+  [all-blocks : ir.CompilerIrBlockList]
+  [preds : OptLabelSet]
+  [instrs : ir.CompilerIrInstrSeq]
+  [cell : (__tl_dyn-array i64)]
+  [env : OptCopyEnv]
+  [phis : ir.CompilerIrInstrList]) : OptBceMbMaybeWirePhis
+  (if (>= index (opt-bce-mb-var-list-count vars))
+    (OptBceMbMaybeWirePhis.Some env phis)
+    (let
+      [var : i64 (opt-bce-mb-var-list-ref vars index)]
+      [existing : i64 (opt-bce-mb-existing-merge-phi instrs 0 var preds)]
+      (if (>= existing 0)
+        (opt-bce-mb-wire-phis-from
+          vars
+          (+ index 1)
+          all-blocks
+          preds
+          instrs
+          cell
+          (OptCopyEnv.Cons var (ir.CompilerIrValue.Var existing) (box env))
+          phis)
+        (match (opt-bce-mb-find-def all-blocks var)
+          [(OptBceMbMaybeInstr.No) (OptBceMbMaybeWirePhis.No)]
+          [(OptBceMbMaybeInstr.Some instr)
+            (match (opt-bce-mb-def-type instr)
+              [(OptMaybeAstType.No) (OptBceMbMaybeWirePhis.No)]
+              [(OptMaybeAstType.Some ty)
+                (let
+                  [pv : i64 (opt-bce-version-alloc-var cell)]
+                  (opt-bce-mb-wire-phis-from
+                    vars
+                    (+ index 1)
+                    all-blocks
+                    preds
+                    instrs
+                    cell
+                    (OptCopyEnv.Cons var (ir.CompilerIrValue.Var pv) (box env))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Phi
+                        pv
+                        (opt-bce-mb-wire-phi-inputs
+                          preds
+                          (ir.CompilerIrValue.Var var))
+                        ty)
+                      phis)))])])))))
+
 (define (opt-bce-mb-wire-phis
   [vars : OptBceMbVarList]
   [all-blocks : ir.CompilerIrBlockList]
@@ -54039,46 +54224,7 @@
   [cell : (__tl_dyn-array i64)]
   [env : OptCopyEnv]
   [phis : ir.CompilerIrInstrList]) : OptBceMbMaybeWirePhis
-  (match vars
-    [(OptBceMbVarList.Nil) (OptBceMbMaybeWirePhis.Some env phis)]
-    [(OptBceMbVarList.Cons var rest)
-      (let
-        [existing : i64 (opt-bce-mb-existing-merge-phi instrs 0 var preds)]
-        (if (>= existing 0)
-          (opt-bce-mb-wire-phis
-            (__tl-box-place rest)
-            all-blocks
-            preds
-            instrs
-            cell
-            (OptCopyEnv.Cons var (ir.CompilerIrValue.Var existing) (box env))
-            phis)
-          (match (opt-bce-mb-find-def all-blocks var)
-            [(OptBceMbMaybeInstr.No) (OptBceMbMaybeWirePhis.No)]
-            [(OptBceMbMaybeInstr.Some instr)
-              (match (opt-bce-mb-def-type instr)
-                [(OptMaybeAstType.No) (OptBceMbMaybeWirePhis.No)]
-                [(OptMaybeAstType.Some ty)
-                  (let
-                    [pv : i64 (opt-bce-version-alloc-var cell)]
-                    (opt-bce-mb-wire-phis
-                      (__tl-box-place rest)
-                      all-blocks
-                      preds
-                      instrs
-                      cell
-                      (OptCopyEnv.Cons
-                        var
-                        (ir.CompilerIrValue.Var pv)
-                        (box env))
-                      (ir.compiler-ir-instr-cons
-                        (ir.CompilerIrInstr.Phi
-                          pv
-                          (opt-bce-mb-wire-phi-inputs
-                            preds
-                            (ir.CompilerIrValue.Var var))
-                          ty)
-                        phis)))])])))]))
+  (opt-bce-mb-wire-phis-from vars 0 all-blocks preds instrs cell env phis))
 
 ;; The rewired block's instructions: the existing phi prefix, then the
 ;; materialized phis, then every original instruction with its non-phi uses
@@ -54145,50 +54291,49 @@
   [cell : (__tl_dyn-array i64)]) : OptBceMbWireBlock
   (let
     [loop-vars : OptBceMbVarList
-      (opt-bce-mb-wire-vars-blocks body-blocks uses (OptBceMbVarList.Nil))]
-    (match loop-vars
-      [(OptBceMbVarList.Nil) (OptBceMbWireBlock.Same)]
-      [(OptBceMbVarList.Cons _ _)
-        (let
-          [preds : OptLabelSet (opt-pred-map-lookup pred-map label)]
-          (if (= (opt-label-count preds) 0)
-            (OptBceMbWireBlock.No)
-            (match (opt-bce-mb-wire-preds
-              pred-map
-              all-blocks
-              body-labels
-              preds
-              label
-              (OptLabelSet.Nil))
-              [(OptBceMbMaybeLabels.No) (OptBceMbWireBlock.No)]
-              [(OptBceMbMaybeLabels.Some stub-labels)
-                (let
-                  [stub-vars : OptBceMbVarList
-                    (opt-bce-mb-wire-vars-stubs
-                      all-blocks
-                      stub-labels
-                      uses
-                      (OptBceMbVarList.Nil))]
-                  (match (opt-bce-mb-wire-phis
-                    (opt-bce-mb-var-list-append loop-vars stub-vars)
+      (opt-bce-mb-wire-vars-blocks body-blocks uses (opt-bce-mb-var-list-new))]
+    (if (opt-bce-mb-var-list-empty? loop-vars)
+      (OptBceMbWireBlock.Same)
+      (let
+        [preds : OptLabelSet (opt-pred-map-lookup pred-map label)]
+        (if (= (opt-label-count preds) 0)
+          (OptBceMbWireBlock.No)
+          (match (opt-bce-mb-wire-preds
+            pred-map
+            all-blocks
+            body-labels
+            preds
+            label
+            (OptLabelSet.Nil))
+            [(OptBceMbMaybeLabels.No) (OptBceMbWireBlock.No)]
+            [(OptBceMbMaybeLabels.Some stub-labels)
+              (let
+                [stub-vars : OptBceMbVarList
+                  (opt-bce-mb-wire-vars-stubs
                     all-blocks
-                    preds
-                    instrs
-                    cell
-                    (OptCopyEnv.Nil)
-                    (ir.CompilerIrInstrList.Nil))
-                    [(OptBceMbMaybeWirePhis.No) (OptBceMbWireBlock.No)]
-                    [(OptBceMbMaybeWirePhis.Some env new-phis)
-                      (OptBceMbWireBlock.Some
-                        (ir.compiler-ir-block
-                          label
-                          (opt-bce-mb-wire-block-instrs
-                            instrs
-                            0
-                            (opt-unroll-phi-prefix-count instrs 0)
-                            new-phis
-                            env))
-                        stub-labels)]))])))])))
+                    stub-labels
+                    uses
+                    (opt-bce-mb-var-list-new))]
+                (match (opt-bce-mb-wire-phis
+                  (opt-bce-mb-var-list-append loop-vars stub-vars)
+                  all-blocks
+                  preds
+                  instrs
+                  cell
+                  (OptCopyEnv.Nil)
+                  (ir.CompilerIrInstrList.Nil))
+                  [(OptBceMbMaybeWirePhis.No) (OptBceMbWireBlock.No)]
+                  [(OptBceMbMaybeWirePhis.Some env new-phis)
+                    (OptBceMbWireBlock.Some
+                      (ir.compiler-ir-block
+                        label
+                        (opt-bce-mb-wire-block-instrs
+                          instrs
+                          0
+                          (opt-unroll-phi-prefix-count instrs 0)
+                          new-phis
+                          env))
+                      stub-labels)]))]))))))
 
 ;; Rewire every outside block with direct loop-def uses, or fail the whole
 ;; attempt (the caller then keeps the original function).
@@ -54309,34 +54454,52 @@
   (far-vars OptBceMbVarList))
 
 (define (opt-bce-mb-var-list-contains? [vars : OptBceMbVarList] [var : i64]) : bool
-  (match vars
-    [(OptBceMbVarList.Nil) false]
-    [(OptBceMbVarList.Cons item rest)
-      (if (= item var)
-        true
-        (opt-bce-mb-var-list-contains? (__tl-box-place rest) var))]))
+  (opt-bce-mb-var-list-contains-from? vars var 0))
+
+(define (opt-bce-mb-var-list-contains-from?
+  [vars : OptBceMbVarList]
+  [var : i64]
+  [index : i64]) : bool
+  (if (>= index (opt-bce-mb-var-list-count vars))
+    false
+    (or
+      (= (opt-bce-mb-var-list-ref vars index) var)
+      (opt-bce-mb-var-list-contains-from? vars var (+ index 1)))))
 
 (define (opt-bce-mb-var-list-union
   [vars : OptBceMbVarList]
   [acc : OptBceMbVarList]) : OptBceMbVarList
-  (match vars
-    [(OptBceMbVarList.Nil) acc]
-    [(OptBceMbVarList.Cons item rest)
-      (opt-bce-mb-var-list-union
-        (__tl-box-place rest)
+  (opt-bce-mb-var-list-union-from vars 0 acc))
+
+(define (opt-bce-mb-var-list-union-from
+  [vars : OptBceMbVarList]
+  [index : i64]
+  [acc : OptBceMbVarList]) : OptBceMbVarList
+  (if (>= index (opt-bce-mb-var-list-count vars))
+    acc
+    (let
+      [item : i64 (opt-bce-mb-var-list-ref vars index)]
+      (opt-bce-mb-var-list-union-from
+        vars
+        (+ index 1)
         (if (opt-bce-mb-var-list-contains? acc item)
           acc
-          (OptBceMbVarList.Cons item (box acc))))]))
+          (opt-bce-mb-var-list-prepend acc item))))))
 
 (define (opt-bce-mb-var-list-subset?
   [vars : OptBceMbVarList]
   [outer : OptBceMbVarList]) : bool
-  (match vars
-    [(OptBceMbVarList.Nil) true]
-    [(OptBceMbVarList.Cons item rest)
-      (and
-        (opt-bce-mb-var-list-contains? outer item)
-        (opt-bce-mb-var-list-subset? (__tl-box-place rest) outer))]))
+  (opt-bce-mb-var-list-subset-from? vars outer 0))
+
+(define (opt-bce-mb-var-list-subset-from?
+  [vars : OptBceMbVarList]
+  [outer : OptBceMbVarList]
+  [index : i64]) : bool
+  (or
+    (>= index (opt-bce-mb-var-list-count vars))
+    (and
+      (opt-bce-mb-var-list-contains? outer (opt-bce-mb-var-list-ref vars index))
+      (opt-bce-mb-var-list-subset-from? vars outer (+ index 1)))))
 
 ;; Classify every outside block with a direct loop-def use as the wire point or
 ;; as a far block.
@@ -54376,33 +54539,32 @@
                       (opt_i64_i64_map.with-capacity 8)
                       instrs
                       0)
-                    (OptBceMbVarList.Nil))]
-                (match vars
-                  [(OptBceMbVarList.Nil) plan]
-                  [(OptBceMbVarList.Cons _ _)
-                    (match (opt-bce-mb-wire-preds
-                      pred-map
-                      all-blocks
-                      body-labels
-                      (opt-pred-map-lookup pred-map label)
-                      label
-                      (OptLabelSet.Nil))
-                      [(OptBceMbMaybeLabels.Some _)
-                        (OptBceMbFarPlan
-                          (if (= plan.wire -1)
-                            label
-                            -2)
-                          (if (= plan.wire -1)
-                            vars
-                            plan.wire-vars)
-                          plan.far-labels
-                          plan.far-vars)]
-                      [(OptBceMbMaybeLabels.No)
-                        (OptBceMbFarPlan
-                          plan.wire
-                          plan.wire-vars
-                          (opt-label-add plan.far-labels label)
-                          (opt-bce-mb-var-list-union vars plan.far-vars))])])))]))]))
+                    (opt-bce-mb-var-list-new))]
+                (if (opt-bce-mb-var-list-empty? vars)
+                  plan
+                  (match (opt-bce-mb-wire-preds
+                    pred-map
+                    all-blocks
+                    body-labels
+                    (opt-pred-map-lookup pred-map label)
+                    label
+                    (OptLabelSet.Nil))
+                    [(OptBceMbMaybeLabels.Some _)
+                      (OptBceMbFarPlan
+                        (if (= plan.wire -1)
+                          label
+                          -2)
+                        (if (= plan.wire -1)
+                          vars
+                          plan.wire-vars)
+                        plan.far-labels
+                        plan.far-vars)]
+                    [(OptBceMbMaybeLabels.No)
+                      (OptBceMbFarPlan
+                        plan.wire
+                        plan.wire-vars
+                        (opt-label-add plan.far-labels label)
+                        (opt-bce-mb-var-list-union vars plan.far-vars))]))))]))]))
 
 (define (opt-bce-mb-far-labels-dominated?
   [doms : OptDomInfo]
@@ -54507,9 +54669,9 @@
         body-blocks
         (OptBceMbFarPlan
           -1
-          (OptBceMbVarList.Nil)
+          (opt-bce-mb-var-list-new)
           (OptLabelSet.Nil)
-          (OptBceMbVarList.Nil)))]
+          (opt-bce-mb-var-list-new)))]
     (if (= (opt-label-count plan.far-labels) 0)
       (OptBceMbFarResult.Same)
       (if (not (opt-bce-mb-far-plan-ok? doms plan))
@@ -57186,7 +57348,7 @@
                 guard-instrs
                 guard-value
                 (opt-bce-fold-conjunct-fuel)
-                (OptBceFoldCondList.Nil))
+                (opt-bce-fold-cond-list-new))
               all-blocks
               shape.body-blocks
               shape.iphi
@@ -57251,13 +57413,148 @@
 ;; became unreachable, not from ones that merely stopped branching there. So a
 ;; fold is refused whenever the dropped successor -- in the loop or an exit
 ;; block outside it -- carries a phi input labelled with the folding block.
-(defenum OptBceFoldCondList
-  (Nil)
-  (Cons
-    ir.CompilerIrBinOp
-    ir.CompilerIrValue
-    ir.CompilerIrValue
-    (Box OptBceFoldCondList)))
+(defstruct OptBceFoldCond
+  (op ir.CompilerIrBinOp)
+  (lhs ir.CompilerIrValue)
+  (rhs ir.CompilerIrValue))
+
+(import (vector.vector OptBceFoldCond core) as opt_bce_fold_cond_vec)
+
+(defstruct OptBceFoldCondList
+  (items opt_bce_fold_cond_vec.Vec))
+
+(define (opt-bce-fold-cond-list-new) : OptBceFoldCondList
+  (OptBceFoldCondList (opt_bce_fold_cond_vec.with-capacity 4)))
+
+(define (opt-bce-fold-cond-list-count [conds : OptBceFoldCondList]) : i64
+  (opt_bce_fold_cond_vec.len (& conds.items)))
+
+(define (opt-bce-fold-cond-list-prepend
+  [conds : OptBceFoldCondList (:consume)]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptBceFoldCondList
+  (let
+    [items : opt_bce_fold_cond_vec.Vec conds.items]
+    (begin
+      (opt_bce_fold_cond_vec.push (&mut items) (OptBceFoldCond op lhs rhs))
+      (OptBceFoldCondList items))))
+
+(define (opt-bce-fold-cond-list-ref [conds : OptBceFoldCondList] [index : i64]) : OptBceFoldCond
+  (let
+    [items : opt_bce_fold_cond_vec.Vec conds.items]
+    (array-ref
+      (opt_bce_fold_cond_vec.slots (& items))
+      (- (- (opt_bce_fold_cond_vec.len (& items)) index) 1))))
+
+(cfg
+  test
+  (test
+    optimizer-bce-fold-condition-dense-storage-grows
+    (let
+      [conds : OptBceFoldCondList (opt-bce-fold-cond-list-new)]
+      (begin
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 10)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.I64 11)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 2)
+            (ir.CompilerIrValue.I64 12)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.I64 13)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 4)
+            (ir.CompilerIrValue.I64 14)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 5)
+            (ir.CompilerIrValue.I64 15)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 6)
+            (ir.CompilerIrValue.I64 16)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 7)
+            (ir.CompilerIrValue.I64 17)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 8)
+            (ir.CompilerIrValue.I64 18)))
+        (set!
+          conds
+          (opt-bce-fold-cond-list-prepend
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 8)
+            (ir.CompilerIrValue.I64 18)))
+        (test.assert-i64-eq
+          (opt-bce-fold-cond-list-count conds)
+          10
+          "BCE fold condition storage grows and preserves duplicates")
+        (test.assert-true
+          (opt-bce-fold-cond-holds?
+            conds
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 8)
+            (ir.CompilerIrValue.I64 18))
+          "BCE fold condition exact membership survives growth")
+        (test.assert-true
+          (not
+            (opt-bce-fold-cond-holds?
+              conds
+              (ir.CompilerIrBinOp.Eq)
+              (ir.CompilerIrValue.Var 8)
+              (ir.CompilerIrValue.I64 19)))
+          "BCE fold condition membership rejects a distinct rhs")
+        (match (opt-bce-fold-cond-list-ref conds 1)
+          [(OptBceFoldCond op lhs rhs)
+            (begin
+              (test.assert-true
+                (opt-binop-eq op (ir.CompilerIrBinOp.Eq))
+                "BCE fold condition operator is preserved")
+              (test.assert-true
+                (opt-value-eq lhs (ir.CompilerIrValue.Var 8))
+                "BCE fold condition newest prior lhs is preserved")
+              (test.assert-true
+                (opt-value-eq rhs (ir.CompilerIrValue.I64 18))
+                "BCE fold condition newest prior rhs is preserved"))])))))
 
 ;; What the guard establishes for the whole fast clone: its conjunct compares,
 ;; the blocks the fold inspects (every block for successor phis, the clone
@@ -57347,7 +57644,7 @@
                     (if (and
                       (opt-bce-fold-cond-op? op)
                       (opt-bce-fold-i64-type? cond-ty))
-                      (OptBceFoldCondList.Cons op lhs rhs (box acc))
+                      (opt-bce-fold-cond-list-prepend acc op lhs rhs)
                       acc)])]
               [_ acc])])]
       [_ acc])))
@@ -57357,15 +57654,24 @@
   [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]) : bool
-  (match conds
-    [(OptBceFoldCondList.Nil) false]
-    [(OptBceFoldCondList.Cons cond-op cond-lhs cond-rhs rest)
-      (if (and
-        (opt-binop-eq cond-op op)
-        (opt-value-eq cond-lhs lhs)
-        (opt-value-eq cond-rhs rhs))
-        true
-        (opt-bce-fold-cond-holds? (__tl-box-place rest) op lhs rhs))]))
+  (opt-bce-fold-cond-holds-from? conds op lhs rhs 0))
+
+(define (opt-bce-fold-cond-holds-from?
+  [conds : OptBceFoldCondList]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [index : i64]) : bool
+  (if (>= index (opt-bce-fold-cond-list-count conds))
+    false
+    (match (opt-bce-fold-cond-list-ref conds index)
+      [(OptBceFoldCond cond-op cond-lhs cond-rhs)
+        (or
+          (and
+            (opt-binop-eq cond-op op)
+            (opt-value-eq cond-lhs lhs)
+            (opt-value-eq cond-rhs rhs))
+          (opt-bce-fold-cond-holds-from? conds op lhs rhs (+ index 1)))])))
 
 ;; `counter <op> k` normalized with the counter on the left, given only
 ;; `counter >= 0`.

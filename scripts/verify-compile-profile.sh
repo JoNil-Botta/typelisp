@@ -1498,16 +1498,43 @@ if [ "$NL_HOST_OS" = windows ]; then
     # global helper surface. Together with the seven-packet optimizer/backend
     # series, that checked source lands this exact combined boundary at 48
     # segments; keep all four ownership boundaries measured independently.
+    # Carrying template source spans through the native macro route brings
+    # ast_expr_pool.macro_expand from 48 to 41 segments. The native route used
+    # to strip the parser's `AstExpr.Spanned` wrapper from every template node;
+    # it now rebuilds each one, so a natively produced expansion is node-for-
+    # node the tree the interpreted quasiquote builds. That changes which side
+    # of the macro-hygiene copy-on-write commit the expansion lands on. A node
+    # `macro-hygiene-produced-owned?` accepts is rewritten in its own slot and
+    # the replacement is truncated back off the pool; a node it rejects leaves
+    # its replacement appended. Over this probe's 27,828 native dispatches
+    # walk_hygiene_nodes_copied falls from 786,701 to 232,422 and
+    # walk_hygiene_nodes_reused rises from 138,237 to 186,034 -- about twenty
+    # nodes per dispatch stop being copied -- so the macro pool holds 463,234
+    # fewer nodes (3,141,747 -> 2,678,513). The authoritative Windows probe
+    # measured 2,678,513 used nodes, 2,686,976 capacity, and 85,983,232
+    # physical payload bytes. Reverting only the span carriage in this same
+    # tree returns all four boundaries to their previous pins exactly
+    # (48/33/24/9), so this is that change and nothing else; the route itself
+    # never flipped and the image never lost coverage (107 entries, 100 native,
+    # 7 shells, 0 interpreted arms either way; 27,826 -> 27,828 native
+    # dispatches, 59 interpreted fallbacks and 0 load failures both times).
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 41 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
     # series keeps the combined graph in that exact segment count. The apparent
     # jitter observed while landing the series was merge-base movement, not
     # identical-source nondeterminism, so this remains an exact pin.
+    # The template span wrappers that survive their expansion carry this
+    # boundary from 33 to 34 segments -- the same change that lowered the
+    # macro-expand boundary above raises this one, which is why the two are
+    # pinned independently. walk_decl_fire_survivor_expr_nodes rises from
+    # 403,079 to 453,835 (+50,756) and the checked graph gains 50,828 nodes:
+    # the authoritative Windows probe measured 2,183,339 used nodes, 2,228,224
+    # capacity, and 71,303,168 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 33 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 34 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \

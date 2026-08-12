@@ -1706,6 +1706,14 @@ run_linux_backend_fixtures() {
         tests/integration/inline_multiblock_call_carrying_clone.tl \
         42 \
         2
+    # The GAP9 gep-fold ordinal table and the multiblock inliner both only
+    # run at opt2, so this row is the only place the store-pair peephole's
+    # absorbed gep meets a cloned call-carrying body (refs #6307).
+    run_linux_program_fixture \
+        gep-fold-ordinal-store-pair-clone-opt2 \
+        tests/integration/gep_fold_ordinal_store_pair_clone.tl \
+        42 \
+        2
     run_linux_program_fixture \
         integer-literal-boundary-matrix-opt0 \
         tests/integration/integer_literal_boundary_matrix.tl \
@@ -2035,6 +2043,11 @@ run_windows_backend_fixtures() {
     run_windows_program_fixture \
         inline-multiblock-call-carrying-clone-opt2 \
         tests/integration/inline_multiblock_call_carrying_clone.tl \
+        42 \
+        2
+    run_windows_program_fixture \
+        gep-fold-ordinal-store-pair-clone-opt2 \
+        tests/integration/gep_fold_ordinal_store_pair_clone.tl \
         42 \
         2
     run_windows_program_fixture \

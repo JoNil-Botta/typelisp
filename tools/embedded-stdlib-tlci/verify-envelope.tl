@@ -2,7 +2,6 @@
 (import compiler_embedded_stdlib_tlci_codec as codec)
 (import stdlib.byte_buf)
 (import stdlib.io)
-(import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
 (define (embedded-stdlib-tlci-envelope-eq?

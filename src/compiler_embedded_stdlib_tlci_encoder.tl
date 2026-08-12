@@ -2,7 +2,7 @@
 ;; This module is used by the payload builder and is not linked into `typelisp`.
 (import compiler_ctfe as ctfe)
 (import stdlib.array)
-(import stdlib.byte_buf_core as byte_buf_core)
+(import stdlib.byte_buf_core)
 (import stdlib.string)
 
 (define (compiler-embedded-stdlib-tlci-encoder-prefix) : String
@@ -140,11 +140,11 @@
                 (begin
                   (while (< out-index raw-len)
                     (begin
-                      (if (>= token-index lzss-len)
+                      (when
+                        (>= token-index lzss-len)
                         (return
                           (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-                            "embedded stdlib tlci encoder: truncated lzss flags"))
-                        unit)
+                            "embedded stdlib tlci encoder: truncated lzss flags")))
                       (let
                         [flags : i64
                           (compiler-embedded-stdlib-tlci-encoder-byte
@@ -157,11 +157,11 @@
                             (begin
                               (if (!= (bit-and flags (shl 1 bit)) 0)
                                 (begin
-                                  (if (>= token-index lzss-len)
+                                  (when
+                                    (>= token-index lzss-len)
                                     (return
                                       (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-                                        "embedded stdlib tlci encoder: truncated lzss literal"))
-                                    unit)
+                                        "embedded stdlib tlci encoder: truncated lzss literal")))
                                   (let
                                     [literal : i64
                                       (compiler-embedded-stdlib-tlci-encoder-byte
@@ -174,11 +174,11 @@
                                       (set! token-index (+ token-index 1))
                                       (set! out-index (+ out-index 1)))))
                                 (begin
-                                  (if (> (+ token-index 2) lzss-len)
+                                  (when
+                                    (> (+ token-index 2) lzss-len)
                                     (return
                                       (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-                                        "embedded stdlib tlci encoder: truncated lzss match"))
-                                    unit)
+                                        "embedded stdlib tlci encoder: truncated lzss match")))
                                   (let
                                     [packed : i64
                                       (bit-or
@@ -194,16 +194,16 @@
                                     [length-symbol : i64 (bit-and packed 15)]
                                     [match-length : i64 (+ length-symbol 3)]
                                     (begin
-                                      (if (> (+ distance-symbol 1) out-index)
+                                      (when
+                                        (> (+ distance-symbol 1) out-index)
                                         (return
                                           (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-                                            "embedded stdlib tlci encoder: lzss match before output"))
-                                        unit)
-                                      (if (> (+ out-index match-length) raw-len)
+                                            "embedded stdlib tlci encoder: lzss match before output")))
+                                      (when
+                                        (> (+ out-index match-length) raw-len)
                                         (return
                                           (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-                                            "embedded stdlib tlci encoder: lzss match exceeds output"))
-                                        unit)
+                                            "embedded stdlib tlci encoder: lzss match exceeds output")))
                                       (set!
                                         (array-ref main 256)
                                         (+ (array-ref main 256) 1))
@@ -456,13 +456,13 @@
                           (begin
                             (set! cursor (array-ref parents cursor))
                             (set! bits (+ bits 1))))
-                        (if (>
-                          bits
-                          (compiler-embedded-stdlib-tlci-encoder-max-code-bits))
+                        (when
+                          (>
+                            bits
+                            (compiler-embedded-stdlib-tlci-encoder-max-code-bits))
                           (return
                             (ResultCompilerEmbeddedStdlibTlciEncoderCodes.Err
-                              "embedded stdlib tlci encoder: huffman code exceeds 31 bits"))
-                          unit)
+                              "embedded stdlib tlci encoder: huffman code exceeds 31 bits")))
                         (set! (array-ref lengths symbol) bits)))
                     unit)
                   (set! symbol (+ symbol 1))))

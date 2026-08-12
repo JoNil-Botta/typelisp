@@ -182,19 +182,16 @@
         (let
           [bits : i64 (cast (array-ref payload (+ start symbol)) : i64)]
           (begin
-            (if (> bits (compiler-embedded-stdlib-tlci-codec-max-code-bits))
+            (when
+              (> bits (compiler-embedded-stdlib-tlci-codec-max-code-bits))
               (return
                 (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err
-                  "embedded stdlib tlci envelope: invalid huffman code length"))
-              unit)
-            (if (> bits 0)
-              (begin
-                (set! (array-ref counts bits) (+ (array-ref counts bits) 1))
-                (set! active (+ active 1))
-                (if (> bits max-bits)
-                  (set! max-bits bits)
-                  unit))
-              unit)
+                  "embedded stdlib tlci envelope: invalid huffman code length")))
+            (when
+              (> bits 0)
+              (set! (array-ref counts bits) (+ (array-ref counts bits) 1))
+              (set! active (+ active 1))
+              (when (> bits max-bits) (set! max-bits bits)))
             (set! symbol (+ symbol 1)))))
       (if (= active 0)
         (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Ok
@@ -215,11 +212,11 @@
             (while (<= bits max-bits)
               (begin
                 (set! left (- (* left 2) (array-ref counts bits)))
-                (if (< left 0)
+                (when
+                  (< left 0)
                   (return
                     (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err
-                      "embedded stdlib tlci envelope: oversubscribed huffman table"))
-                  unit)
+                      "embedded stdlib tlci envelope: oversubscribed huffman table")))
                 (set! bits (+ bits 1))))
             (if (!= left 0)
               (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err
@@ -351,11 +348,11 @@
         (begin
           (while (<= bits table.max-bits)
             (begin
-              (if (>= (deref bit-index) bit-len)
+              (when
+                (>= (deref bit-index) bit-len)
                 (return
                   (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
-                    "embedded stdlib tlci envelope: truncated huffman code"))
-                unit)
+                    "embedded stdlib tlci envelope: truncated huffman code")))
               (let
                 [absolute : i64 (deref bit-index)]
                 [byte : i64
@@ -368,13 +365,13 @@
                 [first : i64 (array-ref table.first-codes bits)]
                 [count : i64 (array-ref table.counts bits)]
                 [offset : i64 (- code first)]
-                (if (and (>= offset 0) (< offset count))
+                (when
+                  (and (>= offset 0) (< offset count))
                   (return
                     (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok
                       (array-ref
                         table.symbols
-                        (+ (array-ref table.first-symbols bits) offset))))
-                  unit))
+                        (+ (array-ref table.first-symbols bits) offset))))))
               (set! bits (+ bits 1))))
           (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
             "embedded stdlib tlci envelope: invalid huffman code"))))))

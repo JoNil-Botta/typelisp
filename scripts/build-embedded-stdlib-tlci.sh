@@ -2,7 +2,7 @@
 set -eu
 
 # Build the host-native stdlib comptime image catalog consumed by the
-# compiler's `include-str-lzss` deployment envelope.
+# compiler's TLCI-only deterministic deployment envelope.
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
@@ -121,5 +121,14 @@ printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
 
 [ -s "$OUTPUT" ] || {
     echo "embedded stdlib tlci builder emitted no image: $OUTPUT" >&2
+    exit 1
+}
+
+ENVELOPE="$OUTPUT.tlch"
+"$COMPILER" run tools/embedded-stdlib-tlci/encode-envelope.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$OUTPUT" "$ENVELOPE" >/dev/null
+[ -s "$ENVELOPE" ] || {
+    echo "embedded stdlib tlci encoder emitted no envelope: $ENVELOPE" >&2
     exit 1
 }

@@ -5,6 +5,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.string)
+(import stdlib.sort as sort)
 (import stdlib.vector)
 (import stdlib.option)
 (import sym_i64_env)
@@ -83,13 +84,153 @@
   (live (__tl_dyn-array bool))
   (len i64))
 
+(defenum CompilerSemanticBindingNamespace
+  (Value)
+  (Type)
+  (Macro))
+
+;; One immutable completion-facing row. `display-name` is the spelling visible
+;; in the querying module, so a selected import may differ from the defining
+;; record's spelling while retaining its stable symbol and source provenance.
+(defstruct CompilerSemanticVisibleBinding
+  (symbol CompilerSemanticSymbolId)
+  (namespace CompilerSemanticBindingNamespace)
+  (kind CompilerSemanticSymbolKind)
+  (display-name String)
+  (resolved-type String)
+  (documentation String)
+  (module-id i64)
+  (definition-span CompilerSemanticSpan)
+  (editable bool)
+  (provenance CompilerSemanticProvenance))
+
+(defstruct CompilerSemanticTopCandidateRef
+  (namespace-tag i64)
+  ;; Retained only for equality inside this immutable index. Consumers never
+  ;; dereference this compiler-session intern id after construction.
+  (name-id i64)
+  (label-index i64)
+  (record-index i64))
+
+(defstruct CompilerSemanticSourcePathInfo
+  (path String)
+  (source-len i64)
+  (default-module-index i64)
+  (module-event-offset i64)
+  (module-event-len i64)
+  (scope-event-offset i64)
+  (scope-event-len i64))
+
+(defstruct CompilerSemanticModuleInfo
+  (module-id i64)
+  (candidate-offset i64)
+  (candidate-len i64))
+
+(defstruct CompilerSemanticModuleEvent
+  (path-index i64)
+  (byte-offset i64)
+  (module-index i64)
+  (sequence i64))
+
+(define (compiler-semantic-scope-event-kind-end) : i64
+  0)
+
+(define (compiler-semantic-scope-event-kind-start) : i64
+  1)
+
+;; Scope events form a persistent-snapshot boundary stream. At a start byte the
+;; new head becomes visible; at an end byte the parent head is restored. The
+;; child head is retained only to order coincident nested exits/entries.
+(defstruct CompilerSemanticScopeEvent
+  (path-index i64)
+  (byte-offset i64)
+  (head i64)
+  (kind i64)
+  (child-head i64)
+  (sequence i64))
+
+(defstruct CompilerSemanticScopeEventVec
+  (items (__tl_dyn-array CompilerSemanticScopeEvent))
+  (live (__tl_dyn-array bool))
+  (len i64))
+
+;; Keep cold construction arrays behind one pointer. CompilerSemanticWalkState
+;; is passed through every recursive AST visit, so embedding these fields there
+;; would make every visit copy a much wider memory aggregate.
+(defstruct CompilerSemanticVisibilityBuildStorage
+  (paths (__tl_dyn-array CompilerSemanticSourcePathInfo))
+  (path-len (Box i64))
+  (modules (__tl_dyn-array CompilerSemanticModuleInfo))
+  (module-len (Box i64))
+  (module-events (__tl_dyn-array CompilerSemanticModuleEvent))
+  (module-event-len (Box i64))
+  (scope-events (Box CompilerSemanticScopeEventVec))
+  (scope-region-count (Box i64))
+  ;; Exact source coordinates for a point near the current declaration. Scope
+  ;; boundaries can then translate AST line/column spans without rescanning the
+  ;; whole file for every visited expression.
+  (source-anchor-offset (Box i64))
+  (source-anchor-line (Box i64))
+  (source-anchor-col (Box i64)))
+
+(defstruct CompilerSemanticVisibleBindingQuery
+  (path-index i64)
+  (module-index i64)
+  (scope-head i64))
+
+(defenum CompilerSemanticMaybeVisibleBindingQuery
+  (Some CompilerSemanticVisibleBindingQuery)
+  (None))
+
+(defstruct CompilerSemanticVisibleBindingCursor
+  (query CompilerSemanticVisibleBindingQuery)
+  (namespace-mask i64)
+  (scope-head i64)
+  (binding-cursor i64)
+  (top-cursor i64)
+  (stage i64))
+
+(defenum CompilerSemanticVisibleBindingStep
+  (Some CompilerSemanticVisibleBinding CompilerSemanticVisibleBindingCursor)
+  (Done))
+
+(defstruct CompilerSemanticBinding
+  (name-id i64)
+  (symbol CompilerSemanticSymbolId)
+  (kind CompilerSemanticSymbolKind)
+  (display-name String)
+  (resolved-type String)
+  (record-index i64)
+  (visible CompilerSemanticVisibleBinding)
+  (parent i64))
+
+(defstruct CompilerSemanticBindingVec
+  (items (__tl_dyn-array CompilerSemanticBinding))
+  (live (__tl_dyn-array bool))
+  (len i64))
+
 (defstruct CompilerSemanticSourceIndex
   (owner-arena i64)
   (records (__tl_dyn-array CompilerSemanticRecord))
   (len i64)
   ;; False identifies current-buffer records established by recovery. It never
   ;; denotes a caller-owned last-good snapshot.
-  (complete bool))
+  (complete bool)
+  (paths (__tl_dyn-array CompilerSemanticSourcePathInfo))
+  (path-len i64)
+  (modules (__tl_dyn-array CompilerSemanticModuleInfo))
+  (module-len i64)
+  (module-events (__tl_dyn-array CompilerSemanticModuleEvent))
+  (module-event-len i64)
+  (scope-events (__tl_dyn-array CompilerSemanticScopeEvent))
+  (scope-event-len i64)
+  (scope-region-count i64)
+  (bindings (__tl_dyn-array CompilerSemanticBinding))
+  (binding-len i64)
+  (top-candidates (__tl_dyn-array CompilerSemanticTopCandidateRef))
+  (top-labels (__tl_dyn-array String))
+  (top-visible-bindings (__tl_dyn-array CompilerSemanticVisibleBinding))
+  (top-candidate-len i64))
 
 (defenum ResultCompilerCheckWithSemanticIndex
   (Ok tc.CompilerTypecheckSummary CompilerSemanticSourceIndex)
@@ -107,19 +248,6 @@
 (defenum CompilerSemanticMaybeHandle
   (Some i64)
   (None))
-
-(defstruct CompilerSemanticBinding
-  (name-id i64)
-  (symbol CompilerSemanticSymbolId)
-  (kind CompilerSemanticSymbolKind)
-  (display-name String)
-  (resolved-type String)
-  (parent i64))
-
-(defstruct CompilerSemanticBindingVec
-  (items (__tl_dyn-array CompilerSemanticBinding))
-  (live (__tl_dyn-array bool))
-  (len i64))
 
 ;; Snapshot heads share one append-only dense store. Each appended binding
 ;; remembers the previous head, so child and sibling walks can extend the same
@@ -148,6 +276,10 @@
   (provenance CompilerSemanticProvenance)
   (records (Box CompilerSemanticRecordVec))
   (bindings (Box CompilerSemanticBindingVec))
+  (visibility-enabled bool)
+  (path-index i64)
+  (module-index i64)
+  (visibility-storage (Box CompilerSemanticVisibilityBuildStorage))
   (visited-expr-ids (__tl_dyn-array i64))
   (next-local-ordinal (Box i64)))
 
@@ -164,6 +296,49 @@
     false
     CompilerSemanticProvenance.EditableSource))
 
+(define (compiler-semantic-binding-namespace-value-mask) : i64
+  1)
+
+(define (compiler-semantic-binding-namespace-type-mask) : i64
+  2)
+
+(define (compiler-semantic-binding-namespace-macro-mask) : i64
+  4)
+
+(define (compiler-semantic-binding-namespace-all-mask) : i64
+  7)
+
+(define (compiler-semantic-binding-namespace-tag
+  [namespace : CompilerSemanticBindingNamespace]) : i64
+  (match namespace
+    [(CompilerSemanticBindingNamespace.Value) 1]
+    [(CompilerSemanticBindingNamespace.Type) 2]
+    [(CompilerSemanticBindingNamespace.Macro) 4]))
+
+(define (compiler-semantic-binding-namespace-from-tag [tag : i64]) : CompilerSemanticBindingNamespace
+  (cond
+    [(= tag 2) CompilerSemanticBindingNamespace.Type]
+    [(= tag 4) CompilerSemanticBindingNamespace.Macro]
+    [else CompilerSemanticBindingNamespace.Value]))
+
+(define (compiler-semantic-binding-namespace-selected? [mask : i64] [tag : i64]) : bool
+  (not (= (bit-and mask tag) 0)))
+
+(define (compiler-semantic-visible-binding-fallback) : CompilerSemanticVisibleBinding
+  (let
+    [record : CompilerSemanticRecord (compiler-semantic-record-fallback)]
+    (CompilerSemanticVisibleBinding
+      record.symbol
+      CompilerSemanticBindingNamespace.Value
+      record.kind
+      record.display-name
+      record.resolved-type
+      record.documentation
+      record.module-id
+      record.span
+      record.editable
+      record.provenance)))
+
 (define compiler-semantic-source-index-live-owners : i64
   0)
 
@@ -175,7 +350,22 @@
     0
     (array.make-array CompilerSemanticRecord 0)
     0
-    false))
+    false
+    (array.make-array CompilerSemanticSourcePathInfo 0)
+    0
+    (array.make-array CompilerSemanticModuleInfo 0)
+    0
+    (array.make-array CompilerSemanticModuleEvent 0)
+    0
+    (array.make-array CompilerSemanticScopeEvent 0)
+    0
+    0
+    (array.make-array CompilerSemanticBinding 0)
+    0
+    (array.make-array CompilerSemanticTopCandidateRef 0)
+    (array.make-array String 0)
+    (array.make-array CompilerSemanticVisibleBinding 0)
+    0))
 
 (define (compiler-semantic-source-index-empty-owned) : CompilerSemanticSourceIndex
   (let
@@ -193,7 +383,22 @@
             owner
             (array.make-array CompilerSemanticRecord 0)
             0
-            false)]
+            false
+            (array.make-array CompilerSemanticSourcePathInfo 0)
+            0
+            (array.make-array CompilerSemanticModuleInfo 0)
+            0
+            (array.make-array CompilerSemanticModuleEvent 0)
+            0
+            (array.make-array CompilerSemanticScopeEvent 0)
+            0
+            0
+            (array.make-array CompilerSemanticBinding 0)
+            0
+            (array.make-array CompilerSemanticTopCandidateRef 0)
+            (array.make-array String 0)
+            (array.make-array CompilerSemanticVisibleBinding 0)
+            0)]
         (begin
           (unsafe
             (arena.tl_arena_set previous))
@@ -260,6 +465,331 @@
         (set! bindings.len (+ index 1))
         index))))
 
+(define (compiler-semantic-scope-event-vec-new [capacity : i64]) : CompilerSemanticScopeEventVec
+  (CompilerSemanticScopeEventVec
+    (array.make-array
+      CompilerSemanticScopeEvent
+      (if (< capacity 1)
+        1
+        capacity))
+    (array.make-array
+      bool
+      (if (< capacity 1)
+        1
+        capacity))
+    0))
+
+(define (compiler-semantic-scope-event-vec-grow!
+  [events : (&mut events CompilerSemanticScopeEventVec)]) : unit
+  (let
+    [old-items : (__tl_dyn-array CompilerSemanticScopeEvent) events.items]
+    [old-live : (__tl_dyn-array bool) events.live]
+    [old-capacity : i64 (array-length old-items)]
+    [new-capacity : i64
+      (if (< old-capacity 1)
+        1
+        (* old-capacity 2))]
+    [new-items : (__tl_dyn-array CompilerSemanticScopeEvent)
+      (array.make-array CompilerSemanticScopeEvent new-capacity)]
+    [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index events.len)
+        (let
+          [taken : (Tuple bool CompilerSemanticScopeEvent)
+            (__tl_array-take! old-items old-live index)]
+          (begin
+            (if (tuple-ref taken 0)
+              (begin
+                (set! (array-ref new-items index) (tuple-ref taken 1))
+                (set! (array-ref new-live index) true))
+              unit)
+            (set! index (+ index 1)))))
+      (set! events.items new-items)
+      (set! events.live new-live))))
+
+(define (compiler-semantic-scope-event-vec-push!
+  [events : (&mut events CompilerSemanticScopeEventVec)]
+  [event : CompilerSemanticScopeEvent]) : unit
+  (begin
+    (if (>= events.len (array-length events.items))
+      (compiler-semantic-scope-event-vec-grow! events)
+      unit)
+    (set! (array-ref events.items events.len) event)
+    (set! (array-ref events.live events.len) true)
+    (set! events.len (+ events.len 1))))
+
+(define (compiler-semantic-module-index-find
+  [modules : (& modules (__tl_dyn-array CompilerSemanticModuleInfo))]
+  [module-len : i64]
+  [module-id : i64]) : i64
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index module-len)
+        (if (or
+          (= (array-ref modules index).module-id module-id)
+          (and
+            (csym.compiler-symbol-root-module-id?
+              (array-ref modules index).module-id)
+            (csym.compiler-symbol-root-module-id? module-id)))
+          (return index)
+          (set! index (+ index 1))))
+      -1)))
+
+(define (compiler-semantic-module-index-ensure!
+  [state : CompilerSemanticWalkState]
+  [module-id : i64]) : i64
+  (let
+    [module-len : i64
+      (__tl-box-place
+        (__tl-project-field
+          (__tl-box-place state.visibility-storage)
+          module-len))]
+    [found : i64
+      (compiler-semantic-module-index-find
+        (&
+          (__tl-project-field (__tl-box-place state.visibility-storage) modules))
+        module-len
+        module-id)]
+    (if (>= found 0)
+      found
+      (if (>=
+        module-len
+        (array-length
+          (__tl-project-field (__tl-box-place state.visibility-storage) modules)))
+        -1
+        (begin
+          (set!
+            (array-ref
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                modules)
+              module-len)
+            (CompilerSemanticModuleInfo module-id 0 0))
+          (set!
+            (deref
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                module-len))
+            (+ module-len 1))
+          module-len)))))
+
+(define (compiler-semantic-path-index-find
+  [paths : (& paths (__tl_dyn-array CompilerSemanticSourcePathInfo))]
+  [path-len : i64]
+  [path : String]) : i64
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index path-len)
+        (if (string.eq (array-ref paths index).path path)
+          (return index)
+          (set! index (+ index 1))))
+      -1)))
+
+(define (compiler-semantic-module-event-push!
+  [state : CompilerSemanticWalkState]
+  [path-index : i64]
+  [byte-offset : i64]
+  [module-index : i64]) : unit
+  (if (or
+    (not state.visibility-enabled)
+    (< path-index 0)
+    (< module-index 0)
+    (< byte-offset 0))
+    unit
+    (let
+      [event-index : i64
+        (__tl-box-place
+          (__tl-project-field
+            (__tl-box-place state.visibility-storage)
+            module-event-len))]
+      (if (>=
+        event-index
+        (array-length
+          (__tl-project-field
+            (__tl-box-place state.visibility-storage)
+            module-events)))
+        unit
+        (if (and
+          (> event-index 0)
+          (=
+            (array-ref
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                module-events)
+              (- event-index 1)).path-index
+            path-index)
+          (=
+            (array-ref
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                module-events)
+              (- event-index 1)).module-index
+            module-index))
+          unit
+          (begin
+            (set!
+              (array-ref
+                (__tl-project-field
+                  (__tl-box-place state.visibility-storage)
+                  module-events)
+                event-index)
+              (CompilerSemanticModuleEvent
+                path-index
+                byte-offset
+                module-index
+                event-index))
+            (set!
+              (deref
+                (__tl-project-field
+                  (__tl-box-place state.visibility-storage)
+                  module-event-len))
+              (+ event-index 1))))))))
+
+(define (compiler-semantic-path-index-ensure!
+  [state : CompilerSemanticWalkState]
+  [path : String]
+  [source-len : i64]
+  [module-index : i64]) : i64
+  (if (or (not state.visibility-enabled) (string.eq path ""))
+    -1
+    (let
+      [normalized : String (cload.compiler-load-normalize-path path)]
+      [path-len : i64
+        (__tl-box-place
+          (__tl-project-field
+            (__tl-box-place state.visibility-storage)
+            path-len))]
+      [found : i64
+        (compiler-semantic-path-index-find
+          (&
+            (__tl-project-field (__tl-box-place state.visibility-storage) paths))
+          path-len
+          normalized)]
+      (if (>= found 0)
+        (let
+          [info : CompilerSemanticSourcePathInfo
+            (array-ref
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                paths)
+              found)]
+          (begin
+            (if (> source-len info.source-len)
+              (begin
+                (set! info.source-len source-len)
+                (set!
+                  (array-ref
+                    (__tl-project-field
+                      (__tl-box-place state.visibility-storage)
+                      paths)
+                    found)
+                  info))
+              unit)
+            found))
+        (if (>=
+          path-len
+          (array-length
+            (__tl-project-field (__tl-box-place state.visibility-storage) paths)))
+          -1
+          (begin
+            (set!
+              (array-ref
+                (__tl-project-field
+                  (__tl-box-place state.visibility-storage)
+                  paths)
+                path-len)
+              (CompilerSemanticSourcePathInfo
+                (string.copy (& normalized))
+                source-len
+                module-index
+                0
+                0
+                0
+                0))
+            (set!
+              (deref
+                (__tl-project-field
+                  (__tl-box-place state.visibility-storage)
+                  path-len))
+              (+ path-len 1))
+            (compiler-semantic-module-event-push! state path-len 0 module-index)
+            path-len))))))
+
+(define (compiler-semantic-scope-region-add!
+  [state : CompilerSemanticWalkState]
+  [parent : CompilerSemanticBindingSnapshot]
+  [child : CompilerSemanticBindingSnapshot]
+  [start-byte : i64]
+  [end-byte : i64]) : unit
+  (if (or
+    (not state.visibility-enabled)
+    (< state.path-index 0)
+    (= parent.head child.head)
+    (< start-byte 0)
+    (<= end-byte start-byte)
+    (> end-byte (string.string-length state.source)))
+    unit
+    (let
+      [start-sequence : i64
+        (__tl-project-field
+          (__tl-box-place
+            (__tl-project-field
+              (__tl-box-place state.visibility-storage)
+              scope-events))
+          len)]
+      (begin
+        (compiler-semantic-scope-event-vec-push!
+          (&mut
+            (__tl-box-place
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                scope-events)))
+          (CompilerSemanticScopeEvent
+            state.path-index
+            start-byte
+            child.head
+            (compiler-semantic-scope-event-kind-start)
+            child.head
+            start-sequence))
+        (compiler-semantic-scope-event-vec-push!
+          (&mut
+            (__tl-box-place
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                scope-events)))
+          (CompilerSemanticScopeEvent
+            state.path-index
+            end-byte
+            parent.head
+            (compiler-semantic-scope-event-kind-end)
+            child.head
+            (+ start-sequence 1)))
+        (set!
+          (deref
+            (__tl-project-field
+              (__tl-box-place state.visibility-storage)
+              scope-region-count))
+          (+
+            (__tl-box-place
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                scope-region-count))
+            1))))))
+
+(define (compiler-semantic-scope-node-region-add!
+  [state : CompilerSemanticWalkState]
+  [parent : CompilerSemanticBindingSnapshot]
+  [child : CompilerSemanticBindingSnapshot]
+  [node-id : i64]) : unit
+  (let
+    [start-byte : i64 (compiler-semantic-expr-start-offset state node-id -1)]
+    [raw-end : i64
+      (compiler-semantic-expr-visibility-end-offset state node-id -1)]
+    (compiler-semantic-scope-region-add! state parent child start-byte raw-end)))
+
 (define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
   (CompilerSemanticRecordVec
     (array.make-array
@@ -303,9 +833,9 @@
       (set! records.items new-items)
       (set! records.live new-live))))
 
-(define (compiler-semantic-record-vec-push!
+(define (compiler-semantic-record-vec-push-index!
   [records : (&mut records CompilerSemanticRecordVec)]
-  [record : CompilerSemanticRecord]) : unit
+  [record : CompilerSemanticRecord]) : i64
   (begin
     (if (>= records.len (array-length records.items))
       (compiler-semantic-record-vec-grow! records)
@@ -315,7 +845,15 @@
       (begin
         (set! (array-ref records.items index) record)
         (set! (array-ref records.live index) true)
-        (set! records.len (+ index 1))))))
+        (set! records.len (+ index 1))
+        index))))
+
+(define (compiler-semantic-record-vec-push!
+  [records : (&mut records CompilerSemanticRecordVec)]
+  [record : CompilerSemanticRecord]) : unit
+  (begin
+    (compiler-semantic-record-vec-push-index! records record)
+    unit))
 
 (define (compiler-semantic-source-index-len
   [index : (& index CompilerSemanticSourceIndex)]) : i64
@@ -341,12 +879,417 @@
         (set! index.owner-arena 0)
         (set! index.len 0)
         (set! index.complete false)
+        (set! index.path-len 0)
+        (set! index.module-len 0)
+        (set! index.module-event-len 0)
+        (set! index.scope-event-len 0)
+        (set! index.scope-region-count 0)
+        (set! index.binding-len 0)
+        (set! index.top-candidate-len 0)
         (set!
           compiler-semantic-source-index-live-owners
           (- compiler-semantic-source-index-live-owners 1))
         (unsafe
           (arena.tl_arena_destroy owner)))
       unit)))
+
+(define (compiler-semantic-source-index-scope-region-count
+  [index : (& index CompilerSemanticSourceIndex)]) : i64
+  index.scope-region-count)
+
+(define (compiler-semantic-source-index-top-candidate-count
+  [index : (& index CompilerSemanticSourceIndex)]) : i64
+  index.top-candidate-len)
+
+(define (compiler-semantic-source-index-path-count
+  [index : (& index CompilerSemanticSourceIndex)]) : i64
+  index.path-len)
+
+(define (compiler-semantic-source-index-retained-byte-estimate
+  [index : (& index CompilerSemanticSourceIndex)]) : i64
+  (let
+    [bytes : i64
+      (+
+        (* index.len (comptime (size-of (type CompilerSemanticRecord))))
+        (+
+          (*
+            index.path-len
+            (comptime (size-of (type CompilerSemanticSourcePathInfo))))
+          (+
+            (*
+              index.module-len
+              (comptime (size-of (type CompilerSemanticModuleInfo))))
+            (+
+              (*
+                index.module-event-len
+                (comptime (size-of (type CompilerSemanticModuleEvent))))
+              (+
+                (*
+                  index.scope-event-len
+                  (comptime (size-of (type CompilerSemanticScopeEvent))))
+                (+
+                  (*
+                    index.binding-len
+                    (comptime (size-of (type CompilerSemanticBinding))))
+                  (+
+                    (*
+                      index.top-candidate-len
+                      (comptime
+                        (size-of (type CompilerSemanticTopCandidateRef))))
+                    (+
+                      (*
+                        index.top-candidate-len
+                        (comptime (size-of (type String))))
+                      (*
+                        index.top-candidate-len
+                        (comptime
+                          (size-of (type CompilerSemanticVisibleBinding))))))))))))]
+    [path-index : i64 0]
+    [binding-index : i64 0]
+    [candidate-index : i64 0]
+    (begin
+      (while (< path-index index.path-len)
+        (begin
+          (set!
+            bytes
+            (+
+              bytes
+              (string.string-length (array-ref index.paths path-index).path)))
+          (set! path-index (+ path-index 1))))
+      (while (< binding-index index.binding-len)
+        (let
+          [binding : CompilerSemanticBinding
+            (array-ref index.bindings binding-index)]
+          (begin
+            (set!
+              bytes
+              (+
+                bytes
+                (+
+                  (string.string-length binding.display-name)
+                  (string.string-length binding.resolved-type))))
+            (set! binding-index (+ binding-index 1)))))
+      (while (< candidate-index index.top-candidate-len)
+        (begin
+          (set!
+            bytes
+            (+
+              bytes
+              (string.string-length
+                (array-ref index.top-labels candidate-index))))
+          (set! candidate-index (+ candidate-index 1))))
+      bytes)))
+
+(define (compiler-semantic-source-index-query
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]
+  [byte-offset : i64]) : CompilerSemanticMaybeVisibleBindingQuery
+  (if (or (<= index.owner-arena 0) (not index.complete) (< byte-offset 0))
+    CompilerSemanticMaybeVisibleBindingQuery.None
+    (let
+      [normalized : String (cload.compiler-load-normalize-path path)]
+      [path-index : i64
+        (compiler-semantic-path-index-find
+          (& index.paths)
+          index.path-len
+          normalized)]
+      (if (< path-index 0)
+        CompilerSemanticMaybeVisibleBindingQuery.None
+        (let
+          [info : CompilerSemanticSourcePathInfo
+            (array-ref index.paths path-index)]
+          (if (> byte-offset info.source-len)
+            CompilerSemanticMaybeVisibleBindingQuery.None
+            (let
+              [scope-low : i64 0]
+              [scope-high : i64 info.scope-event-len]
+              [module-low : i64 0]
+              [module-high : i64 info.module-event-len]
+              (begin
+                (while (< scope-low scope-high)
+                  (let
+                    [mid : i64 (/ (+ scope-low scope-high) 2)]
+                    [event : CompilerSemanticScopeEvent
+                      (array-ref
+                        index.scope-events
+                        (+ info.scope-event-offset mid))]
+                    (if (<= event.byte-offset byte-offset)
+                      (set! scope-low (+ mid 1))
+                      (set! scope-high mid))))
+                (while (< module-low module-high)
+                  (let
+                    [mid : i64 (/ (+ module-low module-high) 2)]
+                    [event : CompilerSemanticModuleEvent
+                      (array-ref
+                        index.module-events
+                        (+ info.module-event-offset mid))]
+                    (if (<= event.byte-offset byte-offset)
+                      (set! module-low (+ mid 1))
+                      (set! module-high mid))))
+                (CompilerSemanticMaybeVisibleBindingQuery.Some
+                  (CompilerSemanticVisibleBindingQuery
+                    path-index
+                    (if (> module-low 0)
+                      (array-ref
+                        index.module-events
+                        (+ info.module-event-offset (- module-low 1))).module-index
+                      info.default-module-index)
+                    (if (> scope-low 0)
+                      (array-ref
+                        index.scope-events
+                        (+ info.scope-event-offset (- scope-low 1))).head
+                      -1)))))))))))
+
+(define (compiler-semantic-visible-binding-owned-copy
+  [record : (& record CompilerSemanticRecord)]
+  [namespace-tag : i64]
+  [display-name : (& display-name str)]) : CompilerSemanticVisibleBinding
+  (CompilerSemanticVisibleBinding
+    (CompilerSemanticSymbolId
+      record.symbol.module-id
+      record.symbol.declaration-ordinal
+      record.symbol.local-ordinal)
+    (compiler-semantic-binding-namespace-from-tag namespace-tag)
+    (match record.kind
+      [(CompilerSemanticSymbolKind.Value) CompilerSemanticSymbolKind.Value]
+      [(CompilerSemanticSymbolKind.Function)
+        CompilerSemanticSymbolKind.Function]
+      [(CompilerSemanticSymbolKind.Macro) CompilerSemanticSymbolKind.Macro]
+      [(CompilerSemanticSymbolKind.ExternValue)
+        CompilerSemanticSymbolKind.ExternValue]
+      [(CompilerSemanticSymbolKind.ExternFunction)
+        CompilerSemanticSymbolKind.ExternFunction]
+      [(CompilerSemanticSymbolKind.Struct) CompilerSemanticSymbolKind.Struct]
+      [(CompilerSemanticSymbolKind.Enum) CompilerSemanticSymbolKind.Enum]
+      [(CompilerSemanticSymbolKind.Parameter)
+        CompilerSemanticSymbolKind.Parameter]
+      [(CompilerSemanticSymbolKind.Local) CompilerSemanticSymbolKind.Local])
+    (string.copy display-name)
+    (string.copy (& record.resolved-type))
+    (string.copy (& record.documentation))
+    record.module-id
+    (CompilerSemanticSpan
+      (string.copy (& record.span.path))
+      record.span.start-byte
+      record.span.end-byte
+      (ast.ast-source-span
+        (cast record.span.source.start-line : i64)
+        (cast record.span.source.start-col : i64)
+        (cast record.span.source.end-line : i64)
+        (cast record.span.source.end-col : i64))
+      record.span.utf16-start-col
+      record.span.utf16-end-col)
+    record.editable
+    (match record.provenance
+      [(CompilerSemanticProvenance.EditableSource)
+        CompilerSemanticProvenance.EditableSource]
+      [(CompilerSemanticProvenance.Generated generator item key)
+        (CompilerSemanticProvenance.Generated
+          (string.copy (& generator))
+          (string.copy (& item))
+          (string.copy (& key)))])))
+
+(define (compiler-semantic-top-visible-bindings-fill!
+  [records : (& records (__tl_dyn-array CompilerSemanticRecord))]
+  [candidates : (& candidates (__tl_dyn-array CompilerSemanticTopCandidateRef))]
+  [labels : (& labels (__tl_dyn-array String))]
+  [candidate-len : i64]
+  [out : (__tl_dyn-array CompilerSemanticVisibleBinding)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index candidate-len)
+      (let
+        [candidate : CompilerSemanticTopCandidateRef
+          (array-ref candidates index)]
+        (begin
+          (set!
+            (array-ref out index)
+            (compiler-semantic-visible-binding-owned-copy
+              (& (array-ref records candidate.record-index))
+              candidate.namespace-tag
+              (& (array-ref labels candidate.label-index))))
+          (set! index (+ index 1)))))))
+
+(define (compiler-semantic-binding-shadowed-before?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [scope-head : i64]
+  [binding-index : i64]
+  [name-id : i64]) : bool
+  (let
+    [cursor : i64 scope-head]
+    (begin
+      (while (and (>= cursor 0) (!= cursor binding-index))
+        (let
+          [binding : CompilerSemanticBinding (array-ref index.bindings cursor)]
+          (if (= binding.name-id name-id)
+            (return true)
+            (set! cursor binding.parent))))
+      false)))
+
+(define (compiler-semantic-source-index-local-visible-binding-get
+  [index : (& index CompilerSemanticSourceIndex)]
+  [binding-index : i64]) : CompilerSemanticVisibleBinding
+  (if (and (>= binding-index 0) (< binding-index index.binding-len))
+    (array-ref index.bindings binding-index).visible
+    (compiler-semantic-visible-binding-fallback)))
+
+(define (compiler-semantic-source-index-top-visible-binding-get
+  [index : (& index CompilerSemanticSourceIndex)]
+  [candidate-index : i64]) : CompilerSemanticVisibleBinding
+  (if (and (>= candidate-index 0) (< candidate-index index.top-candidate-len))
+    (array-ref index.top-visible-bindings candidate-index)
+    (compiler-semantic-visible-binding-fallback)))
+
+(define (compiler-semantic-scope-has-name?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [scope-head : i64]
+  [name-id : i64]) : bool
+  (let
+    [cursor : i64 scope-head]
+    (begin
+      (while (>= cursor 0)
+        (let
+          [binding : CompilerSemanticBinding (array-ref index.bindings cursor)]
+          (if (= binding.name-id name-id)
+            (return true)
+            (set! cursor binding.parent))))
+      false)))
+
+(define (compiler-semantic-visible-binding-query-valid?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]) : bool
+  (and
+    (> index.owner-arena 0)
+    index.complete
+    (>= query.path-index 0)
+    (< query.path-index index.path-len)
+    (>= query.module-index 0)
+    (< query.module-index index.module-len)
+    (>= query.scope-head -1)
+    (< query.scope-head index.binding-len)))
+
+(define (compiler-semantic-visible-binding-cursor
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]
+  [namespace-mask : i64]) : CompilerSemanticVisibleBindingCursor
+  (if (not (compiler-semantic-visible-binding-query-valid? index query))
+    (CompilerSemanticVisibleBindingCursor query namespace-mask -1 -1 0 2)
+    (CompilerSemanticVisibleBindingCursor
+      query
+      namespace-mask
+      query.scope-head
+      query.scope-head
+      (array-ref index.modules query.module-index).candidate-offset
+      0)))
+
+(define (compiler-semantic-visible-binding-cursor-step
+  [index : (& index CompilerSemanticSourceIndex)]
+  [cursor : CompilerSemanticVisibleBindingCursor]) : CompilerSemanticVisibleBindingStep
+  (if (not (compiler-semantic-visible-binding-query-valid? index cursor.query))
+    CompilerSemanticVisibleBindingStep.Done
+    (let
+      [next : CompilerSemanticVisibleBindingCursor
+        (CompilerSemanticVisibleBindingCursor
+          (CompilerSemanticVisibleBindingQuery
+            cursor.query.path-index
+            cursor.query.module-index
+            cursor.query.scope-head)
+          cursor.namespace-mask
+          cursor.scope-head
+          cursor.binding-cursor
+          cursor.top-cursor
+          cursor.stage)]
+      [module-info : CompilerSemanticModuleInfo
+        (array-ref index.modules cursor.query.module-index)]
+      [top-end : i64 (+ module-info.candidate-offset module-info.candidate-len)]
+      (begin
+        (if (or
+          (< next.stage 0)
+          (> next.stage 2)
+          (< next.binding-cursor -1)
+          (>= next.binding-cursor index.binding-len)
+          (and
+            (= next.stage 1)
+            (or
+              (< next.top-cursor module-info.candidate-offset)
+              (> next.top-cursor top-end))))
+          (return CompilerSemanticVisibleBindingStep.Done)
+          unit)
+        (while (= next.stage 0)
+          (if (< next.binding-cursor 0)
+            (begin
+              (set! next.stage 1)
+              (set! next.top-cursor module-info.candidate-offset))
+            (let
+              [binding-index : i64 next.binding-cursor]
+              [binding : CompilerSemanticBinding
+                (array-ref index.bindings binding-index)]
+              (begin
+                (set! next.binding-cursor binding.parent)
+                (if (and
+                  (compiler-semantic-binding-namespace-selected?
+                    next.namespace-mask
+                    (compiler-semantic-binding-namespace-value-mask))
+                  (not
+                    (compiler-semantic-binding-shadowed-before?
+                      index
+                      next.scope-head
+                      binding-index
+                      binding.name-id)))
+                  (return
+                    (CompilerSemanticVisibleBindingStep.Some
+                      (compiler-semantic-source-index-local-visible-binding-get
+                        index
+                        binding-index)
+                      next))
+                  unit)))))
+        (while (and (= next.stage 1) (< next.top-cursor top-end))
+          (let
+            [candidate : CompilerSemanticTopCandidateRef
+              (array-ref index.top-candidates next.top-cursor)]
+            (begin
+              (set! next.top-cursor (+ next.top-cursor 1))
+              (if (and
+                (compiler-semantic-binding-namespace-selected?
+                  next.namespace-mask
+                  candidate.namespace-tag)
+                (not
+                  (and
+                    (=
+                      candidate.namespace-tag
+                      (compiler-semantic-binding-namespace-value-mask))
+                    (compiler-semantic-scope-has-name?
+                      index
+                      next.scope-head
+                      candidate.name-id))))
+                (return
+                  (CompilerSemanticVisibleBindingStep.Some
+                    (compiler-semantic-source-index-top-visible-binding-get
+                      index
+                      (- next.top-cursor 1))
+                    next))
+                unit))))
+        (set! next.stage 2)
+        CompilerSemanticVisibleBindingStep.Done))))
+
+(define (compiler-semantic-source-index-visible-binding-count
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]
+  [namespace-mask : i64]) : i64
+  (let
+    [cursor : CompilerSemanticVisibleBindingCursor
+      (compiler-semantic-visible-binding-cursor index query namespace-mask)]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (compiler-semantic-visible-binding-cursor-step index cursor)
+          [(CompilerSemanticVisibleBindingStep.Some _ next)
+            (begin
+              (set! cursor next)
+              (set! count (+ count 1)))]
+          [(CompilerSemanticVisibleBindingStep.Done) (set! done true)]))
+      count)))
 
 (define (compiler-semantic-decl-symbol [decl : ast.AstDecl]) : CompilerSemanticMaybeDecl
   (match decl
@@ -398,6 +1341,77 @@
             (set! col (+ col 1)))
           (set! index (+ index 1))))
       index)))
+
+(define (compiler-semantic-state-source-offset
+  [state : CompilerSemanticWalkState]
+  [target-line : i64]
+  [target-col : i64]) : i64
+  (let
+    [storage : CompilerSemanticVisibilityBuildStorage
+      (__tl-box-place state.visibility-storage)]
+    [anchor-offset : i64 (__tl-box-place storage.source-anchor-offset)]
+    [anchor-line : i64 (__tl-box-place storage.source-anchor-line)]
+    [anchor-col : i64 (__tl-box-place storage.source-anchor-col)]
+    [source-len : i64 (string.string-length state.source)]
+    [usable : bool
+      (and
+        (>= anchor-offset 0)
+        (<= anchor-offset source-len)
+        (or
+          (> target-line anchor-line)
+          (and (= target-line anchor-line) (>= target-col anchor-col))))]
+    (if (not usable)
+      (compiler-semantic-source-offset state.source target-line target-col)
+      (if (= target-line anchor-line)
+        (let
+          [offset : i64 (+ anchor-offset (- target-col anchor-col))]
+          (cond
+            [(< offset 0) 0]
+            [(> offset source-len) source-len]
+            [else offset]))
+        (let
+          [index : i64 anchor-offset]
+          [line : i64 anchor-line]
+          [col : i64 anchor-col]
+          (begin
+            (while (and
+              (< index source-len)
+              (or
+                (< line target-line)
+                (and (= line target-line) (< col target-col))))
+              (begin
+                (if (= (string.string-ref state.source index) '\n')
+                  (begin
+                    (set! line (+ line 1))
+                    (set! col 1))
+                  (set! col (+ col 1)))
+                (set! index (+ index 1))))
+            index))))))
+
+(define (compiler-semantic-source-anchor-set!
+  [state : CompilerSemanticWalkState]
+  [offset : i64]
+  [line : i64]
+  [col : i64]) : unit
+  (begin
+    (set!
+      (deref
+        (__tl-project-field
+          (__tl-box-place state.visibility-storage)
+          source-anchor-offset))
+      offset)
+    (set!
+      (deref
+        (__tl-project-field
+          (__tl-box-place state.visibility-storage)
+          source-anchor-line))
+      line)
+    (set!
+      (deref
+        (__tl-project-field
+          (__tl-box-place state.visibility-storage)
+          source-anchor-col))
+      col)))
 
 (define (compiler-semantic-source-position [source : String] [target : i64]) : ast.AstSourceSpan
   (let
@@ -1234,30 +2248,39 @@
           name
           search-start
           search-limit))]
-    [binding : CompilerSemanticBinding
-      (CompilerSemanticBinding
-        name-id
-        symbol
-        kind
-        (string.copy (& name))
-        (string.copy (& type-text))
-        scope.head)]
     (begin
       (set! (deref state.next-local-ordinal) (+ local-ordinal 1))
-      (compiler-semantic-record-vec-push!
-        (&mut (__tl-box-place state.records))
-        (CompilerSemanticRecord
-          symbol
-          CompilerSemanticRecordRole.Definition
-          kind
-          (string.copy (& name))
-          (string.copy (& type-text))
-          ""
-          state.module-id
-          span
-          (and (not state.generated) (>= span.start-byte 0))
-          state.provenance))
       (let
+        [record-index : i64
+          (compiler-semantic-record-vec-push-index!
+            (&mut (__tl-box-place state.records))
+            (CompilerSemanticRecord
+              symbol
+              CompilerSemanticRecordRole.Definition
+              kind
+              (string.copy (& name))
+              (string.copy (& type-text))
+              ""
+              state.module-id
+              span
+              (and (not state.generated) (>= span.start-byte 0))
+              state.provenance))]
+        [binding : CompilerSemanticBinding
+          (CompilerSemanticBinding
+            name-id
+            symbol
+            kind
+            (string.copy (& name))
+            (string.copy (& type-text))
+            record-index
+            (compiler-semantic-visible-binding-owned-copy
+              (&
+                (array-ref
+                  (__tl-project-field (__tl-box-place state.records) items)
+                  record-index))
+              (compiler-semantic-binding-namespace-value-mask)
+              (& name))
+            scope.head)]
         [head : i64
           (compiler-semantic-binding-vec-push!
             (&mut (__tl-box-place state.bindings))
@@ -1347,8 +2370,8 @@
   [fallback : i64]) : i64
   (match (tc.tc-expr-id-maybe-span expr-id)
     [(tc.TcMaybeAstSourceSpan.Some span)
-      (compiler-semantic-source-offset
-        state.source
+      (compiler-semantic-state-source-offset
+        state
         (ast.ast-source-span-start-line span)
         (ast.ast-source-span-start-col span))]
     [(tc.TcMaybeAstSourceSpan.No) fallback]))
@@ -1359,11 +2382,34 @@
   [fallback : i64]) : i64
   (match (tc.tc-expr-id-maybe-span expr-id)
     [(tc.TcMaybeAstSourceSpan.Some span)
-      (compiler-semantic-source-offset
-        state.source
+      (compiler-semantic-state-source-offset
+        state
         (ast.ast-source-span-end-line span)
         (ast.ast-source-span-end-col span))]
     [(tc.TcMaybeAstSourceSpan.No) fallback]))
+
+(define (compiler-semantic-expr-visibility-end-offset
+  [state : CompilerSemanticWalkState]
+  [expr-id : i64]
+  [fallback : i64]) : i64
+  (let
+    [start : i64 (compiler-semantic-expr-start-offset state expr-id fallback)]
+    [raw-end : i64 (compiler-semantic-expr-end-offset state expr-id fallback)]
+    [source-len : i64 (string.string-length state.source)]
+    [cursor : i64
+      (cond
+        [(< raw-end start) start]
+        [(> raw-end source-len) source-len]
+        [else raw-end])]
+    (begin
+      ;; Atomic expression spans may end at their first or final byte. Advance
+      ;; only through the token so a sequential binder starts after its RHS.
+      (while (and
+        (< cursor source-len)
+        (not
+          (compiler-semantic-delimiter? (string.string-ref state.source cursor))))
+        (set! cursor (+ cursor 1)))
+      cursor)))
 
 (define (compiler-semantic-maybe-span-start
   [state : CompilerSemanticWalkState]
@@ -1371,10 +2417,22 @@
   [fallback : i64]) : i64
   (match maybe-span
     [(CompilerSemanticMaybeSpan.Some span)
-      (compiler-semantic-source-offset
-        state.source
+      (compiler-semantic-state-source-offset
+        state
         (ast.ast-source-span-start-line span)
         (ast.ast-source-span-start-col span))]
+    [(CompilerSemanticMaybeSpan.None) fallback]))
+
+(define (compiler-semantic-maybe-span-end
+  [state : CompilerSemanticWalkState]
+  [maybe-span : CompilerSemanticMaybeSpan]
+  [fallback : i64]) : i64
+  (match maybe-span
+    [(CompilerSemanticMaybeSpan.Some span)
+      (compiler-semantic-state-source-offset
+        state
+        (ast.ast-source-span-end-line span)
+        (ast.ast-source-span-end-col span))]
     [(CompilerSemanticMaybeSpan.None) fallback]))
 
 (define (compiler-semantic-bind-params!
@@ -1798,6 +2856,11 @@
         state
         body-id
         (string.string-length state.source))]
+    [form-end : i64
+      (compiler-semantic-maybe-span-end
+        state
+        maybe-span
+        (compiler-semantic-expr-end-offset state body-id body-start))]
     [index : i64 0]
     (begin
       (while (< index (ast.ast-let-binding-list-len (& bindings)))
@@ -1831,11 +2894,20 @@
                         cursor
                         init-start)]
                     (begin
+                      (compiler-semantic-scope-region-add!
+                        state
+                        next-scope
+                        bound.scope
+                        (compiler-semantic-expr-visibility-end-offset
+                          state
+                          init-id
+                          bound.next-search)
+                        form-end)
                       (set! next-scope bound.scope)
                       (set! next-env bound.env)
                       (set!
                         cursor
-                        (compiler-semantic-expr-end-offset
+                        (compiler-semantic-expr-visibility-end-offset
                           state
                           init-id
                           bound.next-search))))))])
@@ -1864,7 +2936,9 @@
         params
         (compiler-semantic-form-head-end state.source form-start)
         body-start)]
-    (compiler-semantic-walk-node! state bound.scope bound.env body-id)))
+    (begin
+      (compiler-semantic-scope-node-region-add! state scope bound.scope body-id)
+      (compiler-semantic-walk-node! state bound.scope bound.env body-id))))
 
 (define (compiler-semantic-walk-foreach!
   [state : CompilerSemanticWalkState]
@@ -1899,7 +2973,13 @@
           (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx index-ty))
           (compiler-semantic-form-head-end state.source form-start)
           first-expr-start)]
-      (compiler-semantic-walk-node! state bound.scope bound.env body-id))))
+      (begin
+        (compiler-semantic-scope-node-region-add!
+          state
+          scope
+          bound.scope
+          body-id)
+        (compiler-semantic-walk-node! state bound.scope bound.env body-id)))))
 
 (define (compiler-semantic-walk-spmd-reduce!
   [state : CompilerSemanticWalkState]
@@ -1933,6 +3013,11 @@
       (compiler-semantic-walk-node! state scope env start-id)
       (compiler-semantic-walk-node! state scope env end-id)
       (compiler-semantic-walk-node! state scope env init-id)
+      (compiler-semantic-scope-node-region-add!
+        state
+        scope
+        bound.scope
+        value-id)
       (compiler-semantic-walk-node! state bound.scope bound.env value-id))))
 
 (define (compiler-semantic-walk-spmd-scan!
@@ -1985,11 +3070,28 @@
       (compiler-semantic-walk-node! state scope env start-id)
       (compiler-semantic-walk-node! state scope env end-id)
       (compiler-semantic-walk-node! state scope env init-id)
+      ;; The index remains active through both the scan value and body. The
+      ;; prefix is a nested body-only extension, so its exit restores the
+      ;; index before the enclosing index region restores the outer scope.
+      (compiler-semantic-scope-region-add!
+        state
+        scope
+        index-bound.scope
+        (compiler-semantic-expr-start-offset state value-id -1)
+        (compiler-semantic-expr-end-offset
+          state
+          body-id
+          (string.string-length state.source)))
       (compiler-semantic-walk-node!
         state
         index-bound.scope
         index-bound.env
         value-id)
+      (compiler-semantic-scope-node-region-add!
+        state
+        index-bound.scope
+        prefix-bound.scope
+        body-id)
       (compiler-semantic-walk-node!
         state
         prefix-bound.scope
@@ -2211,11 +3313,17 @@
                               pattern
                               cursor
                               body-start)]
-                          (compiler-semantic-walk-node!
-                            state
-                            bound.scope
-                            fact-env
-                            body))]
+                          (begin
+                            (compiler-semantic-scope-node-region-add!
+                              state
+                              scope
+                              bound.scope
+                              (compiler-semantic-match-body-source-expr-id body))
+                            (compiler-semantic-walk-node!
+                              state
+                              bound.scope
+                              fact-env
+                              body)))]
                       [(tc.ResultTcEnv.Err _)
                         (let
                           [bound : CompilerSemanticBindResult
@@ -2231,11 +3339,17 @@
                               pattern
                               cursor
                               body-start)]
-                          (compiler-semantic-walk-node!
-                            state
-                            bound.scope
-                            bound.env
-                            body))])]
+                          (begin
+                            (compiler-semantic-scope-node-region-add!
+                              state
+                              scope
+                              bound.scope
+                              (compiler-semantic-match-body-source-expr-id body))
+                            (compiler-semantic-walk-node!
+                              state
+                              bound.scope
+                              bound.env
+                              body)))])]
                   [(ast.AstMaybeType.No)
                     (let
                       [bound : CompilerSemanticBindResult
@@ -2251,11 +3365,17 @@
                           pattern
                           cursor
                           body-start)]
-                      (compiler-semantic-walk-node!
-                        state
-                        bound.scope
-                        bound.env
-                        body))])
+                      (begin
+                        (compiler-semantic-scope-node-region-add!
+                          state
+                          scope
+                          bound.scope
+                          (compiler-semantic-match-body-source-expr-id body))
+                        (compiler-semantic-walk-node!
+                          state
+                          bound.scope
+                          bound.env
+                          body)))])
                 (tc.tc-type-env-scoped-runtime-restore! saved)
                 (set!
                   cursor
@@ -2276,6 +3396,11 @@
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
     [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
+    [form-end : i64
+      (compiler-semantic-maybe-span-end
+        state
+        maybe-span
+        (string.string-length state.source))]
     [cursor : i64 (compiler-semantic-form-head-end state.source form-start)]
     [index : i64 0]
     (begin
@@ -2362,14 +3487,29 @@
                               cursor
                               init-start)]))]
                     (begin
+                      (let
+                        [visible-start : i64
+                          (compiler-semantic-expr-visibility-end-offset
+                            state
+                            cleanup
+                            (compiler-semantic-expr-visibility-end-offset
+                              state
+                              init
+                              bound.next-search))]
+                        (compiler-semantic-scope-region-add!
+                          state
+                          next-scope
+                          bound.scope
+                          visible-start
+                          form-end))
                       (set! next-scope bound.scope)
                       (set! next-env bound.env)
                       (set!
                         cursor
-                        (compiler-semantic-expr-end-offset
+                        (compiler-semantic-expr-visibility-end-offset
                           state
                           cleanup
-                          (compiler-semantic-expr-end-offset
+                          (compiler-semantic-expr-visibility-end-offset
                             state
                             init
                             bound.next-search)))))))])
@@ -2758,7 +3898,13 @@
             params
             (compiler-semantic-decl-param-search-start state name body)
             body-start)]
-        (compiler-semantic-walk-node! state bound.scope bound.env body))]
+        (begin
+          (compiler-semantic-scope-node-region-add!
+            state
+            (compiler-semantic-binding-snapshot-empty)
+            bound.scope
+            body)
+          (compiler-semantic-walk-node! state bound.scope bound.env body)))]
     [(ast.AstDecl.DefMacro _ name params _ body)
       (let
         [body-start : i64
@@ -2774,7 +3920,13 @@
             params
             (compiler-semantic-decl-param-search-start state name body)
             body-start)]
-        (compiler-semantic-walk-node! state bound.scope bound.env body))]
+        (begin
+          (compiler-semantic-scope-node-region-add!
+            state
+            (compiler-semantic-binding-snapshot-empty)
+            bound.scope
+            body)
+          (compiler-semantic-walk-node! state bound.scope bound.env body)))]
     [(ast.AstDecl.Test _ body _)
       (compiler-semantic-walk-node!
         state
@@ -2911,6 +4063,716 @@
               ""))
           (set! index (+ index 1)))))))
 
+(define (compiler-semantic-i64-min [left : i64] [right : i64]) : i64
+  (if (< left right)
+    left
+    right))
+
+(define (compiler-semantic-scope-event-before?
+  [left : CompilerSemanticScopeEvent]
+  [right : CompilerSemanticScopeEvent]) : bool
+  (cond
+    [(< left.byte-offset right.byte-offset) true]
+    [(> left.byte-offset right.byte-offset) false]
+    [(< left.kind right.kind) true]
+    [(> left.kind right.kind) false]
+    [(= left.kind (compiler-semantic-scope-event-kind-end))
+      (if (= left.child-head right.child-head)
+        (< left.sequence right.sequence)
+        (> left.child-head right.child-head))]
+    [(= left.child-head right.child-head) (< left.sequence right.sequence)]
+    [else (< left.child-head right.child-head)]))
+
+(define (compiler-semantic-scope-events-sort-segment!
+  [items : (__tl_dyn-array CompilerSemanticScopeEvent)]
+  [offset : i64]
+  [len : i64]) : unit
+  (if (< len 2)
+    unit
+    (let
+      [scratch : (__tl_dyn-array CompilerSemanticScopeEvent)
+        (array.make-array CompilerSemanticScopeEvent len)]
+      [width : i64 1]
+      (while (< width len)
+        (let
+          [run : i64 0]
+          (begin
+            (while (< run len)
+              (let
+                [mid : i64 (compiler-semantic-i64-min (+ run width) len)]
+                [end : i64 (compiler-semantic-i64-min (+ run (* width 2)) len)]
+                [left : i64 run]
+                [right : i64 mid]
+                [out : i64 run]
+                (begin
+                  (while (< out end)
+                    (if (or
+                      (>= right end)
+                      (and
+                        (< left mid)
+                        (not
+                          (compiler-semantic-scope-event-before?
+                            (array-ref items (+ offset right))
+                            (array-ref items (+ offset left))))))
+                      (begin
+                        (set!
+                          (array-ref scratch out)
+                          (array-ref items (+ offset left)))
+                        (set! left (+ left 1)))
+                      (begin
+                        (set!
+                          (array-ref scratch out)
+                          (array-ref items (+ offset right)))
+                        (set! right (+ right 1))))
+                    (set! out (+ out 1)))
+                  (set! run end))))
+            (let
+              [copy-index : i64 0]
+              (while (< copy-index len)
+                (begin
+                  (set!
+                    (array-ref items (+ offset copy-index))
+                    (array-ref scratch copy-index))
+                  (set! copy-index (+ copy-index 1)))))
+            (set! width (* width 2))))))))
+
+(define (compiler-semantic-module-event-before?
+  [left : CompilerSemanticModuleEvent]
+  [right : CompilerSemanticModuleEvent]) : bool
+  (if (= left.byte-offset right.byte-offset)
+    (< left.sequence right.sequence)
+    (< left.byte-offset right.byte-offset)))
+
+(define (compiler-semantic-module-events-sort-segment!
+  [items : (__tl_dyn-array CompilerSemanticModuleEvent)]
+  [offset : i64]
+  [len : i64]) : unit
+  (if (< len 2)
+    unit
+    (let
+      [scratch : (__tl_dyn-array CompilerSemanticModuleEvent)
+        (array.make-array CompilerSemanticModuleEvent len)]
+      [width : i64 1]
+      (while (< width len)
+        (let
+          [run : i64 0]
+          (begin
+            (while (< run len)
+              (let
+                [mid : i64 (compiler-semantic-i64-min (+ run width) len)]
+                [end : i64 (compiler-semantic-i64-min (+ run (* width 2)) len)]
+                [left : i64 run]
+                [right : i64 mid]
+                [out : i64 run]
+                (begin
+                  (while (< out end)
+                    (if (or
+                      (>= right end)
+                      (and
+                        (< left mid)
+                        (not
+                          (compiler-semantic-module-event-before?
+                            (array-ref items (+ offset right))
+                            (array-ref items (+ offset left))))))
+                      (begin
+                        (set!
+                          (array-ref scratch out)
+                          (array-ref items (+ offset left)))
+                        (set! left (+ left 1)))
+                      (begin
+                        (set!
+                          (array-ref scratch out)
+                          (array-ref items (+ offset right)))
+                        (set! right (+ right 1))))
+                    (set! out (+ out 1)))
+                  (set! run end))))
+            (let
+              [copy-index : i64 0]
+              (while (< copy-index len)
+                (begin
+                  (set!
+                    (array-ref items (+ offset copy-index))
+                    (array-ref scratch copy-index))
+                  (set! copy-index (+ copy-index 1)))))
+            (set! width (* width 2))))))))
+
+(define (compiler-semantic-bucket-scope-events!
+  [paths : (__tl_dyn-array CompilerSemanticSourcePathInfo)]
+  [path-len : i64]
+  [raw : (__tl_dyn-array CompilerSemanticScopeEvent)]
+  [raw-len : i64]
+  [out : (__tl_dyn-array CompilerSemanticScopeEvent)]) : unit
+  (let
+    [counts : (__tl_dyn-array i64) (array.make-array i64 path-len)]
+    [cursors : (__tl_dyn-array i64) (array.make-array i64 path-len)]
+    [index : i64 0]
+    (begin
+      (while (< index raw-len)
+        (let
+          [event : CompilerSemanticScopeEvent (array-ref raw index)]
+          (begin
+            (set!
+              (array-ref counts event.path-index)
+              (+ (array-ref counts event.path-index) 1))
+            (set! index (+ index 1)))))
+      (let
+        [path-index : i64 0]
+        [offset : i64 0]
+        (while (< path-index path-len)
+          (let
+            [info : CompilerSemanticSourcePathInfo (array-ref paths path-index)]
+            [count : i64 (array-ref counts path-index)]
+            (begin
+              (set! info.scope-event-offset offset)
+              (set! info.scope-event-len count)
+              (set! (array-ref paths path-index) info)
+              (set! offset (+ offset count))
+              (set! path-index (+ path-index 1))))))
+      (set! index 0)
+      (while (< index raw-len)
+        (let
+          [event : CompilerSemanticScopeEvent (array-ref raw index)]
+          [info : CompilerSemanticSourcePathInfo
+            (array-ref paths event.path-index)]
+          [cursor : i64 (array-ref cursors event.path-index)]
+          (begin
+            (set! (array-ref out (+ info.scope-event-offset cursor)) event)
+            (set! (array-ref cursors event.path-index) (+ cursor 1))
+            (set! index (+ index 1)))))
+      (let
+        [path-index : i64 0]
+        (while (< path-index path-len)
+          (let
+            [info : CompilerSemanticSourcePathInfo (array-ref paths path-index)]
+            (begin
+              (compiler-semantic-scope-events-sort-segment!
+                out
+                info.scope-event-offset
+                info.scope-event-len)
+              (set! path-index (+ path-index 1)))))))))
+
+(define (compiler-semantic-bucket-module-events!
+  [paths : (__tl_dyn-array CompilerSemanticSourcePathInfo)]
+  [path-len : i64]
+  [raw : (__tl_dyn-array CompilerSemanticModuleEvent)]
+  [raw-len : i64]
+  [out : (__tl_dyn-array CompilerSemanticModuleEvent)]) : unit
+  (let
+    [counts : (__tl_dyn-array i64) (array.make-array i64 path-len)]
+    [cursors : (__tl_dyn-array i64) (array.make-array i64 path-len)]
+    [index : i64 0]
+    (begin
+      (while (< index raw-len)
+        (let
+          [event : CompilerSemanticModuleEvent (array-ref raw index)]
+          (begin
+            (set!
+              (array-ref counts event.path-index)
+              (+ (array-ref counts event.path-index) 1))
+            (set! index (+ index 1)))))
+      (let
+        [path-index : i64 0]
+        [offset : i64 0]
+        (while (< path-index path-len)
+          (let
+            [info : CompilerSemanticSourcePathInfo (array-ref paths path-index)]
+            [count : i64 (array-ref counts path-index)]
+            (begin
+              (set! info.module-event-offset offset)
+              (set! info.module-event-len count)
+              (set! (array-ref paths path-index) info)
+              (set! offset (+ offset count))
+              (set! path-index (+ path-index 1))))))
+      (set! index 0)
+      (while (< index raw-len)
+        (let
+          [event : CompilerSemanticModuleEvent (array-ref raw index)]
+          [info : CompilerSemanticSourcePathInfo
+            (array-ref paths event.path-index)]
+          [cursor : i64 (array-ref cursors event.path-index)]
+          (begin
+            (set! (array-ref out (+ info.module-event-offset cursor)) event)
+            (set! (array-ref cursors event.path-index) (+ cursor 1))
+            (set! index (+ index 1)))))
+      (let
+        [path-index : i64 0]
+        (while (< path-index path-len)
+          (let
+            [info : CompilerSemanticSourcePathInfo (array-ref paths path-index)]
+            (begin
+              (compiler-semantic-module-events-sort-segment!
+                out
+                info.module-event-offset
+                info.module-event-len)
+              (set! path-index (+ path-index 1)))))))))
+
+(define (compiler-semantic-map-key-name-for-module
+  [key-id : i64]
+  [module-id : i64]) : i64
+  (cond
+    [(csym.compiler-composite-triple-key-id? key-id) -1]
+    [(csym.compiler-composite-pair-key-id? key-id)
+      (if (= (csym.compiler-composite-pair-left-id key-id) module-id)
+        (csym.compiler-composite-pair-right-id key-id)
+        -1)]
+    [(csym.compiler-symbol-root-module-id? module-id) key-id]
+    [else -1]))
+
+(define (compiler-semantic-map-kind-supported?
+  [namespace-tag : i64]
+  [kind : i64]) : bool
+  (cond
+    [(= namespace-tag (compiler-semantic-binding-namespace-value-mask))
+      (or
+        (= kind (csym.compiler-symbol-kind-value-define))
+        (= kind (csym.compiler-symbol-kind-function-define))
+        (= kind (csym.compiler-symbol-kind-extern))
+        (= kind (csym.compiler-symbol-kind-defstruct))
+        (= kind (csym.compiler-symbol-kind-defdispatch)))]
+    [(= namespace-tag (compiler-semantic-binding-namespace-type-mask))
+      (or
+        (= kind (csym.compiler-symbol-kind-defenum))
+        (= kind (csym.compiler-symbol-kind-defstruct)))]
+    [else (= kind (csym.compiler-symbol-kind-defmacro))]))
+
+(define (compiler-semantic-map-has-module-macro?
+  [map : csym.CompilerSymbolMap]
+  [module-id : i64]) : bool
+  (let
+    [slot : i64 0]
+    (begin
+      (while (< slot (array-length map.keys))
+        (let
+          [stored-key : i64 (array-ref map.keys slot)]
+          (if (and
+            (> stored-key 0)
+            (>=
+              (compiler-semantic-map-key-name-for-module
+                (- stored-key 1)
+                module-id)
+              0)
+            (=
+              (csym.compiler-symbol-handle-kind (array-ref map.values slot))
+              (csym.compiler-symbol-kind-defmacro)))
+            (return true)
+            (set! slot (+ slot 1)))))
+      false)))
+
+(define (compiler-semantic-top-candidate-before?
+  [left : CompilerSemanticTopCandidateRef]
+  [right : CompilerSemanticTopCandidateRef]
+  [labels : (__tl_dyn-array String)]
+  [records : (__tl_dyn-array CompilerSemanticRecord)]) : bool
+  (let
+    [left-label : String (array-ref labels left.label-index)]
+    [right-label : String (array-ref labels right.label-index)]
+    (cond
+      [(< left.namespace-tag right.namespace-tag) true]
+      [(> left.namespace-tag right.namespace-tag) false]
+      [(sort.string-less? left-label right-label) true]
+      [(sort.string-less? right-label left-label) false]
+      [else
+        (let
+          [left-symbol : CompilerSemanticSymbolId
+            (array-ref records left.record-index).symbol]
+          [right-symbol : CompilerSemanticSymbolId
+            (array-ref records right.record-index).symbol]
+          (cond
+            [(<
+                left-symbol.declaration-ordinal
+                right-symbol.declaration-ordinal)
+              true]
+            [(>
+                left-symbol.declaration-ordinal
+                right-symbol.declaration-ordinal)
+              false]
+            [else (< left.record-index right.record-index)]))])))
+
+(define (compiler-semantic-top-candidates-sort-segment!
+  [items : (__tl_dyn-array CompilerSemanticTopCandidateRef)]
+  [labels : (__tl_dyn-array String)]
+  [records : (__tl_dyn-array CompilerSemanticRecord)]
+  [offset : i64]
+  [len : i64]) : unit
+  (if (< len 2)
+    unit
+    (let
+      [scratch : (__tl_dyn-array CompilerSemanticTopCandidateRef)
+        (array.make-array CompilerSemanticTopCandidateRef len)]
+      [width : i64 1]
+      (while (< width len)
+        (let
+          [run : i64 0]
+          (begin
+            (while (< run len)
+              (let
+                [mid : i64 (compiler-semantic-i64-min (+ run width) len)]
+                [end : i64 (compiler-semantic-i64-min (+ run (* width 2)) len)]
+                [left : i64 run]
+                [right : i64 mid]
+                [out : i64 run]
+                (begin
+                  (while (< out end)
+                    (if (or
+                      (>= right end)
+                      (and
+                        (< left mid)
+                        (not
+                          (compiler-semantic-top-candidate-before?
+                            (array-ref items (+ offset right))
+                            (array-ref items (+ offset left))
+                            labels
+                            records))))
+                      (begin
+                        (set!
+                          (array-ref scratch out)
+                          (array-ref items (+ offset left)))
+                        (set! left (+ left 1)))
+                      (begin
+                        (set!
+                          (array-ref scratch out)
+                          (array-ref items (+ offset right)))
+                        (set! right (+ right 1))))
+                    (set! out (+ out 1)))
+                  (set! run end))))
+            (let
+              [copy-index : i64 0]
+              (while (< copy-index len)
+                (begin
+                  (set!
+                    (array-ref items (+ offset copy-index))
+                    (array-ref scratch copy-index))
+                  (set! copy-index (+ copy-index 1)))))
+            (set! width (* width 2))))))))
+
+(define (compiler-semantic-top-map-walk!
+  [symbols : csym.CompilerSymbols]
+  [map : csym.CompilerSymbolMap]
+  [namespace-tag : i64]
+  [modules : (__tl_dyn-array CompilerSemanticModuleInfo)]
+  [module-len : i64]
+  [decl-record-indices : (__tl_dyn-array i64)]
+  [counts-or-cursors : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array CompilerSemanticTopCandidateRef)]
+  [labels : (__tl_dyn-array String)]
+  [count-only : bool]) : unit
+  (let
+    [slot : i64 0]
+    (while (< slot (array-length map.keys))
+      (let
+        [stored-key : i64 (array-ref map.keys slot)]
+        (begin
+          (if (> stored-key 0)
+            (let
+              [key-id : i64 (- stored-key 1)]
+              [handle : i64 (array-ref map.values slot)]
+              [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+              [decl-index : i64 (csym.compiler-symbol-handle-index handle)]
+              [owner-module-id : i64
+                (csym.compiler-symbols-owner-module-id-at-index-or
+                  symbols
+                  decl-index
+                  (csym.compiler-symbol-root-module-id))]
+              [key-is-pair : bool (csym.compiler-composite-pair-key-id? key-id)]
+              [module-id : i64
+                (if key-is-pair
+                  (csym.compiler-composite-pair-left-id key-id)
+                  owner-module-id)]
+              [name-id : i64
+                (if key-is-pair
+                  (csym.compiler-composite-pair-right-id key-id)
+                  key-id)]
+              [module-index : i64
+                (if (or
+                  (csym.compiler-composite-triple-key-id? key-id)
+                  (and
+                    (not key-is-pair)
+                    (not (csym.compiler-symbol-root-module-id? owner-module-id))))
+                  -1
+                  (compiler-semantic-module-index-find
+                    (& modules)
+                    module-len
+                    module-id))]
+              (if (and
+                (>= module-index 0)
+                (compiler-semantic-map-kind-supported? namespace-tag kind)
+                (>= decl-index 0)
+                (< decl-index (array-length decl-record-indices))
+                (> (array-ref decl-record-indices decl-index) 0))
+                (if count-only
+                  (set!
+                    (array-ref counts-or-cursors module-index)
+                    (+ (array-ref counts-or-cursors module-index) 1))
+                  (let
+                    [out-index : i64 (array-ref counts-or-cursors module-index)]
+                    [label : String (tc.tc-env-key-name-text name-id)]
+                    (begin
+                      (set!
+                        (array-ref out out-index)
+                        (CompilerSemanticTopCandidateRef
+                          namespace-tag
+                          name-id
+                          out-index
+                          (- (array-ref decl-record-indices decl-index) 1)))
+                      (set!
+                        (array-ref labels out-index)
+                        (string.copy (& label)))
+                      (set!
+                        (array-ref counts-or-cursors module-index)
+                        (+ out-index 1)))))
+                unit))
+            unit)
+          (set! slot (+ slot 1)))))))
+
+(define (compiler-semantic-module-shadows-core-macro?
+  [symbols : csym.CompilerSymbols]
+  [macros : csym.CompilerSymbolMap]
+  [module-id : i64]
+  [core-module-id : i64]
+  [name-id : i64]) : bool
+  (let
+    [handle : i64
+      (csym.compiler-symbol-map-lookup-handle-id
+        (& macros)
+        (csym.compiler-symbol-module-key-id-by-id module-id name-id))]
+    (if (< handle 0)
+      false
+      (if (csym.compiler-symbol-root-module-id? module-id)
+        (csym.compiler-symbol-root-module-id?
+          (csym.compiler-symbols-owner-module-id-at-index-or
+            symbols
+            (csym.compiler-symbol-handle-index handle)
+            (csym.compiler-symbol-root-module-id)))
+        true))))
+
+(define (compiler-semantic-core-macro-walk!
+  [symbols : csym.CompilerSymbols]
+  [macros : csym.CompilerSymbolMap]
+  [core-module-id : i64]
+  [modules : (__tl_dyn-array CompilerSemanticModuleInfo)]
+  [module-len : i64]
+  [decl-record-indices : (__tl_dyn-array i64)]
+  [counts-or-cursors : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array CompilerSemanticTopCandidateRef)]
+  [labels : (__tl_dyn-array String)]
+  [count-only : bool]) : unit
+  (let
+    [slot : i64 0]
+    (while (< slot (array-length macros.keys))
+      (let
+        [stored-key : i64 (array-ref macros.keys slot)]
+        (begin
+          (if (> stored-key 0)
+            (let
+              [key-id : i64 (- stored-key 1)]
+              [name-id : i64
+                (compiler-semantic-map-key-name-for-module
+                  key-id
+                  core-module-id)]
+              [handle : i64 (array-ref macros.values slot)]
+              [decl-index : i64 (csym.compiler-symbol-handle-index handle)]
+              (if (and
+                (>= name-id 0)
+                (=
+                  (csym.compiler-symbol-handle-kind handle)
+                  (csym.compiler-symbol-kind-defmacro))
+                (>= decl-index 0)
+                (< decl-index (array-length decl-record-indices))
+                (> (array-ref decl-record-indices decl-index) 0))
+                (let
+                  [module-index : i64 0]
+                  [label : String (tc.tc-env-key-name-text name-id)]
+                  (while (< module-index module-len)
+                    (let
+                      [module-id : i64
+                        (array-ref modules module-index).module-id]
+                      (begin
+                        (if (compiler-semantic-module-shadows-core-macro?
+                          symbols
+                          macros
+                          module-id
+                          core-module-id
+                          name-id)
+                          unit
+                          (if count-only
+                            (set!
+                              (array-ref counts-or-cursors module-index)
+                              (+ (array-ref counts-or-cursors module-index) 1))
+                            (let
+                              [out-index : i64
+                                (array-ref counts-or-cursors module-index)]
+                              (begin
+                                (set!
+                                  (array-ref out out-index)
+                                  (CompilerSemanticTopCandidateRef
+                                    (compiler-semantic-binding-namespace-macro-mask)
+                                    name-id
+                                    out-index
+                                    (-
+                                      (array-ref decl-record-indices decl-index)
+                                      1)))
+                                (set!
+                                  (array-ref labels out-index)
+                                  (string.copy (& label)))
+                                (set!
+                                  (array-ref counts-or-cursors module-index)
+                                  (+ out-index 1))))))
+                        (set! module-index (+ module-index 1))))))
+                unit))
+            unit)
+          (set! slot (+ slot 1)))))))
+
+(define (compiler-semantic-build-top-candidates!
+  [ctx : tc.TcContext]
+  [modules : (__tl_dyn-array CompilerSemanticModuleInfo)]
+  [module-len : i64]
+  [decl-record-indices : (__tl_dyn-array i64)]
+  [records : (__tl_dyn-array CompilerSemanticRecord)]
+  [out : (__tl_dyn-array CompilerSemanticTopCandidateRef)]
+  [labels : (__tl_dyn-array String)]) : i64
+  (match (tc.tc-context-symbols ctx)
+    [(csym.CompilerSymbols values types macros _ _ _)
+      (let
+        [symbols : csym.CompilerSymbols (tc.tc-context-symbols ctx)]
+        [core-module-id : i64
+          (if (compiler-semantic-map-has-module-macro?
+            macros
+            cbi.compiler-builtin-id-core-macros-module)
+            cbi.compiler-builtin-id-core-macros-module
+            cbi.compiler-builtin-id-core-macros-legacy-module)]
+        [counts : (__tl_dyn-array i64) (array.make-array i64 module-len)]
+        [cursors : (__tl_dyn-array i64) (array.make-array i64 module-len)]
+        [module-index : i64 0]
+        [cursor : i64 0]
+        (begin
+          (compiler-semantic-top-map-walk!
+            symbols
+            values
+            1
+            modules
+            module-len
+            decl-record-indices
+            counts
+            out
+            labels
+            true)
+          (compiler-semantic-top-map-walk!
+            symbols
+            types
+            2
+            modules
+            module-len
+            decl-record-indices
+            counts
+            out
+            labels
+            true)
+          (compiler-semantic-top-map-walk!
+            symbols
+            macros
+            4
+            modules
+            module-len
+            decl-record-indices
+            counts
+            out
+            labels
+            true)
+          (compiler-semantic-core-macro-walk!
+            symbols
+            macros
+            core-module-id
+            modules
+            module-len
+            decl-record-indices
+            counts
+            out
+            labels
+            true)
+          (while (< module-index module-len)
+            (let
+              [info : CompilerSemanticModuleInfo
+                (array-ref modules module-index)]
+              (begin
+                (set! info.candidate-offset cursor)
+                (set! info.candidate-len (array-ref counts module-index))
+                (set! (array-ref modules module-index) info)
+                (set! (array-ref cursors module-index) cursor)
+                (set! cursor (+ cursor info.candidate-len))
+                (set! module-index (+ module-index 1)))))
+          (compiler-semantic-top-map-walk!
+            symbols
+            values
+            1
+            modules
+            module-len
+            decl-record-indices
+            cursors
+            out
+            labels
+            false)
+          (compiler-semantic-top-map-walk!
+            symbols
+            types
+            2
+            modules
+            module-len
+            decl-record-indices
+            cursors
+            out
+            labels
+            false)
+          (compiler-semantic-top-map-walk!
+            symbols
+            macros
+            4
+            modules
+            module-len
+            decl-record-indices
+            cursors
+            out
+            labels
+            false)
+          (compiler-semantic-core-macro-walk!
+            symbols
+            macros
+            core-module-id
+            modules
+            module-len
+            decl-record-indices
+            cursors
+            out
+            labels
+            false)
+          (set! module-index 0)
+          (while (< module-index module-len)
+            (let
+              [info : CompilerSemanticModuleInfo
+                (array-ref modules module-index)]
+              (begin
+                (compiler-semantic-top-candidates-sort-segment!
+                  out
+                  labels
+                  records
+                  info.candidate-offset
+                  info.candidate-len)
+                (set! module-index (+ module-index 1)))))
+          cursor))]))
+
+(define (compiler-semantic-top-candidate-capacity
+  [ctx : tc.TcContext]
+  [module-capacity : i64]) : i64
+  (match (tc.tc-context-symbols ctx)
+    [(csym.CompilerSymbols values types macros _ _ _)
+      (let
+        [capacity : i64
+          (+
+            (+ values.len types.len)
+            (+ macros.len (* macros.len module-capacity)))]
+        (if (< capacity 1)
+          1
+          capacity))]))
+
 (define (compiler-semantic-index-build-owned
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
@@ -2931,6 +4793,19 @@
         [decls : ast.AstDeclList
           (match (tc.tc-context-program ctx)
             [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)])]
+        [decl-count : i64 (ast.ast-decl-list-len (& decls))]
+        [symbol-count : i64
+          (csym.compiler-symbols-decl-count (tc.tc-context-symbols ctx))]
+        [path-capacity : i64 (+ decl-count 4)]
+        [module-capacity : i64 (+ decl-count 4)]
+        [paths-out : (__tl_dyn-array CompilerSemanticSourcePathInfo)
+          (array.make-array CompilerSemanticSourcePathInfo path-capacity)]
+        [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
+          (array.make-array CompilerSemanticModuleInfo module-capacity)]
+        [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
+          (array.make-array CompilerSemanticModuleEvent (+ (* decl-count 2) 8))]
+        [decl-record-indices : (__tl_dyn-array i64)
+          (array.make-array i64 symbol-count)]
         [walk-state : CompilerSemanticWalkState
           (CompilerSemanticWalkState
             ctx
@@ -2948,6 +4823,23 @@
             (box
               (compiler-semantic-binding-vec-new
                 (* (ast.ast-decl-list-len (& decls)) 2)))
+            complete
+            -1
+            -1
+            (box
+              (CompilerSemanticVisibilityBuildStorage
+                paths-out
+                (box 0)
+                modules-out
+                (box 0)
+                module-events-out
+                (box 0)
+                (box
+                  (compiler-semantic-scope-event-vec-new (+ (* decl-count 2) 8)))
+                (box 0)
+                (box 0)
+                (box 1)
+                (box 1)))
             (array.make-array
               i64
               (ast.ast-node-pool-context-expr-len (tc.tc-context-pools ctx)))
@@ -2985,6 +4877,8 @@
               [provenance : CompilerSemanticProvenance
                 (compiler-semantic-decl-provenance decl)]
               [path-changed : bool (not (string.eq path cached-path))]
+              [module-changed : bool
+                (or path-changed (!= module-id walk-state.module-id))]
               (begin
                 (if path-changed
                   (begin
@@ -3005,10 +4899,58 @@
                 (set! walk-state.top-env env)
                 (set! walk-state.form-start -1)
                 (set! walk-state.module-id module-id)
+                (if module-changed
+                  (set!
+                    walk-state.module-index
+                    (if complete
+                      (compiler-semantic-module-index-ensure!
+                        walk-state
+                        module-id)
+                      -1))
+                  unit)
+                (if path-changed
+                  (set!
+                    walk-state.path-index
+                    (compiler-semantic-path-index-ensure!
+                      walk-state
+                      path
+                      (string.string-length cached-source)
+                      walk-state.module-index))
+                  unit)
                 (set! walk-state.declaration-ordinal index)
                 (set! walk-state.generated generated)
                 (set! walk-state.provenance provenance)
                 (set! (deref walk-state.next-local-ordinal) 0)
+                (compiler-semantic-source-anchor-set! walk-state 0 1 1)
+                ;; Imports and module markers have no semantic definition row,
+                ;; but their checked path owner still changes the module that
+                ;; a cursor at that form observes.
+                (match (compiler-semantic-decl-symbol decl)
+                  [(CompilerSemanticMaybeDecl.Some _ _) unit]
+                  [(CompilerSemanticMaybeDecl.None)
+                    (match (compiler-semantic-decl-origin (& decls) index decl)
+                      [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                        (let
+                          [form-start : i64
+                            (if (or generated (string.eq cached-source ""))
+                              -1
+                              (compiler-semantic-top-level-form-start
+                                cached-source
+                                (compiler-semantic-source-offset
+                                  cached-source
+                                  (ast.ast-source-span-start-line origin)
+                                  (ast.ast-source-span-start-col origin))
+                                form-search-start))]
+                          (begin
+                            (compiler-semantic-module-event-push!
+                              walk-state
+                              walk-state.path-index
+                              form-start
+                              walk-state.module-index)
+                            (if (>= form-start 0)
+                              (set! form-search-start form-start)
+                              unit)))]
+                      [(parse_core.CompilerParseMaybeDeclSpan.None) unit])])
                 (match (compiler-semantic-decl-symbol decl)
                   [(CompilerSemanticMaybeDecl.Some name-id kind)
                     (let
@@ -3109,7 +5051,19 @@
                             form-start)
                           "")]
                       (begin
+                        (if (>= span.start-byte 0)
+                          (compiler-semantic-source-anchor-set!
+                            walk-state
+                            span.start-byte
+                            (ast.ast-source-span-start-line span.source)
+                            (ast.ast-source-span-start-col span.source))
+                          unit)
                         (set! walk-state.form-start form-start)
+                        (compiler-semantic-module-event-push!
+                          walk-state
+                          walk-state.path-index
+                          form-start
+                          walk-state.module-index)
                         (if (>= form-start 0)
                           (set! form-search-start form-start)
                           unit)
@@ -3119,22 +5073,33 @@
                         (set!
                           walk-state.declaration-ordinal
                           symbol.declaration-ordinal)
-                        (compiler-semantic-record-vec-push!
-                          (&mut (__tl-box-place walk-state.records))
-                          (CompilerSemanticRecord
-                            symbol
-                            CompilerSemanticRecordRole.Definition
-                            kind
-                            (string.copy (& name))
-                            (string.copy (& type-text))
-                            (string.copy (& documentation))
-                            symbol.module-id
-                            span
-                            (and
-                              (not generated)
-                              has-origin
-                              (>= span.start-byte 0))
-                            provenance))))]
+                        (let
+                          [record-index : i64
+                            (compiler-semantic-record-vec-push-index!
+                              (&mut (__tl-box-place walk-state.records))
+                              (CompilerSemanticRecord
+                                symbol
+                                CompilerSemanticRecordRole.Definition
+                                kind
+                                (string.copy (& name))
+                                (string.copy (& type-text))
+                                (string.copy (& documentation))
+                                symbol.module-id
+                                span
+                                (and
+                                  (not generated)
+                                  has-origin
+                                  (>= span.start-byte 0))
+                                provenance))]
+                          (if (and
+                            (>= symbol.declaration-ordinal 0)
+                            (< symbol.declaration-ordinal symbol-count))
+                            (set!
+                              (array-ref
+                                decl-record-indices
+                                symbol.declaration-ordinal)
+                              (+ record-index 1))
+                            unit))))]
                   [(CompilerSemanticMaybeDecl.None) unit])
                 (compiler-semantic-walk-decl! walk-state decl)
                 (set! index (+ index 1)))))
@@ -3143,16 +5108,117 @@
             entry-path
             entry-source)
           (let
-            [result : CompilerSemanticSourceIndex
-              (CompilerSemanticSourceIndex
-                owner
-                (__tl-project-field (__tl-box-place walk-state.records) items)
-                (__tl-project-field (__tl-box-place walk-state.records) len)
-                complete)]
+            [visibility-storage : CompilerSemanticVisibilityBuildStorage
+              (__tl-box-place walk-state.visibility-storage)]
+            [path-count : i64 (__tl-box-place visibility-storage.path-len)]
+            [module-count : i64 (__tl-box-place visibility-storage.module-len)]
+            [top-capacity : i64
+              (if complete
+                (compiler-semantic-top-candidate-capacity ctx module-count)
+                0)]
+            [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
+              (array.make-array CompilerSemanticTopCandidateRef top-capacity)]
+            [top-labels : (__tl_dyn-array String)
+              (array.make-array String top-capacity)]
+            [raw-scope-events : CompilerSemanticScopeEventVec
+              (__tl-box-place visibility-storage.scope-events)]
+            [scope-event-count : i64
+              (if complete
+                raw-scope-events.len
+                0)]
+            [module-event-count : i64
+              (if complete
+                (__tl-box-place visibility-storage.module-event-len)
+                0)]
+            [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
+              (array.make-array CompilerSemanticScopeEvent scope-event-count)]
+            [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
+              (array.make-array CompilerSemanticModuleEvent module-event-count)]
+            [top-candidate-count : i64 0]
             (begin
-              (unsafe
-                (arena.tl_arena_set previous))
-              result)))))))
+              (if complete
+                (begin
+                  (compiler-semantic-bucket-scope-events!
+                    paths-out
+                    path-count
+                    raw-scope-events.items
+                    scope-event-count
+                    scope-events)
+                  (compiler-semantic-bucket-module-events!
+                    paths-out
+                    path-count
+                    module-events-out
+                    module-event-count
+                    module-events)
+                  (set!
+                    top-candidate-count
+                    (compiler-semantic-build-top-candidates!
+                      ctx
+                      modules-out
+                      module-count
+                      decl-record-indices
+                      (__tl-project-field
+                        (__tl-box-place walk-state.records)
+                        items)
+                      top-candidates
+                      top-labels)))
+                unit)
+              (let
+                [top-visible-bindings : (__tl_dyn-array
+                  CompilerSemanticVisibleBinding)
+                  (array.make-array
+                    CompilerSemanticVisibleBinding
+                    top-candidate-count)]
+                (begin
+                  (if complete
+                    (compiler-semantic-top-visible-bindings-fill!
+                      (&
+                        (__tl-project-field
+                          (__tl-box-place walk-state.records)
+                          items))
+                      (& top-candidates)
+                      (& top-labels)
+                      top-candidate-count
+                      top-visible-bindings)
+                    unit)
+                  (let
+                    [result : CompilerSemanticSourceIndex
+                      (CompilerSemanticSourceIndex
+                        owner
+                        (__tl-project-field
+                          (__tl-box-place walk-state.records)
+                          items)
+                        (__tl-project-field
+                          (__tl-box-place walk-state.records)
+                          len)
+                        complete
+                        paths-out
+                        path-count
+                        modules-out
+                        module-count
+                        module-events
+                        module-event-count
+                        scope-events
+                        scope-event-count
+                        (if complete
+                          (__tl-box-place visibility-storage.scope-region-count)
+                          0)
+                        (__tl-project-field
+                          (__tl-box-place walk-state.bindings)
+                          items)
+                        (if complete
+                          (__tl-project-field
+                            (__tl-box-place walk-state.bindings)
+                            len)
+                          0)
+                        top-candidates
+                        top-labels
+                        top-visible-bindings
+                        top-candidate-count)]
+                    (begin
+                      (unsafe
+                        (arena.tl_arena_set previous))
+                      result)))))))))))
 
 (define (compiler-check-program-with-paths-index-cache
   [path : String]
@@ -3278,7 +5344,22 @@
                 source-index.owner-arena
                 source-index.records
                 source-index.len
-                false))]
+                false
+                source-index.paths
+                source-index.path-len
+                source-index.modules
+                source-index.module-len
+                source-index.module-events
+                source-index.module-event-len
+                source-index.scope-events
+                source-index.scope-event-len
+                source-index.scope-region-count
+                source-index.bindings
+                source-index.binding-len
+                source-index.top-candidates
+                source-index.top-labels
+                source-index.top-visible-bindings
+                source-index.top-candidate-len))]
           [(ResultCompilerCheckWithSemanticIndex.Partial
               semantic-diagnostics
               source-index)
@@ -3713,6 +5794,295 @@
         (array-ref records.live 1)
         (array-ref records.live 2)))))
 
+(define (compiler-semantic-test-source-find-from
+  [source : String]
+  [needle : String]
+  [start : i64]) : i64
+  (let
+    [index : i64
+      (if (< start 0)
+        0
+        start)]
+    [limit : i64
+      (- (string.string-length source) (string.string-length needle))]
+    (begin
+      (while (<= index limit)
+        (if (string.is-string-prefix-at (& source) (& needle) index)
+          (return index)
+          (set! index (+ index 1))))
+      -1)))
+
+(define (compiler-semantic-test-visible-label-count
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]
+  [namespace-mask : i64]
+  [label : String]) : i64
+  (let
+    [cursor : CompilerSemanticVisibleBindingCursor
+      (compiler-semantic-visible-binding-cursor index query namespace-mask)]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (compiler-semantic-visible-binding-cursor-step index cursor)
+          [(CompilerSemanticVisibleBindingStep.Some binding next)
+            (begin
+              (if (string.eq binding.display-name label)
+                (set! count (+ count 1))
+                unit)
+              (set! cursor next))]
+          [(CompilerSemanticVisibleBindingStep.Done) (set! done true)]))
+      count)))
+
+(define (compiler-semantic-test-visible-symbol?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]
+  [namespace-mask : i64]
+  [label : String]
+  [symbol : CompilerSemanticSymbolId]) : bool
+  (let
+    [cursor : CompilerSemanticVisibleBindingCursor
+      (compiler-semantic-visible-binding-cursor index query namespace-mask)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (compiler-semantic-visible-binding-cursor-step index cursor)
+          [(CompilerSemanticVisibleBindingStep.Some binding next)
+            (if (and
+              (string.eq binding.display-name label)
+              (compiler-semantic-symbol-id-eq? binding.symbol symbol))
+              (return true)
+              (set! cursor next))]
+          [(CompilerSemanticVisibleBindingStep.Done) (set! done true)]))
+      false)))
+
+(define (compiler-semantic-test-visible-order-eq?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [query : CompilerSemanticVisibleBindingQuery]
+  [namespace-mask : i64]) : bool
+  (let
+    [left : CompilerSemanticVisibleBindingCursor
+      (compiler-semantic-visible-binding-cursor index query namespace-mask)]
+    [right : CompilerSemanticVisibleBindingCursor
+      (compiler-semantic-visible-binding-cursor index query namespace-mask)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (compiler-semantic-visible-binding-cursor-step index left)
+          [(CompilerSemanticVisibleBindingStep.Some left-binding left-next)
+            (match (compiler-semantic-visible-binding-cursor-step index right)
+              [(CompilerSemanticVisibleBindingStep.Some
+                  right-binding
+                  right-next)
+                (if (and
+                  (string.eq
+                    left-binding.display-name
+                    right-binding.display-name)
+                  (=
+                    (compiler-semantic-binding-namespace-tag
+                      left-binding.namespace)
+                    (compiler-semantic-binding-namespace-tag
+                      right-binding.namespace))
+                  (compiler-semantic-symbol-id-eq?
+                    left-binding.symbol
+                    right-binding.symbol))
+                  (begin
+                    (set! left left-next)
+                    (set! right right-next))
+                  (return false))]
+              [(CompilerSemanticVisibleBindingStep.Done) (return false)])]
+          [(CompilerSemanticVisibleBindingStep.Done)
+            (match (compiler-semantic-visible-binding-cursor-step index right)
+              [(CompilerSemanticVisibleBindingStep.Some _ _) (return false)]
+              [(CompilerSemanticVisibleBindingStep.Done) (set! done true)])]))
+      true)))
+
+(define (compiler-semantic-test-query-at
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]
+  [offset : i64]) : CompilerSemanticVisibleBindingQuery
+  (match (compiler-semantic-source-index-query index path offset)
+    [(CompilerSemanticMaybeVisibleBindingQuery.Some query) query]
+    [(CompilerSemanticMaybeVisibleBindingQuery.None)
+      (CompilerSemanticVisibleBindingQuery -1 -1 -1)]))
+
+(define (compiler-check-semantic-index-base-visibility-ok?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]
+  [source : String]) : bool
+  (let
+    [init-offset : i64
+      (compiler-semantic-test-source-find-from source "dep.imported-value" 0)]
+    [body-marker : i64
+      (compiler-semantic-test-source-find-from source "\n    answer))" 0)]
+    [after-offset : i64
+      (compiler-semantic-test-source-find-from source "(define (call-use" 0)]
+    [top-index : i64
+      (compiler-semantic-source-index-find-name-occurrence
+        index
+        path
+        "answer"
+        CompilerSemanticRecordRole.Definition
+        0)]
+    [parameter-index : i64
+      (compiler-semantic-source-index-find-name-occurrence
+        index
+        path
+        "answer"
+        CompilerSemanticRecordRole.Definition
+        1)]
+    [local-index : i64
+      (compiler-semantic-source-index-find-name-occurrence
+        index
+        path
+        "answer"
+        CompilerSemanticRecordRole.Definition
+        2)]
+    (if (or
+      (< init-offset 0)
+      (< body-marker 0)
+      (< after-offset 0)
+      (< top-index 0)
+      (< parameter-index 0)
+      (< local-index 0))
+      false
+      (let
+        [init-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path init-offset)]
+        [bound-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path (+ body-marker 5))]
+        [boundary-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at
+            index
+            path
+            (+ init-offset (string.string-length "dep.imported-value")))]
+        [after-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path after-offset)]
+        [top-record : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index top-index)]
+        [parameter-record : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index parameter-index)]
+        [local-record : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index local-index)]
+        [repeated-count : i64
+          (compiler-semantic-source-index-visible-binding-count
+            index
+            bound-query
+            (compiler-semantic-binding-namespace-all-mask))]
+        [repeat : i64 0]
+        [repeated-ok : bool true]
+        (begin
+          (while (< repeat 100)
+            (begin
+              (if (=
+                (compiler-semantic-source-index-visible-binding-count
+                  index
+                  bound-query
+                  (compiler-semantic-binding-namespace-all-mask))
+                repeated-count)
+                unit
+                (set! repeated-ok false))
+              (set! repeat (+ repeat 1))))
+          (and
+            (>= init-query.path-index 0)
+            (>= bound-query.path-index 0)
+            (>= after-query.path-index 0)
+            (compiler-semantic-test-visible-symbol?
+              index
+              init-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "answer"
+              parameter-record.symbol)
+            (compiler-semantic-test-visible-symbol?
+              index
+              bound-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "answer"
+              local-record.symbol)
+            (compiler-semantic-test-visible-symbol?
+              index
+              boundary-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "answer"
+              local-record.symbol)
+            (compiler-semantic-test-visible-symbol?
+              index
+              after-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "answer"
+              top-record.symbol)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                bound-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "answer")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                bound-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "imported-value")
+              0)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                bound-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "Pair")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                bound-query
+                (compiler-semantic-binding-namespace-type-mask)
+                "Pair")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                bound-query
+                (compiler-semantic-binding-namespace-macro-mask)
+                "wrap")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                bound-query
+                (compiler-semantic-binding-namespace-macro-mask)
+                "when")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                init-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "match-use")
+              1)
+            (compiler-semantic-test-visible-order-eq?
+              index
+              bound-query
+              (compiler-semantic-binding-namespace-all-mask))
+            repeated-ok
+            (> repeated-count 0)
+            (> (compiler-semantic-source-index-path-count index) 0)
+            (> (compiler-semantic-source-index-scope-region-count index) 0)
+            (> (compiler-semantic-source-index-top-candidate-count index) 0)
+            (> (compiler-semantic-source-index-retained-byte-estimate index) 0)
+            (=
+              (compiler-semantic-source-index-visible-binding-count
+                index
+                (CompilerSemanticVisibleBindingQuery -1 -1 999999)
+                (compiler-semantic-binding-namespace-all-mask))
+              0)
+            (match (compiler-semantic-source-index-query
+              index
+              path
+              (+ (string.string-length source) 1))
+              [(CompilerSemanticMaybeVisibleBindingQuery.None) true]
+              [_ false])))))))
+
 (define (compiler-check-semantic-index-base-ok?) : bool
   (let
     [path : String "src/tests/semantic_index_entry.tl"]
@@ -3725,7 +6095,7 @@
 (emit-generated)
 (define prior-text : String \"(answer)\")
 (define prior-char : char '(')
-; ordinary source text mentions an unmatched (answer
+; ordinary λ source text mentions an unmatched (answer
 ;: Top answer documentation.
 ;# Additional answer detail.
   (define answer : i64 42)
@@ -4146,6 +6516,10 @@
                           second-param.symbol)
                         (= answer-start second-answer.span.start-byte)
                         invalid-keeps-first
+                        (compiler-check-semantic-index-base-visibility-ok?
+                          (& first)
+                          path
+                          source)
                         (=
                           (compiler-semantic-source-index-len (& first))
                           first-len)
@@ -4517,6 +6891,131 @@
           false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+(define (compiler-check-semantic-index-inferred-visibility-ok?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]
+  [source : String]) : bool
+  (let
+    [lambda-body-offset : i64
+      (compiler-semantic-test-source-find-from source "(if scalar x x)" 0)]
+    [alias-init-offset : i64
+      (compiler-semantic-test-source-find-from source "[alias closure]" 0)]
+    [inner-lambda-offset : i64
+      (compiler-semantic-test-source-find-from source ") : bool flag)" 0)]
+    [inner-call-offset : i64
+      (compiler-semantic-test-source-find-from source "(callback scalar))]" 0)]
+    [outer-callback-index : i64
+      (compiler-semantic-source-index-find-name-occurrence
+        index
+        path
+        "callback"
+        CompilerSemanticRecordRole.Definition
+        0)]
+    [inner-callback-index : i64
+      (compiler-semantic-source-index-find-name-occurrence
+        index
+        path
+        "callback"
+        CompilerSemanticRecordRole.Definition
+        1)]
+    (if (or
+      (< lambda-body-offset 0)
+      (< alias-init-offset 0)
+      (< inner-lambda-offset 0)
+      (< inner-call-offset 0)
+      (< outer-callback-index 0)
+      (< inner-callback-index 0))
+      false
+      (let
+        [lambda-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path lambda-body-offset)]
+        [alias-init-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at
+            index
+            path
+            (+ alias-init-offset (string.string-length "[alias ")))]
+        [inner-lambda-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at
+            index
+            path
+            (+ inner-lambda-offset (string.string-length ") : bool ")))]
+        [inner-call-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path inner-call-offset)]
+        [outer-callback : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index outer-callback-index)]
+        [inner-callback : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index inner-callback-index)]
+        (begin
+          (and
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                lambda-query
+                1
+                "x")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                lambda-query
+                1
+                "scalar")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                lambda-query
+                1
+                "closure")
+              0)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                alias-init-query
+                1
+                "x")
+              0)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                alias-init-query
+                1
+                "closure")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                alias-init-query
+                1
+                "alias")
+              0)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                inner-lambda-query
+                1
+                "flag")
+              1)
+            (compiler-semantic-test-visible-symbol?
+              index
+              inner-lambda-query
+              1
+              "callback"
+              outer-callback.symbol)
+            (not
+              (compiler-semantic-test-visible-symbol?
+                index
+                inner-lambda-query
+                1
+                "callback"
+                inner-callback.symbol))
+            (compiler-semantic-test-visible-symbol?
+              index
+              inner-call-query
+              1
+              "callback"
+              inner-callback.symbol)))))))
+
 (define (compiler-check-semantic-index-inferred-locals-ok?) : bool
   (let
     [path : String "src/tests/semantic_index_inferred_locals.tl"]
@@ -4746,6 +7245,10 @@
                             outer-callback-definition.symbol
                             inner-callback-definition.symbol))
                         (string.eq second-alias.resolved-type "(-> i64 i64)")
+                        (compiler-check-semantic-index-inferred-visibility-ok?
+                          (& first)
+                          path
+                          source)
                         ;; The second complete check resets compiler state; the
                         ;; first index must still own its rendered type text.
                         (string.eq
@@ -4772,6 +7275,193 @@
           (compiler-semantic-source-index-release! (&mut partial))
           false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-dense-visibility-ok?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]
+  [source : String]) : bool
+  (let
+    [resource-body : i64
+      (compiler-semantic-test-source-find-from source "(+ item resource)" 0)]
+    [resource-init : i64
+      (compiler-semantic-test-source-find-from source "[resource item" 0)]
+    [resource-sibling : i64
+      (compiler-semantic-test-source-find-from source "[ScopeNone 0]" 0)]
+    [foreach-body : i64
+      (compiler-semantic-test-source-find-from source "[i : i64 0 n]" 0)]
+    [scan-value : i64
+      (compiler-semantic-test-source-find-from source "\n      k\n" 0)]
+    [scan-body : i64
+      (compiler-semantic-test-source-find-from source "_seen-prefix" 0)]
+    [reduce-value : i64
+      (compiler-semantic-test-source-find-from source " 0 j)))" 0)]
+    [inner-shadow : i64
+      (compiler-semantic-test-source-find-from
+        source
+        "                        shadow))))"
+        0)]
+    [sibling-shadow : i64
+      (compiler-semantic-test-source-find-from
+        source
+        "[shadow : i64 (+ shadow 20)] shadow"
+        0)]
+    [shadow-definition-index : i64
+      (compiler-semantic-source-index-find-name-occurrence
+        index
+        path
+        "shadow"
+        CompilerSemanticRecordRole.Definition
+        10)]
+    (if (or
+      (< resource-body 0)
+      (< resource-init 0)
+      (< resource-sibling 0)
+      (< foreach-body 0)
+      (< scan-value 0)
+      (< scan-body 0)
+      (< reduce-value 0)
+      (< inner-shadow 0)
+      (< sibling-shadow 0)
+      (< shadow-definition-index 0))
+      false
+      (let
+        [resource-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path resource-body)]
+        [resource-init-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at
+            index
+            path
+            (+ resource-init (string.string-length "[resource ")))]
+        [resource-sibling-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path resource-sibling)]
+        [foreach-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at
+            index
+            path
+            (+
+              foreach-body
+              (string.string-length "[i : i64 0 n]) (let [_seen : i64 ")))]
+        [scan-value-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path (+ scan-value 7))]
+        [scan-body-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path scan-body)]
+        [reduce-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path (+ reduce-value 3))]
+        [inner-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at index path (+ inner-shadow 24))]
+        [sibling-init-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at
+            index
+            path
+            (+ sibling-shadow (string.string-length "[shadow : i64 (+ ")))]
+        [sibling-body-query : CompilerSemanticVisibleBindingQuery
+          (compiler-semantic-test-query-at
+            index
+            path
+            (+
+              sibling-shadow
+              (string.string-length "[shadow : i64 (+ shadow 20)] ")))]
+        [inner-shadow-record : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index shadow-definition-index)]
+        (begin
+          (and
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                resource-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "item")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                resource-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "resource")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                resource-init-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "resource")
+              0)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                resource-sibling-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "item")
+              0)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                resource-sibling-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "resource")
+              0)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                foreach-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "i")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                scan-value-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "k")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                scan-value-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "prefix")
+              0)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                scan-body-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "k")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                scan-body-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "prefix")
+              1)
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                reduce-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "j")
+              1)
+            (compiler-semantic-test-visible-symbol?
+              index
+              inner-query
+              (compiler-semantic-binding-namespace-value-mask)
+              "shadow"
+              inner-shadow-record.symbol)
+            (not
+              (compiler-semantic-test-visible-symbol?
+                index
+                sibling-init-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "shadow"
+                inner-shadow-record.symbol))
+            (=
+              (compiler-semantic-test-visible-label-count
+                index
+                sibling-body-query
+                (compiler-semantic-binding-namespace-value-mask)
+                "shadow")
+              1)))))))
 
 (define (compiler-check-semantic-index-dense-scopes-ok?) : bool
   (let
@@ -4932,7 +7622,11 @@
                     path
                     "prefix"
                     0
-                    0))]
+                    0)
+                  (compiler-check-semantic-index-dense-visibility-ok?
+                    (& index)
+                    path
+                    source))]
               (begin
                 (compiler-semantic-source-index-release! (&mut index))
                 ok))))]
@@ -5047,6 +7741,12 @@
                       1)
                     (not (compiler-semantic-source-index-complete? (& partial)))
                     (compiler-semantic-source-index-complete? (& complete))
+                    (match (compiler-semantic-source-index-query
+                      (& partial)
+                      path
+                      0)
+                      [(CompilerSemanticMaybeVisibleBindingQuery.None) true]
+                      [_ false])
                     (>= partial-good-index 0)
                     (>= partial-broken-index 0)
                     (>= partial-later-index 0)

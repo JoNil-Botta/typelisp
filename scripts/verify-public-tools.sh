@@ -3155,6 +3155,8 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_success
     assert_stderr_empty
     assert_contains "$out" "tlci image"
+    assert_contains "$out" "host-platform: x86_64-$HOST_OS"
+    assert_contains "$out" "image-classification: code-bearing"
     assert_contains "$out" "package-name: public_tool_pkg"
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "source-set-binding-schema: 1"
@@ -3167,6 +3169,8 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_success
     assert_stderr_empty
     assert_contains "$out" "tlci image"
+    assert_contains "$out" "host-platform: x86_64-$HOST_OS"
+    assert_contains "$out" "image-classification: code-bearing"
     assert_contains "$out" "package-name: math"
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "source-set-binding-schema: 1"
@@ -3277,7 +3281,8 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     run_cmd package-host-target-split-inspect "$COMPILER" inspect "$SPLIT_ROOT_TLCI"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "host-arch: x86_64"
+    assert_contains "$out" "host-platform: x86_64-$HOST_OS"
+    assert_contains "$out" "image-classification: code-bearing"
     assert_contains "$out" "package-name: split_pkg"
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "source-set-binding-schema: 1"
@@ -3300,7 +3305,8 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     run_cmd package-host-target-split-dep-inspect "$COMPILER" inspect "$SPLIT_MATH_TLCI"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "host-arch: x86_64"
+    assert_contains "$out" "host-platform: x86_64-$HOST_OS"
+    assert_contains "$out" "image-classification: metadata-only"
     assert_contains "$out" "package-name: split_math"
     assert_contains "$out" "source-set-binding-schema: 1"
     assert_not_contains "$out" "source-set-digest: unavailable"

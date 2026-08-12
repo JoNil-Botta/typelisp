@@ -98,16 +98,19 @@
         [empty-status : i64
           (tlci-v2-corpus-write
             (io.arg 1)
-            (tlci_core.tlci-emit-image (tlci-v2-corpus-empty-image)))]
+            (tlci_core.tlci-emit-image-v2-legacy-compatible
+              (tlci-v2-corpus-empty-image)))]
         (if (not (= empty-status 0))
           empty-status
           (let
             [sections-status : i64
               (tlci-v2-corpus-write
                 (io.arg 2)
-                (tlci_core.tlci-emit-image (tlci-v2-corpus-sections-image)))]
+                (tlci_core.tlci-emit-image-v2-legacy-compatible
+                  (tlci-v2-corpus-sections-image)))]
             (if (not (= sections-status 0))
               sections-status
               (tlci-v2-corpus-write
                 (io.arg 3)
-                (tlci_core.tlci-emit-image (tlci-v2-corpus-imports-image))))))))))
+                (tlci_core.tlci-emit-image-v2-legacy-compatible
+                  (tlci-v2-corpus-imports-image))))))))))

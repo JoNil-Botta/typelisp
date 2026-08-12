@@ -5314,7 +5314,7 @@ Windows. It is not ELF or COFF. The first 176 bytes are a fixed header:
 | ---: | ---: | --- |
 | 0 | 8 | Magic bytes `54 4c 43 49 0d 0a 1a 0a` (`TLCI\r\n\x1a\n`) |
 | 8 | 8 | Format version (`2`) |
-| 16 | 8 | Host architecture enum, `1 = x86_64` |
+| 16 | 8 | Host platform enum: `1 = x86_64 legacy/ambiguous`, `2 = x86_64-linux`, `3 = x86_64-windows` |
 | 24 | 8 | Callback ABI version (`2`) |
 | 32 | 8 | Compiler build hash byte offset |
 | 40 | 8 | Compiler build hash byte length |
@@ -5351,6 +5351,22 @@ section starts on an 8-byte boundary. Rodata and code sections are page-aligned
 at 4096-byte offsets so a loader can map them directly. Fixup, entry, and
 symbol, and import sections are 8-byte aligned. Empty sections must use offset
 `0` and count/length `0`.
+
+The host platform identifies the compiler/build host and its native C calling
+convention, never the selected consumer runtime target. New producers stamp
+every image, including a metadata-only image, with value `2` or `3`. Value `1`
+is retained only so new readers can identify legacy v2 images whose x86_64
+calling convention is ambiguous; readers predating this enum extension reject
+values `2` and `3` through their unsupported-host-architecture path.
+
+Readers classify a structurally valid image as code-bearing exactly when its
+parsed code section is non-empty. Metadata-only images are portable and may be
+parsed, inspected, and admitted regardless of their recorded supported host
+platform. Before allocating or mapping pages, applying fixups, binding imports,
+registering entries, or making any native call, a loader rejects a code-bearing
+image tagged with legacy value `1` or a platform different from the loader's
+build host. Unknown platforms and malformed or otherwise indeterminate images
+fail closed and cannot enter the code loader.
 
 The content hash is a deterministic integrity check over the full file with the
 8-byte hash field treated as zero. It is the rolling hash
@@ -5475,9 +5491,9 @@ the image. There is no numeric-dispatch or callback-ABI-v1 compatibility path.
 
 A code-bearing image exports one native entry point named `tlci_image_entry`.
 The host calls it with the host platform's ordinary C integer calling
-convention. A tlci image always executes on the host architecture named in the
-header; code for the consumer program's runtime target remains separate
-runtime output:
+convention. A code-bearing tlci image always executes on the exact host
+platform named in the header; code for the consumer program's runtime target
+remains separate runtime output:
 
 | Position | Type | Meaning |
 | ---: | --- | --- |

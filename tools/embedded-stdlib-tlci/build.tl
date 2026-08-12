@@ -19,6 +19,9 @@
 (define embedded-stdlib-tlci-source-hash : i64
   7)
 
+(define (embedded-stdlib-tlci-build-host) : String
+  (cfg windows "windows" "linux"))
+
 (define (embedded-stdlib-tlci-build-error-shared-view) : String
   (cfg
     stage0-seed-bootstrap
@@ -309,61 +312,71 @@
       [names : svec.Vec (svec.new)]
       [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
         (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-      (if (and
-        (or (string.eq target "linux") (string.eq target "windows"))
-        (or (not full-blockers) (string.eq (io.arg 7) "--full-blockers")))
-        (let
-          [rodata : (__tl_dyn-array u8)
-            (byte_buf.to-array (io.read-file rodata-path))]
-          (begin
-            (embedded-stdlib-tlci-collect-manifest!
-              (byte_buf.to-string (io.read-file manifest-path))
-              root
-              0
-              (&mut names)
-              (&mut captures))
-            (if (>
-              (string.string-length
-                (embedded-stdlib-tlci-build-error-shared-view))
-              0)
-              (begin
-                (io.print-error
-                  (str_cat.str-cat
-                    "embedded stdlib tlci: "
-                    (embedded-stdlib-tlci-build-error-shared-view)
-                    "\n"))
-                1)
-              (let
-                [name-count : i64 (svec.len (& names))]
-                [name-array (make-array String name-count)]
-                [name-index : i64 0]
-                (begin
-                  (while (< name-index name-count)
-                    (begin
-                      (set!
-                        (array-ref name-array name-index)
-                        (svec.get (& names) name-index ""))
-                      (set! name-index (+ name-index 1))))
-                  (embedded-native-write
-                    output
-                    build-hash
-                    (string.eq target "windows")
-                    rodata
-                    name-array
-                    full-blockers
-                    (& captures)))))))
-        (if (and full-blockers (not (string.eq (io.arg 7) "--full-blockers")))
+      (cond
+        [(and full-blockers (not (string.eq (io.arg 7) "--full-blockers")))
           (begin
             (io.print-error
               (str_cat.str-cat
                 "embedded stdlib tlci: invalid diagnostics mode: "
                 (io.arg 7)
                 "\n"))
-            2)
+            2)]
+        [(not (or (string.eq target "linux") (string.eq target "windows")))
           (begin
             (io.print-error
               (str_cat.str-cat
                 "embedded stdlib tlci: invalid host target: "
                 target
                 "\n"))
-            1))))))
+            1)]
+        [(not (string.eq target (embedded-stdlib-tlci-build-host)))
+          (begin
+            (io.print-error
+              (str_cat.str-cat
+                "embedded stdlib tlci: requested host target `"
+                target
+                "` does not match build host `"
+                (embedded-stdlib-tlci-build-host)
+                "`\n"))
+            1)]
+        [else
+          (let
+            [rodata : (__tl_dyn-array u8)
+              (byte_buf.to-array (io.read-file rodata-path))]
+            (begin
+              (embedded-stdlib-tlci-collect-manifest!
+                (byte_buf.to-string (io.read-file manifest-path))
+                root
+                0
+                (&mut names)
+                (&mut captures))
+              (if (>
+                (string.string-length
+                  (embedded-stdlib-tlci-build-error-shared-view))
+                0)
+                (begin
+                  (io.print-error
+                    (str_cat.str-cat
+                      "embedded stdlib tlci: "
+                      (embedded-stdlib-tlci-build-error-shared-view)
+                      "\n"))
+                  1)
+                (let
+                  [name-count : i64 (svec.len (& names))]
+                  [name-array (make-array String name-count)]
+                  [name-index : i64 0]
+                  (begin
+                    (while (< name-index name-count)
+                      (begin
+                        (set!
+                          (array-ref name-array name-index)
+                          (svec.get (& names) name-index ""))
+                        (set! name-index (+ name-index 1))))
+                    (embedded-native-write
+                      output
+                      build-hash
+                      (string.eq target "windows")
+                      rodata
+                      name-array
+                      full-blockers
+                      (& captures)))))))]))))

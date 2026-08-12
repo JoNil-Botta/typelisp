@@ -143,7 +143,7 @@
   (TlciMetadata "v2" package-name package-version spmd-callables))
 
 (defstruct TlciImage
-  (host-arch i64)
+  (host-platform i64)
   (callback-abi-version i64)
   (compiler-build-hash String)
   (metadata TlciMetadata)
@@ -158,7 +158,7 @@
 ;; API concise, this lets the published stage0 compile dotted importers before
 ;; its imported-nominal constructor lowering is bootstrapped forward.
 (define (tlci-make-image
-  [host-arch : i64]
+  [host-platform : i64]
   [callback-abi-version : i64]
   [compiler-build-hash : String]
   [metadata : TlciMetadata]
@@ -169,7 +169,7 @@
   [symbols : (__tl_dyn-array u8)]
   [imports : (__tl_dyn-array u8)]) : TlciImage
   (TlciImage
-    host-arch
+    host-platform
     callback-abi-version
     compiler-build-hash
     metadata
@@ -211,6 +211,15 @@
 (defenum ResultTlciBytes
   (Ok (__tl_dyn-array u8))
   (Err String))
+
+(defenum TlciImageClassification
+  (MetadataOnly)
+  (CodeBearing))
+
+(defenum TlciImageHostAdmission
+  (MetadataOnly)
+  (CodeBearing)
+  (Rejected String))
 
 ;; The container field historically named `compiler-build-hash` is the exact
 ;; producer-compiler identity for compiler-internal sections.  Native callback
@@ -352,8 +361,79 @@
 (define (tlci-metadata-version-v2-current) : String
   (string.copy (& tlci-metadata-version-v2)))
 
+(define tlci-host-platform-x86-64-legacy : i64
+  1)
+(define tlci-host-platform-x86-64-linux : i64
+  2)
+(define tlci-host-platform-x86-64-windows : i64
+  3)
+
+;; Compatibility name for the immutable v2 corpus and old source importers.
 (define tlci-host-arch-x86-64 : i64
   1)
+
+(define (tlci-build-host-platform) : i64
+  (cfg
+    windows
+    tlci-host-platform-x86-64-windows
+    tlci-host-platform-x86-64-linux))
+
+(define (tlci-host-platform-supported? [platform : i64]) : bool
+  (or
+    (= platform tlci-host-platform-x86-64-legacy)
+    (= platform tlci-host-platform-x86-64-linux)
+    (= platform tlci-host-platform-x86-64-windows)))
+
+(define (tlci-host-platform-name [platform : i64]) : String
+  (cond
+    [(= platform tlci-host-platform-x86-64-legacy) "x86_64-legacy-ambiguous"]
+    [(= platform tlci-host-platform-x86-64-linux) "x86_64-linux"]
+    [(= platform tlci-host-platform-x86-64-windows) "x86_64-windows"]
+    [else "unknown"]))
+
+(define (tlci-image-classify [image : TlciImage]) : TlciImageClassification
+  (if (= (array-length image.code) 0)
+    TlciImageClassification.MetadataOnly
+    TlciImageClassification.CodeBearing))
+
+;; Platform is an execution-time trust boundary only for native code. Parsed
+;; metadata remains portable, including metadata from another host platform.
+;; Unknown constructed values fail closed; parsed images already reject them.
+(define (tlci-image-admit-host [image : TlciImage] [host-platform : i64]) : TlciImageHostAdmission
+  (cond
+    [(not (tlci-host-platform-supported? image.host-platform))
+      (TlciImageHostAdmission.Rejected
+        (str_cat.str-cat
+          "tlci: package `"
+          image.metadata.package-name
+          "` image uses unsupported host platform "
+          (string.int->string image.host-platform)))]
+    [(not (tlci-host-platform-supported? host-platform))
+      (TlciImageHostAdmission.Rejected
+        "tlci: loader host platform is unsupported")]
+    [else
+      (match (tlci-image-classify image)
+        [(TlciImageClassification.MetadataOnly)
+          TlciImageHostAdmission.MetadataOnly]
+        [(TlciImageClassification.CodeBearing)
+          (cond
+            [(= image.host-platform tlci-host-platform-x86-64-legacy)
+              (TlciImageHostAdmission.Rejected
+                (str_cat.str-cat
+                  "tlci: package `"
+                  image.metadata.package-name
+                  "` code-bearing image uses legacy/ambiguous host platform"))]
+            [(not (= image.host-platform host-platform))
+              (TlciImageHostAdmission.Rejected
+                (str_cat.str-cat
+                  "tlci: package `"
+                  image.metadata.package-name
+                  "` code-bearing image host platform mismatch: image="
+                  (tlci-host-platform-name image.host-platform)
+                  ", host="
+                  (tlci-host-platform-name host-platform)))]
+            [else TlciImageHostAdmission.CodeBearing])])]))
+
 (define tlci-callback-abi-version : i64
   2)
 (define tlci-host-abi-version : i64
@@ -1322,10 +1402,11 @@
 (define (tlci-emit-native-package-image
   [metadata : TlciMetadata]
   [compiler-build-hash : String]
+  [host-platform : i64]
   [input : TlciNativePackageInput]) : ResultTlciBytes
   (match (tlci-emit-image
     (tlci-make-image
-      tlci-host-arch-x86-64
+      host-platform
       tlci-callback-abi-version
       compiler-build-hash
       metadata
@@ -2925,7 +3006,7 @@
                 [else (set! index (+ index 1))])))
           error)])))
 
-(define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
+(define (tlci-emit-image-v2-legacy-compatible [image : TlciImage]) : ResultTlciBytes
   (cond
     [(not (string.eq (tlci-metadata-validation-error image.metadata) ""))
       (ResultTlciBytes.Err (tlci-metadata-validation-error image.metadata))]
@@ -2993,7 +3074,7 @@
         (begin
           (tlci-push-magic! (&mut out))
           (tlci-push-u64! (&mut out) tlci-format-version)
-          (tlci-push-u64! (&mut out) image.host-arch)
+          (tlci-push-u64! (&mut out) image.host-platform)
           (tlci-push-u64! (&mut out) image.callback-abi-version)
           (tlci-push-u64! (&mut out) hash-offset)
           (tlci-push-u64! (&mut out) (array-length compiler-hash-bytes))
@@ -3062,6 +3143,15 @@
                 (tlci-content-hash out-bytes))
               (ResultTlciBytes.Ok out-bytes)))))]))
 
+(define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
+  (cond
+    [(= image.host-platform tlci-host-platform-x86-64-legacy)
+      (ResultTlciBytes.Err
+        "tlci: new images must record a non-legacy host platform")]
+    [(not (tlci-host-platform-supported? image.host-platform))
+      (ResultTlciBytes.Err "tlci: unsupported host platform")]
+    [else (tlci-emit-image-v2-legacy-compatible image)]))
+
 (define (tlci-section-range-ok? [file-size : i64] [offset : i64] [len : i64]) : bool
   (if (= len 0)
     (= offset 0)
@@ -3090,7 +3180,7 @@
         (ResultTlciImage.Err "tlci: bad magic")
         (let
           [version : i64 (tlci-read-u64 bytes tlci-format-version-field-offset)]
-          [host-arch : i64 (tlci-read-u64 bytes 16)]
+          [host-platform : i64 (tlci-read-u64 bytes 16)]
           [callback-abi : i64 (tlci-read-u64 bytes 24)]
           [hash-offset : i64 (tlci-read-u64 bytes 32)]
           [hash-len : i64 (tlci-read-u64 bytes 40)]
@@ -3139,8 +3229,8 @@
                 (str_cat.str-cat
                   "tlci: unsupported format version "
                   (string.int->string version)))]
-            [(not (= host-arch tlci-host-arch-x86-64))
-              (ResultTlciImage.Err "tlci: unsupported host arch")]
+            [(not (tlci-host-platform-supported? host-platform))
+              (ResultTlciImage.Err "tlci: unsupported host platform")]
             [(not (= callback-abi tlci-callback-abi-version))
               (ResultTlciImage.Err "tlci: unsupported callback ABI version")]
             [(not (= declared-size actual-size))
@@ -3253,7 +3343,7 @@
                   [(ResultTlciMetadata.Ok metadata)
                     (ResultTlciImage.Ok
                       (TlciImage
-                        host-arch
+                        host-platform
                         callback-abi
                         (tlci-bytes->string bytes hash-offset hash-len)
                         metadata
@@ -3338,7 +3428,7 @@
 
 (define (tlci-test-metadata-only-image) : TlciImage
   (TlciImage
-    tlci-host-arch-x86-64
+    (tlci-build-host-platform)
     tlci-callback-abi-version
     "abcdef0"
     (tlci-test-metadata)
@@ -3351,7 +3441,7 @@
 
 (define (tlci-test-v2-metadata-only-image) : TlciImage
   (TlciImage
-    tlci-host-arch-x86-64
+    (tlci-build-host-platform)
     tlci-callback-abi-version
     "abcdef0"
     (tlci-test-v2-metadata)
@@ -3379,7 +3469,7 @@
 
 (define (tlci-test-imports-image) : TlciImage
   (TlciImage
-    tlci-host-arch-x86-64
+    (tlci-build-host-platform)
     tlci-callback-abi-version
     "abcdef0"
     (tlci-test-metadata)
@@ -3392,7 +3482,7 @@
 
 (define (tlci-test-code-image) : TlciImage
   (TlciImage
-    tlci-host-arch-x86-64
+    (tlci-build-host-platform)
     tlci-callback-abi-version
     "abcdef0"
     (tlci-test-metadata)
@@ -3405,7 +3495,7 @@
 
 (define (tlci-test-malformed-fixups-image) : TlciImage
   (TlciImage
-    tlci-host-arch-x86-64
+    (tlci-build-host-platform)
     tlci-callback-abi-version
     "abcdef0"
     (tlci-test-metadata)
@@ -3925,7 +4015,7 @@
           "tlci: unsupported format version 9")
         (tlci-test-parse-rejects?
           (tlci-test-corrupt-byte bytes 16 9)
-          "tlci: unsupported host arch")
+          "tlci: unsupported host platform")
         (tlci-test-parse-rejects?
           (tlci-test-corrupt-byte bytes 24 9)
           "tlci: unsupported callback ABI version")
@@ -3935,6 +4025,101 @@
         (tlci-test-parse-rejects?
           (tlci-slice-bytes bytes 0 20)
           "tlci: truncated header"))]))
+
+(define (tlci-test-platform-image [platform : i64] [code-bearing : bool]) : TlciImage
+  (tlci-make-image
+    platform
+    tlci-callback-abi-version
+    "abcdef0"
+    (tlci-test-metadata)
+    (tlci-empty-bytes)
+    (if code-bearing
+      (tlci-test-bytes3 195 144 144)
+      (tlci-empty-bytes))
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)))
+
+(define (tlci-test-platform-image-admission
+  [platform : i64]
+  [code-bearing : bool]
+  [host-platform : i64]) : TlciImageHostAdmission
+  (match (tlci-emit-image
+    (tlci-test-platform-image
+      (if (= platform tlci-host-platform-x86-64-legacy)
+        host-platform
+        platform)
+      code-bearing))
+    [(ResultTlciBytes.Err message) (TlciImageHostAdmission.Rejected message)]
+    [(ResultTlciBytes.Ok bytes)
+      (begin
+        (tlci-set-u64! bytes 16 platform)
+        (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
+        (match (tlci-parse-image bytes)
+          [(ResultTlciImage.Err message)
+            (TlciImageHostAdmission.Rejected message)]
+          [(ResultTlciImage.Ok image)
+            (tlci-image-admit-host image host-platform)]))]))
+
+(define (tlci-test-host-platform-admission-ok?) : bool
+  (let
+    [host-platform : i64 (tlci-build-host-platform)]
+    [other-platform : i64
+      (if (= host-platform tlci-host-platform-x86-64-windows)
+        tlci-host-platform-x86-64-linux
+        tlci-host-platform-x86-64-windows)]
+    (and
+      (match (tlci-test-platform-image-admission
+        other-platform
+        false
+        host-platform)
+        [(TlciImageHostAdmission.MetadataOnly) true]
+        [_ false])
+      (match (tlci-test-platform-image-admission
+        host-platform
+        true
+        host-platform)
+        [(TlciImageHostAdmission.CodeBearing) true]
+        [_ false])
+      (match (tlci-test-platform-image-admission
+        tlci-host-platform-x86-64-legacy
+        true
+        host-platform)
+        [(TlciImageHostAdmission.Rejected message)
+          (string.eq
+            message
+            "tlci: package `demo` code-bearing image uses legacy/ambiguous host platform")]
+        [_ false])
+      (match (tlci-test-platform-image-admission
+        other-platform
+        true
+        host-platform)
+        [(TlciImageHostAdmission.Rejected message)
+          (string.eq
+            message
+            (str_cat.str-cat
+              "tlci: package `demo` code-bearing image host platform mismatch: image="
+              (tlci-host-platform-name other-platform)
+              ", host="
+              (tlci-host-platform-name host-platform)))]
+        [_ false])
+      (match (tlci-image-admit-host
+        (tlci-test-platform-image 99 true)
+        host-platform)
+        [(TlciImageHostAdmission.Rejected message)
+          (string.eq
+            message
+            "tlci: package `demo` image uses unsupported host platform 99")]
+        [_ false])
+      (match (tlci-image-admit-host
+        (tlci-test-platform-image 99 false)
+        host-platform)
+        [(TlciImageHostAdmission.Rejected message)
+          (string.eq
+            message
+            "tlci: package `demo` image uses unsupported host platform 99")]
+        [_ false]))))
 
 (define (tlci-test-metadata-rejections-ok?) : bool
   (and
@@ -4115,9 +4300,16 @@
         "tlci metadata: specialization missing required field `backend`"))))
 
 (define (tlci-test-emit-rejections-ok?) : bool
-  (tlci-test-emit-rejects?
-    (tlci-test-malformed-fixups-image)
-    "tlci: malformed fixup table length"))
+  (and
+    (tlci-test-emit-rejects?
+      (tlci-test-malformed-fixups-image)
+      "tlci: malformed fixup table length")
+    (tlci-test-emit-rejects?
+      (tlci-test-platform-image tlci-host-platform-x86-64-legacy false)
+      "tlci: new images must record a non-legacy host platform")
+    (tlci-test-emit-rejects?
+      (tlci-test-platform-image 99 false)
+      "tlci: unsupported host platform")))
 
 (define (tlci-test-aux-sections-ok?) : bool
   (let
@@ -4345,6 +4537,7 @@
     [(not (tlci-test-producer-identity-admission-ok?)) 16]
     [(not (tlci-test-dense-spmd-sequences?)) 17]
     [(not (tlci-test-package-source-binding-admission-ok?)) 18]
+    [(not (tlci-test-host-platform-admission-ok?)) 19]
     [else 0]))
 
 (define (tlci-core-self-test) : i64

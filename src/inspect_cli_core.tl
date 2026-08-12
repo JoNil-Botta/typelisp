@@ -14,10 +14,10 @@ Summary:
     Inspect a TypeLisp comptime image.
 ")
 
-(define (tlci-inspect-host-arch-name [arch : i64]) : String
-  (if (= arch tlci_core.tlci-host-arch-x86-64)
-    "x86_64"
-    "unknown"))
+(define (tlci-inspect-classification-name [image : tlci_core.TlciImage]) : String
+  (match (tlci_core.tlci-image-classify image)
+    [(tlci_core.TlciImageClassification.MetadataOnly) "metadata-only"]
+    [(tlci_core.TlciImageClassification.CodeBearing) "code-bearing"]))
 
 (define (tlci-inspect-section-line [name : String] [offset : i64] [len : i64]) : String
   (str_cat.str-cat
@@ -152,7 +152,7 @@ Summary:
   [image : tlci_core.TlciImage]) : String
   (let
     [metadata : tlci_core.TlciMetadata image.metadata]
-    [host-arch : i64 image.host-arch]
+    [host-platform : i64 image.host-platform]
     (str_cat.str-cat
       "tlci image\n"
       "format-version: "
@@ -161,11 +161,14 @@ Summary:
           bytes
           tlci_core.tlci-format-version-field-offset))
       "\n"
-      "host-arch: "
-      (tlci-inspect-host-arch-name host-arch)
+      "host-platform: "
+      (tlci_core.tlci-host-platform-name host-platform)
       " ("
-      (string.int->string host-arch)
+      (string.int->string host-platform)
       ")\n"
+      "image-classification: "
+      (tlci-inspect-classification-name image)
+      "\n"
       "callback-abi-version: "
       (string.int->string image.callback-abi-version)
       "\n"
@@ -368,9 +371,22 @@ Summary:
                   [expected-file-size : String "file-size: 314\n"]
                   [expected-imports : String
                     "  imports: offset=272 records=1 bytes=42\n"]
+                  [expected-platform : String
+                    (str_cat.str-cat
+                      "host-platform: "
+                      (tlci_core.tlci-host-platform-name
+                        (tlci_core.tlci-build-host-platform))
+                      " ("
+                      (string.int->string (tlci_core.tlci-build-host-platform))
+                      ")"
+                      "\n")]
+                  [expected-classification : String
+                    "image-classification: metadata-only\n"]
                   (and
                     (string.contains (& rendered) (& expected-file-size))
-                    (string.contains (& rendered) (& expected-imports))))])])]
+                    (string.contains (& rendered) (& expected-imports))
+                    (string.contains (& rendered) (& expected-platform))
+                    (string.contains (& rendered) (& expected-classification))))])])]
       (unless ok (io.panic "inspect import section rendering failed")))))
 
 (cfg
@@ -380,7 +396,7 @@ Summary:
     (let
       [image : tlci_core.TlciImage
         (tlci_core.tlci-make-image
-          tlci_core.tlci-host-arch-x86-64
+          (tlci_core.tlci-build-host-platform)
           tlci_core.tlci-callback-abi-version
           "inspect-v2-test"
           (tlci_core.tlci-test-v2-metadata)

@@ -19049,6 +19049,199 @@
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
+;; The tail-call twin of opt-inline-nonleaf-callee-named: the same three-block
+;; body, except the arm that called the helper and returned its result is the
+;; fused form the lowerer actually emits for `(helper)` in tail position -- a
+;; single `TailCall`. Nothing else about the callee changes, so anything this
+;; body does that the plain nonleaf body does not is the tail-call admission.
+(define (opt-inline-tail-call-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Bool true)
+            (compiler_ir_types.compiler-ir-label "call")
+            (compiler_ir_types.compiler-ir-label "ret"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "call")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.TailCall
+              symbols.external-helper
+              compiler_ir_types.CompilerIrCallArgs.Nil
+              (compiler_ast_types.AstType.I64))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "ret")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 3)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; The nearest refused neighbour: identical body, except the tail call goes
+;; through a computed callee. The admission stops at the direct form, so this
+;; callee's whole body stays out of its single call site.
+;;
+;; The target is LOADED, not spelled. `TailCallIndirect (Value.Function f)` is
+;; not a computed target at all by the time the inliner sees it:
+;; opt-devirt-known-function-instr rewrites exactly that pattern into a direct
+;; `TailCall f` before the pass runs, and this fixture written that way inlined
+;; -- correctly, and for the direct admission rather than the indirect one it
+;; was meant to pin. A load from a global is a target devirtualization cannot
+;; see through, which is what makes the refusal this test claims the reason the
+;; site survives.
+(define (opt-inline-tail-call-indirect-callee
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Bool true)
+            (compiler_ir_types.compiler-ir-label "call")
+            (compiler_ir_types.compiler-ir-label "ret"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "call")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              0
+              (compiler_ir_types.CompilerIrValue.Global symbols.external-helper)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.TailCallIndirect
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                compiler_ir_types.CompilerIrCallArgs.Nil
+                (compiler_ast_types.AstType.I64))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "ret")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 3)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-inline-tail-call-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-nonleaf-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-tail-call-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-tail-call-indirect-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-nonleaf-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-tail-call-indirect-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+;; A body whose exit arm is a direct tail call inlines, and the merged caller
+;; carries the CONVERTED shape: the callee is gone, its tail call is an
+;; ordinary direct call to the helper, no tail call survives anywhere in the
+;; caller, and the converted call's result reaches the site through the same
+;; single continuation phi every multiblock inline builds.
+(define (compiler-optimize-inline-multiblock-tail-call-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-call-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
+            (= (opt-count-direct-call-name-blocks blocks "external_helper") 1)
+            (= (opt-count-tail-call-blocks blocks) 0)
+            (= (opt-count-phi-blocks blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; The same program with an INDIRECT tail call: the call site keeps its call.
+(define (compiler-optimize-inline-multiblock-tail-call-indirect-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-call-indirect-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; Idempotence: re-running the inliner over its own output leaves the merged
+;; caller alone. The converted call is a plain call to a callee the pass has
+;; no body for, so there is nothing left to absorb and no second conversion.
+(define (compiler-optimize-inline-multiblock-tail-call-idempotent-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [once : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-call-functions symbols)
+        2)]
+    [twice : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        once
+        2)]
+    (match (compiler_optimize.opt-function-list-find once "main")
+      [(compiler_optimize.OptMaybeFunction.Some once-main)
+        (match (compiler_optimize.opt-function-list-find twice "main")
+          [(compiler_optimize.OptMaybeFunction.Some twice-main)
+            (let
+              [once-blocks : compiler_ir_types.CompilerIrBlockList
+                (compiler_optimize.opt-function-blocks once-main)]
+              [twice-blocks : compiler_ir_types.CompilerIrBlockList
+                (compiler_optimize.opt-function-blocks twice-main)]
+              (and
+                (=
+                  (compiler_ir_types.compiler-ir-block-list-count once-blocks)
+                  (compiler_ir_types.compiler-ir-block-list-count twice-blocks))
+                (=
+                  (opt-count-direct-call-name-blocks
+                    twice-blocks
+                    "external_helper")
+                  1)
+                (= (opt-count-tail-call-blocks twice-blocks) 0)
+                (=
+                  (opt-count-phi-blocks once-blocks)
+                  (opt-count-phi-blocks twice-blocks))
+                (compiler_optimize.opt-inline-structure-ok? twice-blocks)))]
+          [(compiler_optimize.OptMaybeFunction.No) false])]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
 (define (opt-inline-repeated-nonleaf-predicate-callee
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -19913,6 +20106,15 @@
                     (unless
                       (compiler-optimize-inline-multiblock-nonleaf-ok?)
                       (return 40))
+                    (unless
+                      (compiler-optimize-inline-multiblock-tail-call-ok?)
+                      (return 60))
+                    (unless
+                      (compiler-optimize-inline-multiblock-tail-call-indirect-refusal-ok?)
+                      (return 61))
+                    (unless
+                      (compiler-optimize-inline-multiblock-tail-call-idempotent-ok?)
+                      (return 62))
                     (unless
                       (compiler-optimize-inline-repeated-tiny-predicate-ok?)
                       (return 46))
@@ -39855,6 +40057,10 @@
       (opt-merged-loop-test-callee-blocks)
       prefix
       cont
+      ;; The tail-call result slot base production would hand this clone:
+      ;; base 5 + (callee frame 9 - 3 params). This callee carries no tail
+      ;; call, so no block reads it.
+      11
       (opt-merged-loop-test-callee-args)
       3
       5)

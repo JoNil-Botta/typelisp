@@ -73481,6 +73481,27 @@
     [(ir.CompilerIrInstr.Switch _ _ _ _) true]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
     [(ir.CompilerIrInstr.Return _) true]
+    ;; A DIRECT tail call is an EXIT of the callee body, not a terminator the
+    ;; merged caller inherits. Leaving it as a tail call would return past the
+    ;; caller's own continuation, so the clone does not leave it as one: it
+    ;; converts the instruction into an ordinary `Call` writing a caller-frame
+    ;; slot, followed by the same `Jump cont` plus phi input that every `Return`
+    ;; already produces (opt-inline-clone-multiblock-instr-seq-from). Nothing
+    ;; downstream ever sees a tail call inside a merged caller, and the exit is
+    ;; wired by the mechanism the multiblock path already owns.
+    ;;
+    ;; What refusing it cost: this clause alone, not any pricing band, held
+    ;; whole bodies out of their single call site whenever ONE arm ended in
+    ;; `(helper ...)`. lex_source's `ls-negative-number-start?`,
+    ;; `ls-colon-token-end` and `ls-number-float?` are each absorbable by every
+    ;; other measure and were refused here.
+    ;;
+    ;; `TailCallIndirect` stays refused. Its target is a computed value, so the
+    ;; converted form would be a `CallIndirect` -- expressible, but not a shape
+    ;; any measurement on this tree asks for, and the census cannot see through
+    ;; a computed target to price the site. The admission stops at the direct
+    ;; form the measurement covers.
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
     [(ir.CompilerIrInstr.Phi dst _ _) (>= dst 0)]
     ;; Bounds checks are inlinable: the instruction remapper freshens the
     ;; ok-label with the site prefix (the same machinery the single-block
@@ -73582,6 +73603,42 @@
             false)])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-inline-blocks-call-free? (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; Does this body carry a direct tail call the multiblock clone will have to
+;; convert into a call plus continuation wiring?
+;;
+;; The conversion needs one caller-frame slot to hold the converted call's
+;; result, and the clone allocates those slots positionally (one per cloned
+;; block, since a tail call is a terminator and a block holds at most one).
+;; Asking this question first is what keeps a tail-call-free callee's frame
+;; growth byte-for-byte what it was before the admission existed: no tail call,
+;; no reserved slots, no change to `vars2` at any site.
+(define (opt-inline-instr-tail-call? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [_ false]))
+
+(define (opt-inline-instr-seq-has-tail-call-from?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-inline-instr-tail-call?
+      (ir.compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-inline-instr-seq-has-tail-call-from? instrs (+ index 1)))))
+
+(define (opt-inline-blocks-have-tail-call? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (opt-inline-instr-seq-has-tail-call-from? instrs 0)
+            true
+            (opt-inline-blocks-have-tail-call? (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-blocks-have-tail-call? (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-inline-multiblock-instrs-ok-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -74901,6 +74958,12 @@
       (opt-inline-remap-value value sa np base)]
     [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrValue.Unit)]))
 
+;; `tail-dst` is THIS block's reserved result slot for a converted tail call.
+;; A tail call is a terminator, so a block holds at most one and one slot per
+;; cloned block is exactly enough; opt-inline-clone-multiblock-blocks hands each
+;; block the next slot, and the caller reserves the range above the clone's
+;; rebased frame (opt-inline-multiblock-build-rewrite-seq). It is read only on
+;; the TailCall arm, so a tail-call-free body never touches it.
 (define (opt-inline-clone-multiblock-instr-seq-from
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]
@@ -74908,6 +74971,7 @@
   [cloned-label : i64]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
@@ -74927,6 +74991,28 @@
               (opt-inline-return-value maybe sa np base)
               cloned-label
               ir.CompilerIrPhiInputList.Nil))]
+        ;; `return f(args)` in the callee becomes `t = f(args); goto cont` with
+        ;; `t` as this edge's phi input -- the same exit wiring the Return arm
+        ;; above builds, with the call it was fused into spelled back out. The
+        ;; converted call carries the tail call's own result type, which is the
+        ;; type a non-tail direct call to the same callee would carry, and its
+        ;; arguments go through the ordinary argument remapper, so a forwarded
+        ;; `__sret` pointer stays the buffer the caller supplied.
+        [(ir.CompilerIrInstr.TailCall cname cargs cty)
+          (OptInlineMultiInstrClone.Clone
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                tail-dst
+                (ir.compiler-ir-symbol-clone cname)
+                (opt-inline-remap-args cargs sa np base)
+                (clone cty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump cont-label)
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var tail-dst)
+              cloned-label
+              ir.CompilerIrPhiInputList.Nil))]
         [_
           (let
             [cloned : ir.CompilerIrInstr
@@ -74938,6 +75024,7 @@
               cloned-label
               prefix
               cont-label
+              tail-dst
               sa
               np
               base)
@@ -74951,6 +75038,7 @@
   [cloned-label : i64]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
@@ -74961,6 +75049,7 @@
     cloned-label
     prefix
     cont-label
+    tail-dst
     sa
     np
     base))
@@ -74969,6 +75058,7 @@
   [block : ir.CompilerIrBlock]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiClone
@@ -74981,6 +75071,7 @@
           cloned-label
           prefix
           cont-label
+          tail-dst
           sa
           np
           base)
@@ -74995,6 +75086,7 @@
   [blocks : ir.CompilerIrBlockList]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiClone
@@ -75008,6 +75100,7 @@
         block
         prefix
         cont-label
+        tail-dst
         sa
         np
         base)
@@ -75016,6 +75109,7 @@
             (__tl-box-place rest)
             prefix
             cont-label
+            (+ tail-dst 1)
             sa
             np
             base)
@@ -75030,6 +75124,7 @@
         (ir.compiler-ir-block-seq-to-list seq)
         prefix
         cont-label
+        tail-dst
         sa
         np
         base)]))
@@ -77647,6 +77742,14 @@
               (let
                 [added-blocks : i64
                   (+ (ir.compiler-ir-block-list-count cblocks) 1)]
+                ;; Result slots for converted tail calls: one per cloned block,
+                ;; reserved above the clone's rebased frame, and reserved at all
+                ;; only for a body that carries one. `added-blocks - 1` is the
+                ;; callee's block count, already counted just above.
+                [tail-slots : i64
+                  (if (opt-inline-blocks-have-tail-call? cblocks)
+                    (- added-blocks 1)
+                    0)]
                 [stage-all-args? : bool
                   (opt-inline-param-mutating-blocks? cblocks np)]
                 [stage-args? : bool
@@ -77862,9 +77965,11 @@
                         [vars2 : i64
                           (+
                             prefix-vars
-                            (if stage-args?
-                              cvars
-                              (opt-inline-frame-growth cvars np)))]
+                            (+
+                              (if stage-args?
+                                cvars
+                                (opt-inline-frame-growth cvars np))
+                              tail-slots))]
                         [_hot-loop-bump : unit
                           (if hot-import?
                             (set!
@@ -77938,6 +78043,11 @@
                           (if stage-args?
                             (+ prefix-vars np)
                             prefix-vars)]
+                        ;; The first slot past the clone's rebased frame: the
+                        ;; callee's highest var rebases to `tail-base - 1`, and
+                        ;; `vars2` above reserved `tail-slots` ids from here.
+                        [tail-base : i64
+                          (opt-inline-rebase-var cvars np clone-base)]
                         [prefix-instrs2 : ir.CompilerIrInstrList
                           (opt-inline-append
                             lead
@@ -77952,6 +78062,7 @@
                           cblocks
                           prefix
                           cont-label
+                          tail-base
                           staged-args
                           np
                           clone-base)
@@ -78231,6 +78342,7 @@
   [cloned-label : i64]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -78257,6 +78369,37 @@
               cloned-label
               ir.CompilerIrPhiInputList.Nil)
             out-spans)]
+        ;; Same conversion as the span-free twin. The converted call takes the
+        ;; tail call's span: it is the instruction that keeps the callee's line,
+        ;; and a trap raised inside the called function has to report through it
+        ;; exactly as it did when the site was a real tail call. The `Jump` gets
+        ;; none, matching the Return arm.
+        [(ir.CompilerIrInstr.TailCall cname cargs cty)
+          (let
+            [converted : ir.CompilerIrInstr
+              (ir.CompilerIrInstr.Call
+                tail-dst
+                (ir.compiler-ir-symbol-clone cname)
+                (opt-inline-remap-args cargs sa np base)
+                (clone cty))]
+            (OptInlineMultiSpanInstrClone.Clone
+              (ir.compiler-ir-instr-cons
+                converted
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump cont-label)
+                  ir.CompilerIrInstrList.Nil))
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.Var tail-dst)
+                cloned-label
+                ir.CompilerIrPhiInputList.Nil)
+              (opt-inline-record-clone-span
+                source-spans
+                out-spans
+                caller
+                call-instr
+                callee
+                instr
+                converted)))]
         [_
           (let
             [cloned : ir.CompilerIrInstr
@@ -78277,6 +78420,7 @@
               cloned-label
               prefix
               cont-label
+              tail-dst
               sa
               np
               base
@@ -78299,6 +78443,7 @@
   [cloned-label : i64]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -78314,6 +78459,7 @@
     cloned-label
     prefix
     cont-label
+    tail-dst
     sa
     np
     base
@@ -78327,6 +78473,7 @@
   [block : ir.CompilerIrBlock]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -78344,6 +78491,7 @@
           cloned-label
           prefix
           cont-label
+          tail-dst
           sa
           np
           base
@@ -78364,6 +78512,7 @@
   [blocks : ir.CompilerIrBlockList]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -78383,6 +78532,7 @@
         block
         prefix
         cont-label
+        tail-dst
         sa
         np
         base
@@ -78396,6 +78546,7 @@
             (__tl-box-place rest)
             prefix
             cont-label
+            (+ tail-dst 1)
             sa
             np
             base
@@ -78416,6 +78567,7 @@
         (ir.compiler-ir-block-seq-to-list seq)
         prefix
         cont-label
+        tail-dst
         sa
         np
         base
@@ -78499,6 +78651,14 @@
               (let
                 [added-blocks : i64
                   (+ (ir.compiler-ir-block-list-count cblocks) 1)]
+                ;; Result slots for converted tail calls: one per cloned block,
+                ;; reserved above the clone's rebased frame, and reserved at all
+                ;; only for a body that carries one. `added-blocks - 1` is the
+                ;; callee's block count, already counted just above.
+                [tail-slots : i64
+                  (if (opt-inline-blocks-have-tail-call? cblocks)
+                    (- added-blocks 1)
+                    0)]
                 [stage-all-args? : bool
                   (opt-inline-param-mutating-blocks? cblocks np)]
                 [stage-args? : bool
@@ -78697,9 +78857,11 @@
                         [vars2 : i64
                           (+
                             prefix-vars
-                            (if stage-args?
-                              cvars
-                              (opt-inline-frame-growth cvars np)))]
+                            (+
+                              (if stage-args?
+                                cvars
+                                (opt-inline-frame-growth cvars np))
+                              tail-slots))]
                         [_hot-loop-bump : unit
                           (if hot-import?
                             (set!
@@ -78771,6 +78933,11 @@
                           (if stage-args?
                             (+ prefix-vars np)
                             prefix-vars)]
+                        ;; The first slot past the clone's rebased frame: the
+                        ;; callee's highest var rebases to `tail-base - 1`, and
+                        ;; `vars2` above reserved `tail-slots` ids from here.
+                        [tail-base : i64
+                          (opt-inline-rebase-var cvars np clone-base)]
                         [prefix-instrs2 : ir.CompilerIrInstrList
                           (opt-inline-append
                             lead
@@ -78785,6 +78952,7 @@
                           cblocks
                           prefix
                           cont-label
+                          tail-base
                           staged-args
                           np
                           clone-base

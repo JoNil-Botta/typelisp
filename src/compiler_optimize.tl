@@ -18512,7 +18512,17 @@
 (defstruct OptLicmStoreSummary
   (call-or-unknown? bool)
   (header-or-unknown-store? bool)
-  (element-only-store? bool))
+  (element-only-store? bool)
+  ;; A DIRECT call the call-memory fixpoint proved writes only element storage
+  ;; (opt-direct-call-element-clean?). It is a memory writer, so it is not
+  ;; `clean?`, and it is a call, so it keeps the call BOUNDARY the hoist/allocate
+  ;; interlock prices (opt-licm-store-summary-call-boundary?) -- but it provably
+  ;; cannot change a descriptor header word, so it does NOT close the
+  ;; header-load proofs the way `call-or-unknown?` does. Keeping it in its own
+  ;; field rather than reusing `element-only-store?` is what separates those two
+  ;; verdicts: an in-function element store is not a call boundary and must not
+  ;; start being priced as one.
+  (element-only-call? bool))
 
 (defenum OptLicmPtrKind
   (Unknown)
@@ -18807,16 +18817,19 @@
   (not global-write?))
 
 (define (opt-licm-store-summary-empty) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false false))
+  (OptLicmStoreSummary false false false false))
 
 (define (opt-licm-store-summary-call-or-unknown) : OptLicmStoreSummary
-  (OptLicmStoreSummary true false false))
+  (OptLicmStoreSummary true false false false))
 
 (define (opt-licm-store-summary-header-or-unknown-store) : OptLicmStoreSummary
-  (OptLicmStoreSummary false true false))
+  (OptLicmStoreSummary false true false false))
 
 (define (opt-licm-store-summary-element-only-store) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false true))
+  (OptLicmStoreSummary false false true false))
+
+(define (opt-licm-store-summary-element-only-call) : OptLicmStoreSummary
+  (OptLicmStoreSummary false false false true))
 
 (define (opt-licm-store-summary-merge
   [left : OptLicmStoreSummary]
@@ -18824,17 +18837,28 @@
   (OptLicmStoreSummary
     (or left.call-or-unknown? right.call-or-unknown?)
     (or left.header-or-unknown-store? right.header-or-unknown-store?)
-    (or left.element-only-store? right.element-only-store?)))
+    (or left.element-only-store? right.element-only-store?)
+    (or left.element-only-call? right.element-only-call?)))
 
 (define (opt-licm-store-summary-clean? [summary : OptLicmStoreSummary]) : bool
   (and
     (not summary.call-or-unknown?)
     (not summary.header-or-unknown-store?)
-    (not summary.element-only-store?)))
+    (not summary.element-only-store?)
+    (not summary.element-only-call?)))
 
 (define (opt-licm-store-summary-header-load-safe?
   [summary : OptLicmStoreSummary]) : bool
   (and (not summary.call-or-unknown?) (not summary.header-or-unknown-store?)))
+
+;; The CALL boundary the P6/R7 hoist-vs-allocate interlock prices: a
+;; loop-spanning live range that has to survive a call costs more in spill
+;; staging than the reloads it saves. That is a register-pressure fact about the
+;; emitted call, not a memory fact, so an element-only direct call counts here
+;; exactly like any other call -- its memory verdict is softer, its calling
+;; convention is not.
+(define (opt-licm-store-summary-call-boundary? [summary : OptLicmStoreSummary]) : bool
+  (or summary.call-or-unknown? summary.element-only-call?))
 
 (define (opt-licm-store-summary-from-effect [effect : ir.CompilerIrEffect]) : OptLicmStoreSummary
   (match effect
@@ -18901,20 +18925,60 @@
       (opt-direct-call-clean-memory-bit)
       (opt-direct-call-clean-global-bit))))
 
+;; Writes ONLY element storage -- the descriptor-safety fact. Strictly weaker
+;; than memory-clean and implied by it, so the test takes either bit. This is
+;; what a DESCRIPTOR word's invariance needs: the buffer a data slot names is a
+;; different allocation from the descriptor that names it, so a callee whose
+;; every write lands in element storage cannot change a header word the caller
+;; already loaded -- whatever the caller passed it. Unlike the global-clean
+;; test, this one needs no call-site argument gate: a `GlobalAddr` argument
+;; hands over a CELL's address, and a write through it is not an element write,
+;; so such a callee would not carry the bit in the first place (see
+;; opt-loop-bce-direct-call-clean-bits, which requires `has-param-writes?`
+;; clear).
+(define (opt-direct-call-element-clean?
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (opt-direct-call-clean-has-bit?
+    direct-call-clean
+    name
+    (bit-or
+      (opt-direct-call-clean-memory-bit)
+      (opt-direct-call-clean-element-bit))))
+
 ;; Direct callees that DO return. opt-licm-store-state-direct-call filters the
 ;; non-returning trap helpers out ahead of this, so a ControlFlow effect never
 ;; reaches the match below and the `_` arm keeps its old meaning: an ordinary
 ;; direct call of unknown effect.
+;;
+;; The element-only tier is the middle rung between "writes nothing" and "may
+;; write anything". Such a callee gets the same MEMORY verdict an in-function
+;; element-only store already gets (opt-licm-store-summary-for-storeptr): not
+;; clean, so every root-keyed memory proof still refuses it, but header-load-
+;; safe, so a descriptor-header load is not killed by it. Without this the call
+;; fell to `call-or-unknown?`, which kills the descriptor class outright -- the
+;; reason a `xs.slots` / `slots.len` / `slots.data` chain reloads on every trip
+;; of a loop that calls an element-only helper.
+;;
+;; It gets its own field rather than `element-only-store?` because it is still a
+;; CALL: the hoist/allocate interlock reads
+;; opt-licm-store-summary-call-boundary? and keeps pricing it as one. Measured,
+;; that separation is the whole difference between a win and a loss -- routing
+;; the bit through `element-only-store?` instead (so the interlock stopped
+;; seeing the call) cost intern_table 602,891,376 -> 611,411,217 (+1.41%) for a
+;; gvn_table gain of 0.34M.
 (define (opt-licm-store-summary-for-direct-call
   [direct-call-clean : opt_i64_i64_map.Map]
   [name : i64]) : OptLicmStoreSummary
   (if (opt-direct-call-memory-clean? direct-call-clean name)
     (opt-licm-store-summary-empty)
-    (match (ir.compiler-ir-direct-call-effect-id name)
-      [(ir.CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
-      [(ir.CompilerIrEffect.MemoryWrite)
-        (opt-licm-store-summary-header-or-unknown-store)]
-      [_ (opt-licm-store-summary-call-or-unknown)])))
+    (if (opt-direct-call-element-clean? direct-call-clean name)
+      (opt-licm-store-summary-element-only-call)
+      (match (ir.compiler-ir-direct-call-effect-id name)
+        [(ir.CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
+        [(ir.CompilerIrEffect.MemoryWrite)
+          (opt-licm-store-summary-header-or-unknown-store)]
+        [_ (opt-licm-store-summary-call-or-unknown)]))))
 
 (define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
   (match env
@@ -19886,12 +19950,14 @@
         ;; refinement the Gep arm of opt-licm-candidate? already applies, moved
         ;; here so the Load arm shares it. `any-call?` still closes the path for
         ;; indirect, C-ABI and SPMD calls, which set call-or-unknown? in both
-        ;; summaries and therefore fail this disjunct.
+        ;; summaries and therefore fail this disjunct -- as does an element-only
+        ;; direct call, whose softer memory verdict buys it nothing here: this
+        ;; disjunct is the register-pressure boundary, not a memory proof.
         (or
           (not any-call?)
           (and
-            (not root-summary.call-or-unknown?)
-            (not legacy-summary.call-or-unknown?)))
+            (not (opt-licm-store-summary-call-boundary? root-summary))
+            (not (opt-licm-store-summary-call-boundary? legacy-summary))))
         (or
           ;; Root identity is a coarse object-level fact. Preserve the older,
           ;; more precise descriptor-header proof when stores touch only data
@@ -20020,12 +20086,19 @@
         ;; range. The backend otherwise has to preserve it across the call,
         ;; which can spill the descriptor base used by every loop iteration.
         ;; A direct call proven memory-clean retains the established LICM
-        ;; behavior and cannot introduce that borrowed-root regression.
+        ;; behavior and cannot introduce that borrowed-root regression. An
+        ;; element-only direct call does NOT qualify: it still emits a call, so
+        ;; the address still has to survive one, and admitting it here is a
+        ;; measured LOSS -- intern_table 602,891,376 -> 611,411,217 (+1.41%)
+        ;; against gvn_table -0.34M and liveness_scan -0.09M, with every other
+        ;; row unmoved (one cachegrind run each). The memory fact the element
+        ;; bit carries is real; the register pressure it would buy is not worth
+        ;; it at an address-formation site.
         (or
           (not any-call?)
           (and
-            (not store-summary.call-or-unknown?)
-            (not legacy-store-summary.call-or-unknown?)))
+            (not (opt-licm-store-summary-call-boundary? store-summary))
+            (not (opt-licm-store-summary-call-boundary? legacy-store-summary))))
         ;; Gep computes an address from SSA values; it does not read through
         ;; that address. A hidden mutable-global read among the operands is
         ;; admitted only when opt-licm-globals-clean? proves the body cannot
@@ -81928,10 +82001,12 @@
 ;;   bit 61      unknown memory effects
 ;;   bit 62      writes only into descriptor ELEMENT storage
 ;;
-;; The summary map is intentionally partial. Leaves are discovered first and
-;; callers become eligible in later fixed-point rounds. An internal call whose
-;; target is still absent makes the caller unresolved, so recursive cycles are
-;; never accidentally proven clean.
+;; The map is built in two phases. The PESSIMISTIC phase discovers leaves first
+;; and makes callers eligible in later rounds; an internal call whose target is
+;; still absent makes the caller unresolved, so it never proves anything about a
+;; recursive cycle. The OPTIMISTIC phase then resolves exactly what the first
+;; one gave up on, by ascending Kleene iteration from the lattice bottom --
+;; see opt-call-memory-optimistic-fixed.
 (define (opt-call-memory-param-limit) : i64
   60)
 
@@ -82867,19 +82942,250 @@
             (- remaining 1))
           next)])))
 
+;; --- optimistic phase: least fixed point over the recursive residue ---------
+;;
+;; The pass above is a WORKLIST over a DAG: it can only ever commit a function
+;; whose callees are already committed, so a call-graph CYCLE is unresolvable by
+;; construction and every function that reaches one stays absent from the map.
+;; That is the whole reason a self-recursive walker -- `qs-sort`, and most of a
+;; compiler written as recursive list walks -- reloads a descriptor word on
+;; every trip of the loop its own tail call becomes.
+;;
+;; The standard answer is to seed the cycle at the lattice BOTTOM and iterate up.
+;; What makes that sound here, spelled out against this code:
+;;
+;;   THE LATTICE. A summary is a bit set (parameter bits 0..59, global, unknown,
+;;   element). Order it by inclusion; join is `bit-or`; bottom is 0 ("writes
+;;   nothing"); the chain height is 63. Finite, so ascending iteration
+;;   terminates.
+;;
+;;   THE TRANSFER IS MONOTONE in the summaries map. Every path by which a callee
+;;   summary reaches its caller's only ADDS bits:
+;;     - opt-call-memory-apply-direct-call ors in `carried-mask` bits;
+;;     - opt-call-memory-map-callee-param-writes visits index i only when the
+;;       callee's bit i is SET, and each visit either ors in a parameter bit for
+;;       the argument's root or ors in `unknown`; a cleared callee bit is
+;;       skipped. So callee bits can add caller bits, never remove them.
+;;   The two summaries-dependent SHAPE decisions are monotone too:
+;;   opt-call-memory-function-candidate consults `blocks-need-roots?` (which
+;;   reads the map) to decide whether to build the root environment at all, and
+;;   that predicate is false only when the body has no StorePtr/CopyBytes AND no
+;;   callee with parameter writes -- exactly the case in which neither the root
+;;   environment nor the element map is ever consulted, so the skipped
+;;   construction cannot change the result. When a growing callee summary flips
+;;   it to true, the environments get BUILT and the extra parameter bits get
+;;   mapped: strictly more bits, never fewer. `blocks-write-memory?` (the
+;;   element-map gate) reads no summaries at all.
+;;
+;;   WHY THE LEAST FIXED POINT IS THE RIGHT ANSWER. A summary must over-
+;;   approximate the writes of every terminating execution of the function. Any
+;;   such execution performs finitely many nested calls, so its writes are
+;;   covered by F^k(bottom) for some finite k, hence by the lfp. Iterating from
+;;   bottom and committing only a map the transfer REPRODUCES (`changed` false)
+;;   is what makes the committed map a genuine fixed point rather than an
+;;   optimistic guess.
+;;
+;; The budget is what keeps this honest. If the iteration has not stabilized
+;; within opt-call-memory-optimistic-rounds, the optimistic map is DISCARDED and
+;; the pessimistic one is committed unchanged -- so an over-budget program bails
+;; to exactly today's verdict (those functions stay absent, hence opaque) rather
+;; than shipping a non-fixed-point. The same fallback covers the defensive
+;; `Unresolved` arm below, which cannot fire: every function of the list is
+;; seeded, and `function-set` is built from that same list.
+(define (opt-call-memory-optimistic-rounds) : i64
+  4)
+
+;; Round zero: pessimistic rows copied through, residue rows at bottom.
+(define (opt-call-memory-seed-optimistic
+  [functions : ir.CompilerIrFunctionList]
+  [resolved : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) out]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            [seed : i64
+              (match (opt_i64_i64_map.get (& resolved) name-id)
+                [(opt_i64_i64_map.LookupFound summary) summary]
+                [(opt_i64_i64_map.LookupMissing) 0])]
+            (begin
+              (opt_i64_i64_map.insert-ref! (&mut out) name-id seed)
+              (opt-call-memory-seed-optimistic
+                (__tl-box-place rest)
+                resolved
+                out)))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-call-memory-seed-optimistic
+        (ir.compiler-ir-function-seq-to-list seq)
+        resolved
+        out)]))
+
+(define (opt-call-memory-unresolved-count
+  [functions : ir.CompilerIrFunctionList]
+  [resolved : opt_i64_i64_map.Map]
+  [count : i64]) : i64
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) count]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (opt-call-memory-unresolved-count
+            (__tl-box-place rest)
+            resolved
+            (match (opt_i64_i64_map.get
+              (& resolved)
+              (ir.compiler-ir-symbol-id name))
+              [(opt_i64_i64_map.LookupFound _) count]
+              [(opt_i64_i64_map.LookupMissing) (+ count 1)]))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-call-memory-unresolved-count
+        (ir.compiler-ir-function-seq-to-list seq)
+        resolved
+        count)]))
+
+;; `out`, whether any residue row moved this round, and whether the round is
+;; usable at all (see the `Unresolved` arm).
+(defenum OptCallMemoryOptimisticPass
+  (Pass opt_i64_i64_map.Map bool bool))
+
+(define (opt-call-memory-optimistic-pass
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionList]
+  [resolved : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [changed : bool]
+  [usable? : bool]) : OptCallMemoryOptimisticPass
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil)
+      (OptCallMemoryOptimisticPass.Pass out changed usable?)]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            (match (opt_i64_i64_map.get (& resolved) name-id)
+              ;; A pessimistically resolved row was computed from callees that
+              ;; were themselves already committed, so no residue row can reach
+              ;; it: it is a constant of this iteration.
+              [(opt_i64_i64_map.LookupFound summary)
+                (begin
+                  (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                  (opt-call-memory-optimistic-pass
+                    type-segment-bases
+                    (__tl-box-place rest)
+                    resolved
+                    current
+                    function-set
+                    out
+                    changed
+                    usable?))]
+              [(opt_i64_i64_map.LookupMissing)
+                (let
+                  [previous : i64
+                    (match (opt_i64_i64_map.get (& current) name-id)
+                      [(opt_i64_i64_map.LookupFound value) value]
+                      [(opt_i64_i64_map.LookupMissing) 0])]
+                  (match (opt-call-memory-function-candidate
+                    type-segment-bases
+                    current
+                    function-set
+                    func)
+                    ;; Unreachable in practice; taking it abandons the round.
+                    [(OptCallMemoryCandidate.Unresolved)
+                      (OptCallMemoryOptimisticPass.Pass out changed false)]
+                    [(OptCallMemoryCandidate.Known summary)
+                      (begin
+                        (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                        (opt-call-memory-optimistic-pass
+                          type-segment-bases
+                          (__tl-box-place rest)
+                          resolved
+                          current
+                          function-set
+                          out
+                          (or changed (not (= summary previous)))
+                          usable?))]))]))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-call-memory-optimistic-pass
+        type-segment-bases
+        (ir.compiler-ir-function-seq-to-list seq)
+        resolved
+        current
+        function-set
+        out
+        changed
+        usable?)]))
+
+(define (opt-call-memory-optimistic-fixed
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionList]
+  [resolved : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [capacity : i64]
+  [remaining : i64]) : opt_i64_i64_map.Map
+  (if (<= remaining 0)
+    resolved
+    (match (opt-call-memory-optimistic-pass
+      type-segment-bases
+      functions
+      resolved
+      current
+      function-set
+      (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
+      false
+      true)
+      [(OptCallMemoryOptimisticPass.Pass next changed usable?)
+        (if (not usable?)
+          resolved
+          (if changed
+            (opt-call-memory-optimistic-fixed
+              type-segment-bases
+              functions
+              resolved
+              function-set
+              next
+              capacity
+              (- remaining 1))
+            ;; The transfer reproduced this map: it is a fixed point, commit it.
+            next))])))
+
 (define (opt-call-memory-build
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
   [capacity : i64]) : opt_i64_i64_map.Map
-  (opt-call-memory-build-fixed
-    type-segment-bases
-    functions
-    (opt-call-memory-function-set
-      functions
-      (opt_i64_i64_map.with-capacity capacity))
-    (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
-    capacity
-    (+ (opt-function-list-count functions) 1)))
+  (let
+    [function-set : opt_i64_i64_map.Map
+      (opt-call-memory-function-set
+        functions
+        (opt_i64_i64_map.with-capacity capacity))]
+    [resolved : opt_i64_i64_map.Map
+      (opt-call-memory-build-fixed
+        type-segment-bases
+        functions
+        function-set
+        (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
+        capacity
+        (+ (opt-function-list-count functions) 1))]
+    (if (= (opt-call-memory-unresolved-count functions resolved 0) 0)
+      resolved
+      (opt-call-memory-optimistic-fixed
+        type-segment-bases
+        functions
+        resolved
+        function-set
+        (opt-call-memory-seed-optimistic
+          functions
+          resolved
+          (opt-call-memory-seed-builtins
+            (opt_i64_i64_map.with-capacity capacity)))
+        capacity
+        (opt-call-memory-optimistic-rounds)))))
 
 ;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global

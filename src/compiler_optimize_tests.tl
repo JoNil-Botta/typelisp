@@ -25474,6 +25474,35 @@
     (opt-licm-array-test-function blocks)
     direct-call-clean))
 
+;; The POST-BCE run, which is where the descriptor-header exception lives (see
+;; opt-licm-apply-loop's `descriptor-header-hoist?`), with a caller-supplied
+;; clean map so a callee's proven memory class decides the hoist.
+(define (opt-licm-array-late-optimized-function-with-direct-call-clean
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [direct-call-clean : opt_i64_i64_map.Map]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-test-function blocks)]
+    (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      direct-call-clean
+      (compiler_optimize.opt-global-cell-summary-empty)
+      true
+      func)
+      [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
+
+(define (opt-licm-touch-clean-map [symbols : OptLicmTestSymbols] [bits : i64]) : opt_i64_i64_map.Map
+  (let
+    [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut map)
+        (compiler_ir_types.compiler-ir-symbol-id symbols.touch)
+        bits)
+      map)))
+
 (define (opt-licm-summary-for-instr [instr : compiler_ir_types.CompilerIrInstr]) : compiler_optimize.OptLicmStoreSummary
   (compiler_optimize.opt-licm-store-summary-blocks
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -26397,6 +26426,39 @@
                     (compiler_ir_types.CompilerIrCallArgs.Nil)
                     (compiler_ast_types.AstType.I64))
                   (opt-licm-loop-finish-instrs))))))))
+    8))
+
+;; The DESCRIPTOR-HANDLE spelling of a header load: `load %array` reads the
+;; data-pointer word directly (GVN canonicalizes a zero-offset descriptor Gep
+;; back to the handle), so the load's address is the loop-invariant parameter
+;; itself and no address formation has to move with it. The body then writes an
+;; element through that buffer and calls a direct callee. Whether the load can
+;; leave the loop is decided by the callee's proven memory class alone.
+(define (opt-licm-header-handle-load-call-blocks [symbols : OptLicmTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        8
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          9
+          (compiler_ir_types.CompilerIrValue.Var 8)
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ir_types.CompilerIrValue.I64 100)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Call
+              12
+              symbols.touch
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.I64))
+            (opt-licm-loop-finish-instrs)))))
     8))
 
 (define (opt-licm-header-load-unknown-store-blocks) : compiler_ir_types.CompilerIrBlockList
@@ -27484,6 +27546,35 @@
         clean-touch-calls)]
     [header-clean-call : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks header-clean-call-func)]
+    ;; One loop in the POST-BCE run, once per callee memory class. Only the
+    ;; clean map differs: the element-only callee provably cannot change a
+    ;; descriptor word, the global-clean-only one can (its writes go through the
+    ;; objects its parameters name, and one of them may BE this descriptor), and
+    ;; an unresolved callee is opaque.
+    [header-element-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function-with-direct-call-clean
+        (opt-licm-header-handle-load-call-blocks symbols)
+        (opt-licm-touch-clean-map
+          symbols
+          (+
+            (compiler_optimize.opt-direct-call-clean-global-bit)
+            (compiler_optimize.opt-direct-call-clean-element-bit))))]
+    [header-element-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks header-element-call-func)]
+    [header-global-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function-with-direct-call-clean
+        (opt-licm-header-handle-load-call-blocks symbols)
+        (opt-licm-touch-clean-map
+          symbols
+          (compiler_optimize.opt-direct-call-clean-global-bit)))]
+    [header-global-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks header-global-call-func)]
+    [header-opaque-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function-with-direct-call-clean
+        (opt-licm-header-handle-load-call-blocks symbols)
+        (opt_i64_i64_map.with-capacity 1))]
+    [header-opaque-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks header-opaque-call-func)]
     [unknown-store-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-array-optimized-function
         (opt-licm-header-load-unknown-store-blocks))]
@@ -27554,8 +27645,9 @@
     ;; The call-memory union that feeds the clean-callee LICM refinement. Over
     ;; the same three fixtures: `leaf` writes no memory at all, so its packed
     ;; summary is exactly 0 and the union admits it; `writer` carries a StorePtr
-    ;; and does not; `probe` is self-recursive, so the deliberately partial
-    ;; fixpoint never resolves it and an absent summary stays opaque.
+    ;; and does not; `probe` is self-recursive with an otherwise empty body, and
+    ;; the optimistic phase of the fixpoint resolves that cycle at the lattice
+    ;; bottom, so it is admitted too.
     [direct-clean-union : opt_i64_i64_map.Map
       (compiler_optimize.opt-loop-bce-direct-call-clean-add-memory-clean
         (opt-licm-direct-call-clean-test-functions symbols)
@@ -28140,10 +28232,63 @@
           (& direct-clean-union)
           (compiler_ir_types.compiler-ir-symbol-id symbols.writer))
         83]
-      [(opt_i64_i64_map.contains?
-          (& direct-clean-union)
-          (compiler_ir_types.compiler-ir-symbol-id symbols.probe))
+      ;; `probe` is self-recursive with an empty body, so the optimistic phase
+      ;; resolves it at the lattice bottom and the union admits it as
+      ;; memory-clean. (The pessimistic phase alone left it absent.)
+      [(not
+          (compiler_optimize.opt-direct-call-clean-has-bit?
+            direct-clean-union
+            symbols.probe
+            (compiler_optimize.opt-direct-call-clean-memory-bit)))
         84]
+      ;; Descriptor-header loads and the callee's memory class, post-BCE.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function header-element-call-func)))
+        210]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-element-call
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        211]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-element-call
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        212]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function header-global-call-func)))
+        213]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-global-call
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        214]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-global-call
+              (compiler_ir_types.compiler-ir-label "entry"))
+            0))
+        215]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function header-opaque-call-func)))
+        216]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-opaque-call
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        217]
       [else 42])))
 
 (define (opt-licm-unswitch-test-params) : compiler_ir_types.CompilerIrParamList
@@ -47563,6 +47708,109 @@
                     (compiler_ir_types.CompilerIrInstrList.Nil))
                   (compiler_ir_types.CompilerIrFunctionList.Nil))))))))))
 
+;; A CYCLE of two mutually recursive writers. Each stores through the element
+;; buffer its own descriptor parameter names and hands that same descriptor to
+;; the other, so neither member can be resolved by the pessimistic phase -- each
+;; waits on the other -- and the cycle's least fixed point is the ELEMENT bit
+;; ALONE: no member writes a parameter's own storage, a global cell, or anything
+;; unknown.
+;;
+;; `global?` gives the SECOND member one additional global-cell store. That bit
+;; has to survive the ascending iteration and land on BOTH members: the first
+;; carries it back off its call. It is what pins the iteration as a real fixed
+;; point rather than optimistic-forever -- a seed of 0 that were simply
+;; committed would report both members global-clean.
+(define (opt-call-memory-cycle-tail [callee : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Call
+      5
+      callee
+      (compiler_ir_types.CompilerIrCallArgs.One
+        (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ast_types.AstType.Unit))
+    (compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-call-memory-cycle-body
+  [callee : i64]
+  [cell : i64]
+  [global? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    ;; the data buffer descriptor parameter 0 names
+    (compiler_ir_types.CompilerIrInstr.Load
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.I64 4)
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.U64))
+        (if global?
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Store
+              cell
+              (compiler_ir_types.CompilerIrValue.I64 9)
+              (compiler_ast_types.AstType.I64))
+            (opt-call-memory-cycle-tail callee))
+          (opt-call-memory-cycle-tail callee))))))
+
+(define (opt-call-memory-cycle-functions
+  [first : i64]
+  [second : i64]
+  [cell : i64]
+  [global? : bool]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-call-memory-test-function
+      first
+      (opt-load-cse-descriptor-params)
+      (opt-call-memory-cycle-body second cell false))
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-call-memory-test-function
+        second
+        (opt-load-cse-descriptor-params)
+        (opt-call-memory-cycle-body first cell global?))
+      (compiler_ir_types.CompilerIrFunctionList.Nil))))
+
+;; The optimistic phase driven directly, so its BUDGET can be pinned: with no
+;; rounds left it must hand back the pessimistic map it was given rather than
+;; the optimistic one it was building.
+(define (opt-call-memory-cycle-optimistic
+  [first : i64]
+  [second : i64]
+  [cell : i64]
+  [rounds : i64]) : opt_i64_i64_map.Map
+  (compiler_optimize.opt-call-memory-optimistic-fixed
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-call-memory-cycle-functions first second cell false)
+    (opt_i64_i64_map.with-capacity 8)
+    (compiler_optimize.opt-call-memory-function-set
+      (opt-call-memory-cycle-functions first second cell false)
+      (opt_i64_i64_map.with-capacity 8))
+    (compiler_optimize.opt-call-memory-seed-optimistic
+      (opt-call-memory-cycle-functions first second cell false)
+      (opt_i64_i64_map.with-capacity 8)
+      (opt_i64_i64_map.with-capacity 8))
+    8
+    rounds))
+
+(define (opt-call-memory-cycle-clean-bits
+  [first : i64]
+  [second : i64]
+  [cell : i64]) : opt_i64_i64_map.Map
+  (compiler_optimize.opt-loop-bce-direct-call-clean-add-memory-clean
+    (opt-call-memory-cycle-functions first second cell false)
+    (compiler_optimize.opt-call-memory-build
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-call-memory-cycle-functions first second cell false)
+      8)
+    (opt_i64_i64_map.with-capacity 8)))
+
 (define (opt-call-memory-summary-is?
   [summaries : opt_i64_i64_map.Map]
   [name : i64]
@@ -47671,6 +47919,25 @@
           summary-recursive
           summary-clean)
         32)]
+    [cycle-a : i64 (opt-test-symbol "call_memory_cycle_a")]
+    [cycle-b : i64 (opt-test-symbol "call_memory_cycle_b")]
+    [cycle-cell : i64 (opt-test-symbol "call_memory_cycle_cell")]
+    [cycle-element : opt_i64_i64_map.Map
+      (compiler_optimize.opt-call-memory-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-call-memory-cycle-functions cycle-a cycle-b cycle-cell false)
+        8)]
+    [cycle-global : opt_i64_i64_map.Map
+      (compiler_optimize.opt-call-memory-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-call-memory-cycle-functions cycle-a cycle-b cycle-cell true)
+        8)]
+    [cycle-bail : opt_i64_i64_map.Map
+      (opt-call-memory-cycle-optimistic cycle-a cycle-b cycle-cell 0)]
+    [cycle-rounds : opt_i64_i64_map.Map
+      (opt-call-memory-cycle-optimistic cycle-a cycle-b cycle-cell 4)]
+    [cycle-clean : opt_i64_i64_map.Map
+      (opt-call-memory-cycle-clean-bits cycle-a cycle-b cycle-cell)]
     ;; GAP4: a store through an UNKNOWN pointer still clears everything.
     [store : bool
       (opt-load-cse-barrier-blocked?
@@ -48028,10 +48295,65 @@
             summary-indirect
             (compiler_optimize.opt-call-memory-unknown-bit)))
         70]
-      [(opt_i64_i64_map.contains?
-          (& call-summaries)
-          (compiler_ir_types.compiler-ir-symbol-id summary-recursive))
+      ;; The optimistic phase resolves the self-recursive member the
+      ;; pessimistic one leaves absent. This one's body is a single self-call,
+      ;; so its least fixed point is the lattice bottom: it writes nothing.
+      [(not (opt-call-memory-summary-is? call-summaries summary-recursive 0))
         71]
+      ;; A two-member CYCLE of element-only writers resolves at the element bit
+      ;; alone -- no parameter bit, no global bit, no unknown.
+      [(not
+          (opt-call-memory-summary-is?
+            cycle-element
+            cycle-a
+            (compiler_optimize.opt-call-memory-summary-add-element 0)))
+        210]
+      [(not
+          (opt-call-memory-summary-is?
+            cycle-element
+            cycle-b
+            (compiler_optimize.opt-call-memory-summary-add-element 0)))
+        211]
+      ;; ...and one global-cell store inside the cycle reaches BOTH members, so
+      ;; the iteration is a fixed point and not an optimistic seed.
+      [(not
+          (opt-call-memory-summary-is?
+            cycle-global
+            cycle-a
+            (compiler_optimize.opt-call-memory-summary-add-global
+              (compiler_optimize.opt-call-memory-summary-add-element 0))))
+        212]
+      [(not
+          (opt-call-memory-summary-is?
+            cycle-global
+            cycle-b
+            (compiler_optimize.opt-call-memory-summary-add-global
+              (compiler_optimize.opt-call-memory-summary-add-element 0))))
+        213]
+      ;; Out of rounds: the pessimistic map is committed unchanged, so the cycle
+      ;; stays absent and therefore opaque.
+      [(opt_i64_i64_map.contains?
+          (& cycle-bail)
+          (compiler_ir_types.compiler-ir-symbol-id cycle-a))
+        214]
+      [(opt_i64_i64_map.contains?
+          (& cycle-bail)
+          (compiler_ir_types.compiler-ir-symbol-id cycle-b))
+        215]
+      [(not
+          (opt-call-memory-summary-is?
+            cycle-rounds
+            cycle-a
+            (compiler_optimize.opt-call-memory-summary-add-element 0)))
+        216]
+      ;; The bit the descriptor readers ask for arrives for a RECURSIVE
+      ;; element-only callee, which is what routes it into LICM's store summary.
+      [(not
+          (compiler_optimize.opt-direct-call-clean-has-bit?
+            cycle-clean
+            cycle-a
+            (compiler_optimize.opt-direct-call-clean-element-bit)))
+        217]
       [(not (opt-call-memory-summary-is? call-summaries summary-clean 0)) 72]
       [(not extern-call) 73]
       [(not volatile-call) 74]

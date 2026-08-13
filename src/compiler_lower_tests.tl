@@ -9959,6 +9959,141 @@
         (+ (array-ref xs i) bias)
         (- (array-ref xs i) bias)))))")
 
+(define (compiler-lower-masked-load-cache-let-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64] [bias : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (let
+      [x : i64 (array-ref xs i)]
+      (set! (array-ref out i) (if (= (bit-and x 1) 1)
+          (+ x bias)
+          (- x bias))))))")
+
+(define (compiler-lower-masked-load-cache-sibling-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (if (< i 4)
+        (+ (array-ref xs i) 1)
+        (- (array-ref xs i) 1)))))")
+
+(define (compiler-lower-masked-load-cache-mutation-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (if (= (bit-and (array-ref xs i) 1) 1)
+        (begin
+          (set! (array-ref xs i) (+ (array-ref xs i) 7))
+          (array-ref xs i))
+        (array-ref xs i)))))")
+
+(define (compiler-lower-masked-load-cache-nested-if-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (if (< (array-ref xs i) 0)
+        (- (array-ref xs i) 1)
+        (if (= (array-ref xs i) 0)
+          0
+          (+ (array-ref xs i) 1))))))")
+
+(define (compiler-lower-masked-load-cache-match-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i)
+      (match (bit-and (array-ref xs i) 1)
+        [0 (+ (array-ref xs i) 1)]
+        [_ (- (array-ref xs i) 1)]))))")
+
+(define (compiler-lower-masked-load-cache-counts-ok?
+  [src : String]
+  [mode : compiler_lower.CompilerLowerMode]
+  [vector-loads : i64]
+  [predicated-loads : i64]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode src mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-vector-load-count functions "fill")
+              vector-loads)
+            (=
+              (lower-test-function-predicated-load-count functions "fill")
+              predicated-loads))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-masked-load-cache-tests-ok?) : bool
+  (and
+    ;; Repeated spelling and an explicit lane-local binding each issue one
+    ;; load in the full body and one parent-mask load in the tail body.
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-if-bitand-value-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      1
+      1)
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-let-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      1
+      1)
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-if-bitand-value-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      1
+      1)
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-let-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      1
+      1)
+    ;; A load first evaluated under one arm cannot feed its sibling: each of
+    ;; the full and tail bodies needs one load for each arm.
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-sibling-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      0
+      4)
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-sibling-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      0
+      4)
+    ;; A store retires the parent value. The post-store read and the sibling
+    ;; read must both reload in each body.
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-mutation-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      1
+      5)
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-mutation-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      1
+      5)
+    ;; Dominance is transitive through nested if and scalar-lane match masks.
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-nested-if-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      1
+      1)
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-nested-if-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      1
+      1)
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-match-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      1
+      1)
+    (compiler-lower-masked-load-cache-counts-ok?
+      (compiler-lower-masked-load-cache-match-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      1
+      1)))
+
 (define (compiler-lower-masked-if-bitwise-value-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -10166,7 +10301,7 @@
               (= load-count 1)
               (= store-count 1)
               (>= binop-count 2)
-              (>= pred-load-count 3)
+              (= pred-load-count 1)
               (= pred-store-count 1)
               (= select-count 2)
               (= tail-mask-count 1)
@@ -10210,7 +10345,7 @@
               (= load-count 1)
               (= store-count 1)
               (>= binop-count 6)
-              (>= pred-load-count 5)
+              (= pred-load-count 1)
               (= pred-store-count 1)
               (= select-count 2)
               (= tail-mask-count 1)
@@ -10881,6 +11016,7 @@
     (compiler-lower-scalar-foreach-stays-scalar-ok?)
     (compiler-lower-simd-foreach-fallback-diagnostic-ok?)
     (compiler-lower-spmd-shuffle-lowering-ok?)
+    (compiler-lower-masked-load-cache-tests-ok?)
     (compiler-lower-avx512-masked-if-shape-ok?)
     (compiler-lower-avx512-masked-if-offset-shape-ok?)
     (compiler-lower-avx512-masked-if-index-value-shape-ok?)
@@ -14297,6 +14433,12 @@
   (test.assert-true
     (compiler-lower-defdispatch-structural-shape-ok?)
     "defdispatch structural thunk transport"))
+
+(test
+  compiler-lower-masked-load-cache
+  (test.assert-true
+    (compiler-lower-masked-load-cache-tests-ok?)
+    "masked loads reuse only through dominating masks and memory epochs"))
 
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let

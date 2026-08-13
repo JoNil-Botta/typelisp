@@ -641,6 +641,10 @@
   (middles (__tl_dyn-array i64))
   (rights (__tl_dyn-array i64))
   (rendered-names (__tl_dyn-array String))
+  ;; Only outer generated-role records populate this lane. Structural
+  ;; component records leave it at zero, so role identity is independent of
+  ;; both allocation order and eventual display spelling.
+  (generated-symbol-handles (__tl_dyn-array InternSlotId))
   (map-slots (__tl_dyn-array i64))
   (structural-cache-raws (__tl_dyn-array i64))
   (len i64))
@@ -692,6 +696,7 @@
     (make-array i64 256)
     (make-array i64 256)
     (make-array String 256)
+    (make-array InternSlotId 256)
     (make-array i64 512)
     (make-array i64 (intern-structural-cache-capacity))
     0))
@@ -866,6 +871,8 @@
         [next-rights : (__tl_dyn-array i64) (make-array i64 new-capacity)]
         [next-rendered-names : (__tl_dyn-array String)
           (make-array String new-capacity)]
+        [next-generated-symbol-handles : (__tl_dyn-array InternSlotId)
+          (make-array InternSlotId new-capacity)]
         (begin
           (unsafe
             (tl_arena_set previous-arena))
@@ -873,6 +880,10 @@
           (intern-structural-copy-array! table.lefts next-lefts (* count 8))
           (intern-structural-copy-array! table.middles next-middles (* count 8))
           (intern-structural-copy-array! table.rights next-rights (* count 8))
+          (intern-structural-copy-array!
+            table.generated-symbol-handles
+            next-generated-symbol-handles
+            (* count 4))
           (let
             [index : i64 0]
             (while (< index count)
@@ -886,6 +897,7 @@
           (set! table.middles next-middles)
           (set! table.rights next-rights)
           (set! table.rendered-names next-rendered-names)
+          (set! table.generated-symbol-handles next-generated-symbol-handles)
           (if (= table.owner intern-active-structural-owner)
             (begin
               (set!
@@ -988,6 +1000,8 @@
     [table : InternStructuralTable (array-ref cell 0)]
     [slots : (__tl_dyn-array i64) table.map-slots]
     [rendered-names : (__tl_dyn-array String) table.rendered-names]
+    [generated-symbol-handles : (__tl_dyn-array InternSlotId)
+      table.generated-symbol-handles]
     [structural-cache-raws : (__tl_dyn-array i64) table.structural-cache-raws]
     [index : i64 0]
     (begin
@@ -999,6 +1013,9 @@
       (while (< index table.len)
         (begin
           (set! (array-ref rendered-names index) "")
+          (set!
+            (array-ref generated-symbol-handles index)
+            (intern-id-slot-empty))
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index (array-length structural-cache-raws))
@@ -1783,6 +1800,18 @@
   compile-profile
   (define intern-profile-slice-miss-count : i64
     0))
+(cfg
+  compile-profile
+  (define intern-profile-generated-role-create-counts : (__tl_dyn-array i64)
+    (make-array i64 9)))
+(cfg
+  compile-profile
+  (define intern-profile-generated-role-reuse-counts : (__tl_dyn-array i64)
+    (make-array i64 9)))
+(cfg
+  compile-profile
+  (define intern-profile-generated-role-render-counts : (__tl_dyn-array i64)
+    (make-array i64 9)))
 
 (cfg
   compile-profile
@@ -1801,7 +1830,21 @@
       (set! intern-profile-source-symbol-bytes-count 0)
       (set! intern-profile-slice-bytes-count 0)
       (set! intern-profile-slice-hit-count 0)
-      (set! intern-profile-slice-miss-count 0))))
+      (set! intern-profile-slice-miss-count 0)
+      (let
+        [index : i64 0]
+        (while (< index 9)
+          (begin
+            (set!
+              (array-ref intern-profile-generated-role-create-counts index)
+              0)
+            (set!
+              (array-ref intern-profile-generated-role-reuse-counts index)
+              0)
+            (set!
+              (array-ref intern-profile-generated-role-render-counts index)
+              0)
+            (set! index (+ index 1))))))))
 
 (cfg
   compile-profile
@@ -1870,6 +1913,33 @@
 
 (cfg
   compile-profile
+  (define (intern-profile-generated-role-create-value [role : i64]) : i64
+    (let
+      [index : i64 (intern-generated-symbol-role-index role)]
+      (if (< index 0)
+        (tl_oob_abort)
+        (array-ref intern-profile-generated-role-create-counts index)))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-generated-role-reuse-value [role : i64]) : i64
+    (let
+      [index : i64 (intern-generated-symbol-role-index role)]
+      (if (< index 0)
+        (tl_oob_abort)
+        (array-ref intern-profile-generated-role-reuse-counts index)))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-generated-role-render-value [role : i64]) : i64
+    (let
+      [index : i64 (intern-generated-symbol-role-index role)]
+      (if (< index 0)
+        (tl_oob_abort)
+        (array-ref intern-profile-generated-role-render-counts index)))))
+
+(cfg
+  compile-profile
   (define (intern-profile-note-intern) : unit
     (set! intern-profile-intern-count (+ intern-profile-intern-count 1))))
 
@@ -1877,6 +1947,39 @@
   compile-profile
   (define (intern-profile-note-generated) : unit
     (set! intern-profile-generated-count (+ intern-profile-generated-count 1))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-generated-role-create [role : i64]) : unit
+    (let
+      [index : i64 (intern-generated-symbol-role-index role)]
+      (if (< index 0)
+        (tl_oob_abort)
+        (set!
+          (array-ref intern-profile-generated-role-create-counts index)
+          (+ (array-ref intern-profile-generated-role-create-counts index) 1))))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-generated-role-reuse [role : i64]) : unit
+    (let
+      [index : i64 (intern-generated-symbol-role-index role)]
+      (if (< index 0)
+        (tl_oob_abort)
+        (set!
+          (array-ref intern-profile-generated-role-reuse-counts index)
+          (+ (array-ref intern-profile-generated-role-reuse-counts index) 1))))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-generated-role-render [role : i64]) : unit
+    (let
+      [index : i64 (intern-generated-symbol-role-index role)]
+      (if (< index 0)
+        (tl_oob_abort)
+        (set!
+          (array-ref intern-profile-generated-role-render-counts index)
+          (+ (array-ref intern-profile-generated-role-render-counts index) 1))))))
 
 (cfg
   compile-profile
@@ -2467,6 +2570,421 @@
             unit)
           (set! i (+ i 1))))
       slash)))
+
+;; Generated-symbol roles are deliberately outside the source/generated id
+;; lanes. They are structural recipe tags, never renderable symbols by
+;; themselves. A role recipe is a triple of (role, qualification, components),
+;; where qualification is zero or a structural (module, base) pair.
+(define (intern-generated-symbol-role-clone-helper) : i64
+  -101)
+
+(define (intern-generated-symbol-role-lambda) : i64
+  -102)
+
+(define (intern-generated-symbol-role-global-initializer) : i64
+  -103)
+
+(define (intern-generated-symbol-role-cleanup-helper) : i64
+  -104)
+
+(define (intern-generated-symbol-role-cleanup-parameter) : i64
+  -105)
+
+(define (intern-generated-symbol-role-cleanup-payload) : i64
+  -106)
+
+(define (intern-generated-symbol-role-dispatch-cache) : i64
+  -107)
+
+(define (intern-generated-symbol-role-dispatch-variant) : i64
+  -108)
+
+(define (intern-generated-symbol-role-nullary-enum-object) : i64
+  -109)
+
+(define (intern-generated-symbol-role-index [role : i64]) : i64
+  (cond
+    [(= role (intern-generated-symbol-role-clone-helper)) 0]
+    [(= role (intern-generated-symbol-role-lambda)) 1]
+    [(= role (intern-generated-symbol-role-global-initializer)) 2]
+    [(= role (intern-generated-symbol-role-cleanup-helper)) 3]
+    [(= role (intern-generated-symbol-role-cleanup-parameter)) 4]
+    [(= role (intern-generated-symbol-role-cleanup-payload)) 5]
+    [(= role (intern-generated-symbol-role-dispatch-cache)) 6]
+    [(= role (intern-generated-symbol-role-dispatch-variant)) 7]
+    [(= role (intern-generated-symbol-role-nullary-enum-object)) 8]
+    [else -1]))
+
+(define (intern-compat-state-generated-role-key
+  [state : InternCompatState]
+  [role : i64]
+  [qualification : i64]
+  [components : i64]) : i64
+  (if (< (intern-generated-symbol-role-index role) 0)
+    (tl_oob_abort)
+    (intern-compat-state-composite-triple-id
+      state
+      role
+      qualification
+      components)))
+
+(define (intern-compat-state-generated-role-refresh-active!
+  [state : InternCompatState]) : unit
+  ;; Parsing, macro expansion, and typechecking still have compatibility
+  ;; callers that reserve generated IDs through the installed global view.
+  ;; A driver-owned state captured before those phases shares the arrays but
+  ;; not their scalar frontier cells, so refresh that frontier immediately
+  ;; before a role handle is reserved. Inactive simultaneous states remain
+  ;; fully independent and are never installed here.
+  (if (= (intern-active-table-id) (intern-compat-state-table-id state))
+    (intern-compat-state-capture-from-globals! state)
+    unit))
+
+(define (intern-compat-state-generated-role-symbol-id-from-key
+  [state : InternCompatState]
+  [role : i64]
+  [key : i64]
+  [qualified : bool]
+  [module-id : i64]
+  [base-id : i64]) : i64
+  (let
+    [index : i64 (- (bit-and key (intern-structural-key-index-mask)) 1)]
+    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
+    (if (not (intern-id-slot-empty? existing))
+      (let
+        [id : i64 (intern-id-slot-decode existing)]
+        (begin
+          ;; A legacy/global caller can publish this shared record after the
+          ;; active explicit-state view captured its scalar frontier. Refresh
+          ;; only that stale reuse case; known handles and inactive independent
+          ;; states keep the fast path.
+          (if (intern-compat-state-generated-id-active? state id)
+            unit
+            (intern-compat-state-generated-role-refresh-active! state))
+          (if (intern-compat-state-generated-id-active? state id)
+            unit
+            (tl_oob_abort))
+          (cfg compile-profile (intern-profile-note-generated-role-reuse role))
+          id))
+      (let
+        [_refresh-active : unit
+          (intern-compat-state-generated-role-refresh-active! state)]
+        [id : i64 (intern-compat-state-generated-symbol-handle state)]
+        (begin
+          ;; Structural role membership is an internal O(1) query. Generated
+          ;; role names never use source dotted-name metadata, so retain the
+          ;; negative role tag in that lane through materialization.
+          (set! (array-ref state.pool-first-dot-slots id) (cast role : i32))
+          (if qualified
+            (begin
+              (set! (array-ref state.pool-qualified-slots id) true)
+              (set!
+                (array-ref state.pool-module-id-slots id)
+                (intern-id-slot-encode module-id))
+              (set!
+                (array-ref state.pool-base-id-slots id)
+                (intern-id-slot-encode base-id)))
+            unit)
+          ;; Allocation may grow unrelated state arrays, but the structural
+          ;; table is arena-stable. Reload it before publishing the handle so
+          ;; the write always targets the current record storage.
+          (set!
+            (array-ref
+              (__tl-project-field
+                (array-ref state.structural-table-cell 0)
+                generated-symbol-handles)
+              index)
+            (intern-id-slot-encode id))
+          (cfg compile-profile (intern-profile-note-generated-role-create role))
+          id)))))
+
+(define (intern-compat-state-generated-role-symbol-id
+  [state : InternCompatState]
+  [role : i64]
+  [components : i64]) : i64
+  (begin
+    (if (array-ref state.map-ready 0)
+      unit
+      (intern-compat-state-reset! state))
+    (let
+      [key : i64
+        (intern-compat-state-generated-role-key state role 0 components)]
+      (intern-compat-state-generated-role-symbol-id-from-key
+        state
+        role
+        key
+        false
+        -1
+        -1))))
+
+(define (intern-compat-state-generated-role-qualified-symbol-id
+  [state : InternCompatState]
+  [role : i64]
+  [components : i64]
+  [module-id : i64]
+  [base-id : i64]) : i64
+  (if (or (< module-id 0) (< base-id 0))
+    (tl_oob_abort)
+    (begin
+      (if (array-ref state.map-ready 0)
+        unit
+        (intern-compat-state-reset! state))
+      (let
+        [qualification : i64
+          (intern-compat-state-composite-pair-id state module-id base-id)]
+        [key : i64
+          (intern-compat-state-generated-role-key
+            state
+            role
+            qualification
+            components)]
+        (intern-compat-state-generated-role-symbol-id-from-key
+          state
+          role
+          key
+          true
+          module-id
+          base-id)))))
+
+;; Rendering is explicit and idempotent. Constructors above perform no string
+;; concatenation or hashing; the caller supplies the legacy spelling only when
+;; crossing a diagnostic, serialization, or backend text boundary.
+(define (intern-compat-state-generated-role-symbol-materialize!
+  [state : InternCompatState]
+  [role : i64]
+  [id : i64]
+  [name : String]) : String
+  (if (< (intern-generated-symbol-role-index role) 0)
+    (tl_oob_abort)
+    (let
+      [cached : String (array-ref state.pool-slots id)]
+      [rendered : String
+        (intern-compat-state-generated-symbol-materialize! state id name)]
+      (begin
+        (if (= (intern-private-string-length cached) 0)
+          (begin
+            (set!
+              (array-ref state.pool-macro-prefix-class-slots id)
+              (intern-private-macro-prefix-class rendered))
+            (if (array-ref state.pool-qualified-slots id)
+              (set!
+                (array-ref state.pool-last-slash-slots id)
+                (cast (intern-private-last-slash rendered) : i32))
+              unit)
+            (cfg
+              compile-profile
+              (intern-profile-note-generated-role-render role)))
+          unit)
+        rendered))))
+
+;; Compatibility wrappers for phases that still operate on the installed
+;; compile job. They use the same structural table and generated lane as the
+;; explicit-state constructors; no second owner or spelling-keyed cache exists.
+(define (intern-generated-role-symbol-handle) : i64
+  (begin
+    (if intern-map-ready
+      unit
+      (intern-reset!))
+    (let
+      [id : i64 (intern-generated-id-allocate!)]
+      (begin
+        (set! (array-ref intern-pool-slots id) "")
+        (set! (array-ref intern-pool-qualified-slots id) false)
+        (set! (array-ref intern-pool-last-slash-slots id) (cast -1 : i32))
+        (set! (array-ref intern-pool-first-dot-slots id) (cast -1 : i32))
+        (set!
+          (array-ref intern-pool-leading-dot-id-slots id)
+          (intern-id-slot-encode -1))
+        (set!
+          (array-ref intern-pool-dotted-prefix-id-slots id)
+          (intern-id-slot-encode -1))
+        (set!
+          (array-ref intern-pool-module-id-slots id)
+          (intern-id-slot-encode -1))
+        (set!
+          (array-ref intern-pool-base-id-slots id)
+          (intern-id-slot-encode id))
+        id))))
+
+(define (intern-generated-role-key
+  [role : i64]
+  [qualification : i64]
+  [components : i64]) : i64
+  (if (< (intern-generated-symbol-role-index role) 0)
+    (tl_oob_abort)
+    (intern-composite-triple-id role qualification components)))
+
+(define (intern-generated-role-symbol-id-from-key
+  [role : i64]
+  [key : i64]
+  [qualified : bool]
+  [module-id : i64]
+  [base-id : i64]) : i64
+  (let
+    [index : i64 (- (bit-and key (intern-structural-key-index-mask)) 1)]
+    [table : InternStructuralTable
+      (array-ref (intern-global-shared-view intern-structural-table-cell) 0)]
+    [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
+    (if (not (intern-id-slot-empty? existing))
+      (begin
+        (cfg compile-profile (intern-profile-note-generated-role-reuse role))
+        (intern-id-slot-decode existing))
+      (let
+        [id : i64 (intern-generated-role-symbol-handle)]
+        (begin
+          (set! (array-ref intern-pool-first-dot-slots id) (cast role : i32))
+          (if qualified
+            (begin
+              (set! (array-ref intern-pool-qualified-slots id) true)
+              (set!
+                (array-ref intern-pool-module-id-slots id)
+                (intern-id-slot-encode module-id))
+              (set!
+                (array-ref intern-pool-base-id-slots id)
+                (intern-id-slot-encode base-id)))
+            unit)
+          (set!
+            (array-ref
+              (__tl-project-field
+                (array-ref
+                  (intern-global-shared-view intern-structural-table-cell)
+                  0)
+                generated-symbol-handles)
+              index)
+            (intern-id-slot-encode id))
+          (cfg compile-profile (intern-profile-note-generated-role-create role))
+          id)))))
+
+(define (intern-generated-role-symbol-id [role : i64] [components : i64]) : i64
+  (begin
+    (if intern-map-ready
+      unit
+      (intern-reset!))
+    (let
+      [key : i64 (intern-generated-role-key role 0 components)]
+      (intern-generated-role-symbol-id-from-key role key false -1 -1))))
+
+(define (intern-generated-role-qualified-symbol-id
+  [role : i64]
+  [components : i64]
+  [module-id : i64]
+  [base-id : i64]) : i64
+  (if (or (< module-id 0) (< base-id 0))
+    (tl_oob_abort)
+    (begin
+      (if intern-map-ready
+        unit
+        (intern-reset!))
+      (let
+        [qualification : i64 (intern-composite-pair-id module-id base-id)]
+        [key : i64 (intern-generated-role-key role qualification components)]
+        (intern-generated-role-symbol-id-from-key
+          role
+          key
+          true
+          module-id
+          base-id)))))
+
+(define (intern-generated-role-symbol-materialize!
+  [role : i64]
+  [id : i64]
+  [name : String]) : String
+  (if (or
+    (< (intern-generated-symbol-role-index role) 0)
+    (not (intern-generated-id-active? id)))
+    (tl_oob_abort)
+    (let
+      [cached : String
+        (array-ref (intern-global-shared-view intern-pool-slots) id)]
+      (if (> (intern-private-string-length cached) 0)
+        cached
+        (let
+          [rendered : String (intern-persistent-copy name)]
+          (begin
+            (set! (array-ref intern-pool-slots id) rendered)
+            (set!
+              (array-ref intern-pool-macro-prefix-class-slots id)
+              (intern-private-macro-prefix-class rendered))
+            (if (array-ref intern-pool-qualified-slots id)
+              (set!
+                (array-ref intern-pool-last-slash-slots id)
+                (cast (intern-private-last-slash rendered) : i32))
+              unit)
+            (cfg
+              compile-profile
+              (intern-profile-note-generated-role-render role))
+            rendered))))))
+
+(define (intern-compat-state-generated-role-symbol?
+  [state : InternCompatState]
+  [id : i64]
+  [role : i64]) : bool
+  (and
+    (>= (intern-generated-symbol-role-index role) 0)
+    (intern-compat-state-generated-id-active? state id)
+    (= (cast (array-ref state.pool-first-dot-slots id) : i64) role)))
+
+(define (intern-generated-role-symbol? [id : i64] [role : i64]) : bool
+  (and
+    (>= (intern-generated-symbol-role-index role) 0)
+    (intern-generated-id-active? id)
+    (=
+      (cast
+        (array-ref (intern-global-shared-view intern-pool-first-dot-slots) id)
+        : i64)
+      role)))
+
+(define (intern-compat-state-generated-role-record-count
+  [state : InternCompatState]) : i64
+  (__tl-project-field (array-ref state.structural-table-cell 0) len))
+
+(define (intern-compat-state-generated-role-record-handle-at
+  [state : InternCompatState]
+  [index : i64]) : i64
+  (let
+    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    (if (or (< index 0) (>= index table.len))
+      0
+      (let
+        [handle : InternSlotId (array-ref table.generated-symbol-handles index)]
+        (if (intern-id-slot-empty? handle)
+          0
+          (intern-id-slot-decode handle))))))
+
+(define (intern-compat-state-generated-role-record-role-at
+  [state : InternCompatState]
+  [index : i64]) : i64
+  (let
+    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    (if (or
+      (< index 0)
+      (>= index table.len)
+      (intern-id-slot-empty? (array-ref table.generated-symbol-handles index))
+      (not
+        (=
+          (cast (array-ref table.kinds index) : i64)
+          (intern-structural-kind-triple))))
+      0
+      (array-ref table.lefts index))))
+
+(define (intern-compat-state-generated-role-record-qualification-at
+  [state : InternCompatState]
+  [index : i64]) : i64
+  (let
+    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    (if (or (< index 0) (>= index table.len))
+      0
+      (array-ref table.middles index))))
+
+(define (intern-compat-state-generated-role-record-components-at
+  [state : InternCompatState]
+  [index : i64]) : i64
+  (let
+    [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
+    (if (or (< index 0) (>= index table.len))
+      0
+      (array-ref table.rights index))))
 
 (define (intern-private-first-dot [name : (& name str)]) : i64
   (let
@@ -4290,6 +4808,252 @@
           [_ (set! ok false)]))
       ok)))
 
+(define (intern-generated-role-symbol-tests-ok?) : bool
+  (let
+    [state-a : InternCompatState (intern-compat-state-new)]
+    [state-b : InternCompatState (intern-compat-state-new)]
+    [component-a : i64 (intern-compat-state-intern state-a "component")]
+    [component-b : i64 (intern-compat-state-intern state-b "component")]
+    [source-collision-a : i64
+      (intern-compat-state-intern state-a "__tl_lambda_component_0")]
+    [lambda-a : i64
+      (intern-compat-state-generated-role-symbol-id
+        state-a
+        (intern-generated-symbol-role-lambda)
+        component-a)]
+    [lambda-a-again : i64
+      (intern-compat-state-generated-role-symbol-id
+        state-a
+        (intern-generated-symbol-role-lambda)
+        component-a)]
+    [clone-a : i64
+      (intern-compat-state-generated-role-symbol-id
+        state-a
+        (intern-generated-symbol-role-clone-helper)
+        component-a)]
+    [lambda-b : i64
+      (intern-compat-state-generated-role-symbol-id
+        state-b
+        (intern-generated-symbol-role-lambda)
+        component-b)]
+    [module-a : i64 (intern-compat-state-intern state-a "pkg")]
+    [base-a : i64 (intern-compat-state-intern state-a "cleanup")]
+    [qualified-a : i64
+      (intern-compat-state-generated-role-qualified-symbol-id
+        state-a
+        (intern-generated-symbol-role-cleanup-helper)
+        component-a
+        module-a
+        base-a)]
+    [enum-boundary-a : i64
+      (intern-compat-state-generated-role-symbol-id
+        state-a
+        (intern-generated-symbol-role-nullary-enum-object)
+        (intern-compat-state-composite-pair-id
+          state-a
+          (intern-compat-state-intern state-a "A_B")
+          (intern-compat-state-intern state-a "C")))]
+    [enum-boundary-b : i64
+      (intern-compat-state-generated-role-symbol-id
+        state-a
+        (intern-generated-symbol-role-nullary-enum-object)
+        (intern-compat-state-composite-pair-id
+          state-a
+          (intern-compat-state-intern state-a "A")
+          (intern-compat-state-intern state-a "B_C")))]
+    [ok : bool true]
+    (begin
+      (unless (= lambda-a lambda-a-again) (set! ok false))
+      (unless (not (= lambda-a clone-a)) (set! ok false))
+      (unless (not (= lambda-a source-collision-a)) (set! ok false))
+      (unless
+        (intern-compat-state-generated-role-symbol?
+          state-a
+          lambda-a
+          (intern-generated-symbol-role-lambda))
+        (set! ok false))
+      (when
+        (intern-compat-state-generated-role-symbol?
+          state-a
+          lambda-a
+          (intern-generated-symbol-role-clone-helper))
+        (set! ok false))
+      (when
+        (intern-compat-state-generated-role-symbol?
+          state-a
+          source-collision-a
+          (intern-generated-symbol-role-lambda))
+        (set! ok false))
+      ;; Both recipes render as `__enum_obj_A_B_C`; component boundaries stay
+      ;; structural so they cannot silently alias before the output boundary.
+      (unless (not (= enum-boundary-a enum-boundary-b)) (set! ok false))
+      (unless
+        (=
+          (intern-private-string-length
+            (intern-compat-state-str state-a lambda-a))
+          0)
+        (set! ok false))
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-generated-role-symbol-materialize!
+            state-a
+            (intern-generated-symbol-role-lambda)
+            lambda-a
+            "__tl_lambda_component_0")
+          "__tl_lambda_component_0")
+        (set! ok false))
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-generated-role-symbol-materialize!
+            state-b
+            (intern-generated-symbol-role-lambda)
+            lambda-b
+            "state_b_lambda")
+          "state_b_lambda")
+        (set! ok false))
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str state-a lambda-a)
+          "__tl_lambda_component_0")
+        (set! ok false))
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str state-b lambda-b)
+          "state_b_lambda")
+        (set! ok false))
+      (intern-compat-state-generated-role-symbol-materialize!
+        state-a
+        (intern-generated-symbol-role-cleanup-helper)
+        qualified-a
+        "pkg/__tl_cleanup_cleanup")
+      (unless
+        (intern-compat-state-qualified? state-a qualified-a)
+        (set! ok false))
+      (unless
+        (=
+          (intern-compat-state-qualified-module-id state-a qualified-a)
+          module-a)
+        (set! ok false))
+      (unless
+        (= (intern-compat-state-qualified-base-id state-a qualified-a) base-a)
+        (set! ok false))
+      (unless
+        (= (intern-compat-state-qualified-last-slash state-a qualified-a) 3)
+        (set! ok false))
+      (let
+        [growth-first : i64
+          (intern-compat-state-generated-role-symbol-id
+            state-a
+            (intern-generated-symbol-role-global-initializer)
+            1000)]
+        ;; The initial structural map has 512 slots; components differing by
+        ;; 512 deliberately share the role triple's first bucket.
+        [hash-collision : i64
+          (intern-compat-state-generated-role-symbol-id
+            state-a
+            (intern-generated-symbol-role-global-initializer)
+            1512)]
+        [index : i64 0]
+        (begin
+          (unless (not (= growth-first hash-collision)) (set! ok false))
+          (while (< index 300)
+            (begin
+              (intern-compat-state-generated-role-symbol-id
+                state-a
+                (intern-generated-symbol-role-global-initializer)
+                (+ 2000 index))
+              (set! index (+ index 1))))
+          (unless
+            (=
+              growth-first
+              (intern-compat-state-generated-role-symbol-id
+                state-a
+                (intern-generated-symbol-role-global-initializer)
+                1000))
+            (set! ok false))))
+      (let
+        [mark-b : i64 (intern-compat-state-pool-len state-b)]
+        (begin
+          (intern-compat-state-reset-to! state-b mark-b)
+          (unless
+            (not (intern-compat-state-generated-id-active? state-b lambda-b))
+            (set! ok false))))
+      (intern-compat-state-reset! state-a)
+      (unless
+        (not (intern-compat-state-generated-id-active? state-a lambda-a))
+        (set! ok false))
+      (let
+        [next-component : i64
+          (intern-compat-state-intern state-a "next-component")]
+        [next-lambda : i64
+          (intern-compat-state-generated-role-symbol-id
+            state-a
+            (intern-generated-symbol-role-lambda)
+            next-component)]
+        (begin
+          (unless
+            (=
+              (intern-private-string-length
+                (intern-compat-state-str state-a next-lambda))
+              0)
+            (set! ok false))
+          (intern-compat-state-generated-role-symbol-materialize!
+            state-a
+            (intern-generated-symbol-role-lambda)
+            next-lambda
+            "after_reset")))
+      ;; Compatibility macro/typecheck callers may advance the active global
+      ;; generated lane after a driver snapshots its explicit state. The next
+      ;; structural allocation refreshes that frontier and cannot reuse the
+      ;; live compatibility ID.
+      (intern-reset!)
+      (let
+        [active-state : InternCompatState (intern-compat-state-capture-active)]
+        [compat-id : i64 (intern-generated-name "compat-generated")]
+        [role-id : i64
+          (intern-compat-state-generated-role-symbol-id
+            active-state
+            (intern-generated-symbol-role-lambda)
+            99)]
+        (begin
+          (unless (not (= compat-id role-id)) (set! ok false))
+          (unless
+            (intern-private-string-eq (intern-str compat-id) "compat-generated")
+            (set! ok false))))
+      ;; Reusing a role first published by the active compatibility view also
+      ;; refreshes the explicit state's generated frontier. This is distinct
+      ;; from the new-role allocation case above: the structural record and
+      ;; handle already exist before the state-side lookup.
+      (intern-reset!)
+      (let
+        [component : i64 (intern "shared-role-component")]
+        [active-state : InternCompatState (intern-compat-state-capture-active)]
+        [role : i64 (intern-generated-symbol-role-clone-helper)]
+        [compat-role-id : i64 (intern-generated-role-symbol-id role component)]
+        [state-role-id : i64
+          (intern-compat-state-generated-role-symbol-id
+            active-state
+            role
+            component)]
+        (begin
+          (unless (= state-role-id compat-role-id) (set! ok false))
+          (unless
+            (intern-compat-state-generated-role-symbol?
+              active-state
+              state-role-id
+              role)
+            (set! ok false))
+          (unless
+            (intern-private-string-eq
+              (intern-compat-state-generated-role-symbol-materialize!
+                active-state
+                role
+                state-role-id
+                "clone$SharedRole")
+              "clone$SharedRole")
+            (set! ok false))))
+      ok)))
+
 (define (intern-qualified-metadata-tests-ok?) : bool
   (begin
     (intern-reset!)
@@ -4375,5 +5139,6 @@
         (unless (intern-reset-to-tests-ok?) (set! ok false))
         (unless (intern-persistent-floor-reset-tests-ok?) (set! ok false))
         (unless (intern-source-name-session-tests-ok?) (set! ok false))
+        (unless (intern-generated-role-symbol-tests-ok?) (set! ok false))
         (intern-reset!)
         ok))))

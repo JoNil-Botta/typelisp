@@ -1011,7 +1011,7 @@
   (Err String))
 
 (defenum ResultLowerCloneAugment
-  (Ok ast.AstProgram ast.AstDeclList)
+  (Ok ast.AstProgram ast.AstDeclList clone_support.CloneRootEntries)
   (Err String))
 
 (defenum CompilerLowerMode
@@ -2067,6 +2067,22 @@
 
 (cfg
   compile-profile
+  (define (compiler-lower-profile-generated-role-counters
+    [name : String]
+    [role : i64]) : unit
+    (begin
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "generated_role." name ".created")
+        (ci.intern-profile-generated-role-create-value role))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "generated_role." name ".reused")
+        (ci.intern-profile-generated-role-reuse-value role))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "generated_role." name ".rendered")
+        (ci.intern-profile-generated-role-render-value role)))))
+
+(cfg
+  compile-profile
   (define (compiler-lower-profile-specialization-counters) : unit
     (begin
       (compiler-lower-profile-counter
@@ -2087,6 +2103,38 @@
       (compiler-lower-profile-counter
         "specialization.render.cache_misses"
         (spec.spec-profile-name-render-cache-misses-value)))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-generated-role-counters-all) : unit
+    (begin
+      (compiler-lower-profile-generated-role-counters
+        "clone_helper"
+        (ci.intern-generated-symbol-role-clone-helper))
+      (compiler-lower-profile-generated-role-counters
+        "lambda"
+        (ci.intern-generated-symbol-role-lambda))
+      (compiler-lower-profile-generated-role-counters
+        "global_initializer"
+        (ci.intern-generated-symbol-role-global-initializer))
+      (compiler-lower-profile-generated-role-counters
+        "cleanup_helper"
+        (ci.intern-generated-symbol-role-cleanup-helper))
+      (compiler-lower-profile-generated-role-counters
+        "cleanup_parameter"
+        (ci.intern-generated-symbol-role-cleanup-parameter))
+      (compiler-lower-profile-generated-role-counters
+        "cleanup_payload"
+        (ci.intern-generated-symbol-role-cleanup-payload))
+      (compiler-lower-profile-generated-role-counters
+        "dispatch_cache"
+        (ci.intern-generated-symbol-role-dispatch-cache))
+      (compiler-lower-profile-generated-role-counters
+        "dispatch_variant"
+        (ci.intern-generated-symbol-role-dispatch-variant))
+      (compiler-lower-profile-generated-role-counters
+        "nullary_enum_object"
+        (ci.intern-generated-symbol-role-nullary-enum-object)))))
 
 (cfg
   compile-profile
@@ -2606,6 +2654,33 @@
                       (return binding.symbol-id)
                       (set! cursor binding.parent)))))
               fallback))]))))
+
+(define (lower-name-env-lookup-logical-id
+  [names : LowerNameEnv]
+  [source-id : i64]
+  [fallback : i64]) : i64
+  (if (< source-id 0)
+    fallback
+    (match names
+      [(LowerNameEnv.Nil) fallback]
+      [(LowerNameEnv.Inline bind-id logical-id _)
+        (if (= bind-id source-id)
+          logical-id
+          fallback)]
+      [(LowerNameEnv.Dense store head _)
+        (let
+          [cursor : i64 head]
+          (begin
+            (while (>= cursor 0)
+              (let
+                [binding : LowerNameBinding
+                  (lower-name-store-binding-at
+                    (& (__tl-box-place store))
+                    cursor)]
+                (if (= binding.source-id source-id)
+                  (return binding.logical-id)
+                  (set! cursor binding.parent))))
+            fallback))])))
 
 (define (lower-name-env-lookup-with-id [names : LowerNameEnv] [source-id : i64]) : tc_core.TcMaybeString
   (let
@@ -5551,42 +5626,50 @@
 (define (lower-name-env-add-clone-decl-in-module-inner
   [lower-state : CompilerLowerState]
   [names : LowerNameEnv]
+  [roots : clone_support.CloneRootEntries]
+  [bind-syntax? : bool]
   [entry-path : String]
   [decl-path : String]
   [module : String]
   [module-id : i64]
   [decl : ast.AstDecl]) : LowerNameEnv
-  (match decl
-    [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-      (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
-        (if (lower-name-has-clone-prefix? name-str)
-          (lower-name-env-add-decl-module-binding-id
+  (if (not bind-syntax?)
+    names
+    (match decl
+      [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
+        (let
+          [name-str : String (tc_core.tc-env-key-name-text name)]
+          (if (lower-name-has-clone-prefix? name-str)
+            (lower-name-env-add-decl-module-binding-id
+              lower-state
+              names
+              entry-path
+              decl-path
+              module
+              module-id
+              name-str
+              name)
+            names))]
+      [(ast.AstDecl.Unsafe inner-box)
+        (let
+          [inner : ast.AstDecl (__tl-box-place inner-box)]
+          (lower-name-env-add-clone-decl-in-module
             lower-state
             names
+            roots
+            bind-syntax?
             entry-path
             decl-path
             module
             module-id
-            name-str
-            name)
-          names))]
-    [(ast.AstDecl.Unsafe inner-box)
-      (let
-        [inner : ast.AstDecl (__tl-box-place inner-box)]
-        (lower-name-env-add-clone-decl-in-module
-          lower-state
-          names
-          entry-path
-          decl-path
-          module
-          module-id
-          inner))]
-    [_ names]))
+            inner))]
+      [_ names])))
 
 (define (lower-name-env-add-clone-decl-in-module
   [lower-state : CompilerLowerState]
   [names : LowerNameEnv]
+  [roots : clone_support.CloneRootEntries]
+  [bind-syntax? : bool]
   [entry-path : String]
   [decl-path : String]
   [module : String]
@@ -5597,19 +5680,57 @@
       (if (string.eq generator "stdlib.clone/synthesize-helpers")
         (match (ast.ast-decl-unwrapped decl)
           [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-            (lower-name-env-add-decl-module-binding-id
-              lower-state
-              names
-              entry-path
-              decl-path
-              module
-              module-id
-              item
-              name)]
+            (let
+              [with-syntax-id : LowerNameEnv
+                (if bind-syntax?
+                  (lower-name-env-add-decl-module-binding-id
+                    lower-state
+                    names
+                    entry-path
+                    decl-path
+                    module
+                    module-id
+                    item
+                    name)
+                  names)]
+              [root-key-id : i64
+                (lower-clone-handoff-source-helper-root-id name module-id roots)]
+              (if (>= root-key-id 0)
+                (let
+                  [helper-id : i64
+                    (clone_support.clone-root-entries-helper-id-or
+                      roots
+                      root-key-id
+                      -1)]
+                  [syntax-key-id : i64
+                    (lower-module-name-key-id-by-id module-id name)]
+                  [logical-id : i64
+                    (lower-name-env-lookup-logical-id
+                      with-syntax-id
+                      syntax-key-id
+                      -1)]
+                  [symbol-id : i64
+                    (lower-name-env-lookup-symbol-id
+                      with-syntax-id
+                      syntax-key-id
+                      -1)]
+                  ;; Alias the role handle to the declaration's exact
+                  ;; logical/symbol identity. Recomputing from helper-id would
+                  ;; create a second IR symbol for the same helper.
+                  (if (and (>= logical-id 0) (>= symbol-id 0))
+                    (lower-name-env-bind-logical-symbol-id
+                      (lower-module-name-key-id-by-id module-id helper-id)
+                      logical-id
+                      symbol-id
+                      with-syntax-id)
+                    with-syntax-id))
+                with-syntax-id))]
           [_ names])
         (lower-name-env-add-clone-decl-in-module-inner
           lower-state
           names
+          roots
+          bind-syntax?
           entry-path
           decl-path
           module
@@ -5619,6 +5740,8 @@
       (lower-name-env-add-clone-decl-in-module-inner
         lower-state
         names
+        roots
+        bind-syntax?
         entry-path
         decl-path
         module
@@ -5631,6 +5754,8 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
+  [roots : clone_support.CloneRootEntries]
+  [bind-syntax? : bool]
   [initial-module-id : i64]) : LowerNameEnv
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
@@ -5656,6 +5781,8 @@
                   (lower-name-env-add-clone-decl-in-module
                     lower-state
                     cur-names
+                    roots
+                    bind-syntax?
                     entry-path
                     decl-path
                     (ci.intern-str cur-module-id)
@@ -5669,13 +5796,17 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
-  [names : LowerNameEnv]) : LowerNameEnv
+  [names : LowerNameEnv]
+  [roots : clone_support.CloneRootEntries]
+  [bind-syntax? : bool]) : LowerNameEnv
   (lower-name-env-add-clone-decls-in-module
     lower-state
     decls
     paths
     entry-path
     names
+    roots
+    bind-syntax?
     cbi.compiler-builtin-id-fix-empty))
 
 (define (lower-alias-logical-name-id
@@ -9436,7 +9567,12 @@
             able
             roots)]
         [conflict : i64
-          (lower-clone-handoff-source-conflict source-decls handoff-roots)]
+          (begin
+            ;; Clone roots carry structural generated-symbol identities. The
+            ;; macro handoff below is their first text boundary.
+            (clone_support.clone-root-entries-materialize-helper-names!
+              handoff-roots)
+            (lower-clone-handoff-source-conflict source-decls handoff-roots))]
         (if (>= conflict 0)
           (ResultLowerCloneAugment.Err
             (str_cat.str-cat
@@ -9459,7 +9595,8 @@
                     handoff-decls)]
                 (ResultLowerCloneAugment.Ok
                   (ast.ast-program augmented-decls)
-                  handoff-decls))]
+                  handoff-decls
+                  handoff-roots))]
             [(tc_core.ResultMacroDecls.Err diag)
               (ResultLowerCloneAugment.Err
                 (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))]))
@@ -13320,16 +13457,20 @@
       (let
         [next-lambda : i64
           (__tl-project-field (__tl-box-place data) next-lambda)]
-        [function-text : String
-          (ir.compiler-ir-symbol-text
-            (__tl-project-field (__tl-box-place data) function))]
-        [lambda-name : String
-          (str_cat.str-cat
-            "__tl_lambda_"
-            function-text
-            "_"
-            (string.int->string next-lambda))]
-        [lambda-id : i64 (ci.intern-generated-name lambda-name)]
+        [intern-state : ci.InternCompatState
+          (compiler-lower-state-interns
+            (compiler-lower-state-from-name-cache
+              (__tl-project-field (__tl-box-place data) names)))]
+        [components : i64
+          (ci.intern-compat-state-composite-pair-id
+            intern-state
+            (__tl-project-field (__tl-box-place data) function)
+            next-lambda)]
+        [lambda-id : i64
+          (ci.intern-compat-state-generated-role-symbol-id
+            intern-state
+            (ci.intern-generated-symbol-role-lambda)
+            components)]
         (begin
           (__tl-project-set-field
             (__tl-box-place data)
@@ -13806,12 +13947,22 @@
       (lower-variant-fields-storage-size ctx fields)]))
 
 (define (lower-nullary-variant-object-symbol
-  [enum-name : String]
-  [variant-name : String]) : i64
-  (lower-derived-symbol-id
-    (str_cat.str-cat "__enum_obj_" enum-name "_" variant-name)))
+  [intern-state : ci.InternCompatState]
+  [enum-name-id : i64]
+  [variant-name-id : i64]) : i64
+  (let
+    [components : i64
+      (ci.intern-compat-state-composite-pair-id
+        intern-state
+        enum-name-id
+        variant-name-id)]
+    (ci.intern-compat-state-generated-role-symbol-id
+      intern-state
+      (ci.intern-generated-symbol-role-nullary-enum-object)
+      components)))
 
 (define (lower-nullary-variant-globals
+  [intern-state : ci.InternCompatState]
   [enum-name-id : i64]
   [enum-name : String]
   [variants : ast.AstVariantDefList]
@@ -13830,8 +13981,9 @@
               (let
                 [object-name : i64
                   (lower-nullary-variant-object-symbol
-                    enum-name
-                    (tc_core.tc-env-key-name-text variant-name))]
+                    intern-state
+                    enum-name-id
+                    variant-name)]
                 (ir.compiler-ir-global-cons
                   (ir.CompilerIrGlobal.Global
                     object-name
@@ -13840,6 +13992,7 @@
                   globals))
               globals)]
           (lower-nullary-variant-globals
+            intern-state
             enum-name-id
             enum-name
             variants
@@ -15482,10 +15635,11 @@
   (if (lower-internal-structural-resolved-type? ret-ty)
     (let
       [class : LowerCAbiAggregate
-        (lower-internal-return-class-for-name
+        (lower-internal-return-class-for-symbol
           ctx
           (lower-state-mode state)
-          (lower-state-current-function state)
+          (lower-state-names state)
+          (lower-state-current-function-id state)
           ret-ty)]
       (match class
         [(LowerCAbiAggregate.Integer scalar-ty _)
@@ -20589,12 +20743,18 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [logical-name-text : String (ir.compiler-ir-symbol-text logical-name)]
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+      [global-init? : bool
+        (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
-        (lower-internal-return-class-for-name ctx mode logical-name-text ret-ty)]
+        (lower-internal-return-class-for-symbol
+          ctx
+          mode
+          names
+          logical-name
+          ret-ty)]
       [structural-sret? : bool
         (match ret-class
           [(LowerCAbiAggregate.Sret _) true]
@@ -20603,7 +20763,7 @@
         (and
           (not structural-sret?)
           (lower-mode-inline-aggregates? mode)
-          (not (lower-global-init-function? logical-name-text))
+          (not global-init?)
           (lower-type-inline-struct-or-enum? ctx ret-ty)
           (not (lower-type-register-resident? ctx ret-ty)))]
       [source-start : i64
@@ -23934,14 +24094,16 @@
                     (match (csym.compiler-registries-variant-name-id-indexed
                       symbols
                       handle)
-                      [(option_i64.Some _)
+                      [(option_i64.Some variant-name-id)
                         (ResultLowerExpr.Ok
                           (LowerExpr.Expr
                             args-state
                             (ir.CompilerIrValue.GlobalAddr
                               (lower-nullary-variant-object-symbol
-                                enum-name
-                                variant-name))
+                                (compiler-lower-state-interns
+                                  (lower-state-owner args-state))
+                                (lower-enum-type-name-id-or enum-ty -1)
+                                variant-name-id))
                             enum-ty))]
                       [(option_i64.None)
                         (ResultLowerExpr.Err
@@ -31805,14 +31967,15 @@
   [tail : ir.CompilerIrValueList]) : ir.CompilerIrValueList
   (ir.compiler-ir-value-cons head tail))
 
-(define (lower-internal-return-class-for-name
+(define (lower-internal-return-class-for-symbol
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
-  [name : String]
+  [names : LowerNameCache]
+  [symbol : i64]
   [result-ty : ast.AstType]) : LowerCAbiAggregate
   ;; Global initializers are invoked by startup code, which owns the stable
   ;; arena result path rather than a caller stack slot.
-  (if (lower-global-init-function? name)
+  (if (lower-global-init-function-symbol? names symbol)
     (LowerCAbiAggregate.No)
     (lower-internal-return-class ctx mode result-ty)))
 
@@ -32080,8 +32243,12 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (let
     [mode : CompilerLowerMode (lower-state-mode state)]
-    [result-class : LowerCAbiAggregate
-      (lower-internal-return-class-for-name ctx mode name result-ty)]
+    [result-class
+      : LowerCAbiAggregate
+      ;; Source calls cannot target the backend-only initializer functions.
+      ;; Their text may deliberately equal a rendered initializer spelling,
+      ;; but role identity keeps the ordinary source ABI distinct.
+      (lower-internal-return-class ctx mode result-ty)]
     (match (lower-internal-call-args ctx mode state values param-types origin)
       [(ResultLowerArgs.Ok args-state physical-values)
         (match result-class
@@ -55588,18 +55755,25 @@
                 (+ idx 1)))])])))
 
 (define (lower-spmd-private-helper-name
+  [names : LowerNameCache]
   [hidden-name : i64]
   [result-ty : ast.AstType]
   [result-varying : bool]) : i64
-  (let
-    [hidden-text : String (ir.compiler-ir-symbol-text hidden-name)]
-    [private-name : String
-      (if result-varying
-        (if (lower-type-bool? result-ty)
-          (str_cat.str-cat "__tl_spmd_ret_mask_" hidden-text)
-          (str_cat.str-cat "__tl_spmd_ret_varying_" hidden-text))
-        (str_cat.str-cat "__tl_spmd_ret_uniform_" hidden-text))]
-    (ci.intern-generated-canonical-name private-name)))
+  (begin
+    ;; SPMD names remain a legacy text-derived domain (tracked separately from
+    ;; ordinary generated roles). Materialize the hidden ordinary lambda at
+    ;; this explicit compatibility boundary before SPMD derives its name.
+    (lower-materialize-generated-role-symbols!
+      (compiler-lower-state-from-name-cache names))
+    (let
+      [hidden-text : String (ir.compiler-ir-symbol-text hidden-name)]
+      [private-name : String
+        (if result-varying
+          (if (lower-type-bool? result-ty)
+            (str_cat.str-cat "__tl_spmd_ret_mask_" hidden-text)
+            (str_cat.str-cat "__tl_spmd_ret_varying_" hidden-text))
+          (str_cat.str-cat "__tl_spmd_ret_uniform_" hidden-text))]
+      (ci.intern-generated-canonical-name private-name))))
 
 (define (lower-spmd-helper-index-param-at
   [ctx : tc_core.TcContext]
@@ -56524,6 +56698,7 @@
                                   ir.CompilerIrSpmdBackend.Avx512)]
                               [private-name : i64
                                 (lower-spmd-private-helper-name
+                                  (lower-state-names named-state)
                                   hidden-name
                                   result-ty
                                   result-varying)]
@@ -63183,22 +63358,17 @@
         (tc_core.tc-context-type-get ctx inner))]
     [_ true]))
 
-(define (lower-logical-name-has-prefix?
-  [logical-name : String]
-  [prefix : String]) : bool
-  (let
-    [name-len : i64 (string.string-length logical-name)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (and
-      (>= name-len prefix-len)
-      (string.eq (string.substring logical-name 0 prefix-len) prefix))))
-
 ;; sret ABI: a `__global_init_<name>` initializer's result is stored into
 ;; a forever-lived global by the backend's startup sequence (not a normal call
 ;; site), so it must return stable arena storage -- never a caller stack sret
 ;; slot. Keep these on the arena return path.
-(define (lower-global-init-function? [logical-name : String]) : bool
-  (lower-logical-name-has-prefix? logical-name "__global_init_"))
+(define (lower-global-init-function-symbol?
+  [names : LowerNameCache]
+  [symbol : i64]) : bool
+  (ci.intern-compat-state-generated-role-symbol?
+    (compiler-lower-state-interns (compiler-lower-state-from-name-cache names))
+    symbol
+    (ci.intern-generated-symbol-role-global-initializer)))
 
 (define (lower-function
   [ctx : tc_core.TcContext]
@@ -63217,12 +63387,18 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [logical-name-text : String (ir.compiler-ir-symbol-text logical-name)]
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+      [global-init? : bool
+        (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
-        (lower-internal-return-class-for-name ctx mode logical-name-text ret-ty)]
+        (lower-internal-return-class-for-symbol
+          ctx
+          mode
+          names
+          logical-name
+          ret-ty)]
       [structural-sret? : bool
         (match ret-class
           [(LowerCAbiAggregate.Sret _) true]
@@ -63231,7 +63407,7 @@
         (and
           (not structural-sret?)
           (lower-mode-inline-aggregates? mode)
-          (not (lower-global-init-function? logical-name-text))
+          (not global-init?)
           (lower-type-inline-struct-or-enum? ctx ret-ty)
           (not (lower-type-register-resident? ctx ret-ty)))]
       [source-start : i64
@@ -63417,9 +63593,13 @@
       (ResultLowerValue.Err
         (box (lower-diagnostic "lower: unsupported global initializer")))]))
 
-(define (lower-global-init-function-name [global : i64]) : i64
-  (ci.intern-generated-name
-    (str_cat.str-cat "__global_init_" (ir.compiler-ir-symbol-text global))))
+(define (lower-global-init-function-name
+  [lower-state : CompilerLowerState]
+  [global : i64]) : i64
+  (ci.intern-compat-state-generated-role-symbol-id
+    (compiler-lower-state-interns lower-state)
+    (ci.intern-generated-symbol-role-global-initializer)
+    global))
 
 (define (lower-top-decl-type-or-check
   [ctx : tc_core.TcContext]
@@ -63739,39 +63919,24 @@
                     (tc_core.tc-nominal-owner-cache-reset!)
                     (ResultLowerFunction.Err escaped-message)))))])))))
 
-(define lower-struct-cleanup-param-id-cache : i64
-  -1)
-(define lower-struct-cleanup-param-id-cache-generation : i64
-  -1)
-(define lower-struct-cleanup-param-id-cache-table-id : i64
-  -1)
-
 (define (lower-struct-cleanup-param-id [lower-state : CompilerLowerState]) : i64
   (let
     [intern-state : ci.InternCompatState
       (compiler-lower-state-interns lower-state)]
-    (if (and
-      (=
-        lower-struct-cleanup-param-id-cache-table-id
-        (ci.intern-compat-state-table-id intern-state))
-      (=
-        lower-struct-cleanup-param-id-cache-generation
-        (ci.intern-compat-state-generation intern-state)))
-      lower-struct-cleanup-param-id-cache
-      (let
-        [id : i64
-          (ci.intern-compat-state-generated-name
-            intern-state
-            "__tl_cleanup_value")]
-        (begin
-          (set! lower-struct-cleanup-param-id-cache id)
-          (set!
-            lower-struct-cleanup-param-id-cache-table-id
-            (ci.intern-compat-state-table-id intern-state))
-          (set!
-            lower-struct-cleanup-param-id-cache-generation
-            (ci.intern-compat-state-generation intern-state))
-          id)))))
+    [id : i64
+      (ci.intern-compat-state-generated-role-symbol-id
+        intern-state
+        (ci.intern-generated-symbol-role-cleanup-parameter)
+        0)]
+    (begin
+      ;; This identity enters a synthetic AST immediately, so construction of
+      ;; that AST is the text boundary for the local parameter spelling.
+      (ci.intern-compat-state-generated-role-symbol-materialize!
+        intern-state
+        (ci.intern-generated-symbol-role-cleanup-parameter)
+        id
+        "__tl_cleanup_value")
+      id)))
 
 (define (lower-struct-cleanup-qualified-id
   [lower-state : CompilerLowerState]
@@ -63811,13 +63976,32 @@
             cbi.compiler-builtin-id-fix-empty)]
         (if (or (< module-id 0) (= module-id cbi.compiler-builtin-id-fix-empty))
           cleanup-id
-          (ci.intern-compat-state-generated-canonical-qualified-name
-            intern-state
-            (csym.compiler-symbol-module-key
-              (ci.intern-compat-state-str intern-state module-id)
-              (ci.intern-compat-state-str intern-state cleanup-id))
-            module-id
-            cleanup-id))))))
+          (let
+            [components : i64
+              (ci.intern-compat-state-composite-pair-id
+                intern-state
+                struct-id
+                cleanup-id)]
+            [id : i64
+              (ci.intern-compat-state-generated-role-qualified-symbol-id
+                intern-state
+                (ci.intern-generated-symbol-role-cleanup-helper)
+                components
+                module-id
+                cleanup-id)]
+            [display : String
+              (csym.compiler-symbol-module-key
+                (ci.intern-compat-state-str intern-state module-id)
+                (ci.intern-compat-state-str intern-state cleanup-id))]
+            (begin
+              ;; Synthetic cleanup calls resolve this qualified name during
+              ;; their immediate typecheck/lowering boundary.
+              (ci.intern-compat-state-generated-role-symbol-materialize!
+                intern-state
+                (ci.intern-generated-symbol-role-cleanup-helper)
+                id
+                display)
+              id)))))))
 
 (define (lower-struct-cleanup-id-for-struct
   [lower-state : CompilerLowerState]
@@ -64062,9 +64246,21 @@
 (define (lower-enum-cleanup-payload-id
   [lower-state : CompilerLowerState]
   [index : i64]) : i64
-  (ci.intern-compat-state-generated-canonical-name
-    (compiler-lower-state-interns lower-state)
-    (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string index))))
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    [id : i64
+      (ci.intern-compat-state-generated-role-symbol-id
+        intern-state
+        (ci.intern-generated-symbol-role-cleanup-payload)
+        index)]
+    (begin
+      (ci.intern-compat-state-generated-role-symbol-materialize!
+        intern-state
+        (ci.intern-generated-symbol-role-cleanup-payload)
+        id
+        (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string index)))
+      id)))
 
 (define (lower-enum-cleanup-call-expr
   [pools : ast.AstNodePoolContext]
@@ -64331,21 +64527,168 @@
 (define (lower-dispatch-cache-name [logical-name : String]) : String
   (str_cat.str-cat "__tl_dispatch_cache_" logical-name))
 
-(define (lower-dispatch-variant-prefix [isa : ast.AstDispatchIsa]) : String
-  (match isa
-    [(ast.AstDispatchIsa.Scalar) "__tl_dispatch_variant_scalar_"]
-    [(ast.AstDispatchIsa.Avx2) "__tl_dispatch_variant_avx2_"]
-    [(ast.AstDispatchIsa.Avx512) "__tl_dispatch_variant_avx512_"]))
+(define (lower-generated-role-dispatch-variant-prefix [tag : i64]) : String
+  (cond
+    [(= tag 1) "__tl_dispatch_variant_scalar_"]
+    [(= tag 2) "__tl_dispatch_variant_avx2_"]
+    [(= tag 3) "__tl_dispatch_variant_avx512_"]
+    [else ""]))
 
-(define (lower-dispatch-variant-internal-name
-  [dispatch-name : String]
+(define (lower-generated-role-render
+  [intern-state : ci.InternCompatState]
+  [role : i64]
+  [qualification : i64]
+  [components : i64]) : String
+  (cond
+    [(= role (ci.intern-generated-symbol-role-lambda))
+      (if (ci.intern-compat-state-composite-pair-id? intern-state components)
+        (str_cat.str-cat
+          "__tl_lambda_"
+          (ir.compiler-ir-symbol-text
+            (ci.intern-compat-state-composite-left-id-unchecked
+              intern-state
+              components))
+          "_"
+          (string.int->string
+            (ci.intern-compat-state-composite-right-id-unchecked
+              intern-state
+              components)))
+        "")]
+    [(= role (ci.intern-generated-symbol-role-global-initializer))
+      (str_cat.str-cat "__global_init_" (ir.compiler-ir-symbol-text components))]
+    [(= role (ci.intern-generated-symbol-role-cleanup-helper))
+      (if (ci.intern-compat-state-composite-pair-id? intern-state qualification)
+        (csym.compiler-symbol-module-key
+          (ci.intern-compat-state-str
+            intern-state
+            (ci.intern-compat-state-composite-left-id-unchecked
+              intern-state
+              qualification))
+          (ci.intern-compat-state-str
+            intern-state
+            (ci.intern-compat-state-composite-right-id-unchecked
+              intern-state
+              qualification)))
+        "")]
+    [(= role (ci.intern-generated-symbol-role-cleanup-parameter))
+      "__tl_cleanup_value"]
+    [(= role (ci.intern-generated-symbol-role-cleanup-payload))
+      (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string components))]
+    [(= role (ci.intern-generated-symbol-role-dispatch-cache))
+      (lower-dispatch-cache-name (ir.compiler-ir-symbol-text components))]
+    [(= role (ci.intern-generated-symbol-role-dispatch-variant))
+      (if (ci.intern-compat-state-composite-triple-id? intern-state components)
+        (str_cat.str-cat
+          (lower-generated-role-dispatch-variant-prefix
+            (ci.intern-compat-state-composite-middle-id-unchecked
+              intern-state
+              components))
+          (ir.compiler-ir-symbol-text
+            (ci.intern-compat-state-composite-left-id-unchecked
+              intern-state
+              components))
+          "__"
+          (ir.compiler-ir-symbol-text
+            (ci.intern-compat-state-composite-right-id-unchecked
+              intern-state
+              components)))
+        "")]
+    [(= role (ci.intern-generated-symbol-role-nullary-enum-object))
+      (if (ci.intern-compat-state-composite-pair-id? intern-state components)
+        (str_cat.str-cat
+          "__enum_obj_"
+          (tc_core.tc-nominal-name-id-display
+            (ci.intern-compat-state-composite-left-id-unchecked
+              intern-state
+              components))
+          "_"
+          (tc_core.tc-env-key-name-text
+            (ci.intern-compat-state-composite-right-id-unchecked
+              intern-state
+              components)))
+        "")]
+    [else ""]))
+
+(define (lower-materialize-generated-role-symbols!
+  [lower-state : CompilerLowerState]) : unit
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    [count : i64
+      (ci.intern-compat-state-generated-role-record-count intern-state)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [handle : i64
+          (ci.intern-compat-state-generated-role-record-handle-at
+            intern-state
+            index)]
+        (begin
+          (when
+            (> handle 0)
+            (let
+              [role : i64
+                (ci.intern-compat-state-generated-role-record-role-at
+                  intern-state
+                  index)]
+              [rendered : String
+                (lower-generated-role-render
+                  intern-state
+                  role
+                  (ci.intern-compat-state-generated-role-record-qualification-at
+                    intern-state
+                    index)
+                  (ci.intern-compat-state-generated-role-record-components-at
+                    intern-state
+                    index))]
+              (when
+                (> (string.string-length rendered) 0)
+                (begin
+                  (ci.intern-compat-state-generated-role-symbol-materialize!
+                    intern-state
+                    role
+                    handle
+                    rendered)
+                  unit))))
+          (set! index (+ index 1)))))))
+
+(define (lower-dispatch-isa-role-tag [isa : ast.AstDispatchIsa]) : i64
+  (match isa
+    [(ast.AstDispatchIsa.Scalar) 1]
+    [(ast.AstDispatchIsa.Avx2) 2]
+    [(ast.AstDispatchIsa.Avx512) 3]))
+
+(define (lower-dispatch-variant-role-symbol
+  [names : LowerNameCache]
+  [dispatch-symbol : i64]
+  [module-id : i64]
   [isa : ast.AstDispatchIsa]
-  [variant-name : String]) : String
-  (str_cat.str-cat
-    (lower-dispatch-variant-prefix isa)
-    dispatch-name
-    "__"
-    variant-name))
+  [variant-name : i64]) : i64
+  (let
+    [lower-state : CompilerLowerState
+      (compiler-lower-state-from-name-cache names)]
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    [variant-logical-name : String
+      (lower-dispatch-variant-logical-name module-id names variant-name)]
+    [variant-logical-id : i64
+      (lower-dispatch-variant-logical-id module-id names variant-name)]
+    [variant-symbol : i64
+      (lower-name-cache-ir-symbol
+        names
+        variant-logical-id
+        variant-name
+        variant-logical-name)]
+    [components : i64
+      (ci.intern-compat-state-composite-triple-id
+        intern-state
+        dispatch-symbol
+        (lower-dispatch-isa-role-tag isa)
+        variant-symbol)]
+    (ci.intern-compat-state-generated-role-symbol-id
+      intern-state
+      (ci.intern-generated-symbol-role-dispatch-variant)
+      components)))
 
 (define (lower-dispatch-lower-mode
   [isa : ast.AstDispatchIsa]
@@ -64471,7 +64814,7 @@
   [index : i64]
   [module-id : i64]
   [names : LowerNameCache]
-  [dispatch-name : String]
+  [dispatch-symbol : i64]
   [wanted : ast.AstDispatchIsa]) : LowerMaybeIrSymbol
   (if (>= index variants.len)
     (LowerMaybeIrSymbol.No)
@@ -64482,34 +64825,32 @@
       [(ast.AstDispatchVariant.Variant isa variant-name)
         (if (tc_core.tc-dispatch-isa-eq? isa wanted)
           (LowerMaybeIrSymbol.Some
-            (lower-derived-symbol-id
-              (lower-dispatch-variant-internal-name
-                dispatch-name
-                isa
-                (lower-dispatch-variant-logical-name
-                  module-id
-                  names
-                  variant-name))))
+            (lower-dispatch-variant-role-symbol
+              names
+              dispatch-symbol
+              module-id
+              isa
+              variant-name))
           (lower-dispatch-find-internal-name-from
             variants
             (+ index 1)
             module-id
             names
-            dispatch-name
+            dispatch-symbol
             wanted))])))
 
 (define (lower-dispatch-find-internal-name
   [variants : ast.AstDispatchVariantList]
   [module-id : i64]
   [names : LowerNameCache]
-  [dispatch-name : String]
+  [dispatch-symbol : i64]
   [wanted : ast.AstDispatchIsa]) : LowerMaybeIrSymbol
   (lower-dispatch-find-internal-name-from
     (& variants)
     0
     module-id
     names
-    dispatch-name
+    dispatch-symbol
     wanted))
 
 (define (lower-dispatch-call-return-instr
@@ -64811,7 +65152,6 @@
   (match fn-ty
     [(ast.AstType.Func param-types ret-box)
       (let
-        [logical-name-text : String (ir.compiler-ir-symbol-text logical-name)]
         [ret-ty : ast.AstType
           (tc_core.tc-type-without-regions
             (tc_core.tc-context-type-get ctx ret-box))]
@@ -64841,20 +65181,20 @@
             variants
             module-id
             names
-            logical-name-text
+            logical-name
             (ast.AstDispatchIsa.Avx2))]
         [maybe-avx512 : LowerMaybeIrSymbol
           (lower-dispatch-find-internal-name
             variants
             module-id
             names
-            logical-name-text
+            logical-name
             (ast.AstDispatchIsa.Avx512))]
         (match (lower-dispatch-find-internal-name
           variants
           module-id
           names
-          logical-name-text
+          logical-name
           (ast.AstDispatchIsa.Scalar))
           [(LowerMaybeIrSymbol.Some scalar-name)
             (let
@@ -64966,7 +65306,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
-  [dispatch-name : String]
+  [dispatch-symbol : i64]
   [variant : ast.AstDispatchVariant]
   [module-id : i64]
   [spans : ir.CompilerSourceSpans]
@@ -64975,14 +65315,13 @@
   (match variant
     [(ast.AstDispatchVariant.Variant isa variant-name)
       (let
-        [variant-logical : String
-          (lower-dispatch-variant-logical-name module-id names variant-name)]
         [internal-name : i64
-          (lower-derived-symbol-id
-            (lower-dispatch-variant-internal-name
-              dispatch-name
-              isa
-              variant-logical))]
+          (lower-dispatch-variant-role-symbol
+            names
+            dispatch-symbol
+            module-id
+            isa
+            variant-name)]
         [handle : i64
           (if (tc_core.tc-name-qualified-id? variant-name)
             (csym.compiler-symbols-lookup-value-id-or
@@ -65022,7 +65361,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
-  [dispatch-name : String]
+  [dispatch-symbol : i64]
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
   [module-id : i64]
@@ -65038,7 +65377,7 @@
       ctx
       top-env
       type-cache
-      dispatch-name
+      dispatch-symbol
       (ast.ast-dispatch-variant-list-get
         variants
         index
@@ -65058,7 +65397,7 @@
               ctx
               top-env
               type-cache
-              dispatch-name
+              dispatch-symbol
               variants
               (+ index 1)
               module-id
@@ -65072,7 +65411,7 @@
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
-  [dispatch-name : String]
+  [dispatch-symbol : i64]
   [variants : ast.AstDispatchVariantList]
   [module-id : i64]
   [spans : ir.CompilerSourceSpans]
@@ -65082,7 +65421,7 @@
     ctx
     top-env
     type-cache
-    dispatch-name
+    dispatch-symbol
     (& variants)
     0
     module-id
@@ -65120,8 +65459,12 @@
       (lower-name-cache-lookup-logical-id (& name-cache) key-id key-id)]
     [logical-symbol : i64
       (lower-name-cache-ir-symbol name-cache logical-id name-id logical-name)]
-    [cache-text : String (lower-dispatch-cache-name logical-name)]
-    [cache-id : i64 (ci.intern-generated-name cache-text)]
+    [cache-id : i64
+      (ci.intern-compat-state-generated-role-symbol-id
+        (compiler-lower-state-interns
+          (compiler-lower-state-from-name-cache name-cache))
+        (ci.intern-generated-symbol-role-dispatch-cache)
+        logical-symbol)]
     [cache-symbol : i64 cache-id]
     (match (tc_core.tc-lookup-id local-top-env name-id)
       [(tc_core.ResultTcType.Ok dispatch-ty)
@@ -65133,7 +65476,7 @@
             decl-ctx
             local-top-env
             type-cache
-            logical-name
+            logical-symbol
             variants
             module-id
             spans
@@ -65536,6 +65879,7 @@
                               (let
                                 [init-symbol : i64
                                   (lower-global-init-function-name
+                                    lower-state
                                     global-symbol)]
                                 (match (lower-function-escaping
                                   decl-ctx
@@ -65894,6 +66238,7 @@
                         (set!
                           cur-globals
                           (lower-nullary-variant-globals
+                            (compiler-lower-state-interns lower-state)
                             (lower-name-cache-lookup-logical-id
                               (& decl-name-cache)
                               (lower-module-name-key-id-by-id
@@ -65977,6 +66322,7 @@
                         (set!
                           cur-globals
                           (lower-nullary-variant-globals
+                            (compiler-lower-state-interns lower-state)
                             (lower-name-cache-lookup-logical-id
                               (& decl-name-cache)
                               (lower-module-name-key-id-by-id
@@ -66174,12 +66520,20 @@
             [(ResultLowerDecls.Ok payload)
               (let
                 [success : LowerDeclsSuccess (__tl-box-place payload)]
-                (ResultCompilerLower.Ok
-                  (ir.CompilerIrProgram.Program
-                    success.globals
-                    success.functions
-                    success.externs)
-                  success.spans))]
+                (begin
+                  ;; Returning the public IR is the explicit text boundary:
+                  ;; diagnostics, optimizers, and backend emitters may inspect
+                  ;; symbol spellings, while construction above uses handles.
+                  (lower-materialize-generated-role-symbols! lower-state)
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-generated-role-counters-all))
+                  (ResultCompilerLower.Ok
+                    (ir.CompilerIrProgram.Program
+                      success.globals
+                      success.functions
+                      success.externs)
+                    success.spans)))]
             [(ResultLowerDecls.Err message) (ResultCompilerLower.Err message)]))])))
 
 ;; Internal `expanded` workers assume macro expansion has already run; the
@@ -66350,13 +66704,17 @@
                 pools)]
             [checked-program : ast.AstProgram
               (match clone-augmentation
-                [(ResultLowerCloneAugment.Ok augmented _) augmented]
+                [(ResultLowerCloneAugment.Ok augmented _ _) augmented]
                 [(ResultLowerCloneAugment.Err _) program])]
+            [all-clone-roots : clone_support.CloneRootEntries
+              (match clone-augmentation
+                [(ResultLowerCloneAugment.Ok _ _ handoff-roots) handoff-roots]
+                [(ResultLowerCloneAugment.Err _) clone-roots])]
             [_install-augmented-pools : unit
               (ast.ast-node-pool-context-install! pools)]
             [checked-context : ResultLowerCheckedContext
               (match clone-augmentation
-                [(ResultLowerCloneAugment.Ok _ _)
+                [(ResultLowerCloneAugment.Ok _ _ _)
                   (lower-extend-checked-context-with-clone-decls
                     source-ctx
                     source-top-env
@@ -66369,19 +66727,23 @@
                 [(ast.AstProgram.Program decls-box)
                   (let
                     [decls : ast.AstDeclList (__tl-box-place decls-box)]
-                    (if needs-specialization
-                      (lower-name-env-add-clone-decls
-                        lower-state
-                        decls
-                        paths
-                        entry-path
-                        escaped-names)
-                      (lower-name-env-from-decls-with-state
-                        lower-state
-                        decls
-                        paths
-                        entry-path
-                        LowerNameEnv.Nil)))])]
+                    [base-names : LowerNameEnv
+                      (if needs-specialization
+                        escaped-names
+                        (lower-name-env-from-decls-with-state
+                          lower-state
+                          decls
+                          paths
+                          entry-path
+                          LowerNameEnv.Nil))]
+                    (lower-name-env-add-clone-decls
+                      lower-state
+                      decls
+                      paths
+                      entry-path
+                      base-names
+                      all-clone-roots
+                      needs-specialization))])]
             (begin
               (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
               (cfg compile-profile (compiler-lower-profile-start))

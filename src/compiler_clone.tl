@@ -45,9 +45,30 @@
   (Dense (Box CloneRootEntryStore) i64 i64))
 
 (define (clone-helper-name-id-new-for-key [type-key-id : i64]) : i64
-  (ci.intern-generated-canonical-name
+  (ci.intern-generated-role-symbol-id
+    (ci.intern-generated-symbol-role-clone-helper)
+    type-key-id))
+
+(define (clone-helper-name-id-materialize-for-key!
+  [type-key-id : i64]
+  [helper-id : i64]) : String
+  (ci.intern-generated-role-symbol-materialize!
+    (ci.intern-generated-symbol-role-clone-helper)
+    helper-id
     (clone-local-helper-name
       (ci.intern-str (clone-name-key-base-id type-key-id)))))
+
+(define (clone-root-entries-materialize-helper-names!
+  [roots : CloneRootEntries]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (clone-root-entries-len roots)]
+    (while (< index count)
+      (begin
+        (clone-helper-name-id-materialize-for-key!
+          (clone-root-entries-key-id-at-or roots index -1)
+          (clone-root-entries-helper-id-at-or roots index -1))
+        (set! index (+ index 1))))))
 
 (define (clone-root-module-id) : i64
   -1)
@@ -825,6 +846,12 @@
       (clone-root-entries-add-id
         (clone-root-entries-add-id empty first-qualified)
         second-qualified)]
+    [first-qualified-helper : i64
+      (clone-root-entries-helper-id-or qualified first-qualified -1)]
+    [second-qualified-helper : i64
+      (clone-root-entries-helper-id-or qualified second-qualified -1)]
+    [_materialize-qualified : unit
+      (clone-root-entries-materialize-helper-names! qualified)]
     [unique-root : CloneRootEntries
       (clone-root-entries-add-id empty unique-qualified)]
     (and
@@ -882,6 +909,13 @@
         (clone-root-entries-smoke-key-id 18))
       ;; Qualified keys with one base stay ambiguous; a unique base resolves.
       (= (clone-root-entries-unique-key-for-base-id-or qualified base-id -1) -1)
+      (not (= first-qualified-helper second-qualified-helper))
+      (string.eq
+        (ci.intern-str first-qualified-helper)
+        (ci.intern-str second-qualified-helper))
+      (string.eq
+        (ci.intern-str first-qualified-helper)
+        "clone$CloneDenseSmokeKey")
       (=
         (clone-root-entries-unique-key-for-base-id-or
           unique-root
@@ -1509,7 +1543,11 @@
                 (if (clone-name-key-qualified? root-key-id)
                   (clone-name-key-module-id root-key-id)
                   cbi.compiler-builtin-id-fix-empty))
-              (= name helper-name-id))
+              ;; The declaration macro still constructs syntax from text. At
+              ;; this boundary validate its spelling in the matching module;
+              ;; lowering then aliases that syntax identity to the structural
+              ;; clone-helper identity carried by the root entry.
+              (string.eq (ci.intern-str name) (ci.intern-str helper-name-id)))
               1
               0)
             (clone-helper-decl-count-in-module

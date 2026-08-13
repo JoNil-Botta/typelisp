@@ -1600,6 +1600,87 @@
     (ir.CompilerIrMaskBinOp.And)
     op))
 
+;; --- commutative constant-operand canonicalisation ---------------------------
+;;
+;; `K + x` and `x + K` compute the same value, but only the second spelling
+;; reaches the backend's immediate forms. `compiler-backend-emit-binop-direct-
+;; immediate` keys entirely off an immediate RHS: with the constant on the
+;; right an integer add becomes `leaq K(%src), %dst` (one instruction, and it
+;; does not need %dst to already hold the source); with the constant on the
+;; left the same add materialises the literal into the destination first and
+;; then adds the register, which costs an extra instruction AND forces a copy
+;; whenever the allocator hands the destination a register the source still
+;; occupies. Measured in benchmarks/gvn_table's inlined `gvn-facts-slot`, the
+;; `(- 0 (+ 2 slot))` tail lowers as
+;;     movq %rcx, %r11 / movl $2, %ecx / addq %r11, %rcx
+;; where the canonical spelling needs only `leaq 2(%r11), %rcx`.
+;;
+;; Only the integer/char commutative ops qualify. Floats are excluded because
+;; `addsd`/`mulsd` propagate the FIRST operand's NaN payload, so a swap is
+;; observable; bool `And`/`Or` are excluded because they carry no immediate
+;; form worth the churn; the compares are handled by the backend's own
+;; operand-commute path (compiler-backend-compare-operands-commute?), which
+;; also has to flip the predicate and therefore stays where it is.
+(define (opt-binop-commutative-int-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Add) true]
+    [(ir.CompilerIrBinOp.Mul) true]
+    [(ir.CompilerIrBinOp.BitAnd) true]
+    [(ir.CompilerIrBinOp.BitOr) true]
+    [(ir.CompilerIrBinOp.BitXor) true]
+    [_ false]))
+
+(define (opt-value-int-literal? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 _) true]
+    [(ir.CompilerIrValue.Char _) true]
+    [_ false]))
+
+;; True when `lhs op rhs` should be rewritten to `rhs op lhs`: a commutative
+;; integer op whose literal sits on the left and whose right operand is not
+;; itself a literal (a literal pair is constant-folded before this runs, so the
+;; guard only keeps the rewrite from oscillating on a shape the folder missed).
+(define (opt-binop-commute-constant-lhs?
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (and
+    (opt-binop-commutative-int-op? op)
+    (opt-int-or-char-type? ty)
+    (opt-value-int-literal? lhs)
+    (not (opt-value-int-literal? rhs))))
+
+;; `0 - x` is the one non-commutative constant-lhs shape worth a rule of its
+;; own: it has no immediate form at all (the backend must materialise the zero
+;; into the destination and then subtract, two instructions and a copy when the
+;; destination already holds something), while the unary `Neg` it means lowers
+;; to a single `negq` and lets the allocator place the result in the operand's
+;; own register. Restricted to the 8-byte integer types, which is where the
+;; measured shape lives (the negated-index idiom in the hashmap probe) and
+;; where `negq` needs no width reasoning beyond what a 64-bit `subq` already
+;; did.
+(define (opt-value-zero-literal? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 n) (= n 0)]
+    [_ false]))
+
+(define (opt-binop-negate-zero-lhs?
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (and
+    (match op
+      [(ir.CompilerIrBinOp.Sub) true]
+      [_ false])
+    (match ty
+      [(ast.AstType.I64) true]
+      [(ast.AstType.U64) true]
+      [_ false])
+    (opt-value-zero-literal? lhs)
+    (not (opt-value-int-literal? rhs))))
+
 (define (opt-fold-instr
   [type-segment-bases : i64]
   [env : OptConstEnv]
@@ -1647,7 +1728,13 @@
               (opt-const-bind env dst folded result-ty)
               (ir.CompilerIrInstr.Mov dst folded result-ty))]
           [(ir.CompilerIrMaybeValue.No)
-            (OptInstrResult.Result (opt-const-unbind env dst) instr)]))]
+            (OptInstrResult.Result
+              (opt-const-unbind env dst)
+              (if (opt-binop-commute-constant-lhs? op l r ty)
+                (ir.CompilerIrInstr.BinOp dst op r l ty)
+                (if (opt-binop-negate-zero-lhs? op l r ty)
+                  (ir.CompilerIrInstr.UnOp dst ir.CompilerIrUnOp.Neg r ty)
+                  instr)))]))]
     [(ir.CompilerIrInstr.UnOp dst op v ty)
       (match (opt-fold-unop op (opt-resolve-known env v ty) ty)
         [(ir.CompilerIrMaybeValue.Some folded)
@@ -42750,10 +42837,14 @@
       (and
         (opt-scan-literal? src)
         (opt-scan-stamped? used-later generation dst))]
-    [(ir.CompilerIrInstr.BinOp _ op l r _)
+    [(ir.CompilerIrInstr.BinOp _ op l r ty)
       (if (and (opt-scan-literal? l) (opt-scan-literal? r))
         true
-        (opt-scan-strength-identity? op l r))]
+        (if (or
+          (opt-binop-commute-constant-lhs? op l r ty)
+          (opt-binop-negate-zero-lhs? op l r ty))
+          true
+          (opt-scan-strength-identity? op l r)))]
     [(ir.CompilerIrInstr.UnOp _ _ v _) (opt-scan-literal? v)]
     [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
       (or (opt-scan-literal? src) (opt-int-cast-as-mov? from-ty to-ty))]
@@ -86741,6 +86832,12 @@
   (stores opt_i64_i64_map.Map)
   (calls bool))
 
+;; Reference counts saturate: the only question the plan asks is "more than
+;; one?", so the map value stops growing at two and a hot cell cannot make the
+;; count wrap or churn the map.
+(define (opt-global-cell-ref-count-cap) : i64
+  2)
+
 (define (opt-global-cell-scan-new) : OptGlobalCellScan
   (OptGlobalCellScan
     (opt_i64_i64_map.with-capacity 8)
@@ -86753,15 +86850,24 @@
   [name : i64]) : OptGlobalCellScan
   (match scan
     [(OptGlobalCellScan refs ref-list stores calls)
-      (if (opt_i64_i64_map.contains? (& refs) name)
-        (OptGlobalCellScan refs ref-list stores calls)
-        (begin
-          (opt_i64_i64_map.insert-ref! (&mut refs) name 1)
-          (OptGlobalCellScan
-            refs
-            (OptI64List.Cons name (box ref-list))
-            stores
-            calls)))]))
+      (match (opt_i64_i64_map.get (& refs) name)
+        [(opt_i64_i64_map.LookupFound seen)
+          (begin
+            (opt_i64_i64_map.insert-ref!
+              (&mut refs)
+              name
+              (if (< seen (opt-global-cell-ref-count-cap))
+                (+ seen 1)
+                seen))
+            (OptGlobalCellScan refs ref-list stores calls))]
+        [(opt_i64_i64_map.LookupMissing)
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut refs) name 1)
+            (OptGlobalCellScan
+              refs
+              (OptI64List.Cons name (box ref-list))
+              stores
+              calls))])]))
 
 (define (opt-global-cell-scan-store
   [scan : OptGlobalCellScan (:consume)]
@@ -87788,9 +87894,137 @@
   (map opt_i64_i64_map.Map)
   (count i64))
 
+;; Profitability, on top of legality. The hoist trades N per-use cell loads for
+;; ONE entry load plus a live range that spans the whole function. At N >= 2 it
+;; is a straight win in loads. At N = 1 it is not: the same single load happens
+;; either way, so the only thing the rewrite adds is the live range -- and a
+;; value live from entry to a use the function may not even reach costs a
+;; callee-saved register (a push/pop pair paid on EVERY call) plus, when the
+;; use sits behind a branch, an unconditional load where the original was
+;; conditional.
+;;
+;; Measured on benchmarks/gvn_table's `gvn-facts-remove` (1,556,618 calls, of
+;; which 378 take the branch that reads the cells): `gvn-fact-len` and
+;; `gvn-fact-deleted` are each read exactly once, inside that branch. Promoted,
+;; their entry loads run 1,556,618 times and their live ranges pin %rbp and
+;; %rbx, so the prologue grows two pushes and the epilogue two pops. The
+;; single-reference cell is the entire shape.
+;;
+;; A single reference INSIDE A LOOP is the case this rule must not lose: there
+;; the one static read is many dynamic loads, and the entry load replaces all of
+;; them. Loop membership is estimated from BACK EDGES IN BLOCK ORDER -- an edge
+;; whose target sits at or before its source -- the same estimate
+;; opt-inline-census-depth-* documents and uses, and for the same reason: the
+;; two agree on every reducible CFG this compiler lowers, and where they
+;; disagree the answer is only a price. A wrong answer here cannot make a hoist
+;; unsound; the legality conditions (a)/(b)/(c) are unchanged and this filter
+;; only ever declines one.
+;;
+;; The index build is paid only when some referenced cell has exactly one
+;; reference, which is the only question the loop set can change.
+;; Mark every block covered by a back edge's [target, source] span. One
+;; difference-array pass plus a prefix sum, linear in blocks plus edges.
+(define (opt-global-cell-loop-marks!
+  [index : OptCfgIndex]
+  [count : i64]
+  [marks : (__tl_dyn-array bool)]) : unit
+  (let
+    [csr : OptCfgCsr index.succs]
+    [delta : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i count)
+        (let
+          [edge : i64 (array-ref csr.offsets i)]
+          [end : i64 (array-ref csr.offsets (+ i 1))]
+          (begin
+            (while (< edge end)
+              (let
+                [id : i64 (array-ref csr.edges edge)]
+                (begin
+                  (if (and (>= id 0) (<= id i))
+                    (begin
+                      (set! (array-ref delta id) (+ (array-ref delta id) 1))
+                      (set!
+                        (array-ref delta (+ i 1))
+                        (- (array-ref delta (+ i 1)) 1)))
+                    unit)
+                  (set! edge (+ edge 1)))))
+            (set! i (+ i 1)))))
+      (set! i 0)
+      (while (< i count)
+        (begin
+          (set! acc (+ acc (array-ref delta i)))
+          (set! (array-ref marks i) (> acc 0))
+          (set! i (+ i 1)))))))
+
+(define (opt-global-cell-loop-refs-collect
+  [index : OptCfgIndex]
+  [marks : (__tl_dyn-array bool)]
+  [i : i64]
+  [count : i64]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= i count)
+    out
+    (opt-global-cell-loop-refs-collect
+      index
+      marks
+      (+ i 1)
+      count
+      (if (array-ref marks i)
+        (let
+          [scan : OptGlobalCellScan (opt-global-cell-scan-block-by-id index i)]
+          (opt-global-cell-refs-add scan.ref-list out))
+        out))))
+
+(define (opt-global-cell-loop-refs
+  [blocks : ir.CompilerIrBlockList]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (let
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (or
+      (<= count 0)
+      (not (opt-cfg-index-labels-unique? index))
+      (not index.targets-known))
+      out
+      (let
+        [marks : (__tl_dyn-array bool) (array.make-array bool count)]
+        (begin
+          (opt-global-cell-loop-marks! index count marks)
+          (opt-global-cell-loop-refs-collect index marks 0 count out))))))
+
+(define (opt-global-cell-single-ref?
+  [counts : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (match (opt_i64_i64_map.get (& counts) name)
+    [(opt_i64_i64_map.LookupFound seen) (< seen 2)]
+    [(opt_i64_i64_map.LookupMissing) true]))
+
+(define (opt-global-cell-any-single-ref?
+  [counts : opt_i64_i64_map.Map]
+  [refs : OptI64List]) : bool
+  (match refs
+    [(OptI64List.Nil) false]
+    [(OptI64List.Cons name rest)
+      (if (opt-global-cell-single-ref? counts name)
+        true
+        (opt-global-cell-any-single-ref? counts (__tl-box-place rest)))]))
+
+(define (opt-global-cell-promotion-pays?
+  [counts : opt_i64_i64_map.Map]
+  [loop-refs : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (if (not (opt-global-cell-single-ref? counts name))
+    true
+    (opt_i64_i64_map.contains? (& loop-refs) name)))
+
 (define (opt-global-cell-plan-build
   [cell : OptGlobalCellSummary]
   [stores : opt_i64_i64_map.Map]
+  [counts : opt_i64_i64_map.Map]
+  [loop-refs : opt_i64_i64_map.Map]
   [refs : OptI64List]
   [frame-cell : (__tl_dyn-array i64)]
   [plan : opt_i64_i64_map.Map (:consume)]
@@ -87800,10 +88034,13 @@
     [(OptI64List.Cons name rest)
       (if (or
         (opt_i64_i64_map.contains? (& stores) name)
-        (opt_i64_i64_map.contains? (& cell.addr-taken) name))
+        (opt_i64_i64_map.contains? (& cell.addr-taken) name)
+        (not (opt-global-cell-promotion-pays? counts loop-refs name)))
         (opt-global-cell-plan-build
           cell
           stores
+          counts
+          loop-refs
           (__tl-box-place rest)
           frame-cell
           plan
@@ -87813,6 +88050,8 @@
             (opt-global-cell-plan-build
               cell
               stores
+              counts
+              loop-refs
               (__tl-box-place rest)
               frame-cell
               plan
@@ -87828,6 +88067,8 @@
                   (opt-global-cell-plan-build
                     cell
                     stores
+                    counts
+                    loop-refs
                     (__tl-box-place rest)
                     frame-cell
                     next
@@ -87835,6 +88076,8 @@
               (opt-global-cell-plan-build
                 cell
                 stores
+                counts
+                loop-refs
                 (__tl-box-place rest)
                 frame-cell
                 plan
@@ -88414,6 +88657,14 @@
                     (opt-global-cell-plan-build
                       cell
                       (opt-global-cell-observable-stores blocks)
+                      scan.refs
+                      (if (opt-global-cell-any-single-ref?
+                        scan.refs
+                        scan.ref-list)
+                        (opt-global-cell-loop-refs
+                          blocks
+                          (opt_i64_i64_map.with-capacity 8))
+                        (opt_i64_i64_map.with-capacity 1))
                       scan.ref-list
                       frame-cell
                       (opt_i64_i64_map.with-capacity 8)

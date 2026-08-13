@@ -4456,6 +4456,243 @@
       (= (opt-mov-dst-i64-value finite-casts 55 999) (- 0 3))
       (= (opt-count-cast-instrs deferred-casts) 4))))
 
+;; --- commutative constant-lhs canonicalisation --------------------------------
+;;
+;; The backend's immediate forms all key off an immediate RHS, so `K op x` and
+;; `x op K` -- the same value -- lower to different instruction counts. These
+;; fixtures pin which shapes move and, just as importantly, which do not.
+;;
+;;   C1 admitted : `2 + x`   -> `x + 2`
+;;   C2 admitted : `3 * x`   -> `x * 3`      (the rest of the commutative set:
+;;                 `7 & x`, `7 | x`, `7 ^ x` follow on dsts 3/4/5)
+;;   C3 refused  : `x + 2` is already canonical -- untouched, which is also the
+;;                 idempotence witness (the rule cannot oscillate).
+;;   C4 refused  : `2 - x` -- Sub does not commute.
+;;   C5 refused  : `2 << x` -- Shl does not commute (and its RHS is separately
+;;                 typed).
+;;   C6 admitted : `0 - x` on i64 -> `UnOp Neg x`, the one non-commutative
+;;                 constant-lhs shape with a strictly better single-instruction
+;;                 form.
+;;   C7 refused  : `0 - x` on i32 -- the Neg rule is restricted to the 8-byte
+;;                 integer types.
+;;   C8 refused  : `2.0 + x` on f64 -- `addsd` propagates the FIRST operand's
+;;                 NaN payload, so the swap is observable.
+;;   C9 twin     : `0 - 5` is a literal pair, so the constant folder answers it
+;;                 first and the result is `Mov -5`, exactly as before the rule
+;;                 existed.
+(define (opt-cc-var? [v : compiler_ir_types.CompilerIrValue] [id : i64]) : bool
+  (match v
+    [(compiler_ir_types.CompilerIrValue.Var x) (= x id)]
+    [_ false]))
+
+(define (opt-cc-i64? [v : compiler_ir_types.CompilerIrValue] [k : i64]) : bool
+  (match v
+    [(compiler_ir_types.CompilerIrValue.I64 x) (= x k)]
+    [_ false]))
+
+(define (opt-cc-f64? [v : compiler_ir_types.CompilerIrValue]) : bool
+  (match v
+    [(compiler_ir_types.CompilerIrValue.F64 _) true]
+    [_ false]))
+
+(define (opt-cc-op-is? [op : compiler_ir_types.CompilerIrBinOp] [tag : i64]) : bool
+  (=
+    tag
+    (match op
+      [(compiler_ir_types.CompilerIrBinOp.Add) 1]
+      [(compiler_ir_types.CompilerIrBinOp.Mul) 2]
+      [(compiler_ir_types.CompilerIrBinOp.BitAnd) 3]
+      [(compiler_ir_types.CompilerIrBinOp.BitOr) 4]
+      [(compiler_ir_types.CompilerIrBinOp.BitXor) 5]
+      [(compiler_ir_types.CompilerIrBinOp.Sub) 6]
+      [(compiler_ir_types.CompilerIrBinOp.Shl _) 7]
+      [_ 0])))
+
+(define (opt-cc-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      1
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.I64 2)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        2
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          3
+          (compiler_ir_types.CompilerIrBinOp.BitAnd)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.BitOr)
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.BitXor)
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                6
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 2)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  7
+                  (compiler_ir_types.CompilerIrBinOp.Sub)
+                  (compiler_ir_types.CompilerIrValue.I64 2)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    8
+                    (compiler_ir_types.CompilerIrBinOp.Shl
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrValue.I64 2)
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.BinOp
+                      9
+                      (compiler_ir_types.CompilerIrBinOp.Sub)
+                      (compiler_ir_types.CompilerIrValue.I64 0)
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.BinOp
+                        10
+                        (compiler_ir_types.CompilerIrBinOp.Sub)
+                        (compiler_ir_types.CompilerIrValue.I64 0)
+                        (compiler_ir_types.CompilerIrValue.Var 0)
+                        (compiler_ast_types.AstType.I32))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.BinOp
+                          11
+                          (compiler_ir_types.CompilerIrBinOp.Add)
+                          (compiler_ir_types.CompilerIrValue.F64
+                            (opt-test-f64-bits "2.0"))
+                          (compiler_ir_types.CompilerIrValue.Var 0)
+                          (compiler_ast_types.AstType.F64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.BinOp
+                            12
+                            (compiler_ir_types.CompilerIrBinOp.Sub)
+                            (compiler_ir_types.CompilerIrValue.I64 0)
+                            (compiler_ir_types.CompilerIrValue.I64 5)
+                            (compiler_ast_types.AstType.I64))
+                          compiler_ir_types.CompilerIrInstrList.Nil)))))))))))))
+
+;; 0 when `instr` has the shape the rule prescribes for its dst, else the code
+;; naming the case that broke.
+(define (opt-cc-check-instr [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp dst op l r _)
+      (cond
+        [(= dst 1)
+          (if (and (opt-cc-op-is? op 1) (opt-cc-var? l 0) (opt-cc-i64? r 2))
+            0
+            1)]
+        [(= dst 2)
+          (if (and (opt-cc-op-is? op 2) (opt-cc-var? l 0) (opt-cc-i64? r 3))
+            0
+            2)]
+        [(= dst 3)
+          (if (and (opt-cc-op-is? op 3) (opt-cc-var? l 0) (opt-cc-i64? r 7))
+            0
+            3)]
+        [(= dst 4)
+          (if (and (opt-cc-op-is? op 4) (opt-cc-var? l 0) (opt-cc-i64? r 7))
+            0
+            4)]
+        [(= dst 5)
+          (if (and (opt-cc-op-is? op 5) (opt-cc-var? l 0) (opt-cc-i64? r 7))
+            0
+            5)]
+        [(= dst 6)
+          (if (and (opt-cc-op-is? op 1) (opt-cc-var? l 0) (opt-cc-i64? r 2))
+            0
+            6)]
+        [(= dst 7)
+          (if (and (opt-cc-op-is? op 6) (opt-cc-i64? l 2) (opt-cc-var? r 0))
+            0
+            7)]
+        [(= dst 8)
+          (if (and (opt-cc-op-is? op 7) (opt-cc-i64? l 2) (opt-cc-var? r 0))
+            0
+            8)]
+        [(= dst 9) 19]
+        [(= dst 10)
+          (if (and (opt-cc-op-is? op 6) (opt-cc-i64? l 0) (opt-cc-var? r 0))
+            0
+            10)]
+        [(= dst 11)
+          (if (and (opt-cc-op-is? op 1) (opt-cc-f64? l) (opt-cc-var? r 0))
+            0
+            11)]
+        [(= dst 12) 22]
+        [else 30])]
+    [(compiler_ir_types.CompilerIrInstr.UnOp dst op src _)
+      (cond
+        [(= dst 9)
+          (match op
+            [(compiler_ir_types.CompilerIrUnOp.Neg)
+              (if (opt-cc-var? src 0)
+                0
+                9)]
+            [_ 9])]
+        [else 31])]
+    [(compiler_ir_types.CompilerIrInstr.Mov dst src _)
+      (cond
+        [(= dst 12)
+          (if (opt-cc-i64? src (- 0 5))
+            0
+            12)]
+        [else 32])]
+    [_ 33]))
+
+(define (opt-cc-check [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
+  (match instrs
+    [(compiler_ir_types.CompilerIrInstrList.Nil) 0]
+    [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
+      (let
+        [code : i64 (opt-cc-check-instr instr)]
+        (if (= code 0)
+          (opt-cc-check (__tl-box-place rest))
+          code))]))
+
+(define (compiler-optimize-commute-constant-lhs-self-test) : i64
+  (let
+    [once : compiler_ir_types.CompilerIrInstrList
+      (compiler_optimize.opt-fold-instrs
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.OptConstEnv.Nil)
+        (opt-cc-instrs))]
+    [twice : compiler_ir_types.CompilerIrInstrList
+      (compiler_optimize.opt-fold-instrs
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.OptConstEnv.Nil)
+        once)]
+    (begin
+      (unless (= (opt-cc-check once) 0) (return (opt-cc-check once)))
+      ;; idempotence: the canonical form is a fixpoint of the same pass
+      (unless (= (opt-cc-check twice) 0) (return (+ 40 (opt-cc-check twice))))
+      42)))
+
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let
     [pos : compiler_ir_types.CompilerIrInstrList
@@ -50746,39 +50983,51 @@
       6
       (compiler_ir_types.CompilerIrValue.Global symbols.agg)
       (compiler_ast_types.AstType.Struct symbols.agg))
-    (cond
-      [(> call-mode 0)
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Call
-            9
-            (if (= call-mode 2)
-              cbi.compiler-builtin-id-tl-oob-abort
-              symbols.callee)
-            (compiler_ir_types.CompilerIrCallArgs.One
-              (compiler_ir_types.CompilerIrValue.Var 3))
-            (compiler_ast_types.AstType.I64))
+    ;; second @gc_arr reference (var 0 is otherwise unused in this fixture, so
+    ;; the frame is unchanged). The hoist trades N per-use loads for one entry
+    ;; load, so opt-global-cell-promotion-pays? admits a cell only at N >= 2;
+    ;; this fixture is about LEGALITY (store / call / address-taken), and one
+    ;; reference would now be refused on profitability before legality was
+    ;; ever exercised. The single-reference refusal is fixture H below.
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        0
+        (compiler_ir_types.CompilerIrValue.Global symbols.arr)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (cond
+        [(> call-mode 0)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Call
+              9
+              (if (= call-mode 2)
+                cbi.compiler-builtin-id-tl-oob-abort
+                symbols.callee)
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.Var 3))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 5)))
+              compiler_ir_types.CompilerIrInstrList.Nil))]
+        [store-k?
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Store
+              symbols.k
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 5)))
+              compiler_ir_types.CompilerIrInstrList.Nil))]
+        [else
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
                 (compiler_ir_types.CompilerIrValue.Var 5)))
-            compiler_ir_types.CompilerIrInstrList.Nil))]
-      [store-k?
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Store
-            symbols.k
-            (compiler_ir_types.CompilerIrValue.Var 5)
-            (compiler_ast_types.AstType.I64))
-          (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.Return
-              (compiler_ir_types.CompilerIrMaybeValue.Some
-                (compiler_ir_types.CompilerIrValue.Var 5)))
-            compiler_ir_types.CompilerIrInstrList.Nil))]
-      [else
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Return
-            (compiler_ir_types.CompilerIrMaybeValue.Some
-              (compiler_ir_types.CompilerIrValue.Var 5)))
-          compiler_ir_types.CompilerIrInstrList.Nil)])))
+            compiler_ir_types.CompilerIrInstrList.Nil)]))))
 
 ;; reader fixture: descriptor gep off @gc_arr, a scalar operand @gc_k, a
 ;; Mov of @gc_k, and a Mov of the non-word-cell @gc_agg.
@@ -51161,12 +51410,47 @@
         6]
       ;; the abort call itself is untouched -- this is a classification, not
       ;; check or trap motion
-      [(match (opt-gc-test-instr-at blocks 1 6)
+      [(match (opt-gc-test-instr-at blocks 1 7)
           [(compiler_ir_types.CompilerIrInstr.Call _ callee _ _)
             (not (= callee cbi.compiler-builtin-id-tl-oob-abort))]
           [_ true])
         7]
       [else 42])))
+
+;; Fixture H: @gc_k is read EXACTLY ONCE, in a non-entry block. The hoist
+;; would replace that one conditional load with one unconditional entry load
+;; plus a live range spanning the function -- the same load count and a strictly
+;; longer range -- so opt-global-cell-promotion-pays? refuses it even though
+;; every legality condition (no store, no call, not address-taken, word cell)
+;; holds. This is the nearest refused neighbour of fixture A's @gc_k, which is
+;; identical except that it is read twice.
+(define (opt-gc-test-single-ref-function [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.reader
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    2
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "body"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              0
+              (compiler_ir_types.CompilerIrValue.Global symbols.k)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        compiler_ir_types.CompilerIrBlockList.Nil))))
 
 (define (compiler-optimize-global-cell-self-test) : i64
   (let
@@ -51226,6 +51510,15 @@
       (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-g))]
     [out-g : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-global-cell-function summaries-g reader-g)]
+    ;; fixture H: a single-reference cell is refused on profitability
+    [reader-h : compiler_ir_types.CompilerIrFunction
+      (opt-gc-test-single-ref-function symbols)]
+    [summaries-h : compiler_optimize.OptLoopBceSummaries
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-h))]
+    [out-h : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-global-cell-function summaries-h reader-h)]
+    [blocks-h : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out-h)]
     ;; fixture F: idempotence -- a second run over A's output adds nothing
     [out-f : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-global-cell-function summaries-a out-a)]
@@ -51258,7 +51551,7 @@
       ;; survives (the pass rewrites reads only). The negatives that DO bite
       ;; live in compiler-optimize-global-cell-observable-store-self-test.
       [(not (= (opt-gc-test-plain-hoist-ok? out-b) 42)) 20]
-      [(match (opt-gc-test-instr-at blocks-b 1 6)
+      [(match (opt-gc-test-instr-at blocks-b 1 7)
           [(compiler_ir_types.CompilerIrInstr.Store _ _ _) false]
           [_ true])
         27]
@@ -51283,7 +51576,10 @@
             (not (opt-gc-test-is-global-named? base "gc_arr"))]
           [_ true])
         43]
-      [(not (= (opt-gc-test-stray-blocks blocks-d true 0) 2)) 44]
+      ;; three direct global operands survive here: the @gc_agg Mov and BOTH
+      ;; @gc_arr geps (gc_arr is address-taken in this fixture, so it never
+      ;; hoists)
+      [(not (= (opt-gc-test-stray-blocks blocks-d true 0) 3)) 44]
       ;; fixture E: loader pattern hoists exactly like fixture A
       [(not (= (opt-gc-test-plain-hoist-ok? out-e) 42)) 50]
       ;; fixture G: a NON-RETURNING abort call is not a (c) call -- the
@@ -51302,6 +51598,15 @@
             (not (opt-gc-test-is-var? base 8))]
           [_ true])
         63]
+      ;; fixture H: untouched -- no entry load, no fresh var, the single read
+      ;; still names the global directly
+      [(not (= (compiler_optimize.opt-function-frame out-h) 2)) 70]
+      [(not (= (opt-gc-test-block-instr-count blocks-h 0) 1)) 71]
+      [(match (opt-gc-test-instr-at blocks-h 1 0)
+          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
+            (not (and (= d 0) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        72]
       [else 42])))
 
 ;; --- constant fill -> tl_mem_fill8 (fill_call) self-tests ---------------------
@@ -54590,6 +54895,13 @@
     (compiler-optimize-cse-self-test)
     42
     "CSE keeps otherwise-identical shifts with distinct RHS count types"))
+
+(test
+  commute-constant-lhs
+  (test.assert-i64-eq
+    (compiler-optimize-commute-constant-lhs-self-test)
+    42
+    "a commutative integer op with a literal LHS canonicalises to a literal RHS, `0 - x` on i64 becomes Neg, and Sub/Shl/f32-f64/narrow-width neighbours are left alone"))
 
 (test
   scalar-shift-count-type-fold

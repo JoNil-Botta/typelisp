@@ -2652,9 +2652,21 @@
     [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
     [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
     (if (not (intern-id-slot-empty? existing))
-      (begin
-        (cfg compile-profile (intern-profile-note-generated-role-reuse role))
-        (intern-id-slot-decode existing))
+      (let
+        [id : i64 (intern-id-slot-decode existing)]
+        (begin
+          ;; A legacy/global caller can publish this shared record after the
+          ;; active explicit-state view captured its scalar frontier. Refresh
+          ;; only that stale reuse case; known handles and inactive independent
+          ;; states keep the fast path.
+          (if (intern-compat-state-generated-id-active? state id)
+            unit
+            (intern-compat-state-generated-role-refresh-active! state))
+          (if (intern-compat-state-generated-id-active? state id)
+            unit
+            (tl_oob_abort))
+          (cfg compile-profile (intern-profile-note-generated-role-reuse role))
+          id))
       (let
         [_refresh-active : unit
           (intern-compat-state-generated-role-refresh-active! state)]
@@ -5007,6 +5019,38 @@
           (unless (not (= compat-id role-id)) (set! ok false))
           (unless
             (intern-private-string-eq (intern-str compat-id) "compat-generated")
+            (set! ok false))))
+      ;; Reusing a role first published by the active compatibility view also
+      ;; refreshes the explicit state's generated frontier. This is distinct
+      ;; from the new-role allocation case above: the structural record and
+      ;; handle already exist before the state-side lookup.
+      (intern-reset!)
+      (let
+        [component : i64 (intern "shared-role-component")]
+        [active-state : InternCompatState (intern-compat-state-capture-active)]
+        [role : i64 (intern-generated-symbol-role-clone-helper)]
+        [compat-role-id : i64 (intern-generated-role-symbol-id role component)]
+        [state-role-id : i64
+          (intern-compat-state-generated-role-symbol-id
+            active-state
+            role
+            component)]
+        (begin
+          (unless (= state-role-id compat-role-id) (set! ok false))
+          (unless
+            (intern-compat-state-generated-role-symbol?
+              active-state
+              state-role-id
+              role)
+            (set! ok false))
+          (unless
+            (intern-private-string-eq
+              (intern-compat-state-generated-role-symbol-materialize!
+                active-state
+                role
+                state-role-id
+                "clone$SharedRole")
+              "clone$SharedRole")
             (set! ok false))))
       ok)))
 

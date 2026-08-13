@@ -694,7 +694,9 @@ if [ -n "${TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE:-}" ]; then
     printf '%s\n' "$PROFILE_BIN" > "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE"
 fi
 
-echo "[compile-profile] verify dense macro profile storage"
+# This profile selfhost also compiles the extracted poison-name helpers that
+# exposed dotted-constructor cache poisoning in #6324 before #6451 fixed it.
+echo "[compile-profile] verify dense macro profile storage and helper layout"
 if ! "$PROFILE_BIN" run src/tests/compiler_typecheck_smoke.tl \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \

@@ -117,11 +117,11 @@
       [(lex.ResultTokens.Ok toks)
         (lexer-assert-true
           (and
-            (=
+            (compiler_intern.intern-id-eq?
               (token.sym-id (array-ref toks 1))
               (token.sym-id (array-ref toks 2)))
             (not
-              (=
+              (compiler_intern.intern-id-eq?
                 (token.sym-id (array-ref toks 1))
                 (token.sym-id (array-ref toks 3))))
             (string.eq (token.sym (array-ref toks 1)) "x")
@@ -141,19 +141,38 @@
               (comptime (size-of (type InternId)))
               (comptime (size-of (type u32))))
             "typed intern ids should retain compact u32 storage")
+          (lexer-assert-true
+            (=
+              (comptime (size-of (type InternSyntaxId)))
+              (comptime (size-of (type i64))))
+            "mixed syntax ids should retain one-word storage")
           (match (array-ref toks 1)
             [(token.Token.Sym id)
-              (lexer-assert-true
-                (=
-                  (compiler_intern.intern-id-value id)
-                  (token.sym-id (array-ref toks 1)))
-                "typed symbol ids should preserve the lexer identity")]
+              (let
+                [syntax : InternSyntaxId
+                  (compiler_intern.intern-syntax-id-from-renderable id)]
+                (begin
+                  (lexer-assert-true
+                    (compiler_intern.intern-id-eq?
+                      id
+                      (token.sym-id (array-ref toks 1)))
+                    "typed symbol ids should preserve the lexer identity")
+                  (lexer-assert-true
+                    (=
+                      (compiler_intern.intern-syntax-id-value syntax)
+                      (compiler_intern.intern-id-value id))
+                    "syntax ids should preserve renderable identity")
+                  (lexer-assert-true
+                    (string.eq
+                      (compiler_intern.intern-syntax-id-text syntax)
+                      "x")
+                    "renderable syntax ids should retain source text")))]
             [_ (lexer-assert-true false "symbol token should carry an id")])
           (match (array-ref toks 2)
             [(token.Token.Str id)
               (lexer-assert-true
-                (=
-                  (compiler_intern.intern-id-value id)
+                (compiler_intern.intern-id-eq?
+                  id
                   (token.str-id (array-ref toks 2)))
                 "typed string ids should preserve the lexer identity")]
             [_ (lexer-assert-true false "string token should carry an id")]))]

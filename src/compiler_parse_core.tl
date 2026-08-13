@@ -8144,7 +8144,9 @@
     (parse-ast-type
       dispatch
       pools
-      (reader.Sexpr.Sym (parse-ast-extern-varargs-tail-id name-id)))
+      (reader.Sexpr.Sym
+        (ci.intern-syntax-id-from-raw
+          (parse-ast-extern-varargs-tail-id name-id))))
     (ResultAstType.Err "parse: expected typed extern varargs tail")))
 
 (define (parse-ast-extern-head-fixed-param

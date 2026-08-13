@@ -3038,6 +3038,41 @@
       (ast-type-node-pool-state-dedup-clear (array-ref pools.type-pool 0)))
     (ast-node-pool-compat-context-sync-installed!)))
 
+(define (ast-node-pool-context-expr-cell-address [pools : AstNodePoolContext]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data pools.expr-pool) : (Ptr u8))))
+    : i64))
+
+(define (ast-node-pool-context-expr-installed? [pools : AstNodePoolContext]) : bool
+  (if (ast-node-pool-compat-context-active?)
+    (=
+      (ast-node-pool-context-expr-cell-address pools)
+      (ast-node-pool-context-expr-cell-address
+        (ast-node-pool-compat-context-current)))
+    (and
+      (ast-node-pool-has-active-context?)
+      (=
+        (ast-node-pool-context-expr-cell-address pools)
+        (ast-node-pool-context-expr-cell-address
+          (ast-node-pool-context-active-live))))))
+
+;; Keep transitional global expression constructors on the same append cursor
+;; when an explicit owner mutates the cells of the installed context.
+(define (ast-node-pool-context-expr-sync-installed!
+  [pools : AstNodePoolContext]) : unit
+  (if (not (ast-node-pool-context-expr-installed? pools))
+    unit
+    (let
+      [state : AstExprNodePoolState (array-ref pools.expr-pool 0)]
+      (begin
+        (set! ast-node-pool-segment-bases state.segment-bases)
+        (set! ast-node-pool-count state.count)
+        (set! ast-node-pool-storage-arena state.storage-arena)
+        (set! ast-node-pool-segment-count state.segment-count)
+        (set! node-pool-base-arena state.base-arena)
+        (set! node-pool-owner-arena pools.owner-arena)))))
+
 (define (ast-node-pool-context-expr-push
   [pools : AstNodePoolContext]
   [node : AstExpr]) : i64
@@ -3050,7 +3085,7 @@
           (if (not (= current.base-arena next.base-arena))
             (ast-node-pool-context-sync-base-arena! pools next.base-arena)
             unit)
-          (ast-node-pool-compat-context-sync-installed!)
+          (ast-node-pool-context-expr-sync-installed! pools)
           id)])))
 
 ;; Raw expression-node read keyed by the pool's segment-bases pointer rather
@@ -3096,7 +3131,16 @@
     (set!
       (array-ref pools.expr-pool 0)
       (ast-expr-node-pool-state-set! (array-ref pools.expr-pool 0) id node))
-    (ast-node-pool-compat-context-sync-installed!)))
+    (ast-node-pool-context-expr-sync-installed! pools)))
+
+(define (ast-node-pool-context-expr-truncate!
+  [pools : AstNodePoolContext]
+  [mark : i64]) : unit
+  (begin
+    (set!
+      (array-ref pools.expr-pool 0)
+      (ast-expr-node-pool-state-reset-to (array-ref pools.expr-pool 0) mark))
+    (ast-node-pool-context-expr-sync-installed! pools)))
 
 (define (ast-node-pool-context-type-push
   [pools : AstNodePoolContext]

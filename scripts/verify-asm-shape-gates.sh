@@ -577,6 +577,31 @@ check_licm_desc_hoist() {
     assert_contains "$_body" 'call tl_oob_abort' licm-desc-hoist
 }
 
+check_licm_memclean_promote() {
+    _src=tests/integration/licm_memclean_global_promote.tl
+    _asm=$(compile_gate licm_memclean_promote "$_src")
+    _sym=_tl_licm_memclean_global_promote
+    _promoted=$(function_body "$_asm" "${_sym}_promoted_scan")
+    _pressured=$(function_body "$_asm" "${_sym}_pressured_scan")
+    _writer=$(function_body "$_asm" "${_sym}_writer_scan")
+    # All three loops read their cell TWICE per iteration around a surviving
+    # direct call, so two occurrences means "still read per use" and one means
+    # "promoted to a single preheader load". Pre-change every one of them is 2.
+    #
+    # ADMITTED: the callee is proven to write no memory and the loop's live-in
+    # count is under opt-licm-global-promote-live-in-budget.
+    assert_fixed_count_eq "$_promoted" "${_sym}_gcell_a(%rip)" 1 licm-memclean-promote
+    assert_contains "$_promoted" "call ${_sym}_mix" licm-memclean-promote
+    # REFUSED on pressure: same callee and cell shape, live-in over the budget,
+    # so the copy would spill instead of taking a register.
+    assert_fixed_count_eq "$_pressured" "${_sym}_gcell_b(%rip)" 2 licm-memclean-promote
+    assert_contains "$_pressured" "call ${_sym}_mix" licm-memclean-promote
+    # REFUSED on the proof: the callee set!s the cell, so it is not invariant at
+    # any pressure. This is also the wrong-answer guard the fixture runs.
+    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 2 licm-memclean-promote
+    assert_contains "$_writer" "call ${_sym}_mix_writing" licm-memclean-promote
+}
+
 check_group_copy_direct() {
     _asm=$(compile_gate group_copy_direct tests/integration/group_copy_direct.tl)
     _body=$(function_body "$_asm" _tl_group_copy_direct_wrap)
@@ -612,7 +637,27 @@ check_handle_arg_csr() {
     _body=$(function_body "$_asm" _tl_handle_arg_csr_sum_args)
     assert_contains "$_body" 'call _tl_handle_arg_csr_probe' handle-arg-csr
     assert_matches "$_body" '^[[:space:]]+movq %rdi, %r(12|13|14|15|bx|bp)$' handle-arg-csr
-    assert_not_matches "$_body" '\(%rsp\)|\(%rbp\)' handle-arg-csr
+    # M-A2 is a claim about the HANDLE: `xs` is copied out of %rdi into a
+    # callee-saved register once at entry and every later use -- the direct
+    # call's argument included -- reads that register instead of re-materialising
+    # the handle from the frame.
+    #
+    # This used to be asserted as "no frame reference anywhere in the body",
+    # which is a proxy, not the claim: it also fails when some UNRELATED value
+    # takes a frame slot. The measured-plan inliner now prices call-carrying
+    # callees, so it absorbs `probe` at this site and hoists the absorbed body's
+    # own `xs[0]` into a spill slot -- a value that is not the handle and that
+    # the handle contract says nothing about. The two assertions below state the
+    # contract directly: the handle's callee-saved home is never reloaded from
+    # the frame, and the call's handle argument is never sourced from it either.
+    _home=$(sed -n \
+        's/^[[:space:]]*movq %rdi, %\(r1[2-5]\|rbx\|rbp\)$/\1/p' \
+        "$_body" | head -1)
+    [ -n "$_home" ] || fail "handle-arg-csr could not read the handle's register home"
+    assert_not_matches "$_body" \
+        "^[[:space:]]+movq [-0-9]*\\((%rsp|%rbp)\\), %$_home\$" handle-arg-csr
+    assert_not_matches "$_body" \
+        '^[[:space:]]+movq [-0-9]*\((%rsp|%rbp)\), %rdi$' handle-arg-csr
 }
 
 check_shift_pin() {
@@ -845,6 +890,7 @@ check_const_global_mask_unroll
 check_rbp_sixth_csr
 check_win64_rbp_eighth_csr
 check_licm_desc_hoist
+check_licm_memclean_promote
 check_group_copy_direct
 check_dead_result_store
 check_param_csr_home

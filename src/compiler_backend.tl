@@ -55060,7 +55060,20 @@
                                   ptr
                                   value0
                                   ty0
-                                  disp
+                                  ;; GAP9: this pair ABSORBS the second store's
+                                  ;; gep -- the walker resumes past it -- so its
+                                  ;; ordinal must be consumed here or every later
+                                  ;; gep in the function reads a shifted entry.
+                                  ;; The admitted shape is a constant offset, for
+                                  ;; which the pre-pass records displacement 0, so
+                                  ;; the sum is the same spelling it always was.
+                                  (+
+                                    disp
+                                    (compiler-backend-gep-fold-next!
+                                      ctx.function-state
+                                      ctx.type-segment-bases
+                                      offset
+                                      elem-ty))
                                   value1
                                   ty1
                                   ctx.program-index
@@ -63817,11 +63830,12 @@
 ;;   * a candidate whose base j is ITSELF an elided candidate is dropped
 ;;     (its add is deleted, so the value would never exist).
 ;; The rewrite deletes the add, retargets the gep's index operand to j, and
-;; records gep-dst -> byte displacement in a per-function side table sized
-;; by the pre-rewrite var count (the later register rewrites insert copies
-;; but never renumber a Gep's dst). Emission threads the displacement into
-;; the two bottom-most address builders, so every addressing form -- SIB,
-;; staged non-SIB, spilled-operand fallbacks -- applies it exactly once.
+;; records the byte displacement in the per-function ordinal-indexed side
+;; table described below (walk order, one entry per Gep -- NOT keyed by gep
+;; dst: the later register rewrites renumber vars). Emission threads the
+;; displacement into the two bottom-most address builders, so every addressing
+;; form -- SIB, staged non-SIB, spilled-operand fallbacks -- applies it exactly
+;; once.
 (defenum CompilerBackendMaybeVarImm
   (No)
   (Some i64 i64))
@@ -63834,6 +63848,22 @@
 ;; offset kind (1 = Var, 0 = other) and element size as a drift check: a
 ;; consumption mismatch marks the function poisoned and emission fails loudly
 ;; rather than addressing with a stale displacement.
+;;
+;; The obligation the ordinal keying puts on EMISSION is the whole invariant:
+;; every Gep in the walk consumes exactly one ordinal, whether the block walker
+;; dispatches it or a peephole ABSORBS it (a fusion that resumes the walk past
+;; a gep it folded into its own operand still owns that gep's ordinal). A path
+;; that absorbs without consuming does not fail where it sits -- it shifts
+;; every later gep in the function onto the previous entry, which is silent
+;; whenever the shapes happen to agree. That was a real backend defect, not a
+;; theoretical one: the `StorePtr;Gep;StorePtr` store-ptr pair peephole
+;; absorbed its gep without consuming, so any function with a folded gep after
+;; a store pair addressed with a stale displacement. It is the defect behind
+;; #6307 ("call-carrying multiblock clones miscompile"), whose re-triage as
+;; false against regalloc #6288 was INCOMPLETE -- the regalloc report was a
+;; separate bug; this ordinal-accounting one was real and is fixed here, and
+;; the audit below now checks the ordinal COUNT as well as the shapes so an
+;; absorbing path can never again go silent.
 (define (compiler-backend-gep-fold-disable!
   [function-state : CompilerBackendFunctionState]) : unit
   (begin
@@ -63935,6 +63965,37 @@
     (compiler-backend-function-state-bool?
       function-state
       compiler-backend-function-bool-gep-fold-drift)))
+
+;; Whole-function completeness half of the audit: after a body has been
+;; emitted, every recorded ordinal must have been consumed. A shape mismatch
+;; (above) only catches a misalignment that happens to land on a differently
+;; shaped gep; an emission path that ABSORBS a gep without consuming its
+;; ordinal -- the store-ptr pair peephole did exactly that -- shifts every
+;; later gep in the function onto the wrong entry and can be shape-silent, so
+;; the count is checked as well and drives the same hard error.
+(define (compiler-backend-gep-fold-unconsumed?
+  [function-state : CompilerBackendFunctionState]) : bool
+  (and
+    (compiler-backend-function-state-bool?
+      function-state
+      compiler-backend-function-bool-gep-fold-ready)
+    (not
+      (=
+        (compiler-backend-function-state-i64
+          function-state
+          compiler-backend-function-i64-gep-fold-cursor)
+        (array-length
+          (compiler-backend-function-state-i64-array
+            function-state
+            compiler-backend-function-i64-array-gep-fold-disp-table))))))
+
+;; The emit-function gate: either half of the GAP9 accounting audit fails the
+;; compile loudly rather than addressing with a stale displacement.
+(define (compiler-backend-gep-fold-audit-failed?
+  [function-state : CompilerBackendFunctionState]) : bool
+  (or
+    (compiler-backend-gep-fold-drift? function-state)
+    (compiler-backend-gep-fold-unconsumed? function-state)))
 
 ;; Conservative magnitude cap for the folded element offset and its byte
 ;; displacement: far below imm32 so downstream constant-offset merges can
@@ -65615,10 +65676,12 @@
                     use-counts)
                     [(ResultCompilerBackend.Ok body)
                       ;; GAP9 drift check: every Gep must have consumed its
-                      ;; ordinal with a matching shape; a mismatch means a
-                      ;; displacement could have been misapplied, so fail the
-                      ;; compile loudly instead of emitting wrong addressing.
-                      (if (compiler-backend-gep-fold-drift? function-state)
+                      ;; ordinal, and consumed it with a matching shape. Either
+                      ;; half failing means a displacement could have been
+                      ;; misapplied, so fail the compile loudly instead of
+                      ;; emitting wrong addressing.
+                      (if (compiler-backend-gep-fold-audit-failed?
+                        function-state)
                         (ResultCompilerBackend.Err
                           (box
                             (compiler-backend-apply-instr-diagnostic

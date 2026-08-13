@@ -10983,6 +10983,7 @@
 (define (compiler-reg-ref-counts-add-instr-weighted-remat!
   [counts : (__tl_dyn-array i64)]
   [def-status : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]
   [weight : i64]
   [allow-invariant-loads : bool]) : unit
@@ -11006,11 +11007,16 @@
       (compiler-reg-remat-status-candidate-add-instr!
         def-status
         instr
-        allow-invariant-loads))))
+        allow-invariant-loads)
+      ;; Same instruction, same block weight: the foldability rebate rides the
+      ;; walk that already visited this mention rather than paying for a second
+      ;; pass over every function's IR.
+      (compiler-reg-foldable-rebate-add-instr! rebates instr weight))))
 
 (define (compiler-reg-ref-counts-seq-weighted-remat!
   [counts : (__tl_dyn-array i64)]
   [def-status : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]
   [weight : i64]
   [allow-invariant-loads : bool]) : unit
@@ -11024,6 +11030,7 @@
           (compiler-reg-ref-counts-add-instr-weighted-remat!
             counts
             def-status
+            rebates
             (array-ref slots index)
             weight
             allow-invariant-loads)
@@ -11033,6 +11040,7 @@
 (define (compiler-reg-ref-counts-blocks-weighted-remat!
   [counts : (__tl_dyn-array i64)]
   [def-status : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
   [depths : (__tl_dyn-array i64)]
   [block-index : i64]
@@ -11046,12 +11054,14 @@
             (compiler-reg-ref-counts-seq-weighted-remat!
               counts
               def-status
+              rebates
               instrs
               (compiler-reg-loop-depth-weight (array-ref depths block-index))
               allow-invariant-loads)])
         (compiler-reg-ref-counts-blocks-weighted-remat!
           counts
           def-status
+          rebates
           (__tl-box-place rest)
           depths
           (+ block-index 1)
@@ -11068,11 +11078,179 @@
                 (compiler-reg-ref-counts-seq-weighted-remat!
                   counts
                   def-status
+                  rebates
                   instrs
                   (compiler-reg-loop-depth-weight (array-ref depths index))
                   allow-invariant-loads)])
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
+
+;; ============================================================================
+;; MEMORY-OPERAND FOLDABILITY REBATE.
+;;
+;; The ladder above prices every mention at its block's loop-depth weight, on
+;; the model that a spilled value costs one reload per use. That model is wrong
+;; for a use the backend spells as a MEMORY OPERAND: the reload it is pricing
+;; does not exist, so the value costs the same in a register as on the stack.
+;;
+;; Pricing such a use at 16x inside a depth-4 loop is what inverts the
+;; allocator's spill choice. cfg-idom-iterate's versioned fast clone is the
+;; measured case: four array lengths, each mentioned only as the LENGTH of a
+;; bounds check but deep in the loop nest, outranked the outer loop counter --
+;; read, incremented and compared every iteration -- and took its register,
+;; leaving the counter to pay a reload, an add, a store and a reload-for-index
+;; per trip while the lengths' "reloads" were compare operands that were never
+;; emitted.
+;;
+;; The rebate returns a foldable mention to a flat 1 rather than 0: a value the
+;; IR mentions must still outrank one it does not, the density tie-break in
+;; compiler-reg-greedy-combine-spill-weights keeps meaning something among
+;; fold-only values, and a register home is still marginally the better
+;; encoding. Rebates are clamped by compiler-reg-foldable-rebate-floor, so an
+;; over-count can never drive a mentioned var to zero.
+(define (compiler-reg-foldable-mention-weight) : i64
+  1)
+
+(define (compiler-reg-foldable-rebate-floor [weight : i64]) : i64
+  (if (< weight (compiler-reg-foldable-mention-weight))
+    (compiler-reg-foldable-mention-weight)
+    weight))
+
+;; Credit one foldable mention of `value` at `weight`: the ladder already added
+;; `weight` there, and the mention is worth
+;; `compiler-reg-foldable-mention-weight`, so the rebate is the difference.
+(define (compiler-reg-foldable-rebate-add-value!
+  [rebates : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]
+  [weight : i64]) : unit
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (and
+        (>= var 0)
+        (< var (array-length rebates))
+        (> weight (compiler-reg-foldable-mention-weight)))
+        (set!
+          (array-ref rebates var)
+          (+
+            (array-ref rebates var)
+            (- weight (compiler-reg-foldable-mention-weight))))
+        unit)]
+    [_ unit]))
+
+;; The one use position whose spilled operand the backend folds
+;; UNCONDITIONALLY, on every arm, at every width: a bounds check's LENGTH.
+;; compiler-backend-emit-bounds-check reads it through
+;; compiler-backend-bounds-length-operand, which spells a spilled length as its
+;; own stack slot -- `cmpq LEN(%rsp), %idx` on the register-index arm and
+;; `cmpq $K, LEN(%rsp)` on the constant-index arm (GAP6d) -- and the abort tail
+;; pushes that same operand. No home-dependent veto sits between: the index is
+;; a register or an imm32 on both arms, so the compare's other side is never
+;; memory and the single-memory-operand rule is never in play.
+;;
+;; The INDEX is deliberately NOT rebated. Both arms load a non-constant index
+;; into a register (a constant index folds as an immediate, which the ladder
+;; never scored in the first place), so that mention is a genuine reload; and
+;; the abort tail's second `pushq` reads it after `%rsp` has already moved,
+;; which is exactly why the emitter refuses a memory index there.
+;;
+;; Mirroring discipline, as for compiler-reg-alu-mem-fold-commutative? above:
+;; the structural half of the backend's gate is restated here because regalloc
+;; runs before homes exist. Every other fold the backend performs (a binop's
+;; RHS, either side of a compare branch, a select's on-true) carries a
+;; home-dependent veto -- `rhs-reg == dst-home`, "never both sides memory",
+;; bit-test-in-branch -- that regalloc cannot decide, so those positions stay
+;; priced at the ladder's full rate.
+(define (compiler-reg-foldable-rebate-add-instr!
+  [rebates : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]
+  [weight : i64]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.BoundsCheck _ length _)
+      (compiler-reg-foldable-rebate-add-value! rebates length weight)]
+    [_ unit]))
+
+(define (compiler-reg-foldable-rebate-seq!
+  [rebates : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [weight : i64]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-foldable-rebate-add-instr!
+          rebates
+          (array-ref slots index)
+          weight)
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-foldable-rebate-blocks!
+  [rebates : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [depths : (__tl_dyn-array i64)]
+  [block-index : i64]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (compiler-reg-foldable-rebate-seq!
+              rebates
+              instrs
+              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+        (compiler-reg-foldable-rebate-blocks!
+          rebates
+          (__tl-box-place rest)
+          depths
+          (+ block-index 1)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [index : i64 block-index]
+        (while (< i count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (compiler-reg-foldable-rebate-seq!
+                  rebates
+                  instrs
+                  (compiler-reg-loop-depth-weight (array-ref depths index)))])
+            (set! index (+ index 1))
+            (set! i (+ i 1)))))]))
+
+;; Subtract the accumulated rebates. A var the ladder never scored keeps its
+;; zero, so the "does this variable appear at all" consumers see no change.
+(define (compiler-reg-apply-foldable-rebates!
+  [weights : (__tl_dyn-array i64)]
+  [rebates : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64
+      (if (< (array-length rebates) (array-length weights))
+        (array-length rebates)
+        (array-length weights))]
+    [var : i64 0]
+    (while (< var count)
+      (begin
+        (if (and (> (array-ref rebates var) 0) (> (array-ref weights var) 0))
+          (set!
+            (array-ref weights var)
+            (compiler-reg-foldable-rebate-floor
+              (- (array-ref weights var) (array-ref rebates var))))
+          unit)
+        (set! var (+ var 1))))))
+
+(define (compiler-reg-function-foldable-rebates
+  [blocks : ir.CompilerIrBlockList]
+  [depths : (__tl_dyn-array i64)]
+  [vars : i64]) : (__tl_dyn-array i64)
+  (let
+    [rebates : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    (begin
+      (compiler-reg-foldable-rebate-blocks! rebates blocks depths 0)
+      rebates)))
 
 (define (compiler-reg-function-spill-weights [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
@@ -11095,6 +11273,7 @@
       (let
         [raw : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
         [def-status : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
+        [rebates : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
         [depths : (__tl_dyn-array i64)
           (compiler-reg-function-loop-depths blocks)]
         [allow-invariant-loads : bool
@@ -11103,6 +11282,7 @@
           (compiler-reg-ref-counts-blocks-weighted-remat!
             raw
             def-status
+            rebates
             blocks
             depths
             0
@@ -11111,6 +11291,12 @@
             [discounted : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
             (begin
               (compiler-reg-copy-i64-array! discounted raw 0)
+              ;; Rebate the memory-operand-foldable mentions before the remat
+              ;; discount and the coalesce merge: the rebate is a per-VAR
+              ;; correction to what the ladder walk just charged that var, and
+              ;; the merge collapses a class to its hottest member, which must
+              ;; be read off corrected weights.
+              (compiler-reg-apply-foldable-rebates! discounted rebates)
               (compiler-reg-remat-discount-single-def-spill-weights!
                 discounted
                 def-status
@@ -29843,6 +30029,92 @@
           dst
           (__tl-box-place rest)))]))
 
+;; --- the induction-step witness -------------------------------------------------
+;;
+;; A loop counter's web is `phi <- step`, and the step is `next = cur + k` for a
+;; literal `k`, never a Mov. Without a witness for THAT link the pair fails the
+;; all-pairs disjointness rule -- `cur` is live from the header down to the step
+;; and `next` from the step to the back edge, so the two hulls TOUCH at the step
+;; instruction -- and a spilled counter then pays, every iteration, a second slot
+;; plus a slot-to-slot phi copy through a scratch register (measured in
+;; cfg_domloops: eight instructions per iteration to decrement `pos` and branch,
+;; where three suffice).
+;;
+;; The Mov witness's own argument covers this shape unchanged. Interval points are
+;; two coordinates per instruction: an instruction's uses and its def are both
+;; stamped at its point, and anything live AFTER it is stamped at point+1. So
+;; `hull(src).end == hull(dst).start` still says exactly "src's last liveness event
+;; is this instruction, dst's first is this instruction" -- src is dead after the
+;; step, which is what makes one home serve both.
+;;
+;; WHY THE BACKEND IS SAFE HERE. The hazard the header warns about is a
+;; destination home written before a source home is read, which is what a parallel
+;; copy at a block edge can do. A BinOp is not a parallel copy: the emitter stages
+;; the LHS into a register, applies the operator against the RHS operand, and only
+;; then writes the destination home (`compiler-backend-binop-asm-with-plan` builds
+;; exactly that sequence), so BOTH operands are consumed before the destination is
+;; written. That is what makes either operand a legal witness, whatever the other
+;; one is.
+;;
+;; The admitted operator set is the plain two-operand ALU family, whose lowering
+;; is that staged sequence and nothing else. Everything with its own register
+;; discipline is excluded so no operator that writes a fixed register before
+;; consuming its operands can reach the rule: Div/Mod/SafeDiv/SafeMod (the
+;; rdx:rax pair plus the planned min/neg registers), Shl/Shr (the %cl count).
+;; The comparisons are excluded too -- they define a `bool` while their operands
+;; are the compared width, so the link's own type-equality guard would refuse
+;; them anyway, and naming them here keeps the reason local.
+(define (compiler-reg-color-scalar-step-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Add) true]
+    [(ir.CompilerIrBinOp.Sub) true]
+    [(ir.CompilerIrBinOp.Mul) true]
+    [(ir.CompilerIrBinOp.And) true]
+    [(ir.CompilerIrBinOp.Or) true]
+    [(ir.CompilerIrBinOp.BitAnd) true]
+    [(ir.CompilerIrBinOp.BitOr) true]
+    [(ir.CompilerIrBinOp.BitXor) true]
+    [_ false]))
+
+;; Offer one BinOp operand as the induction-step witness. Both operands are
+;; offered, in operand order, and the hull equality decides which one -- if
+;; either -- actually dies here. When BOTH do (`dst = a + b` with a and b each
+;; last used at this instruction) only the first can join: the second offer finds
+;; the destination already rooted in the first operand's web, falls through to
+;; the all-pairs rule, and is refused there because a and b are live at once up
+;; to this point. So the shared home is always a home the surviving member alone
+;; was reading.
+(define (compiler-reg-color-scalar-alias-step-operand!
+  [type-segment-bases : i64]
+  [alias : (__tl_dyn-array i64)]
+  [web-root : (__tl_dyn-array bool)]
+  [web-end : (__tl_dyn-array i64)]
+  [web-next : (__tl_dyn-array i64)]
+  [web-size : (__tl_dyn-array i64)]
+  [eligible : (__tl_dyn-array bool)]
+  [var-tys : (__tl_dyn-array ast.AstType)]
+  [ep-starts : (__tl_dyn-array i64)]
+  [ep-ends : (__tl_dyn-array i64)]
+  [operand : ir.CompilerIrValue]
+  [dst : i64]) : unit
+  (match operand
+    [(ir.CompilerIrValue.Var src-var)
+      (compiler-reg-color-scalar-alias-link!
+        type-segment-bases
+        alias
+        web-root
+        web-end
+        web-next
+        web-size
+        eligible
+        var-tys
+        ep-starts
+        ep-ends
+        src-var
+        dst
+        true)]
+    [_ unit]))
+
 ;; One instruction's link offers for ONE pass. `phi-pass` true is the loop-carry
 ;; priority pass (phi-defined phi inputs only); the Mov witness rides that pass so
 ;; the second visit adds nothing for non-phi instructions. The caller re-reads the
@@ -29882,6 +30154,38 @@
               dst
               true))]
         [_ unit])]
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
+      ;; The induction step `next = cur <op> k` and its accumulator cousins:
+      ;; same witness as a Mov (see above).
+      (when
+        (and phi-pass (compiler-reg-color-scalar-step-op? op))
+        (begin
+          (compiler-reg-color-scalar-alias-step-operand!
+            type-segment-bases
+            alias
+            web-root
+            web-end
+            web-next
+            web-size
+            eligible
+            var-tys
+            ep-starts
+            ep-ends
+            lhs
+            dst)
+          (compiler-reg-color-scalar-alias-step-operand!
+            type-segment-bases
+            alias
+            web-root
+            web-end
+            web-next
+            web-size
+            eligible
+            var-tys
+            ep-starts
+            ep-ends
+            rhs
+            dst)))]
     [(ir.CompilerIrInstr.Phi dst inputs _)
       (compiler-reg-color-scalar-alias-phi-inputs!
         type-segment-bases

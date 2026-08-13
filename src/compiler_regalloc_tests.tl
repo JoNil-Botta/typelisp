@@ -151,6 +151,7 @@
       (let
         [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [def-status : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [rebates : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [depths : (__tl_dyn-array i64)
           (reg.compiler-reg-function-loop-depths blocks)]
         [allow-invariant-loads : bool
@@ -158,9 +159,11 @@
         (begin
           (reg.compiler-reg-fill-i64-array counts 0)
           (reg.compiler-reg-fill-i64-array def-status 0)
+          (reg.compiler-reg-fill-i64-array rebates 0)
           (reg.compiler-reg-ref-counts-blocks-weighted-remat!
             counts
             def-status
+            rebates
             blocks
             depths
             0
@@ -2522,6 +2525,315 @@
               (reg.compiler-reg-stack-slot-offset 1))
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 5)))]))))
+
+;; ---------------------------------------------------------------------------
+;; Memory-operand foldability rebate (compiler-reg-function-foldable-rebates).
+;;
+;; The fixture below is a three-level loop nest under call-spanning pressure.
+;; The counter (var 0) is read and written once per trip of the OUTER loop
+;; (ladder depth 1, weight 2 per mention); the five candidates (vars 1-5) are
+;; each mentioned exactly ONCE, in the innermost block (ladder depth 3, weight
+;; 8). The raw ladder therefore ranks every candidate above the counter and
+;; makes the counter the eviction victim -- the inversion this rebate exists to
+;; fix.
+;;
+;; `fold?` selects the position of that single mention:
+;;   true  -> the candidate is the bounds check's LENGTH, which the backend
+;;            spells straight out of the home slot (`cmpq $0, LEN(%rsp)`), so
+;;            the spilled form costs no instruction and the rebate applies;
+;;   false -> the candidate is the bounds check's INDEX, which both arms of
+;;            compiler-backend-emit-bounds-check load into a register, so the
+;;            mention is a genuine reload and must NOT be rebated.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-checks
+    [var : i64]
+    [fold? : bool]
+    [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+    (if (< var 1)
+      tail
+      (compiler-reg-foldable-rebate-checks
+        (- var 1)
+        fold?
+        (ir.compiler-ir-instr-cons
+          (if fold?
+            (ir.CompilerIrInstr.BoundsCheck
+              (ir.CompilerIrValue.I64 0)
+              (ir.CompilerIrValue.Var var)
+              (ir.compiler-ir-label "ok"))
+            (ir.CompilerIrInstr.BoundsCheck
+              (ir.CompilerIrValue.Var var)
+              (ir.CompilerIrValue.I64 64)
+              (ir.compiler-ir-label "ok")))
+          tail)))))
+
+;; Each candidate gets TWO definitions. A single-def Mov of a constant is a
+;; remat candidate and would have its weight halved by
+;; compiler-reg-remat-discount-single-def-spill-weights!, which would confound
+;; the comparison: the test must measure the foldability rebate and nothing
+;; else. The counter is already multi-def (its Mov plus the loop's BinOp).
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-defs
+    [var : i64]
+    [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+    (if (< var 0)
+      tail
+      (compiler-reg-foldable-rebate-defs
+        (- var 1)
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            var
+            (ir.CompilerIrValue.I64 (+ var 1))
+            (compiler-reg-i64-ty))
+          (if (< var 1)
+            tail
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                var
+                (ir.CompilerIrValue.I64 (+ var 100))
+                (compiler-reg-i64-ty))
+              tail)))))))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-function [fold? : bool]) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "foldable_rebate_pressure")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.Unit)
+      7
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-foldable-rebate-defs
+            5
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Syscall
+                6
+                (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 39)))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l1"))
+                ir.CompilerIrInstrList.Nil))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "l1")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                0
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Bool false)
+                  (ir.compiler-ir-label "l2")
+                  (ir.compiler-ir-label "exit"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "l2")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Bool false)
+                  (ir.compiler-ir-label "l3")
+                  (ir.compiler-ir-label "l1latch"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "l3")
+                (compiler-reg-foldable-rebate-checks
+                  5
+                  fold?
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Bool false)
+                      (ir.compiler-ir-label "l3latch")
+                      (ir.compiler-ir-label "l2latch"))
+                    ir.CompilerIrInstrList.Nil)))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "l3latch")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l3"))
+                    ir.CompilerIrInstrList.Nil))
+                (ir.compiler-ir-block-cons
+                  (ir.compiler-ir-block
+                    (ir.compiler-ir-label "l2latch")
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l2"))
+                      ir.CompilerIrInstrList.Nil))
+                  (ir.compiler-ir-block-cons
+                    (ir.compiler-ir-block
+                      (ir.compiler-ir-label "l1latch")
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "l1"))
+                        ir.CompilerIrInstrList.Nil))
+                    (ir.compiler-ir-block-cons
+                      (ir.compiler-ir-block
+                        (ir.compiler-ir-label "exit")
+                        (ir.compiler-ir-instr-cons
+                          (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                          ir.CompilerIrInstrList.Nil))
+                      ir.CompilerIrBlockList.Nil)))))))))))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-array [func : ir.CompilerIrFunction]) : (__tl_dyn-array
+      i64)
+    (match func
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        (reg.compiler-reg-function-foldable-rebates
+          blocks
+          (reg.compiler-reg-function-loop-depths blocks)
+          vars)])))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-combined [func : ir.CompilerIrFunction]) : (__tl_dyn-array
+      i64)
+    (match func
+      [(ir.CompilerIrFunction.Function _ _ _ vars _)
+        (reg.compiler-reg-function-spill-weights-combined
+          func
+          (reg.CompilerRegCoalesceMap (array.make-array i64 0))
+          vars)])))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-any-spilled?
+    [assignments : reg.CompilerRegAssignmentTable]
+    [var : i64]) : bool
+    (if (< var 1)
+      false
+      (if (compiler-reg-location-spill-offset?
+        (reg.compiler-reg-assignment-lookup assignments var)
+        (reg.compiler-reg-stack-slot-offset var))
+        true
+        (compiler-reg-foldable-rebate-any-spilled? assignments (- var 1))))))
+
+;; (c) Classification against the backend's fold table: only the LENGTH operand
+;; of a bounds check is credited, and it is credited exactly the difference
+;; between the block's ladder weight (depth 3 -> 8) and the flat foldable rate
+;; (1). Constant operands are never credited (they were never scored), and the
+;; counter, whose mentions are a BinOp def and use, is never credited.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-classification-ok?) : bool
+    (let
+      [fold-rebates : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-array
+          (compiler-reg-foldable-rebate-function true))]
+      [index-rebates : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-array
+          (compiler-reg-foldable-rebate-function false))]
+      [raw : (__tl_dyn-array i64)
+        (reg.compiler-reg-function-spill-weights
+          (compiler-reg-foldable-rebate-function true))]
+      [combined : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-combined
+          (compiler-reg-foldable-rebate-function true))]
+      [index-combined : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-combined
+          (compiler-reg-foldable-rebate-function false))]
+      (and
+        ;; The ladder ranks a single depth-3 foldable mention above the
+        ;; counter's per-trip def+use at depth 1.
+        (= (array-ref raw 0) 5)
+        (= (array-ref raw 1) 10)
+        (= (array-ref raw 5) 10)
+        ;; Only the length position is credited, and only by weight - 1.
+        (= (array-ref fold-rebates 0) 0)
+        (= (array-ref fold-rebates 1) 7)
+        (= (array-ref fold-rebates 5) 7)
+        (= (array-ref fold-rebates 6) 0)
+        ;; The index position is a genuine reload: nothing is credited.
+        (= (array-ref index-rebates 0) 0)
+        (= (array-ref index-rebates 1) 0)
+        (= (array-ref index-rebates 5) 0)
+        ;; ... and the rebate flips the greedy's priority order, while the
+        ;; index fixture keeps the raw order exactly.
+        (> (array-ref combined 0) (array-ref combined 1))
+        (> (array-ref combined 0) (array-ref combined 5))
+        (< (array-ref index-combined 0) (array-ref index-combined 1))
+        (< (array-ref index-combined 0) (array-ref index-combined 5))))))
+
+;; (a) The forcing fixture: under call-spanning pressure exactly one of the six
+;; values must give up its register. With the fold-only candidates repriced the
+;; counter keeps one and a candidate spills.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-keeps-counter-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-foldable-rebate-function true)]
+      (match (reg.compiler-reg-plan-function-scalar func)
+        [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (and
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 0))
+            (compiler-reg-foldable-rebate-any-spilled? assignments 5))]))))
+
+;; (b) The negative: the same shape with the candidates in the non-foldable
+;; INDEX position is left exactly as the ladder priced it -- the hot-by-depth
+;; candidates keep the registers and the counter is the victim. A rebate that
+;; leaked into non-foldable positions would flip this too.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-index-not-discounted-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-foldable-rebate-function false)]
+      (match (reg.compiler-reg-plan-function-scalar func)
+        [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (and
+            (compiler-reg-location-spill-offset?
+              (reg.compiler-reg-assignment-lookup assignments 0)
+              (reg.compiler-reg-stack-slot-offset 0))
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 1))
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 5)))]))))
+
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-arrays-equal?
+    [left : (__tl_dyn-array i64)]
+    [right : (__tl_dyn-array i64)]
+    [index : i64]) : bool
+    (if (< index 0)
+      true
+      (if (= (array-ref left index) (array-ref right index))
+        (compiler-reg-foldable-rebate-arrays-equal? left right (- index 1))
+        false))))
+
+;; (d) Idempotence: the rebate is a pure function of the IR, so recomputing the
+;; weights (and replanning) yields identical results -- the walk must not
+;; accumulate into, or otherwise mutate, anything the next call reads.
+(cfg
+  test
+  (define (compiler-reg-foldable-rebate-idempotent-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-foldable-rebate-function true)]
+      [first-rebates : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-array func)]
+      [second-rebates : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-array func)]
+      [first-combined : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-combined func)]
+      [second-combined : (__tl_dyn-array i64)
+        (compiler-reg-foldable-rebate-combined func)]
+      (and
+        (compiler-reg-foldable-rebate-arrays-equal?
+          first-rebates
+          second-rebates
+          6)
+        (compiler-reg-foldable-rebate-arrays-equal?
+          first-combined
+          second-combined
+          6)))))
 
 (cfg
   test
@@ -7119,6 +7431,14 @@
       (compiler-reg-color-carry-priority-ok?)
       "a phi dst joins the loop carry's web rather than an interfering computed source")))
 
+(cfg
+  test
+  (test
+    regalloc-scalar-web-step-witness
+    (test.assert-true
+      (compiler-reg-color-step-witness-ok?)
+      "an induction step joins its counter's web on the same witness a Mov gets, and a counter that outlives the step is refused")))
+
 ;; M-B2 scalar phi-web slot sharing. Both cases hand the colorer the SAME plan
 ;; intervals -- deliberately overlapping, which is what the conservative model
 ;; produces for a phi and its input, because it counts the input as live AT the
@@ -7354,6 +7674,134 @@
               ;; Genuine interference still refuses: %1 outlives %2's definition.
               (> overlap-slots 1)
               (not (= (array-ref overlap-remap 1) (array-ref overlap-remap 2))))]
+          [(reg.CompilerRegColoring.None) false])]
+      [(reg.CompilerRegColoring.None) false])))
+
+;; The induction-step witness. Same fixture idea as the web-merge case above, cut
+;; down to the counter itself: `%0 = phi(%2 entry, %1 latch)` with the back-edge
+;; value produced by `%1 = %0 + 1` -- a BinOp, which is what every counted loop
+;; writes and what the Mov-only witness could not see. The two hulls TOUCH at the
+;; step (the counter's last event and the step's definition are the same
+;; instruction), so the all-pairs disjointness rule refuses them and the pair used
+;; to cost a second slot plus a slot-to-slot phi copy on the back edge.
+;;
+;; `outlives` is the negative: `exit` returns the COUNTER, so %0's hull runs past
+;; the step into a later block and the equality that carries the witness no longer
+;; holds. The step must then keep its own slot -- exactly the case where sharing
+;; one home would clobber a value still to be read.
+(cfg
+  test
+  (define (compiler-reg-color-step-witness-blocks [outlives : bool]) : ir.CompilerIrBlockList
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            2
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+            ir.CompilerIrInstrList.Nil)))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "header")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.Var 1)
+                (ir.compiler-ir-label "latch")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 2)
+                  (ir.compiler-ir-label "entry")
+                  ir.CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 0)
+                (ir.compiler-ir-label "body")
+                (ir.compiler-ir-label "exit"))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                1
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "latch")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "exit")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some
+                      (if outlives
+                        (ir.CompilerIrValue.Var 0)
+                        (ir.CompilerIrValue.I64 0))))
+                  ir.CompilerIrInstrList.Nil))
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; Deliberately overlapping conservative intervals again: the ordinary
+;; disjoint-interval walk can share nothing, so any sharing is the web logic's.
+(cfg
+  test
+  (define (compiler-reg-color-step-witness-intervals) : reg.CompilerRegIntervalSeq
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 0 0 9)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 1 9)
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 2 2 9)
+          (reg.compiler-reg-interval-seq-empty))))))
+
+(cfg
+  test
+  (define (compiler-reg-color-step-witness-coloring [outlives : bool]) : reg.CompilerRegColoring
+    (reg.compiler-reg-color-stack-slots
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (reg.CompilerRegPlan.Plan
+        (compiler-reg-color-spill-sharing-assignments 3)
+        (live.compiler-live-set-empty)
+        (compiler-reg-color-step-witness-intervals)
+        (compiler-reg-color-spill-sharing-types 3)
+        (reg.compiler-reg-call-split-empty)
+        (reg.compiler-reg-split-plan-empty))
+      (live.compiler-live-set-empty)
+      ir.CompilerIrParamList.Nil
+      (compiler-reg-color-step-witness-blocks outlives)
+      3
+      3
+      (live.compiler-live-set-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-color-step-witness-ok?) : bool
+    (match (compiler-reg-color-step-witness-coloring false)
+      [(reg.CompilerRegColoring.Remap step-remap step-slots)
+        (match (compiler-reg-color-step-witness-coloring true)
+          [(reg.CompilerRegColoring.Remap live-remap live-slots)
+            (and
+              ;; Counter, its step and the entry seed all share ONE slot, so the
+              ;; back-edge phi copy is a same-home no-op.
+              (= step-slots 1)
+              (= (array-ref step-remap 0) (array-ref step-remap 1))
+              (= (array-ref step-remap 0) (array-ref step-remap 2))
+              ;; A counter still live past its step keeps its own home.
+              (> live-slots 1)
+              (not (= (array-ref live-remap 0) (array-ref live-remap 1))))]
           [(reg.CompilerRegColoring.None) false])]
       [(reg.CompilerRegColoring.None) false])))
 
@@ -13215,6 +13663,18 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-spill-weight-eviction-ok?"
       (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-foldable-rebate-classification-ok?"
+      (cfg test (compiler-reg-foldable-rebate-classification-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-foldable-rebate-keeps-counter-ok?"
+      (cfg test (compiler-reg-foldable-rebate-keeps-counter-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-foldable-rebate-index-not-discounted-ok?"
+      (cfg test (compiler-reg-foldable-rebate-index-not-discounted-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-foldable-rebate-idempotent-ok?"
+      (cfg test (compiler-reg-foldable-rebate-idempotent-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-call-span-counts-ok?"
       (cfg test (compiler-reg-call-span-counts-ok?) true))

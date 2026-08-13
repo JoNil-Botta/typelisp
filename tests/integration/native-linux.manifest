@@ -98,6 +98,7 @@ idx_copy_coalesce|tests/integration/idx_copy_coalesce.tl|42|-|-|stdlib/io.tl
 call_result_rax|tests/integration/call_result_rax.tl|42|-|-|stdlib/io.tl
 gep_direct_base|tests/integration/gep_direct_base.tl|42|-|-|stdlib/io.tl
 gep_copy_sib_shape|tests/integration/gep_copy_sib_shape.tl|42|-|-|stdlib/array.tl
+gep_fold_ordinal_store_pair_clone|tests/integration/gep_fold_ordinal_store_pair_clone.tl|42|-|-|stdlib/array.tl
 tail_arg_reg|tests/integration/tail_arg_reg.tl|42|-|-|stdlib/io.tl
 callregion_split|tests/integration/callregion_split.tl|42|-|-|stdlib/io.tl
 callregion_writeback|tests/integration/callregion_writeback.tl|42|-|-|stdlib/io.tl
@@ -120,6 +121,7 @@ global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl std
 scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+licm_memclean_global_promote|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
 licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl stdlib/array.tl
@@ -174,6 +176,13 @@ intern_pool_state_source_exhaustion|tests/integration/intern_pool_exhaustion.tl|
 intern_pool_state_generated_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|3|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
 bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_paired_underflow_sp0_trap/bce_paired_underflow_sp0_trap.tl:39:47: array index out of bounds: index=-1 length=4\n
 bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_paired_underflow_sp1_trap/bce_paired_underflow_sp1_trap.tl:40:46: array index out of bounds: index=-1 length=4\n
+bce_descending_counted_loop|tests/integration/bce_descending_counted_loop.tl|42|-|-|stdlib/array.tl stdlib/io.tl stdlib/string.tl
+unroll_load_store_remainder|tests/integration/unroll_load_store_remainder.tl|42|-|-|stdlib/array.tl
+unroll_load_store_even_trap|tests/integration/unroll_load_store_trap.tl|134|7000056000120\n|4|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/unroll_load_store_even_trap/unroll_load_store_even_trap.tl:28:56: array index out of bounds: index=4 length=4\n
+unroll_load_store_odd_trap|tests/integration/unroll_load_store_trap.tl|134|7000077000288000388\n|5|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/unroll_load_store_odd_trap/unroll_load_store_odd_trap.tl:28:56: array index out of bounds: index=5 length=5\n
+bce_call_carrying_versioned_loop|tests/integration/bce_call_carrying_versioned_loop.tl|42|-|-|stdlib/array.tl stdlib/io.tl stdlib/string.tl
+bce_call_carrying_fast_trap|tests/integration/bce_call_carrying_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_call_carrying_fast_trap/bce_call_carrying_fast_trap.tl:41:57: array index out of bounds: index=4 length=4\n
+bce_call_carrying_slow_trap|tests/integration/bce_call_carrying_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_call_carrying_slow_trap/bce_call_carrying_slow_trap.tl:41:57: array index out of bounds: index=4 length=4\n
 bce_affine_versioning|tests/integration/bce_affine_versioning.tl|42|-|0|stdlib/io.tl stdlib/string.tl
 bce_affine_overflow_trap|tests/integration/bce_affine_versioning.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_affine_overflow_trap/bce_affine_overflow_trap.tl:17:45: array index out of bounds: index=-9223372036854775807 length=8\n
 bce_affine_underflow_trap|tests/integration/bce_affine_versioning.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_affine_underflow_trap/bce_affine_underflow_trap.tl:28:45: array index out of bounds: index=-2 length=8\n
@@ -419,3 +428,4 @@ str_cat_scoped_region|tests/integration/str_cat_scoped_region.tl|42|-|-|-
 tlci_native_index_folds|tests/integration/tlci_native_index_folds.tl|42|-|-|stdlib/fs.tl stdlib/string.tl stdlib/str_cat.tl
 tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl
 tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|scanner: 1 {} 2\ndone\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
+inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|stdlib/array.tl

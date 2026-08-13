@@ -4165,6 +4165,8 @@
 ;; Dotted variants and bare module-local constructors share the same direct
 ;; cache storage but are distinct key domains. A dotted name misclassified as
 ;; bare can cache a false constructor miss that poisons later variant lookup.
+;; In #6324, two unrelated helper declarations changed collision order and
+;; surfaced that poisoned miss as a bogus CompilerCtfeValue.I64 lookup failure.
 (define (compiler-typecheck-smoke-dotted-constructor-cache-domain-ok?) : bool
   (let
     [bare-id : i64 (ci.intern "Full")]

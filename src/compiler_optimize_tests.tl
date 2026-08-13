@@ -3859,14 +3859,18 @@
         (compiler_ir_types.CompilerIrValue.I64 0)
         (opt-test-symbol "aggregate_callee")
         compiler_ir_types.CompilerIrCallArgs.Nil
-        compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)]
+        (compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+          (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 0)
+          0))]
     [indirect-store : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.ir-instr-call-indirect-cabi-store-result
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.CompilerIrValue.Function
           (opt-test-symbol "aggregate_indirect_callee"))
         compiler_ir_types.CompilerIrCallArgs.Nil
-        compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)]
+        (compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+          (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 0)
+          0))]
     [tail : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.CompilerIrInstr.TailCallIndirect
         (compiler_ir_types.CompilerIrValue.Function

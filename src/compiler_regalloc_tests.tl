@@ -8731,7 +8731,9 @@
             (ir.CompilerIrCallArgs.Two
               (ir.CompilerIrValue.Var 1)
               (ir.CompilerIrValue.Var 2))
-            ir.CompilerIrCAbiReturnSlotList.Nil)
+            (ir.CompilerIrCAbiReturnSlotSeq
+              (array.make-array ir.CompilerIrCAbiReturnSlot 0)
+              0))
           (ir.compiler-ir-instr-cons
             (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
             ir.CompilerIrInstrList.Nil)))

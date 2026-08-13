@@ -5694,43 +5694,6 @@
         0
         count))))
 
-(define (opt-c-abi-return-slot-list-eq
-  [type-segment-bases : i64]
-  [a : ir.CompilerIrCAbiReturnSlotList]
-  [b : ir.CompilerIrCAbiReturnSlotList]) : bool
-  (match a
-    [(ir.CompilerIrCAbiReturnSlotList.Nil)
-      (match b
-        [(ir.CompilerIrCAbiReturnSlotList.Nil) true]
-        [(ir.CompilerIrCAbiReturnSlotList.Array seq) (= seq.len 0)]
-        [_ false])]
-    [(ir.CompilerIrCAbiReturnSlotList.Cons aslot arest)
-      (match b
-        [(ir.CompilerIrCAbiReturnSlotList.Cons bslot brest)
-          (and
-            (opt-c-abi-return-slot-eq type-segment-bases aslot bslot)
-            (opt-c-abi-return-slot-list-eq
-              type-segment-bases
-              (__tl-box-place arest)
-              (__tl-box-place brest)))]
-        [(ir.CompilerIrCAbiReturnSlotList.Array seq)
-          (opt-c-abi-return-slot-list-eq
-            type-segment-bases
-            (ir.compiler-ir-c-abi-return-slot-cons-linked
-              aslot
-              (__tl-box-place arest))
-            (ir.compiler-ir-c-abi-return-slot-seq-to-list seq))]
-        [_ false])]
-    [(ir.CompilerIrCAbiReturnSlotList.Array aseq)
-      (match b
-        [(ir.CompilerIrCAbiReturnSlotList.Array bseq)
-          (opt-c-abi-return-slot-seq-eq type-segment-bases aseq bseq)]
-        [_
-          (opt-c-abi-return-slot-list-eq
-            type-segment-bases
-            (ir.compiler-ir-c-abi-return-slot-seq-to-list aseq)
-            b)])]))
-
 (define (opt-instr-eq
   [type-segment-bases : i64]
   [a : ir.CompilerIrInstr]
@@ -6245,7 +6208,7 @@
                 (opt-value-eq abase bbase)
                 (ir.compiler-ir-symbol-eq? aname bname)
                 (opt-call-args-eq aargs bargs)
-                (opt-c-abi-return-slot-list-eq type-segment-bases aslots bslots)))]
+                (opt-c-abi-return-slot-seq-eq type-segment-bases aslots bslots)))]
           [_ false]))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
@@ -6268,7 +6231,7 @@
                 (opt-value-eq abase bbase)
                 (opt-value-eq afunc bfunc)
                 (opt-call-args-eq aargs bargs)
-                (opt-c-abi-return-slot-list-eq type-segment-bases aslots bslots)))]
+                (opt-c-abi-return-slot-seq-eq type-segment-bases aslots bslots)))]
           [_ false]))]
     [(ir.CompilerIrInstr.SpmdCall _) false]
     [(ir.CompilerIrInstr.TailCall aname aargs aty)

@@ -3310,6 +3310,7 @@
   [decls : ast.AstDeclList]
   [path : String]
   [owner-id : i64]
+  [provenance-id : i64]
   [rest-paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
     [out : ast.AstDeclPathList
@@ -3322,7 +3323,11 @@
     (begin
       (while (< index count)
         (begin
-          (ast.ast-decl-path-list-push-with-owner-id (&mut out) path owner-id)
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+            (&mut out)
+            path
+            owner-id
+            provenance-id)
           (set! index (+ index 1))))
       (ast.ast-decl-path-list-append-from (&mut out) (& rest-paths) 0)
       out)))
@@ -3332,12 +3337,23 @@
   [decls : ast.AstDeclList]
   [path : String]
   [owner-id : i64]
+  [provenance-id : i64]
   [index : i64]) : unit
   (if (>= index (ast.ast-decl-list-len (& decls)))
     unit
     (begin
-      (ast.ast-decl-path-list-push-with-owner-id out path owner-id)
-      (gen-path-list-push-for-decls out decls path owner-id (+ index 1)))))
+      (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+        out
+        path
+        owner-id
+        provenance-id)
+      (gen-path-list-push-for-decls
+        out
+        decls
+        path
+        owner-id
+        provenance-id
+        (+ index 1)))))
 
 (define (gen-rewrite-decls-with-owner
   [owner : SpecOwnerContext]
@@ -3459,6 +3475,11 @@
                   (& path-cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
+              [provenance-id : i64
+                (ast.ast-decl-path-list-provenance-id
+                  (& path-cursor)
+                  0
+                  cbi.compiler-builtin-id-fix-empty)]
               (match (gen-rewrite-decl-with-owner
                 owner
                 decl
@@ -3488,6 +3509,7 @@
                         rewritten-decls
                         decl-path
                         owner-id
+                        provenance-id
                         0)
                       (set! cur-registry decl-registry)
                       (set! cur-module-id decl-module)
@@ -8726,6 +8748,11 @@
                   (& path-cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
+              [provenance-id : i64
+                (ast.ast-decl-path-list-provenance-id
+                  (& path-cursor)
+                  0
+                  cbi.compiler-builtin-id-fix-empty)]
               (match (spec-rewrite-decl-with-owner
                 owner
                 decl
@@ -8748,10 +8775,11 @@
                             (- rest.offset 1)
                             decl
                             false)
-                          (ast.ast-decl-path-list-push-with-owner-id
+                          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                             (&mut out-paths)
                             decl-path
-                            owner-id))])
+                            owner-id
+                            provenance-id))])
                     (set! decl-cursor rest)
                     (set! path-cursor (gen-path-list-tail path-cursor)))]
                 [(ResultSpecDecl.Err diag)
@@ -8768,6 +8796,7 @@
     (gen-path-list-for-decls
       decls
       fallback-path
+      cbi.compiler-builtin-id-fix-empty
       cbi.compiler-builtin-id-fix-empty
       (ast.ast-decl-path-list-new))))
 

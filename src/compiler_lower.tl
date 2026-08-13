@@ -1619,10 +1619,14 @@
               [path : String (ast.ast-decl-path-list-get (& paths) index "")]
               [owned-path : String (string.copy (& path))]
               (begin
-                (ast.ast-decl-path-list-push-with-owner-id
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                   (&mut out)
                   owned-path
                   (ast.ast-decl-path-list-owner-id
+                    (& paths)
+                    index
+                    cbi.compiler-builtin-id-fix-empty)
+                  (ast.ast-decl-path-list-provenance-id
                     (& paths)
                     index
                     cbi.compiler-builtin-id-fix-empty))
@@ -12511,13 +12515,17 @@
               (begin
                 (set! (array-ref keep index) 1)
                 (ast.ast-decl-list-push (&mut out) decl)
-                (ast.ast-decl-path-list-push-with-owner-id
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                   (&mut out-paths)
                   decl-path
                   (ast.ast-decl-path-list-owner-id
                     (& paths)
                     index
-                    source-module-id)))
+                    source-module-id)
+                  (ast.ast-decl-path-list-provenance-id
+                    (& paths)
+                    index
+                    cbi.compiler-builtin-id-fix-empty)))
               unit)
             (match decl
               [(ast.AstDecl.Module next-module)
@@ -12664,10 +12672,14 @@
         (begin
           (when
             (not (= (array-ref keep index) 0))
-            (ast.ast-decl-path-list-push-with-owner-id
+            (ast.ast-decl-path-list-push-with-owner-and-provenance-id
               (&mut out)
               (ast.ast-decl-path-list-get (& paths) index "")
               (ast.ast-decl-path-list-owner-id
+                (& paths)
+                index
+                cbi.compiler-builtin-id-fix-empty)
+              (ast.ast-decl-path-list-provenance-id
                 (& paths)
                 index
                 cbi.compiler-builtin-id-fix-empty)))
@@ -65120,6 +65132,11 @@
             (& paths)
             0
             cbi.compiler-builtin-id-fix-empty)]
+        [provenance-id : i64
+          (ast.ast-decl-path-list-provenance-id
+            (& paths)
+            0
+            cbi.compiler-builtin-id-fix-empty)]
         [rest-paths : ast.AstDeclPathList (ast.ast-decl-path-list-tail paths)]
         (match decl
           [(ast.AstDecl.Module _)
@@ -65132,9 +65149,10 @@
                 (if (lower-type-decl? decl)
                   (LowerSkippedRuntimeWithPaths.Skipped
                     (ast.ast-decl-list-prepend-builder decl kept)
-                    (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                    (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                       decl-path
                       owner-id
+                      provenance-id
                       kept-paths))
                   (LowerSkippedRuntimeWithPaths.Skipped kept kept-paths))])]))]))
 

@@ -36,6 +36,9 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 5: declaration paths encode physical provenance separately from effective
+  ;; module ownership so hydrated dependency macros retain their package key.
+  ;;
   ;; 4: imports no longer encode the removed legacy string-path kind.
   ;;
   ;; 3: macro type-kind constraints use a count followed by dense ordered name
@@ -51,7 +54,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  4)
+  5)
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
@@ -1254,19 +1257,26 @@
               out
               context
               (array-ref paths.owner-ids (+ paths.offset index)))
+            (codec.surface-ast-write-name!
+              out
+              context
+              (ast.ast-decl-path-list-provenance-id (& paths) index 0))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-paths! [reader : codec.SurfaceAstReader]) : ast.AstDeclPathList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array String) (make-array String count)]
-    [owners : (__tl_dyn-array i64) (make-array i64 count)]
+    [owners : (__tl_dyn-array i64) (make-array i64 (* count 2))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
           (set! (array-ref slots index) (codec.surface-ast-read-string! reader))
           (set! (array-ref owners index) (codec.surface-ast-read-name! reader))
+          (set!
+            (array-ref owners (+ count index))
+            (codec.surface-ast-read-name! reader))
           (set! index (+ index 1))))
       (ast.AstDeclPathList slots owners 0 count true))))
 
@@ -1653,7 +1663,7 @@
         (make-array ast.AstParam 1)]
       [decl-slots : (__tl_dyn-array ast.AstDecl) (make-array ast.AstDecl 2)]
       [path-slots : (__tl_dyn-array String) (make-array String 2)]
-      [owner-slots : (__tl_dyn-array i64) (make-array i64 2)]
+      [owner-slots : (__tl_dyn-array i64) (make-array i64 4)]
       [module-slots : (__tl_dyn-array i64) (make-array i64 2)]
       [key-modules : (__tl_dyn-array String) (make-array String 1)]
       (begin
@@ -1702,6 +1712,8 @@
         (set! (array-ref path-slots 1) "test.tl")
         (set! (array-ref owner-slots 0) module-id)
         (set! (array-ref owner-slots 1) module-id)
+        (set! (array-ref owner-slots 2) path-id)
+        (set! (array-ref owner-slots 3) path-id)
         (set! (array-ref module-slots 0) module-id)
         (set! (array-ref module-slots 1) module-id)
         (set! (array-ref key-modules 0) "test.tl")
@@ -1771,6 +1783,20 @@
                                   (=
                                     (ast.ast-decl-list-len (& hydration.decls))
                                     2)
+                                  (surface_identity.surface-identity-string-eq?
+                                    (ci.intern-str
+                                      (ast.ast-decl-path-list-owner-id
+                                        (& hydration.paths)
+                                        0
+                                        -1))
+                                    "test.module")
+                                  (surface_identity.surface-identity-string-eq?
+                                    (ci.intern-str
+                                      (ast.ast-decl-path-list-provenance-id
+                                        (& hydration.paths)
+                                        0
+                                        -1))
+                                    "test.tl")
                                   (match (array-ref hydration.decls.slots 0)
                                     [(ast.AstDecl.DefFn
                                         _

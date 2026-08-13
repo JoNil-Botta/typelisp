@@ -33,6 +33,9 @@
     CompilerSymbolMap
     CompilerSymbolMap
     (__tl_dyn-array ast.AstDecl)
+    ;; One allocation with two capacity-sized lanes: effective module owners,
+    ;; then physical provenance. Keeping the sidecar in the existing field
+    ;; preserves TcContext's hot pass-by-value width.
     (__tl_dyn-array i64)
     i64))
 
@@ -482,7 +485,7 @@
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
     (make-array ast.AstDecl capacity)
-    (make-array i64 capacity)
+    (make-array i64 (* capacity 2))
     decl-count))
 
 (define (compiler-symbols-empty-with-decls [decl-count : i64]) : CompilerSymbols
@@ -637,7 +640,7 @@
             [next-decls : (__tl_dyn-array ast.AstDecl)
               (make-array ast.AstDecl next-capacity)]
             [next-owner-module-ids : (__tl_dyn-array i64)
-              (make-array i64 next-capacity)]
+              (make-array i64 (* next-capacity 2))]
             [index : i64 0]
             (begin
               (while (< index decl-count)
@@ -646,6 +649,9 @@
                   (set!
                     (array-ref next-owner-module-ids index)
                     (array-ref owner-module-ids index))
+                  (set!
+                    (array-ref next-owner-module-ids (+ next-capacity index))
+                    (array-ref owner-module-ids (+ capacity index)))
                   (set! index (+ index 1))))
               (CompilerSymbols
                 values
@@ -2315,6 +2321,17 @@
   [decls : ast.AstDeclList]
   [path : String]
   [owner-id : i64]) : ast.AstDeclPathList
+  (compiler-symbol-path-list-repeat-with-provenance
+    decls
+    path
+    owner-id
+    owner-id))
+
+(define (compiler-symbol-path-list-repeat-with-provenance
+  [decls : ast.AstDeclList]
+  [path : String]
+  [owner-id : i64]
+  [provenance-id : i64]) : ast.AstDeclPathList
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
@@ -2322,7 +2339,11 @@
     (begin
       (while (< index count)
         (begin
-          (ast.ast-decl-path-list-push-with-owner-id (&mut out) path owner-id)
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+            (&mut out)
+            path
+            owner-id
+            provenance-id)
           (set! index (+ index 1))))
       out)))
 
@@ -2543,14 +2564,20 @@
   [symbols : CompilerSymbols]
   [decl : ast.AstDecl]
   [index : i64]
-  [module-id : i64]) : unit
+  [module-id : i64]
+  [provenance-id : i64]) : unit
   (let
     [indexed : ast.AstDecl (compiler-symbol-indexed-decl decl)]
     (begin
       (set! (array-ref (compiler-symbols-decls symbols) index) indexed)
       (set!
         (array-ref (compiler-symbols-owner-module-ids symbols) index)
-        module-id))))
+        module-id)
+      (set!
+        (array-ref
+          (compiler-symbols-owner-module-ids symbols)
+          (+ (array-length (compiler-symbols-decls symbols)) index))
+        provenance-id))))
 
 (define (compiler-symbols-owner-module-id-at-index-or
   [symbols : CompilerSymbols]
@@ -2562,6 +2589,19 @@
     (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       fallback
       (array-ref owner-module-ids target))))
+
+(define (compiler-symbols-provenance-id-at-index-or
+  [symbols : CompilerSymbols]
+  [target : i64]
+  [fallback : i64]) : i64
+  (let
+    [owner-module-ids : (__tl_dyn-array i64)
+      (compiler-symbols-owner-module-ids symbols)]
+    (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
+      fallback
+      (array-ref
+        owner-module-ids
+        (+ (array-length (compiler-symbols-decls symbols)) target)))))
 
 (define (compiler-symbols-owner-id-at-index-or
   [symbols : CompilerSymbols]
@@ -2682,7 +2722,12 @@
               module-id)]
           [_
             (begin
-              (compiler-symbols-index-decl! symbols decl index module-id)
+              (compiler-symbols-index-decl!
+                symbols
+                decl
+                index
+                module-id
+                cbi.compiler-builtin-id-fix-empty)
               (match (compiler-symbols-add-decl-in-module
                 symbols
                 module-id
@@ -2743,6 +2788,11 @@
                   (& cur-paths)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
+              [path-provenance-id : i64
+                (ast.ast-decl-path-list-provenance-id
+                  (& cur-paths)
+                  0
+                  cbi.compiler-builtin-id-fix-empty)]
               [rest-paths : ast.AstDeclPathList
                 (match (ast.ast-decl-path-list-step cur-paths)
                   [(ast.AstDeclPathListStep.Cons _ path-rest)
@@ -2787,13 +2837,14 @@
                     [body : ast.AstDeclList (__tl-box-place body-box)]
                     [body-count : i64 (compiler-decl-list-index-count body)]
                     [body-paths : ast.AstDeclPathList
-                      (compiler-symbol-path-list-repeat
+                      (compiler-symbol-path-list-repeat-with-provenance
                         body
                         decl-path
                         (ast.ast-decl-path-list-owner-id
                           (& cur-paths)
                           0
-                          cbi.compiler-builtin-id-fix-empty))]
+                          cbi.compiler-builtin-id-fix-empty)
+                        path-provenance-id)]
                     (match (build-compiler-symbol-list-with-paths-in-module
                       all-decls
                       all-paths
@@ -2874,7 +2925,8 @@
                                       resolved-owner))
                                   resolved-owner)
                                 cur-module-id))
-                            cur-module-id))
+                            cur-module-id)
+                          path-provenance-id)
                         (match (compiler-symbols-add-decl-in-module
                           cur-symbols
                           cur-module-id
@@ -5832,6 +5884,40 @@
           field-id)
         (compiler-composite-triple-key-id generated-empty-id struct-id field-id)))))
 
+(define (compiler-symbols-defining-provenance-survives-owner-rewrite-ok?) : bool
+  (match (parser.parse-ast-source "(define chosen : i64 42)")
+    [(parser.ResultAstProgram.Ok program)
+      (let
+        [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+        [modules : ast.AstDeclModuleList (ast.ast-decl-module-list-new)]
+        [recorded-owner : i64 (ci.intern "dependency.source")]
+        [rewritten-owner : i64 (ci.intern "consumer.visible")]
+        [provenance : i64 (ci.intern "deps/example/src/lib.tl")]
+        (begin
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+            (&mut paths)
+            "deps/example/src/lib.tl"
+            recorded-owner
+            provenance)
+          (ast.ast-decl-module-list-push-id (&mut modules) rewritten-owner)
+          (let
+            [rewritten : ast.AstDeclPathList
+              (ast.ast-decl-path-list-with-modules paths modules)]
+            (match (build-compiler-symbols-with-paths program rewritten)
+              [(ResultCompilerSymbols.Ok symbols)
+                (and
+                  (=
+                    (ast.ast-decl-path-list-owner-id (& rewritten) 0 -1)
+                    rewritten-owner)
+                  (=
+                    (compiler-symbols-provenance-id-at-index-or symbols 0 -1)
+                    provenance)
+                  (=
+                    (ast.ast-decl-path-list-provenance-id (& rewritten) 0 -1)
+                    provenance))]
+              [(ResultCompilerSymbols.Err _) false]))))]
+    [(parser.ResultAstProgram.Err _) false]))
+
 (define (compiler-symbols-self-test) : i64
   (begin
     (cbi.compiler-builtin-refresh!)
@@ -5937,6 +6023,9 @@
                       unit
                       (set! ok false))
                     (if (compiler-symbols-module-id-identity-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-defining-provenance-survives-owner-rewrite-ok?)
                       unit
                       (set! ok false))
                     (if ok

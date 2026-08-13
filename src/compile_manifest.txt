@@ -722,6 +722,7 @@ decision|src/compiler_surface_hydrate.tl|package-agnostic tlci frontend surface 
 decision|src/compiler_prelude_surface_producer.tl|stdlib-prelude deployment producer for generic package surface sections (#5519/#5522): cold-loads the fixed closure, captures its portable identity/AST payload, and packages it behind a byte-only boundary from native tlci generation
 
 decision|src/compiler_comptime_diagnostics_core.tl|shared interpreted/native comptime fuel diagnostic prefix (#2656): main-less helper module imported by compiler_ctfe and tlci_loader so status-2 native failures retain interpreted message parity before appending the registered macro name
+decision|src/compiler_dependency_tlci.tl|dependency TLCI discovery, trust admission, mapping lifecycle, and defining-module catalog registry (#5482): main-less helper module imported by build_cli_core and check_cli_core; exercised by their selfhost cases and compiler dependency registry self-tests
 
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader

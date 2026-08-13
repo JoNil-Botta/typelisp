@@ -83437,6 +83437,11 @@
   (macro-decl-generation-active bool)
   (macro-expand-program-structurally-changed bool)
   (macro-active-decl-owner-id i64)
+  (macro-active-decl-provenance-id i64)
+  (macro-dependency-catalog-handle cload.CompilerLoadDependencyCatalogHandle)
+  ;; -1 means no dependency catalog. Embedded stdlib is selected through the
+  ;; same post-resolution helper using its existing trusted-source route.
+  (macro-active-dependency-catalog-slot i64)
   (macro-expand-stdlib-tlci-route-active bool)
   (dotted-macro-journal-pools (__tl_dyn-array ast.AstNodePoolContext))
   (dotted-macro-journal-ids (__tl_dyn-array i64))
@@ -83495,6 +83500,10 @@
     false
     false
     cbi.compiler-builtin-id-fix-empty
+    cbi.compiler-builtin-id-fix-empty
+    (cload.compiler-load-session-state-dependency-catalog-handle
+      (cload.compiler-load-serial-test-session-state))
+    -1
     false
     (array.make-array ast.AstNodePoolContext 0)
     (array.make-array i64 0)
@@ -85462,9 +85471,13 @@
             (begin
               (set!
                 result
-                (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                   head
                   (ast.ast-decl-path-list-owner-id
+                    (& cursor)
+                    0
+                    cbi.compiler-builtin-id-fix-empty)
+                  (ast.ast-decl-path-list-provenance-id
                     (& cursor)
                     0
                     cbi.compiler-builtin-id-fix-empty)
@@ -85481,10 +85494,14 @@
       (while (> index 0)
         (begin
           (set! index (- index 1))
-          (ast.ast-decl-path-list-push-with-owner-id
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
             (&mut out)
             (ast.ast-decl-path-list-get (& items) index "")
             (ast.ast-decl-path-list-owner-id
+              (& items)
+              index
+              cbi.compiler-builtin-id-fix-empty)
+            (ast.ast-decl-path-list-provenance-id
               (& items)
               index
               cbi.compiler-builtin-id-fix-empty))))
@@ -85497,10 +85514,10 @@
     items
     (let
       [count : i64 (ast.ast-decl-path-list-len (& items))]
-      [slots : (__tl_dyn-array String)
-        (array.make-array String (+ reserve count))]
-      [owner-ids : (__tl_dyn-array i64)
-        (array.make-array i64 (+ reserve count))]
+      [capacity : i64 (+ reserve count)]
+      [items-capacity : i64 (array-length items.slots)]
+      [slots : (__tl_dyn-array String) (array.make-array String capacity)]
+      [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
       (begin
         (ast.ast-decl-path-list-copy-to
           (&mut slots)
@@ -85516,6 +85533,13 @@
           reserve
           0
           count)
+        (ast.ast-decl-module-list-copy-to
+          (&mut owner-ids)
+          (& items.owner-ids)
+          (+ items-capacity items.offset)
+          (+ capacity reserve)
+          0
+          count)
         (ast.AstDeclPathList slots owner-ids reserve count true)))))
 
 (define (macro-decl-path-list-append-from
@@ -85526,10 +85550,14 @@
     [count : i64 (ast.ast-decl-path-list-len items)]
     (while (< index count)
       (begin
-        (ast.ast-decl-path-list-push-with-owner-id
+        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
           out
           (ast.ast-decl-path-list-get items index "")
           (ast.ast-decl-path-list-owner-id
+            items
+            index
+            cbi.compiler-builtin-id-fix-empty)
+          (ast.ast-decl-path-list-provenance-id
             items
             index
             cbi.compiler-builtin-id-fix-empty))
@@ -85543,6 +85571,8 @@
     [right-len : i64 (ast.ast-decl-path-list-len (& right))]
     [right-slots : (__tl_dyn-array String) right.slots]
     [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
+    [left-capacity : i64 (array-length left.slots)]
+    [right-capacity : i64 (array-length right.slots)]
     (if (and
       (<= left-len right.offset)
       right.prependable
@@ -85566,6 +85596,13 @@
             (& left.owner-ids)
             left.offset
             new-offset
+            0
+            left-len)
+          (ast.ast-decl-module-list-copy-to
+            (&mut right-owner-ids)
+            (& left.owner-ids)
+            (+ left-capacity left.offset)
+            (+ right-capacity new-offset)
             0
             left-len)
           (ast.AstDeclPathList
@@ -85691,7 +85728,12 @@
       [alias-left : ast.AstDeclPathList
         (begin
           (set! (array-ref right.slots 0) "alias")
-          (set! (array-ref right.owner-ids 0) alias-id)
+          (ast.ast-decl-path-list-set-owner-and-provenance-id-at-physical-index!
+            right.owner-ids
+            (array-length right.slots)
+            0
+            alias-id
+            alias-id)
           (ast.AstDeclPathList right.slots right.owner-ids 0 1 false))]
       [copied : ast.AstDeclPathList
         (macro-decl-path-list-append alias-left right)]
@@ -85797,12 +85839,22 @@
                   (& cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
+              [provenance-id : i64
+                (ast.ast-decl-path-list-provenance-id
+                  (& cursor)
+                  0
+                  cbi.compiler-builtin-id-fix-empty)]
               (match (ast.ast-decl-path-list-step cursor)
                 [(ast.AstDeclPathListStep.Nil) (set! done true)]
                 [(ast.AstDeclPathListStep.Cons path rest)
                   (begin
                     (set! (array-ref suffix.slots write-index) path)
-                    (set! (array-ref suffix.owner-ids write-index) owner-id)
+                    (ast.ast-decl-path-list-set-owner-and-provenance-id-at-physical-index!
+                      suffix.owner-ids
+                      (array-length suffix.slots)
+                      write-index
+                      owner-id
+                      provenance-id)
                     (set! write-index (- write-index 1))
                     (set! cursor rest))])))
           (ast.AstDeclPathList
@@ -86007,6 +86059,17 @@
       data.cursor
       cbi.compiler-builtin-id-fix-empty)))
 
+(define (macro-segmented-program-current-provenance-id [state : TcJobState]) : i64
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data data.head)]
+    (ast.ast-decl-path-list-provenance-id
+      (& node.paths)
+      data.cursor
+      cbi.compiler-builtin-id-fix-empty)))
+
 (define (macro-segmented-program-advance! [state : TcJobState]) : unit
   (let
     [address : i64 (tc-job-state-macro-program-view-address state)]
@@ -86063,7 +86126,7 @@
         1
         decl-count)]
     [slots : (__tl_dyn-array String) (array.make-array String capacity)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
     [index : i64 0]
     (begin
       (while (< index decl-count)
@@ -86074,6 +86137,12 @@
           (set!
             (array-ref owner-ids index)
             (ast.ast-decl-path-list-owner-id
+              (& paths)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+          (set!
+            (array-ref owner-ids (+ capacity index))
+            (ast.ast-decl-path-list-provenance-id
               (& paths)
               index
               cbi.compiler-builtin-id-fix-empty))
@@ -86544,7 +86613,7 @@
     [decl-slots : (__tl_dyn-array ast.AstDecl)
       (array.make-array ast.AstDecl capacity)]
     [path-slots : (__tl_dyn-array String) (array.make-array String capacity)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
@@ -86573,6 +86642,12 @@
               (& prefix-paths)
               (- (- prefix-count 1) index)
               cbi.compiler-builtin-id-fix-empty))
+          (set!
+            (array-ref owner-ids (+ capacity index))
+            (ast.ast-decl-path-list-provenance-id
+              (& prefix-paths)
+              (- (- prefix-count 1) index)
+              cbi.compiler-builtin-id-fix-empty))
           (set! index (+ index 1))))
       (let
         [node-address : i64 data.head]
@@ -86596,6 +86671,12 @@
                   (set!
                     (array-ref owner-ids index)
                     (ast.ast-decl-path-list-owner-id
+                      (& paths)
+                      node-index
+                      cbi.compiler-builtin-id-fix-empty))
+                  (set!
+                    (array-ref owner-ids (+ capacity index))
+                    (ast.ast-decl-path-list-provenance-id
                       (& paths)
                       node-index
                       cbi.compiler-builtin-id-fix-empty))
@@ -87113,11 +87194,16 @@
     (begin
       (while (< index count)
         (begin
-          (ast.ast-decl-path-list-push-with-owner-id
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
             (&mut out)
             path
             (if (>= (tc-macro-walk-field state macro-active-decl-owner-id) 0)
               (tc-macro-walk-field state macro-active-decl-owner-id)
+              cbi.compiler-builtin-id-fix-empty)
+            (if (>=
+              (tc-macro-walk-field state macro-active-decl-provenance-id)
+              0)
+              (tc-macro-walk-field state macro-active-decl-provenance-id)
               cbi.compiler-builtin-id-fix-empty))
           (set! index (+ index 1))))
       out)))
@@ -94908,16 +94994,36 @@
 ;; path, use the indexed owner module so the transformer still runs as its
 ;; original definition module. The dense declaration ID is carried with it.
 (define (macro-decl-at-index-with-owner-module
+  [ctx : TcContext]
   [symbols : csym.CompilerSymbols]
   [target : i64]
   [module-id : i64]) : MacroMaybeDecl
-  (match (csym.compiler-symbols-decl-at-index symbols target)
-    [(parser.ResultAstDecl.Ok decl)
-      (macro-decl-from-decl
-        decl
-        (macro-decl-owner-module-or symbols target module-id)
-        target)]
-    [(parser.ResultAstDecl.Err _) (MacroMaybeDecl.No)]))
+  (let
+    [provenance-id : i64
+      (csym.compiler-symbols-provenance-id-at-index-or
+        symbols
+        target
+        cbi.compiler-builtin-id-fix-empty)]
+    [catalog-slot : i64
+      (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-id
+        (tc-macro-walk-field
+          (tc-context-macro-state ctx)
+          macro-dependency-catalog-handle)
+        provenance-id)]
+    (begin
+      ;; Catalog selection happens only after normal visibility, alias, and
+      ;; shadowing lookup has produced this dense declaration index.
+      (tc-macro-walk-set!
+        (tc-context-macro-state ctx)
+        macro-active-dependency-catalog-slot
+        catalog-slot)
+      (match (csym.compiler-symbols-decl-at-index symbols target)
+        [(parser.ResultAstDecl.Ok decl)
+          (macro-decl-from-decl
+            decl
+            (macro-decl-owner-module-or symbols target module-id)
+            target)]
+        [(parser.ResultAstDecl.Err _) (MacroMaybeDecl.No)]))))
 
 ;; The module accumulator and the current module compare as INTERN IDS: the
 ;; previous String-based walk converted every AstDecl.Module's interned name
@@ -97518,6 +97624,7 @@
     ;; symbol table.
     (if (csym.compiler-symbols-handle-found? macro-handle)
       (match (macro-decl-at-index-with-owner-module
+        ctx
         (tc-context-symbols ctx)
         (csym.compiler-symbol-handle-index macro-handle)
         target-module-id)
@@ -97625,6 +97732,7 @@
 ;; precedence over the prelude. Returns MacroMaybeDecl.No (an ordinary call, not an
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
 (define (macro-prelude-resolve-module
+  [ctx : TcContext]
   [symbols : csym.CompilerSymbols]
   [module-id : i64]
   [lookup-id : i64]) : ResultMacroCallDecl
@@ -97640,6 +97748,7 @@
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? handle)
       (match (macro-decl-at-index-with-owner-module
+        ctx
         symbols
         (csym.compiler-symbol-handle-index handle)
         module-id)
@@ -97662,9 +97771,11 @@
       (ResultMacroCallDecl.Ok (MacroMaybeDecl.No)))))
 
 (define (macro-prelude-resolve
+  [ctx : TcContext]
   [symbols : csym.CompilerSymbols]
   [lookup-id : i64]) : ResultMacroCallDecl
   (match (macro-prelude-resolve-module
+    ctx
     symbols
     cbi.compiler-builtin-id-core-macros-module
     lookup-id)
@@ -97674,6 +97785,7 @@
           ;; Compatibility fallback for sources loaded with the old module
           ;; identity before the core_macros spelling migration.
           (macro-prelude-resolve-module
+            ctx
             symbols
             cbi.compiler-builtin-id-core-macros-legacy-module
             lookup-id)]
@@ -97685,7 +97797,7 @@
   [_decls : ast.AstDeclList]
   [lookup-name-id : i64]
   [_call-expr : ast.AstExpr]) : ResultMacroCallDecl
-  (macro-prelude-resolve (tc-context-symbols ctx) lookup-name-id))
+  (macro-prelude-resolve ctx (tc-context-symbols ctx) lookup-name-id))
 
 (defstruct TcMacroResultIdentityStateData
   (table-id i64)
@@ -97826,6 +97938,7 @@
     ;; the symbol table.
     (if (csym.compiler-symbols-handle-found? handle)
       (match (macro-decl-at-index-with-owner-module
+        ctx
         (tc-context-symbols ctx)
         (csym.compiler-symbol-handle-index handle)
         target-module-id)
@@ -98012,6 +98125,7 @@
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? handle)
       (match (macro-decl-at-index-with-owner-module
+        ctx
         (tc-context-symbols ctx)
         (csym.compiler-symbol-handle-index handle)
         module-id)
@@ -98189,71 +98303,78 @@
   [func : ast.AstExpr]
   [decls : ast.AstDeclList]
   [call-expr : ast.AstExpr]) : ResultMacroCallDecl
-  (match func
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (macro-call-decl ctx inner decls call-expr))]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (macro-call-decl ctx inner decls call-expr))]
-    [(ast.AstExpr.Var name)
-      (if (or
-        (csym.compiler-composite-pair-key-id? name)
-        (csym.compiler-composite-triple-key-id? name))
-        (macro-call-decl-from-name
-          ctx
-          decls
-          (tc-context-module ctx)
-          (macro-source-module-id (tc-context-module-id ctx))
-          (tc-nominal-name-id-display name)
-          name
-          name
-          -1
-          call-expr)
-        (if (tc-hygiene-global-name-id? name)
-          (if (macro-hygiene-global-id? name)
-            (let
-              [module-id : i64 (macro-hygiene-global-module-id name)]
-              [lookup-name-id : i64
-                (macro-hygiene-global-source-name-id-or name -1)]
-              (macro-call-decl-from-hygiene-name
-                ctx
-                decls
-                (macro-decl-module-display module-id)
-                (macro-source-module-id module-id)
-                (ci.intern-str lookup-name-id)
-                lookup-name-id
-                call-expr))
-            (match (tc-hygiene-global-decode (tc-env-key-name-text name))
-              [(TcHygieneGlobalName.Legacy lookup-name)
-                (macro-call-decl-from-hygiene-name
-                  ctx
-                  decls
-                  (tc-context-module ctx)
-                  (macro-source-module-id (ci.intern-qualified-module-id name))
-                  lookup-name
-                  (macro-hygiene-global-source-name-id-or name -1)
-                  call-expr)]
-              [(TcHygieneGlobalName.Context module lookup-name)
-                (macro-call-decl-from-hygiene-name
-                  ctx
-                  decls
-                  module
-                  (macro-source-module-id (ci.intern-qualified-module-id name))
-                  lookup-name
-                  (macro-hygiene-global-source-name-id-or name -1)
-                  call-expr)]))
-          (macro-call-decl-from-source-name
+  (begin
+    (tc-macro-walk-set!
+      (tc-context-macro-state ctx)
+      macro-active-dependency-catalog-slot
+      -1)
+    (match func
+      [(ast.AstExpr.Spanned inner-box _)
+        (let
+          [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+          (macro-call-decl ctx inner decls call-expr))]
+      [(ast.AstExpr.MacroExpansion inner-box _ _)
+        (let
+          [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+          (macro-call-decl ctx inner decls call-expr))]
+      [(ast.AstExpr.Var name)
+        (if (or
+          (csym.compiler-composite-pair-key-id? name)
+          (csym.compiler-composite-triple-key-id? name))
+          (macro-call-decl-from-name
             ctx
             decls
             (tc-context-module ctx)
             (macro-source-module-id (tc-context-module-id ctx))
-            (tc-hygiene-name-text-id name)
+            (tc-nominal-name-id-display name)
             name
-            call-expr)))]
-    [_ (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))
+            name
+            -1
+            call-expr)
+          (if (tc-hygiene-global-name-id? name)
+            (if (macro-hygiene-global-id? name)
+              (let
+                [module-id : i64 (macro-hygiene-global-module-id name)]
+                [lookup-name-id : i64
+                  (macro-hygiene-global-source-name-id-or name -1)]
+                (macro-call-decl-from-hygiene-name
+                  ctx
+                  decls
+                  (macro-decl-module-display module-id)
+                  (macro-source-module-id module-id)
+                  (ci.intern-str lookup-name-id)
+                  lookup-name-id
+                  call-expr))
+              (match (tc-hygiene-global-decode (tc-env-key-name-text name))
+                [(TcHygieneGlobalName.Legacy lookup-name)
+                  (macro-call-decl-from-hygiene-name
+                    ctx
+                    decls
+                    (tc-context-module ctx)
+                    (macro-source-module-id
+                      (ci.intern-qualified-module-id name))
+                    lookup-name
+                    (macro-hygiene-global-source-name-id-or name -1)
+                    call-expr)]
+                [(TcHygieneGlobalName.Context module lookup-name)
+                  (macro-call-decl-from-hygiene-name
+                    ctx
+                    decls
+                    module
+                    (macro-source-module-id
+                      (ci.intern-qualified-module-id name))
+                    lookup-name
+                    (macro-hygiene-global-source-name-id-or name -1)
+                    call-expr)]))
+            (macro-call-decl-from-source-name
+              ctx
+              decls
+              (tc-context-module ctx)
+              (macro-source-module-id (tc-context-module-id ctx))
+              (tc-hygiene-name-text-id name)
+              name
+              call-expr)))]
+      [_ (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])))
 
 (define (macro-call-decl-with-context
   [ctx : TcContext]
@@ -100053,6 +100174,57 @@
             (compiler-tc-stdlib-tlci-entry-resolution-finish!))
           lookup)))))
 
+(define (macro-dependency-tlci-catalog-lookup
+  [ctx : TcContext]
+  [identity : String]) : cload.CompilerLoadDependencyCatalogLookup
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [slot : i64
+      (tc-macro-walk-field state macro-active-dependency-catalog-slot)]
+    (cload.compiler-load-dependency-catalog-handle-lookup-macro
+      (tc-macro-walk-field state macro-dependency-catalog-handle)
+      slot
+      identity)))
+
+;; Both embedded stdlib and dependency catalogs enter through this selection
+;; contract after ordinary macro lookup has chosen the defining declaration.
+;; Dependency entries deliberately retain their full status but are never
+;; dispatched here; #2755 owns dependency-native execution and commit.
+(cfg
+  embedded-stdlib-tlci
+  (defenum MacroTlciCatalogSelection
+    (None)
+    (Dependency)
+    (EmbeddedResolved tlci_loader_support.TlciResolvedMacroEntry)
+    (EmbeddedShell tlci_loader_support.TlciResolvedMacroEntry)
+    (EmbeddedMissing)
+    (EmbeddedUnavailable)))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-tlci-catalog-select
+    [ctx : TcContext]
+    [definition-module : String]
+    [identity : String]) : MacroTlciCatalogSelection
+    (match (macro-dependency-tlci-catalog-lookup ctx identity)
+      [(cload.CompilerLoadDependencyCatalogLookup.NoCatalog)
+        (if (and
+          (tc-macro-walk-field
+            (tc-context-macro-state ctx)
+            macro-expand-stdlib-tlci-route-active)
+          (cload.compiler-load-embedded-stdlib-module-id? definition-module))
+          (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
+            [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
+              (MacroTlciCatalogSelection.EmbeddedResolved resolved)]
+            [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell resolved)
+              (MacroTlciCatalogSelection.EmbeddedShell resolved)]
+            [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
+              MacroTlciCatalogSelection.EmbeddedMissing]
+            [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
+              MacroTlciCatalogSelection.EmbeddedUnavailable])
+          MacroTlciCatalogSelection.None)]
+      [_ MacroTlciCatalogSelection.Dependency])))
+
 (define (macro-note-stdlib-tlci-route
   [state : TcMacroState]
   [definition-module : String]
@@ -100560,43 +100732,38 @@
     [ret : ast.AstType]
     [env : ctfe_support.CtfeEnv]
     [call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
-    (if (or
-      (not
-        (tc-macro-walk-field
-          (tc-context-macro-state ctx)
-          macro-expand-stdlib-tlci-route-active))
-      (not (cload.compiler-load-embedded-stdlib-module-id? definition-module)))
-      MacroNativeStdlibTlciResult.No
-      (let
-        [identity : String
-          (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
-            macro-name
-            (str_cat.str-cat definition-module "/" macro-name))]
-        (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
-          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
-            (macro-try-stdlib-tlci-native-resolved
-              (tc-context-pools ctx)
-              identity
-              resolved
-              params
-              ret
-              env
-              call-expr
-              (array.make-array ctfe_support.CompilerCtfeValue 8)
-              params.len
-              false)]
-          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
-            (begin
-              (cfg
-                compile-profile
-                (set!
-                  compiler-tc-macro-stdlib-tlci-shell-cache-hits
-                  (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1)))
-              MacroNativeStdlibTlciResult.No)]
-          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
-            MacroNativeStdlibTlciResult.No]
-          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
-            MacroNativeStdlibTlciResult.No])))))
+    (let
+      [identity : String
+        (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
+          macro-name
+          (str_cat.str-cat definition-module "/" macro-name))]
+      (match (macro-tlci-catalog-select ctx definition-module identity)
+        [(MacroTlciCatalogSelection.None) MacroNativeStdlibTlciResult.No]
+        [(MacroTlciCatalogSelection.Dependency) MacroNativeStdlibTlciResult.No]
+        [(MacroTlciCatalogSelection.EmbeddedResolved resolved)
+          (macro-try-stdlib-tlci-native-resolved
+            (tc-context-pools ctx)
+            identity
+            resolved
+            params
+            ret
+            env
+            call-expr
+            (array.make-array ctfe_support.CompilerCtfeValue 8)
+            params.len
+            false)]
+        [(MacroTlciCatalogSelection.EmbeddedShell _)
+          (begin
+            (cfg
+              compile-profile
+              (set!
+                compiler-tc-macro-stdlib-tlci-shell-cache-hits
+                (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1)))
+            MacroNativeStdlibTlciResult.No)]
+        [(MacroTlciCatalogSelection.EmbeddedMissing)
+          MacroNativeStdlibTlciResult.No]
+        [(MacroTlciCatalogSelection.EmbeddedUnavailable)
+          MacroNativeStdlibTlciResult.No]))))
 
 (cfg
   (not embedded-stdlib-tlci)
@@ -100698,21 +100865,18 @@
     [ret : ast.AstType]
     [expanded-args : ast.AstExprList]
     [call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
-    (if (or
-      (not
-        (tc-macro-walk-field
-          (tc-context-macro-state ctx)
-          macro-expand-stdlib-tlci-route-active))
-      (> params.len 8)
-      (not (cload.compiler-load-embedded-stdlib-module-id? fallback-module)))
+    (if (> params.len 8)
       MacroDirectStdlibTlciResult.No
       (let
         [identity : String
           (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
             macro-name
             (str_cat.str-cat fallback-module "/" macro-name))]
-        (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
-          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
+        (match (macro-tlci-catalog-select ctx fallback-module identity)
+          [(MacroTlciCatalogSelection.None) MacroDirectStdlibTlciResult.No]
+          [(MacroTlciCatalogSelection.Dependency)
+            MacroDirectStdlibTlciResult.BoundFallback]
+          [(MacroTlciCatalogSelection.EmbeddedResolved resolved)
             (begin
               (cfg compile-profile (compiler-tc-walk-direct-marshal-start!))
               (match (let
@@ -100836,15 +101000,15 @@
                         (begin
                           (macro-note-stdlib-tlci-resolved-fallback!)
                           MacroDirectStdlibTlciResult.BoundFallback)]))]))]
-          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
+          [(MacroTlciCatalogSelection.EmbeddedShell _)
             (begin
               (macro-note-stdlib-tlci-shell-fallback!)
               MacroDirectStdlibTlciResult.BoundFallback)]
-          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
+          [(MacroTlciCatalogSelection.EmbeddedMissing)
             (begin
               (macro-note-stdlib-tlci-missing-fallback!)
               MacroDirectStdlibTlciResult.BoundFallback)]
-          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
+          [(MacroTlciCatalogSelection.EmbeddedUnavailable)
             (begin
               (macro-note-stdlib-tlci-unavailable-fallback!)
               MacroDirectStdlibTlciResult.BoundFallback)])))))
@@ -100852,18 +101016,25 @@
 (cfg
   (not embedded-stdlib-tlci)
   (define (macro-try-stdlib-tlci-direct-expression
-    [_ctx : TcContext]
+    [ctx : TcContext]
     [_decls : ast.AstDeclList]
-    [_fallback-module : String]
+    [fallback-module : String]
     [_fallback-module-id : i64]
     [_type-env : TcTypeEnv]
     [_macro-name-id : i64]
-    [_macro-name : String]
+    [macro-name : String]
     [_params : ast.AstMacroParamList]
     [_ret : ast.AstType]
     [_expanded-args : ast.AstExprList]
     [_call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
-    MacroDirectStdlibTlciResult.No))
+    (match (macro-dependency-tlci-catalog-lookup
+      ctx
+      (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
+        macro-name
+        (str_cat.str-cat fallback-module "/" macro-name)))
+      [(cload.CompilerLoadDependencyCatalogLookup.NoCatalog)
+        MacroDirectStdlibTlciResult.No]
+      [_ MacroDirectStdlibTlciResult.BoundFallback])))
 
 (define (macro-prepare-transformer-pools! [ctx : TcContext]) : unit
   ;; Argument normalization may extend the owned context while the global
@@ -104749,10 +104920,14 @@
           [path : String (ast.ast-decl-path-list-get (& paths) index "")]
           [owned-path : String (string.copy (& path))]
           (begin
-            (ast.ast-decl-path-list-push-with-owner-id
+            (ast.ast-decl-path-list-push-with-owner-and-provenance-id
               (&mut out)
               owned-path
               (ast.ast-decl-path-list-owner-id
+                (& paths)
+                index
+                cbi.compiler-builtin-id-fix-empty)
+              (ast.ast-decl-path-list-provenance-id
                 (& paths)
                 index
                 cbi.compiler-builtin-id-fix-empty))
@@ -107036,11 +107211,18 @@
                   (macro-segmented-program-current-path walk-state)]
                 [decl-owner-id : i64
                   (macro-segmented-program-current-owner-id walk-state)]
+                [decl-provenance-id : i64
+                  (macro-segmented-program-current-provenance-id walk-state)]
                 [_set-decl-owner : unit
                   (tc-macro-walk-set!
                     macro-state
                     macro-active-decl-owner-id
                     decl-owner-id)]
+                [_set-decl-provenance : unit
+                  (tc-macro-walk-set!
+                    macro-state
+                    macro-active-decl-provenance-id
+                    decl-provenance-id)]
                 (match decl
                   [(ast.AstDecl.Module next-module)
                     (begin
@@ -107052,9 +107234,10 @@
                         (ast.ast-decl-list-prepend-builder decl out-rev))
                       (set!
                         out-paths-rev
-                        (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                        (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                           decl-path
                           decl-owner-id
+                          decl-provenance-id
                           out-paths-rev))
                       (macro-segmented-program-advance! walk-state)
                       (macro-segmented-program-prefix-set!
@@ -107485,11 +107668,12 @@
                             ;; spliced) nodes.
                             [_capture-before-load : unit
                               (tc-context-capture-active-pools! cur-ctx)]
-                            (match (macro-materialize-generated-import
+                            (match (macro-materialize-generated-import-with-provenance
                               load-state
                               decl
                               decl-path
                               decl-owner-id
+                              decl-provenance-id
                               cur-module
                               cur-module-id
                               cur-materialize-seen
@@ -107637,9 +107821,10 @@
                             (ast.ast-decl-list-prepend-builder decl out-rev))
                           (set!
                             out-paths-rev
-                            (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                            (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
                               decl-path
                               decl-owner-id
+                              decl-provenance-id
                               out-paths-rev))
                           (macro-segmented-program-advance! walk-state)
                           (macro-segmented-program-prefix-set!
@@ -108335,11 +108520,12 @@
   (tc-canonical-diagnostic
     (cdiag.compiler-diagnostic-from-ast-span path span message)))
 
-(define (macro-materialize-generated-import
+(define (macro-materialize-generated-import-with-provenance
   [load-state : cload.CompilerLoadSessionState]
   [decl : ast.AstDecl]
   [decl-path : String]
   [decl-owner-id : i64]
+  [decl-provenance-id : i64]
   [module : String]
   [module-id : i64]
   [seen : sym_i64_env.SymI64Env]
@@ -108350,9 +108536,10 @@
     [(MacroMaybeGeneratedNormalImport.No)
       (ResultMacroMaterializeImport.Ok
         (ast.ast-decl-cons decl (ast.ast-decl-list-new))
-        (ast.ast-decl-path-list-prepend-builder-with-owner-id
+        (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
           decl-path
           decl-owner-id
+          decl-provenance-id
           (ast.ast-decl-path-list-new))
         seen)]
     [(MacroMaybeGeneratedNormalImport.Some
@@ -108430,6 +108617,7 @@
                   [tail-paths : ast.AstDeclPathList
                     (cload.compiler-load-paths-after-import
                       decl-path
+                      decl-provenance-id
                       decl-owner-id
                       after-import-alias
                       imported-decls
@@ -108448,6 +108636,32 @@
             (ResultMacroMaterializeImport.Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
+;; Compatibility entry point for focused callers that construct generated
+;; declarations without a distinct physical provenance lane.
+(define (macro-materialize-generated-import
+  [load-state : cload.CompilerLoadSessionState]
+  [decl : ast.AstDecl]
+  [decl-path : String]
+  [decl-owner-id : i64]
+  [module : String]
+  [module-id : i64]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultMacroMaterializeImport
+  (macro-materialize-generated-import-with-provenance
+    load-state
+    decl
+    decl-path
+    decl-owner-id
+    decl-owner-id
+    module
+    module-id
+    seen
+    stdlib-roots
+    cfgs
+    pools))
+
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [program : ast.AstProgram]
@@ -108462,6 +108676,14 @@
     (tc-macro-state-bind-source-names!
       (tc-job-state-macro-state job-state)
       source-names)
+    (tc-macro-walk-set!
+      (tc-job-state-macro-state job-state)
+      macro-dependency-catalog-handle
+      (cload.compiler-load-session-state-dependency-catalog-handle load-state))
+    (tc-macro-walk-set!
+      (tc-job-state-macro-state job-state)
+      macro-active-dependency-catalog-slot
+      -1)
     ;; Legacy macro expansion still reads compatibility globals; bridge the
     ;; compile-owned pool and interner state at the phase boundary.
     (ast.ast-node-pool-context-install! pools)

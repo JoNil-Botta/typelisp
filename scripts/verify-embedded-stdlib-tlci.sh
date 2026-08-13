@@ -40,6 +40,8 @@ WORKDIR=target/embedded-stdlib-tlci-verify
 EMBEDDED_IMAGE=target/embedded-stdlib-tlci/stdlib.tlci
 IMAGE_A=$WORKDIR/stdlib-a.tlci
 IMAGE_B=$WORKDIR/stdlib-b.tlci
+ENVELOPE_A=$IMAGE_A.tlch
+ENVELOPE_B=$IMAGE_B.tlch
 FULL_BLOCKER_IMAGE=$WORKDIR/stdlib-full-blockers.tlci
 FULL_BLOCKER_STDOUT=$WORKDIR/full-blockers.stdout
 FULL_BLOCKER_STDERR=$WORKDIR/full-blockers.stderr
@@ -99,14 +101,23 @@ scripts/build-embedded-stdlib-tlci.sh \
     "$COMPILER" "$EMBEDDED_IMAGE" "$HOST_TARGET" > "$COVERAGE_LOG"
 cat "$COVERAGE_LOG"
 cp "$EMBEDDED_IMAGE" "$IMAGE_A"
+cp "$EMBEDDED_IMAGE.tlch" "$ENVELOPE_A"
 scripts/build-embedded-stdlib-tlci.sh \
     "$COMPILER" "$EMBEDDED_IMAGE" "$HOST_TARGET"
 cp "$EMBEDDED_IMAGE" "$IMAGE_B"
+cp "$EMBEDDED_IMAGE.tlch" "$ENVELOPE_B"
 
 if ! cmp -s "$IMAGE_A" "$IMAGE_B"; then
     echo "embedded stdlib tlci build is not deterministic" >&2
     exit 1
 fi
+if ! cmp -s "$ENVELOPE_A" "$ENVELOPE_B"; then
+    echo "embedded stdlib tlci envelope build is not deterministic" >&2
+    exit 1
+fi
+"$COMPILER" run tools/embedded-stdlib-tlci/verify-envelope.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$IMAGE_A" "$ENVELOPE_A"
 
 # Ratchet the native-coverage numbers. The native entry count overstates
 # coverage on its own: a native entry can still hand single match arms back to
@@ -157,9 +168,16 @@ SURFACE=target/embedded-stdlib-tlci/prelude-surface-$HOST_TARGET.rodata
     "$MANIFEST" stdlib "$FULL_BLOCKER_IMAGE" "$HOST_TARGET" \
     "$PRODUCER_IDENTITY" "$SURFACE" --full-blockers \
     > "$FULL_BLOCKER_STDOUT" 2> "$FULL_BLOCKER_STDERR"
+"$COMPILER" run tools/embedded-stdlib-tlci/encode-envelope.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$FULL_BLOCKER_IMAGE" "$FULL_BLOCKER_IMAGE.tlch"
 
 if ! cmp -s "$IMAGE_A" "$FULL_BLOCKER_IMAGE"; then
     echo "full-blocker diagnostics changed the embedded stdlib tlci image" >&2
+    exit 1
+fi
+if ! cmp -s "$ENVELOPE_A" "$FULL_BLOCKER_IMAGE.tlch"; then
+    echo "full-blocker diagnostics changed the embedded stdlib tlci envelope" >&2
     exit 1
 fi
 if ! cmp -s "$COVERAGE_LOG" "$FULL_BLOCKER_STDOUT"; then

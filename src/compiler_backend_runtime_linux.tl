@@ -868,6 +868,24 @@ tl_region_reset:
         base)
       base)))
 
+;; `tl_memcpy` is memmove: it copies BACKWARD when the destination overlaps and
+;; sits above the source. `tl_mem_copy_fwd` is deliberately NOT that. It is the
+;; exact machine equivalent of the source-level forward byte loop
+;; `for (i = 0; i < n; i += 1) dst[i] = src[i]`, for EVERY argument triple,
+;; which is what licenses the copy_call rewrite (compiler_optimize.tl) to
+;; replace such a loop with a call to it without proving the ranges disjoint.
+;; The three cases:
+;;   * `dst <= src`  -- every read at src+k precedes the only write that could
+;;     clobber it (the write to dst+j = src+k lands at j = k + (src - dst) >= k,
+;;     and within a wide chunk all reads precede all writes), so the wide
+;;     forward copy is byte-for-byte the loop's result.
+;;   * `dst >= src + n` -- the ranges are disjoint; likewise exact.
+;;   * `src < dst < src + n` -- the loop PROPAGATES (it re-reads bytes it just
+;;     wrote), which neither a wide copy nor memmove reproduces. `rep movsb` is
+;;     forward and byte-granular, so it is that propagation exactly.
+;; A non-positive count writes nothing: `rep movsb` reads %rcx as UNSIGNED, so
+;; a negative count would run ~2^64 copies; the explicit `jle` is load-bearing.
+;; Arguments are SysV: %rdi = dst, %rsi = src, %rdx = count (bytes).
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
     .type tl_memcpy,@function
@@ -900,6 +918,22 @@ tl_memcpy_fresh:
     movq %rdx, %rcx
     jmp .Ltl_memcpy_fwd
     .size tl_memcpy_fresh, . - tl_memcpy_fresh
+    .globl tl_mem_copy_fwd
+    .type tl_mem_copy_fwd,@function
+tl_mem_copy_fwd:
+    testq %rdx, %rdx
+    jle .Ltl_mem_copy_fwd_done
+    movq %rdx, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_memcpy_fwd
+    movq %rsi, %rax
+    addq %rdx, %rax
+    cmpq %rax, %rdi
+    jae .Ltl_memcpy_fwd
+    rep movsb
+.Ltl_mem_copy_fwd_done:
+    ret
+    .size tl_mem_copy_fwd, . - tl_mem_copy_fwd
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String

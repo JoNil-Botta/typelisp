@@ -879,16 +879,19 @@ The stage1 CLI smoke also runs from a scratch directory without a colocated
 `stdlib/` to verify embedded stdlib fallback, then checks that
 `TYPELISP_STDLIB_ROOT` still overrides embedded contents.
 Before each self-host generation after stage1, the preceding compiler builds
-the exact 42-module embedded source manifest into `stdlib.tlci`. The generated
-compiler includes those bytes, maps them with the production W^X loader, and
+the exact 48-module embedded source manifest into ordinary `stdlib.tlci` bytes,
+then deterministically wraps those bytes in the compiler-owned TLCH deployment
+envelope. The generated compiler expands the envelope before the existing
+parser and production W^X loader, and
 the bootstrap smoke requires `typelisp inspect embedded:stdlib.tlci` to register
 every current macro identity. Trusted embedded-stdlib native routing is the
 default on both hosts; the bootstrap embedded-provenance parity compile proves
 the staged disk-source and embedded-source paths converge. The
-`verify-embedded-stdlib-tlci.sh` gate separately
-checks byte determinism, proves that a source-only mutation changes the image,
-ratchets source-lowered native-entry coverage, and stress-tests the mapped
-host callback/session bridge on both hosts. Unsupported transformer shapes
+`verify-embedded-stdlib-tlci.sh` gate separately checks ordinary-image and
+envelope byte determinism and exact envelope expansion, proves that a
+source-only mutation changes the image, ratchets source-lowered native-entry
+coverage, and stress-tests the mapped host callback/session bridge on both
+hosts. Unsupported transformer shapes
 remain explicit registration shells and fall back to interpreted CTFE.
 `verify-compile-profile.sh` compares mapped-image and explicit-source assembly;
 its native-result counters require real `Module` and `Decls` results to commit

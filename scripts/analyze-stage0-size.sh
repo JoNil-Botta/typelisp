@@ -24,10 +24,9 @@ EOF
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-# Every compiler-owned LZSS stream in the binary must be accounted for here or
-# the stream count below rejects the report. The stdlib comptime image is the
-# second producer: it is embedded compressed through the same form, and its
-# input is a generated artifact rather than a checked-in source.
+# Every compiler-owned compressed stream in the binary must be accounted for
+# here or the stream counts below reject the report. Source fallback modules use
+# independent LZSS frames; the generated TLCI image uses one TLCH envelope.
 EMBEDDED_STDLIB="src/compiler_embedded_stdlib_payload.tl src/compiler_embedded_stdlib_tlci_payload.tl"
 BINARY=
 
@@ -335,12 +334,13 @@ function emit_input() {
     } else {
         directory = declaration_file
         sub(/[^\/]*$/, "", directory)
+        sub(/\.tlch$/, "", path)
         print directory path
     }
     declaration = ""
     collecting = 0
 }
-/^\(include-str-lzss([ \t]|$)/ {
+/^\(include-str-lzss([ \t]|$)|^\(include-bin([ \t]|$)/ {
     declaration = $0
     declaration_file = FILENAME
     collecting = 1
@@ -362,6 +362,8 @@ collecting {
     exit 1
 }
 expected_payload_streams=$(wc -l < "$payload_paths" | tr -d ' ')
+expected_lzss_streams=$(awk '/^\(include-str-lzss([ \t]|$)/ { count += 1 } END { print count + 0 }' $EMBEDDED_STDLIB)
+expected_tlch_streams=$(awk '/^\(include-bin([ \t]|$)/ { count += 1 } END { print count + 0 }' $EMBEDDED_STDLIB)
 
 # Recover each bounded static LZSS stream directly from the linked binary.
 # This keeps the report useful now that no base64/generated source exists.
@@ -452,8 +454,92 @@ payload_streams=$1
 compressed_payload_bytes=$2
 static_payload_bytes=$3
 encoded_payload_bytes=0
-[ "$payload_streams" -eq "$expected_payload_streams" ] || {
-    echo "expected $expected_payload_streams embedded stdlib payloads in binary, found $payload_streams" >&2
+[ "$payload_streams" -eq "$expected_lzss_streams" ] || {
+    echo "expected $expected_lzss_streams embedded stdlib LZSS payloads in binary, found $payload_streams" >&2
+    exit 1
+}
+
+# Recover the TLCI-only TLCH envelope. Its fixed header contains little-endian
+# raw and meaningful-bit lengths followed by 4,369 code-length bytes.
+binary_scan_bytes=$(wc -c < "$BINARY" | tr -d ' ')
+set -- $(od -An -v -tu1 "$BINARY" | awk -v binary_size="$binary_scan_bytes" '
+BEGIN {
+    split("95 95 116 121 112 101 108 105 115 112 95 101 109 98 101 100 100 101 100 95 115 116 100 108 105 98 95 116 108 99 104 95 118 49 95 95", prefix)
+    prefix_len = 36
+    mode = "scan"
+    prefix_index = 0
+}
+function reset_scan() {
+    mode = "scan"
+    prefix_index = 0
+}
+function finish_payload() {
+    payload_count += 1
+    raw_total += raw_len
+    bitstream_total += bit_bytes
+    static_total += prefix_len + 16 + 4369 + bit_bytes
+    reset_scan()
+}
+{
+    for (field = 1; field <= NF; field += 1) {
+        byte = $field + 0
+        if (mode == "scan") {
+            if (byte == prefix[prefix_index + 1]) {
+                prefix_index += 1
+            } else if (byte == prefix[1]) {
+                prefix_index = 1
+            } else {
+                prefix_index = 0
+            }
+            if (prefix_index == prefix_len) {
+                mode = "raw"
+                header_index = 0
+                raw_len = 0
+                bit_len = 0
+            }
+        } else if (mode == "raw") {
+            raw_len += byte * (2 ^ (8 * header_index))
+            header_index += 1
+            if (header_index == 8) {
+                mode = "bits"
+                header_index = 0
+            }
+        } else if (mode == "bits") {
+            bit_len += byte * (2 ^ (8 * header_index))
+            header_index += 1
+            if (header_index == 8) {
+                bit_bytes = int(bit_len / 8)
+                if (bit_len % 8 != 0) bit_bytes += 1
+                remaining = 4369 + bit_bytes
+                if (raw_len <= 0 || raw_len > 268435456 || bit_len <= 0 ||
+                    remaining > binary_size) {
+                    reset_scan()
+                } else if (remaining == 0) {
+                    finish_payload()
+                } else {
+                    mode = "body"
+                }
+            }
+        } else if (mode == "body") {
+            remaining -= 1
+            if (remaining == 0) finish_payload()
+        }
+    }
+}
+END { printf "%d %.0f %.0f %.0f\n", payload_count, raw_total, bitstream_total, static_total }
+')
+tlch_payload_streams=$1
+tlch_raw_bytes=$2
+tlch_bitstream_bytes=$3
+tlch_static_bytes=$4
+[ "$tlch_payload_streams" -eq "$expected_tlch_streams" ] || {
+    echo "expected $expected_tlch_streams embedded stdlib TLCH payloads in binary, found $tlch_payload_streams" >&2
+    exit 1
+}
+static_payload_bytes=$((static_payload_bytes + tlch_static_bytes))
+
+[ $((expected_lzss_streams + expected_tlch_streams)) -eq "$expected_payload_streams" ] || {
+    echo "embedded stdlib payload declaration accounting mismatch" >&2
     exit 1
 }
 
@@ -511,6 +597,9 @@ printf 'source_manifest\t%s\n' "$EMBEDDED_STDLIB"
 printf 'total_files\t%s\n' "$payload_files"
 printf 'expanded_source_bytes\t%s\n' "$payload_total"
 printf 'compressed_token_bytes\t%s\n' "$compressed_payload_bytes"
+printf 'tlci_envelope_raw_bytes\t%s\n' "$tlch_raw_bytes"
+printf 'tlci_envelope_bitstream_bytes\t%s\n' "$tlch_bitstream_bytes"
+printf 'tlci_envelope_static_bytes\t%s\n' "$tlch_static_bytes"
 printf 'static_payload_bytes\t%s\n' "$static_payload_bytes"
 printf 'encoded_payload_bytes\t%s\n' "$encoded_payload_bytes"
 printf 'bucket\tfiles\tbytes\n'

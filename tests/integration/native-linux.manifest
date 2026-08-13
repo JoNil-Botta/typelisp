@@ -413,6 +413,7 @@ arena_phase_rewind_destroy|tests/integration/arena_phase_rewind_destroy.tl|42|-|
 arena_rewind_make_array_zero|tests/integration/arena_rewind_make_array_zero.tl|42|-|-|-
 make_array_default_reads_zero|tests/integration/make_array_default_reads_zero.tl|42|-|-|stdlib/arena.tl
 mem_fill8_runtime_contract|tests/integration/mem_fill8_runtime_contract.tl|42|-|-|stdlib/arena.tl stdlib/runtime.tl
+mem_copy_fwd_runtime_contract|tests/integration/mem_copy_fwd_runtime_contract.tl|42|-|-|stdlib/array.tl stdlib/runtime.tl
 arena_atomic_rewind_destroy_safe|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
 resource_with_arg_cycle|tests/integration/resource_with_arg_cycle.tl|42|-|-|-

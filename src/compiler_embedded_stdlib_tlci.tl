@@ -6,7 +6,7 @@
 (cfg
   (not (any stage0-seed-bootstrap test))
   (import compiler_embedded_stdlib_tlci_payload as payload))
-(import compiler_lzss as lzss)
+(import compiler_embedded_stdlib_tlci_codec as codec)
 (import tlci_loader as loader)
 
 ;; compiler_ctfe instantiates (hashmap i64 i64); the generated-module import
@@ -175,11 +175,10 @@
     (arena.Arena (compiler-embedded-stdlib-tlci-session-arena))
     (string.substring (& text) 0 (string.string-length text))))
 
-;; The image is embedded through `include-str-lzss`, so the payload bytes use
-;; the compiler-owned binary envelope. It compressed 5,010,300 -> 1,623,689
-;; bytes when this path landed, reducing the published compiler from 12.45 MB
-;; to 9.06 MB. `compiler_lzss` is also used by the source fallback, keeping one
-;; byte-exact decoder and one corruption policy for both payload families.
+;; The image is embedded through a TLCI-only canonical-Huffman layer over the
+;; proven LZSS matches. The ordinary `.tlci` bytes are restored before the
+;; existing parser and mapper, while the source fallback retains its separate
+;; lazy per-module `include-str-lzss` payloads and decoder.
 ;;
 ;; Expansion is per call, exactly where the byte copy used to be: the decoded
 ;; image is transient working memory owned by whatever arena the caller made
@@ -199,11 +198,11 @@
       (compiler-embedded-stdlib-tlci-compressed-shared-view)]
     (if (= (array-length compressed) 0)
       0
-      (match (lzss.compiler-lzss-frame
+      (match (codec.compiler-embedded-stdlib-tlci-codec-frame
         (& compressed)
         (compiler-embedded-stdlib-tlci-raw-limit))
-        [(lzss.CompilerLzssFrame.Ok raw-len _) raw-len]
-        [(lzss.CompilerLzssFrame.Err _)
+        [(codec.CompilerEmbeddedStdlibTlciCodecFrame.Ok raw-len _ _) raw-len]
+        [(codec.CompilerEmbeddedStdlibTlciCodecFrame.Err _)
           (begin
             (string.tl_oob_abort)
             0)]))))
@@ -214,11 +213,11 @@
       (compiler-embedded-stdlib-tlci-compressed-shared-view)]
     (if (= (array-length compressed) 0)
       (array.make-array u8 0)
-      (match (lzss.compiler-lzss-decode
+      (match (codec.compiler-embedded-stdlib-tlci-codec-decode
         (& compressed)
         (compiler-embedded-stdlib-tlci-raw-limit))
-        [(lzss.CompilerLzssBytes.Ok bytes) bytes]
-        [(lzss.CompilerLzssBytes.Err _)
+        [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok bytes) bytes]
+        [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _)
           (begin
             (string.tl_oob_abort)
             (array.make-array u8 0))]))))

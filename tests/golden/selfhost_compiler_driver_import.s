@@ -699,6 +699,22 @@ tl_memcpy_fresh:
     movq %rdx, %rcx
     jmp .Ltl_memcpy_fwd
     .size tl_memcpy_fresh, . - tl_memcpy_fresh
+    .globl tl_mem_copy_fwd
+    .type tl_mem_copy_fwd,@function
+tl_mem_copy_fwd:
+    testq %rdx, %rdx
+    jle .Ltl_mem_copy_fwd_done
+    movq %rdx, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_memcpy_fwd
+    movq %rsi, %rax
+    addq %rdx, %rax
+    cmpq %rax, %rdi
+    jae .Ltl_memcpy_fwd
+    rep movsb
+.Ltl_mem_copy_fwd_done:
+    ret
+    .size tl_mem_copy_fwd, . - tl_mem_copy_fwd
     .globl tl_memchr
     .type tl_memchr,@function
 tl_memchr:

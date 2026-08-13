@@ -1,13 +1,12 @@
 ;; Production compiler build input, generated before each self-host stage.
 ;;
-;; The image is embedded compressed. `include-str-lzss` compresses the file's
-;; exact bytes at the loader boundary -- it neither decodes nor validates them
-;; as text -- so the comptime image round-trips byte for byte, and the
-;; published compiler carries roughly 1.6 MB of `.data` instead of 5.0 MB.
-;; `compiler_embedded_stdlib_tlci` expands the payload on demand.
-(include-str-lzss
+;; The image is an ordinary `.tlci` until the build-time encoder wraps it in the
+;; versioned compiler-owned TLCH deployment envelope. `include-bin` embeds that
+;; envelope byte for byte; `compiler_embedded_stdlib_tlci` expands the exact
+;; ordinary image on demand before the existing parser and mapper see it.
+(include-bin
   embedded-stdlib-tlci-bytes
-  "../target/embedded-stdlib-tlci/stdlib.tlci")
+  "../target/embedded-stdlib-tlci/stdlib.tlci.tlch")
 
 (include-str embedded-stdlib-tlci-source-hash "../target/embedded-stdlib-tlci/source-hash.txt")
 

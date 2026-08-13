@@ -27,18 +27,32 @@
   (slots (__tl_dyn-array SpecTemplate))
   (len i64))
 
-(defenum SpecTemplateShadowList
-  (Nil)
-  (Cons i64 (Box SpecTemplateShadowList)))
-
 (defenum SpecMaybeTemplate
   (None)
   (Some SpecTemplate))
 
+;; Shadow snapshots form a persistent tree of dense slots. Each lexical child
+;; appends one `(template slot, parent, depth)` record; siblings retain their
+;; own head index without allocating a boxed name chain. `counts` caches the
+;; currently activated head so template lookup stays O(1), while `scratch`
+;; switches between retained sibling/nested snapshots without allocating.
+(defstruct SpecTemplateShadowStateData
+  (slots (__tl_dyn-array i64))
+  (parents (__tl_dyn-array i64))
+  (depths (__tl_dyn-array i64))
+  (counts (__tl_dyn-array i64))
+  (scratch (__tl_dyn-array i64))
+  (len i64)
+  (active-head i64))
+
+(defstruct SpecTemplateShadowState
+  (address i64))
+
 (defstruct SpecTemplateEnv
   (index spec_id_i64_map.Map)
   (values (__tl_dyn-array SpecMaybeTemplate))
-  (shadowed SpecTemplateShadowList))
+  (shadow-state SpecTemplateShadowState)
+  (shadow-head i64))
 
 ;; Comptime argument vectors and the two substitution environments keep their
 ;; head at slot 0, so every lookup scans forward from the newest binding and
@@ -645,15 +659,197 @@
       true
       (spec-param-list-has-comptime-at? params (+ index 1)))))
 
-(define (spec-template-shadow-contains?
-  [shadowed : SpecTemplateShadowList]
-  [name-id : i64]) : bool
-  (match shadowed
-    [(SpecTemplateShadowList.Nil) false]
-    [(SpecTemplateShadowList.Cons shadow-name rest)
-      (if (= shadow-name name-id)
-        true
-        (spec-template-shadow-contains? (__tl-box-place rest) name-id))]))
+(define (spec-template-shadow-copy-range
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (set! (array-ref dst index) (array.ref src index))
+      (spec-template-shadow-copy-range dst src (+ index 1) count))))
+
+(define (spec-template-shadow-fill-zero
+  [slots : (&mut slots (__tl_dyn-array i64))]
+  [index : i64]) : unit
+  (if (>= index (array.length slots))
+    unit
+    (begin
+      (set! (array-ref slots index) 0)
+      (spec-template-shadow-fill-zero slots (+ index 1)))))
+
+(define (spec-template-shadow-state-data [state : SpecTemplateShadowState]) : SpecTemplateShadowStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr SpecTemplateShadowStateData)))))
+
+(define (spec-template-shadow-state-data-set!
+  [state : SpecTemplateShadowState]
+  [data : SpecTemplateShadowStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast state.address : u64)
+        : (MutPtr SpecTemplateShadowStateData))
+      data)))
+
+(define (spec-template-shadow-state-new [template-count : i64]) : SpecTemplateShadowState
+  (let
+    [counts : (__tl_dyn-array i64) (array.make-array i64 template-count)]
+    [cell : (__tl_dyn-array SpecTemplateShadowStateData)
+      (array.make-array SpecTemplateShadowStateData 1)]
+    (begin
+      (spec-template-shadow-fill-zero (&mut counts) 0)
+      (set!
+        (array-ref cell 0)
+        (SpecTemplateShadowStateData
+          (array.make-array i64 8)
+          (array.make-array i64 8)
+          (array.make-array i64 8)
+          counts
+          (array.make-array i64 8)
+          0
+          -1))
+      (SpecTemplateShadowState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr SpecTemplateShadowStateData))))
+          : i64)))))
+
+(define (spec-template-shadow-state-grow-records
+  [data : SpecTemplateShadowStateData]) : SpecTemplateShadowStateData
+  (let
+    [count : i64 data.len]
+    [next-capacity : i64 (+ (* (array.length data.slots) 2) 8)]
+    [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [next-parents : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [next-depths : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    (begin
+      (spec-template-shadow-copy-range (&mut next-slots) (& data.slots) 0 count)
+      (spec-template-shadow-copy-range
+        (&mut next-parents)
+        (& data.parents)
+        0
+        count)
+      (spec-template-shadow-copy-range
+        (&mut next-depths)
+        (& data.depths)
+        0
+        count)
+      (SpecTemplateShadowStateData
+        next-slots
+        next-parents
+        next-depths
+        data.counts
+        data.scratch
+        data.len
+        data.active-head))))
+
+(define (spec-template-shadow-state-grow-scratch
+  [data : SpecTemplateShadowStateData]
+  [count : i64]) : SpecTemplateShadowStateData
+  (let
+    [next : (__tl_dyn-array i64)
+      (array.make-array i64 (+ (* (array.length data.scratch) 2) 8))]
+    (begin
+      (spec-template-shadow-copy-range (&mut next) (& data.scratch) 0 count)
+      (SpecTemplateShadowStateData
+        data.slots
+        data.parents
+        data.depths
+        data.counts
+        next
+        data.len
+        data.active-head))))
+
+(define (spec-template-shadow-state-depth
+  [data : SpecTemplateShadowStateData]
+  [head : i64]) : i64
+  (if (< head 0)
+    0
+    (array.ref data.depths head)))
+
+(define (spec-template-shadow-state-append
+  [state : SpecTemplateShadowState]
+  [parent : i64]
+  [slot : i64]) : i64
+  (let
+    [data : SpecTemplateShadowStateData (spec-template-shadow-state-data state)]
+    (begin
+      (if (< data.len (array.length data.slots))
+        unit
+        (set! data (spec-template-shadow-state-grow-records data)))
+      (let
+        [index : i64 data.len]
+        (begin
+          (set! (array-ref data.slots index) slot)
+          (set! (array-ref data.parents index) parent)
+          (set!
+            (array-ref data.depths index)
+            (+ (spec-template-shadow-state-depth data parent) 1))
+          (set! data.len (+ index 1))
+          (spec-template-shadow-state-data-set! state data)
+          index)))))
+
+(define (spec-template-shadow-state-activate!
+  [state : SpecTemplateShadowState]
+  [wanted-head : i64]) : unit
+  (let
+    [data : SpecTemplateShadowStateData (spec-template-shadow-state-data state)]
+    [current : i64 data.active-head]
+    [wanted : i64 wanted-head]
+    [scratch-len : i64 0]
+    (begin
+      ;; Walk both retained snapshots to their common parent. Remove the old
+      ;; path immediately and record the new path leaf-first in reusable dense
+      ;; scratch storage, then apply it parent-first.
+      (while (not (= current wanted))
+        (let
+          [current-depth : i64 (spec-template-shadow-state-depth data current)]
+          [wanted-depth : i64 (spec-template-shadow-state-depth data wanted)]
+          (begin
+            (if (and (>= current-depth wanted-depth) (>= current 0))
+              (let
+                [slot : i64 (array.ref data.slots current)]
+                (begin
+                  (set!
+                    (array-ref data.counts slot)
+                    (- (array.ref data.counts slot) 1))
+                  (set! current (array.ref data.parents current))))
+              unit)
+            (if (and (>= wanted-depth current-depth) (>= wanted 0))
+              (begin
+                (if (< scratch-len (array.length data.scratch))
+                  unit
+                  (set!
+                    data
+                    (spec-template-shadow-state-grow-scratch data scratch-len)))
+                (set! (array-ref data.scratch scratch-len) wanted)
+                (set! scratch-len (+ scratch-len 1))
+                (set! wanted (array.ref data.parents wanted)))
+              unit))))
+      (while (> scratch-len 0)
+        (let
+          [next-index : i64 (- scratch-len 1)]
+          [node : i64 (array.ref data.scratch next-index)]
+          [slot : i64 (array.ref data.slots node)]
+          (begin
+            (set!
+              (array-ref data.counts slot)
+              (+ (array.ref data.counts slot) 1))
+            (set! scratch-len next-index))))
+      (set! data.active-head wanted-head)
+      (spec-template-shadow-state-data-set! state data))))
+
+(define (spec-template-shadow-state-slot-shadowed?
+  [state : SpecTemplateShadowState]
+  [head : i64]
+  [slot : i64]) : bool
+  (begin
+    (spec-template-shadow-state-activate! state head)
+    (> (array.ref (spec-template-shadow-state-data state).counts slot) 0)))
 
 (define (spec-template-values-fill-empty
   [values : (__tl_dyn-array SpecMaybeTemplate)]
@@ -707,22 +903,35 @@
           0
           0)
         values
-        SpecTemplateShadowList.Nil))))
+        (spec-template-shadow-state-new count)
+        -1))))
 
 (define (spec-template-lookup [templates : SpecTemplateEnv] [name-id : i64]) : SpecMaybeTemplate
-  (if (spec-template-shadow-contains? templates.shadowed name-id)
-    (SpecMaybeTemplate.None)
-    (match (spec_id_i64_map.get (& templates.index) name-id)
-      [(spec_id_i64_map.LookupFound slot) (array.ref templates.values slot)]
-      [(spec_id_i64_map.LookupMissing) (SpecMaybeTemplate.None)])))
+  (match (spec_id_i64_map.get (& templates.index) name-id)
+    [(spec_id_i64_map.LookupFound slot)
+      (if (spec-template-shadow-state-slot-shadowed?
+        templates.shadow-state
+        templates.shadow-head
+        slot)
+        (SpecMaybeTemplate.None)
+        (array.ref templates.values slot))]
+    [(spec_id_i64_map.LookupMissing) (SpecMaybeTemplate.None)]))
 
 (define (spec-template-env-shadow-name
   [templates : SpecTemplateEnv]
   [name-id : i64]) : SpecTemplateEnv
-  (SpecTemplateEnv
-    templates.index
-    templates.values
-    (SpecTemplateShadowList.Cons name-id (box templates.shadowed))))
+  (match (spec_id_i64_map.get (& templates.index) name-id)
+    [(spec_id_i64_map.LookupFound slot)
+      (SpecTemplateEnv
+        templates.index
+        templates.values
+        templates.shadow-state
+        (spec-template-shadow-state-append
+          templates.shadow-state
+          templates.shadow-head
+          slot))]
+    ;; Names that cannot select a template need no shadow record.
+    [(spec_id_i64_map.LookupMissing) templates]))
 
 (define (spec-template-env-shadow-params
   [templates : SpecTemplateEnv]
@@ -9088,6 +9297,216 @@
         [(ResultSpecProgram.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
+(define (spec-template-env-has-template?
+  [templates : SpecTemplateEnv]
+  [name-id : i64]) : bool
+  (match (spec-template-lookup templates name-id)
+    [(SpecMaybeTemplate.Some _) true]
+    [(SpecMaybeTemplate.None) false]))
+
+(define (compiler-specialize-dense-template-shadow-state-ok?) : bool
+  (let
+    [items : SpecTemplateList (spec-template-list-new)]
+    [_x : unit
+      (spec-template-list-push
+        (&mut items)
+        (SpecTemplate.Item
+          cbi.compiler-builtin-id-fix-x
+          (ast.ast-param-list-new)
+          (ast.AstType.I64)
+          (ast.AstExpr.Literal (ast.ast-lit-int 1))))]
+    [_second : unit
+      (spec-template-list-push
+        (&mut items)
+        (SpecTemplate.Item
+          cbi.compiler-builtin-id-fix-second
+          (ast.ast-param-list-new)
+          (ast.AstType.I64)
+          (ast.AstExpr.Literal (ast.ast-lit-int 2))))]
+    [base : SpecTemplateEnv (spec-template-env-from-list items)]
+    [shadow-x : SpecTemplateEnv
+      (spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-x)]
+    [duplicate-x : SpecTemplateEnv
+      (spec-template-env-shadow-name shadow-x cbi.compiler-builtin-id-fix-x)]
+    [sibling-second : SpecTemplateEnv
+      (spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-second)]
+    [nested-both : SpecTemplateEnv
+      (spec-template-env-shadow-name
+        shadow-x
+        cbi.compiler-builtin-id-fix-second)]
+    [patterns : ast.AstPatternList (ast.ast-pattern-list-new)]
+    [_pattern-x : unit
+      (ast.ast-pattern-list-push
+        (&mut patterns)
+        (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-x))]
+    [_pattern-second : unit
+      (ast.ast-pattern-list-push
+        (&mut patterns)
+        (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-second))]
+    [pattern-both : SpecTemplateEnv
+      (spec-template-env-shadow-pattern base (ast.ast-pat-tuple patterns))]
+    [params : ast.AstParamList (ast.ast-param-list-new)]
+    [_param-x : unit
+      (ast.ast-param-list-push
+        (&mut params)
+        (ast.ast-param-id cbi.compiler-builtin-id-fix-x (ast.AstType.I64) false))]
+    [_param-second : unit
+      (ast.ast-param-list-push
+        (&mut params)
+        (ast.ast-param-id
+          cbi.compiler-builtin-id-fix-second
+          (ast.AstType.I64)
+          false))]
+    [_param-x-again : unit
+      (ast.ast-param-list-push
+        (&mut params)
+        (ast.ast-param-id cbi.compiler-builtin-id-fix-x (ast.AstType.I64) false))]
+    [param-both : SpecTemplateEnv (spec-template-env-shadow-params base params)]
+    [bindings : ast.AstLetBindingList (ast.ast-let-binding-list-new)]
+    [binding-value : i64
+      (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
+    [_binding-x : unit
+      (ast.ast-let-binding-list-push
+        (&mut bindings)
+        (ast.ast-let-binding-id
+          cbi.compiler-builtin-id-fix-x
+          (ast.AstMaybeType.No)
+          binding-value))]
+    [_binding-second : unit
+      (ast.ast-let-binding-list-push
+        (&mut bindings)
+        (ast.ast-let-binding-id
+          cbi.compiler-builtin-id-fix-second
+          (ast.AstMaybeType.No)
+          binding-value))]
+    [_binding-x-again : unit
+      (ast.ast-let-binding-list-push
+        (&mut bindings)
+        (ast.ast-let-binding-id
+          cbi.compiler-builtin-id-fix-x
+          (ast.AstMaybeType.No)
+          binding-value))]
+    [binding-both : SpecTemplateEnv
+      (spec-template-env-shadow-let-binding-names base bindings)]
+    [param-then-binding : SpecTemplateEnv
+      (spec-template-env-shadow-let-binding-names
+        (spec-template-env-shadow-params base params)
+        bindings)]
+    [unrelated : SpecTemplateEnv
+      (spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-flag)]
+    [wide : SpecTemplateEnv (spec-template-env-from-list items)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      ;; Cross multiple dense-record growth boundaries with repeated names.
+      (while (< index 64)
+        (begin
+          (set!
+            wide
+            (spec-template-env-shadow-name
+              wide
+              (if (= (bit-and index 1) 0)
+                cbi.compiler-builtin-id-fix-x
+                cbi.compiler-builtin-id-fix-second)))
+          (set! index (+ index 1))))
+      ;; Alternate retained parents, siblings, duplicates, and nested snapshots
+      ;; so the activated dense counts must roll backward and forward exactly.
+      (set!
+        ok
+        (and
+          ok
+          (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-x)
+          (spec-template-env-has-template?
+            base
+            cbi.compiler-builtin-id-fix-second)
+          (not
+            (spec-template-env-has-template?
+              shadow-x
+              cbi.compiler-builtin-id-fix-x))
+          (spec-template-env-has-template?
+            shadow-x
+            cbi.compiler-builtin-id-fix-second)
+          (not
+            (spec-template-env-has-template?
+              duplicate-x
+              cbi.compiler-builtin-id-fix-x))
+          (spec-template-env-has-template?
+            duplicate-x
+            cbi.compiler-builtin-id-fix-second)
+          (spec-template-env-has-template?
+            sibling-second
+            cbi.compiler-builtin-id-fix-x)
+          (not
+            (spec-template-env-has-template?
+              sibling-second
+              cbi.compiler-builtin-id-fix-second))
+          (not
+            (spec-template-env-has-template?
+              nested-both
+              cbi.compiler-builtin-id-fix-x))
+          (not
+            (spec-template-env-has-template?
+              nested-both
+              cbi.compiler-builtin-id-fix-second))
+          (not
+            (spec-template-env-has-template?
+              pattern-both
+              cbi.compiler-builtin-id-fix-x))
+          (not
+            (spec-template-env-has-template?
+              pattern-both
+              cbi.compiler-builtin-id-fix-second))
+          (not
+            (spec-template-env-has-template?
+              param-both
+              cbi.compiler-builtin-id-fix-x))
+          (not
+            (spec-template-env-has-template?
+              param-both
+              cbi.compiler-builtin-id-fix-second))
+          (not
+            (spec-template-env-has-template?
+              binding-both
+              cbi.compiler-builtin-id-fix-x))
+          (not
+            (spec-template-env-has-template?
+              binding-both
+              cbi.compiler-builtin-id-fix-second))
+          (not
+            (spec-template-env-has-template?
+              param-then-binding
+              cbi.compiler-builtin-id-fix-x))
+          (not
+            (spec-template-env-has-template?
+              param-then-binding
+              cbi.compiler-builtin-id-fix-second))
+          (spec-template-env-has-template?
+            unrelated
+            cbi.compiler-builtin-id-fix-x)
+          (not
+            (spec-template-env-has-template? wide cbi.compiler-builtin-id-fix-x))
+          (not
+            (spec-template-env-has-template?
+              wide
+              cbi.compiler-builtin-id-fix-second))
+          ;; A missing-template name creates no record; all real shadows are
+          ;; dense slots, and the state grew beyond its initial capacity.
+          (= (spec-template-shadow-state-data base.shadow-state).len 18)
+          (= (spec-template-shadow-state-data wide.shadow-state).len 64)
+          (>
+            (array.length
+              (spec-template-shadow-state-data wide.shadow-state).slots)
+            8)
+          (= (comptime (size-of (type SpecTemplateShadowState))) 8)
+          (= (comptime (size-of (type SpecTemplateShadowStateData))) 56)))
+      ;; Revisit the root after the deepest snapshot to catch leaked counts.
+      (and
+        ok
+        (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-x)
+        (spec-template-env-has-template?
+          base
+          cbi.compiler-builtin-id-fix-second)))))
+
 (define (compiler-specialize-type-shadow-ok?) : bool
   (match (parser.parse-ast-source (compiler-specialize-type-shadow-source))
     [(parser.ResultAstProgram.Ok program)
@@ -9954,6 +10373,7 @@
     (unless (compiler-specialize-runtime-type-use-rejected?) (return 0))
     (unless (compiler-specialize-template-shadow-ok?) (return 0))
     (unless (compiler-specialize-template-shadow-sibling-ok?) (return 0))
+    (unless (compiler-specialize-dense-template-shadow-state-ok?) (return 0))
     (unless (compiler-specialize-type-shadow-ok?) (return 0))
     (unless (compiler-specialize-raw-pointer-type-ok?) (return 0))
     (unless (compiler-specialize-owner-slice-type-ok?) (return 0))

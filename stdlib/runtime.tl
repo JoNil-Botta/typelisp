@@ -745,6 +745,19 @@
 ;: bump allocator just handed out, never for an arbitrary live buffer.
 (extern (mem-fill8 [buf : (MutPtr u8)] [count : i64] [value : u64]) : unit (:symbol "tl_mem_fill8"))
 
+;: Copy `count` bytes from `src` to `dst` FORWARD and byte-exactly: this is the
+;: machine equivalent of `for (i = 0; i < count; i += 1) dst[i] = src[i]` for
+;: every argument triple, which is what the optimizer's `copy_call` pass relies
+;: on when it rewrites such a loop into one call (see its header). Deliberately
+;: NOT `string`'s memcpy: that one is memmove, and memmove copies BACKWARD when
+;: the destination overlaps above the source, where this loop instead
+;: PROPAGATES the bytes it has just written. A non-positive `count` copies
+;: nothing. The backend supplies the body (a wide `rep movsq` when `dst <= src`
+;: or the ranges are disjoint, a byte `rep movsb` otherwise), so a copy costs
+;: one instruction per eight bytes under the deterministic instruction-count
+;: gate where the source loop cost three and a half per byte.
+(extern (mem-copy-fwd [dst : (MutPtr u8)] [src : (Ptr u8)] [count : i64]) : unit (:symbol "tl_mem_copy_fwd"))
+
 ;: Zero `byte-count` bytes starting at `buf`. The backend provides the body
 ;: as a qword `rep stosq` plus a byte `rep stosb` tail (see
 ;: compiler-backend-runtime-array-zero-functions), which costs one instruction

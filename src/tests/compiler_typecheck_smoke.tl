@@ -2793,6 +2793,126 @@
           (ast.ast-node-pool-context-install! active-before)
           ok)))))
 
+(define (compiler-typecheck-smoke-type-resolution-pool-isolation-ok?) : bool
+  (let
+    [active-before : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [installed-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [owned-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [installed-child : i64
+      (ast.ast-node-pool-context-type-push installed-pools (ast.AstType.I64))]
+    [installed-parent : i64
+      (ast.ast-node-pool-context-type-push
+        installed-pools
+        (ast.AstType.Array installed-child 3))]
+    [name-id : i64 (ci.intern "Expr")]
+    [owned-child : i64
+      (ast.ast-node-pool-context-type-push
+        owned-pools
+        (ast.AstType.Var name-id))]
+    [owned-parent : i64
+      (ast.ast-node-pool-context-type-push
+        owned-pools
+        (ast.AstType.Array owned-child 3))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (compiler_symbols.compiler-symbols-empty)
+        (compiler_symbols.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        owned-pools)]
+    [installed-ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (compiler_symbols.compiler-symbols-empty)
+        (compiler_symbols.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        installed-pools)]
+    (begin
+      (ast.ast-node-pool-context-install! installed-pools)
+      ;; The same numeric parent id deliberately means "already concrete" in
+      ;; the installed pool and "contains Var" in the context-owned pool.
+      (let
+        [installed-memo-answer : bool
+          (tc_core.tc-type-needs-resolution-id? installed-parent)]
+        [installed-generation-after-prime : i64
+          (ast.ty-node-pool-generation-value)]
+        [owned-explicit-answer : bool
+          (tc_core.tc-type-needs-resolution-id-with-bases?
+            (ast.ast-node-pool-context-type-segment-bases owned-pools)
+            owned-parent)]
+        [resolved : ast.AstType
+          (tc_core.tc-resolve-type-with-pools
+            ctx
+            owned-pools
+            (ast.ast-node-pool-context-type-get owned-pools owned-parent))]
+        [foreign-installed-count : i64
+          (ast.ast-node-pool-context-type-len installed-pools)]
+        [installed-var : i64
+          (ast.ast-node-pool-context-type-push
+            installed-pools
+            (ast.AstType.Var name-id))]
+        [installed-var-parent : i64
+          (ast.ast-node-pool-context-type-push
+            installed-pools
+            (ast.AstType.Array installed-var 5))]
+        [installed-resolved : ast.AstType
+          (tc_core.tc-resolve-type
+            installed-ctx
+            (ast.ast-node-pool-context-type-get
+              installed-pools
+              installed-var-parent))]
+        [installed-bases : i64
+          (ast.ast-node-pool-context-type-segment-bases installed-pools)]
+        [ok : bool
+          (and
+            (= installed-child owned-child)
+            (= installed-parent owned-parent)
+            (not installed-memo-answer)
+            owned-explicit-answer
+            (ast.ast-node-pool-context-type-installed? installed-pools)
+            (=
+              (ast.ty-node-pool-generation-value)
+              installed-generation-after-prime)
+            (= foreign-installed-count 2)
+            (= (ast.ast-node-pool-context-type-len installed-pools) 5)
+            (= (ast.ty-node-pool-len) 5)
+            (= (ast.ast-node-pool-context-type-len owned-pools) 3)
+            (match resolved
+              [(ast.AstType.Array resolved-child count)
+                (and
+                  (= count 3)
+                  (match (ast.ast-node-pool-context-type-get
+                    owned-pools
+                    resolved-child)
+                    [(ast.AstType.Expr) true]
+                    [_ false]))]
+              [_ false])
+            (match (ast.ast-node-pool-context-type-get
+              installed-pools
+              installed-child)
+              [(ast.AstType.I64) true]
+              [_ false])
+            (match installed-resolved
+              [(ast.AstType.Array resolved-child count)
+                (and
+                  (= count 5)
+                  (match (ast.ty-node-get resolved-child)
+                    [(ast.AstType.Expr) true]
+                    [_ false]))]
+              [_ false])
+            (=
+              (ast.ast-node-pool-context-type-segment-bases
+                (ast.ast-node-pool-context-capture-active))
+              installed-bases))]
+        (begin
+          (ast.ast-node-pool-context-install! active-before)
+          ok)))))
+
 (define (compiler-typecheck-smoke-generated-import-decl
   [source : String]
   [key : String]) : ast.AstDecl
@@ -5456,6 +5576,12 @@
   (unless
     (tc_core.tc-macro-state-isolation-ok?)
     (io.panic "typecheck: macro/CTFE job state isolation smoke failed")))
+
+(test
+  compiler-typecheck-type-resolution-pool-isolation
+  (unless
+    (compiler-typecheck-smoke-type-resolution-pool-isolation-ok?)
+    (io.panic "typecheck: type-resolution pool isolation smoke failed")))
 
 (define (compiler-typecheck-structural-intern-session-isolation-ok?) : bool
   (let

@@ -3110,7 +3110,7 @@
           (if (not (= current.base-arena next.base-arena))
             (ast-node-pool-context-sync-base-arena! pools next.base-arena)
             unit)
-          (ast-node-pool-compat-context-sync-installed!)
+          (ast-node-pool-context-type-sync-installed! pools)
           id)])))
 
 ;; Raw type-node read keyed by the pool's segment-bases pointer rather than a
@@ -3149,6 +3149,51 @@
 ;; replaced on every push, so callers may only cache this across pure reads.
 (define (ast-node-pool-context-type-segment-bases [pools : AstNodePoolContext]) : i64
   (__tl-project-field (array-ref pools.type-pool 0) segment-bases))
+
+(define (ast-node-pool-context-type-cell-address [pools : AstNodePoolContext]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data pools.type-pool) : (Ptr u8))))
+    : i64))
+
+;; Cell identity, rather than a segment-bases comparison, distinguishes the
+;; live installed owner from a snapshot that shares immutable prefix segments
+;; but has an independent logical length.
+(define (ast-node-pool-context-type-installed? [pools : AstNodePoolContext]) : bool
+  (if (ast-node-pool-compat-context-active?)
+    (=
+      (ast-node-pool-context-type-cell-address pools)
+      (ast-node-pool-context-type-cell-address
+        (ast-node-pool-compat-context-current)))
+    (and
+      (ast-node-pool-has-active-context?)
+      (=
+        (ast-node-pool-context-type-cell-address pools)
+        (ast-node-pool-context-type-cell-address
+          (ast-node-pool-context-active-live))))))
+
+;; An explicit push through the cells of the ordinary installed context must
+;; publish its new count/dedup state to the transitional global pushers. This
+;; is an append, so existing ids remain valid and the pool generation must not
+;; change. This type-only publication also avoids treating every explicit
+;; compatibility append as a pool swap and needlessly invalidating id memos.
+(define (ast-node-pool-context-type-sync-installed!
+  [pools : AstNodePoolContext]) : unit
+  (if (not (ast-node-pool-context-type-installed? pools))
+    unit
+    (let
+      [state : AstTypeNodePoolState (array-ref pools.type-pool 0)]
+      (begin
+        (set! ty-node-pool-segment-bases state.segment-bases)
+        (set! ty-node-pool-count state.count)
+        (set! ty-node-pool-storage-arena state.storage-arena)
+        (set! ty-node-pool-segment-count state.segment-count)
+        (set! ty-node-pool-exhausted state.exhausted)
+        (set! ty-node-dedup-capacity (array-length state.dedup-slots))
+        (set! ty-node-dedup-slots state.dedup-slots)
+        (set! ty-node-dedup-count state.dedup-count)
+        (set! node-pool-base-arena state.base-arena)
+        (set! node-pool-owner-arena pools.owner-arena)))))
 
 (define (ast-node-pool-context-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
   (ast-type-segment-bases-get

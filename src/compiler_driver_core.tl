@@ -129,7 +129,10 @@
     [_lower-state-init : unit
       (set!
         (array-ref lower-cell 0)
-        (__tl-project-field (compiler_lower.compiler-lower-state-new) address))]
+        (__tl-project-field
+          (compiler_lower.compiler-lower-state-new-with-intern-state
+            intern-state)
+          address))]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
     [_restore-previous-arena : unit

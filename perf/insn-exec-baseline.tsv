@@ -1,7 +1,7 @@
 name	ir_count
 benchmark/typelisp/arith_loop	312500073
 benchmark/c-scalar/arith_loop	500001471
-benchmark/typelisp/array_sum	1426229772
+benchmark/typelisp/array_sum	1426187771
 benchmark/c-scalar/array_sum	1651021946
 benchmark/typelisp/borrowed_disjoint_store	1300000258
 benchmark/c-scalar/borrowed_disjoint_store	1400001545
@@ -29,7 +29,7 @@ benchmark/typelisp/intern_table	592870857
 benchmark/c-scalar/intern_table	296287351
 benchmark/typelisp/lex_source	571164006
 benchmark/c-scalar/lex_source	555172535
-benchmark/typelisp/liveness_scan	493818887
+benchmark/typelisp/liveness_scan	493971467
 benchmark/c-scalar/liveness_scan	433553439
 benchmark/typelisp/peephole_lines	625066092
 benchmark/c-scalar/peephole_lines	464527258

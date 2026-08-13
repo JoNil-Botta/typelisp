@@ -1045,6 +1045,101 @@ check_load_widen_cast_fold() {
 }
 
 
+# Count the block that starts at the FIRST `__unroll_body:` label and runs to
+# the next label definition -- one unrolled group, whose line count IS the
+# unroll factor for a body that emits one line per copy.
+unroll_body_block() {
+    _file=$1
+    _out="$WORKDIR/$(basename "$_file").unroll_body"
+    awk '
+        started && /^[^[:blank:]]*:$/ { exit }
+        started { print }
+        !started && /__unroll_body:$/ { started = 1 }
+    ' "$_file" > "$_out"
+    printf '%s\n' "$_out"
+}
+
+check_mem_dest_rmw_fold() {
+    _asm=$(compile_gate mem_dest_rmw_fold tests/integration/mem_dest_rmw_fold.tl)
+    # GAP10: `a[i] = a[i] OP x` must become an x86 memory-DESTINATION ALU op.
+    # Each kernel emits its merge in three places -- the four copies of the
+    # unrolled fast body, the fast remainder, and the checked slow body -- so
+    # six memory-destination lines and, decisively, ZERO memory-SOURCE lines:
+    # a memory-source op is the old three-instruction round trip's middle
+    # instruction, and its absence is what proves the load and the store-back
+    # are both gone.
+    for _kernel in merge_or merge_and merge_add merge_reg; do
+        _body=$(function_body "$_asm" "_tl_mem_dest_rmw_fold_$_kernel")
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' \
+            6 "mem-dest-rmw-$_kernel"
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' \
+            0 "mem-dest-rmw-$_kernel-no-memory-source"
+    done
+    # The register-source kernel folds to ONE instruction per word: the other
+    # operand is loop-invariant, so nothing is staged and no element is loaded.
+    _reg=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_reg)
+    assert_not_matches "$_reg" \
+        '^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' mem-dest-rmw-merge-reg
+    # Refused neighbours: one-token edits of the admitted shape that must keep
+    # the three-instruction round trip. Each keeps exactly the six memory-SOURCE
+    # ALU ops the fold would have consumed and gains no memory destination.
+    #   shifted    -- stores to a different element than it loaded
+    #   reused     -- the loaded element has a second reader
+    #   interposed -- another store lands between the load and the store-back
+    for _kernel in merge_shifted merge_reused merge_interposed; do
+        _body=$(function_body "$_asm" "_tl_mem_dest_rmw_fold_$_kernel")
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' \
+            0 "mem-dest-rmw-$_kernel-refused"
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' \
+            6 "mem-dest-rmw-$_kernel-still-emitted"
+    done
+    # Byte width: the same source shape at a width the fold refuses, because a
+    # `q` op cannot agree with the load's zero-extension and the store's
+    # truncation. The merge is still emitted, as `orb`.
+    _bytes=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_bytes)
+    assert_regex_count_eq "$_bytes" \
+        '^[[:space:]]+(orq|orb) (%r[a-z0-9]+b?|%[a-d]l|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,1\)$' \
+        0 mem-dest-rmw-merge-bytes-refused
+    assert_matches "$_bytes" '^[[:space:]]+orb ' mem-dest-rmw-merge-bytes-still-emitted
+}
+
+check_word_merge_unroll() {
+    _asm=$(compile_gate word_merge_unroll tests/integration/mem_dest_rmw_fold.tl)
+    # The word-merge unroll tier: a load-and-store body whose every access is a
+    # 64-bit word through a 64-bit-element gep runs at K=4, not the class
+    # default K=2. One group of the unrolled body therefore holds FOUR folded
+    # merges and one counter step of 4.
+    _or=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_or)
+    _or_group=$(unroll_body_block "$_or")
+    assert_regex_count_eq "$_or_group" \
+        '^[[:space:]]+orq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 4 \
+        word-merge-unroll-k4
+    assert_contains "$_or_group" 'addq $4,' word-merge-unroll-k4-step
+    # The refusal that keeps the K=2 pin two-sided: the byte-wide twin is the
+    # SAME loop written over `(Array u8)`. It is still the load-and-store class,
+    # so it still unrolls -- at the class default of 2, with a counter step of
+    # 2. Raising the class instead of adding a tier would move this one too.
+    _bytes=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_bytes)
+    _bytes_group=$(unroll_body_block "$_bytes")
+    assert_regex_count_eq "$_bytes_group" '^[[:space:]]+orb ' 2 word-merge-unroll-bytes-k2
+    assert_contains "$_bytes_group" 'addq $2,' word-merge-unroll-bytes-k2-step
+    # The container shape the K=2 constant was pinned for: a word payload
+    # updated alongside a NARROW tag. Its word half still takes the
+    # memory-destination fold -- that fold is per-instruction -- but ONE narrow
+    # access is enough to refuse the tier, and the body stays at K=2. This is
+    # where the two mechanisms are pinned as independent.
+    _mixed=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_mixed)
+    _mixed_group=$(unroll_body_block "$_mixed")
+    assert_contains "$_mixed_group" 'addq $2,' word-merge-unroll-mixed-k2-step
+    assert_regex_count_eq "$_mixed_group" \
+        '^[[:space:]]+orq \$1, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 2 \
+        word-merge-unroll-mixed-k2
+}
+
 check_gep_load_cmp_spilled_stage() {
     _asm=$(compile_gate gep_load_cmp_spilled_stage         tests/integration/gep_load_cmp_spilled_stage.tl)
     _changed=$(function_body "$_asm"         _tl_gep_load_cmp_spilled_stage_changed_question)
@@ -1072,6 +1167,8 @@ check_gep_load_cmp_spilled_stage() {
     assert_matches "$_refused"         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$'         gep-load-cmp-spilled-stage-refused
 }
 
+check_mem_dest_rmw_fold
+check_word_merge_unroll
 check_divmagic_hoist
 check_hoist_priority
 check_lftr_counter_retire

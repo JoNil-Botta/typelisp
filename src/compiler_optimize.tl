@@ -44805,6 +44805,95 @@
 (define (opt-unroll-load-store-group-copies) : i64
   2)
 
+;; The WORD-MERGE tier: a third factor between the load-and-store class's K=2
+;; and the store-free K=16, for the one load-and-store shape where K=2 leaves
+;; measurable loop control on the table.
+;;
+;; Why not simply raise the class. K=2 was pinned TWO-SIDED against container-
+;; pointer pressure on short-trip hashmap loops, and that pin holds: the cost
+;; recorded above is per EXTRA copy, so anything that doubles the clone again
+;; re-opens it for the very bodies it was chosen for. This tier therefore
+;; WIDENS nothing; it carves out a shape whose per-copy pressure is bounded by
+;; construction and leaves every other load-and-store body at 2.
+;;
+;; The shape: a pure WORD MERGE. Every memory access in the body is a 64-bit
+;; integer load or store through a Gep over 64-bit integer elements, and every
+;; value the body computes is 64-bit integer arithmetic -- `dst[i] = f(dst[i],
+;; src[i], ...)` and its copy/transfer relatives, which is what liveness's
+;; live-out union, its transfer function and its copy-back all are. Three
+;; properties follow from that description alone, and they are exactly the three
+;; terms of the K=2 refusal:
+;;
+;;   * No CALL and no ALLOC, so no container can grow inside the body and no
+;;     copy can inherit a reallocated base (already true of the class; restated
+;;     because it is load-bearing here).
+;;   * No narrow or floating traffic, so a copy adds no extension, truncation
+;;     or cross-bank move -- each copy is the same handful of word ops.
+;;   * Word-width elements mean every copy's live values are single registers
+;;     that die at that copy's own store. The pressure the K=2 pin protects
+;;     against is a container pointer held live ACROSS stores; here the bases
+;;     are loop-invariant and shared by all copies, so going 2 -> 4 adds copies,
+;;     not live ranges.
+;;
+;; Check-free admission is inherited unchanged: BoundsCheck is refused by
+;; opt-unroll-body-load-store-instr-ok?, so this tier, like the class it
+;; refines, only ever versions a `__bce_fast` clone and never duplicates a
+;; check. K=4 recovers 2.25 of the 3 loop-control instructions where K=2
+;; recovers 1.50, and its entry guard (`seed < bound - 4`) breaks even around
+;; 7 trips instead of 4 -- the word-merge loops measured run the word count of
+;; a live set, which is comfortably past that.
+(define (opt-unroll-word-merge-group-copies) : i64
+  4)
+
+(define (opt-unroll-word-merge-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [_ false]))
+
+(define (opt-unroll-body-word-merge-instr-ok? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ _ _ elem-ty)
+      (opt-unroll-word-merge-type? elem-ty)]
+    [(ir.CompilerIrInstr.Load _ _ ty) (opt-unroll-word-merge-type? ty)]
+    [(ir.CompilerIrInstr.StorePtr _ _ ty) (opt-unroll-word-merge-type? ty)]
+    [(ir.CompilerIrInstr.BinOp _ _ _ _ ty) (opt-unroll-word-merge-type? ty)]
+    [(ir.CompilerIrInstr.UnOp _ _ _ ty) (opt-unroll-word-merge-type? ty)]
+    [(ir.CompilerIrInstr.Mov _ _ ty) (opt-unroll-word-merge-type? ty)]
+    [_ false]))
+
+;; A merge, not a fill and not a reduction: the body must both read and write
+;; memory. Fills (no Load) and reductions (no StorePtr) already have their own
+;; class at K=16 and must not be re-routed through this one.
+(define (opt-unroll-body-word-merge-scan
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [last : i64]
+  [loads : i64]
+  [stores : i64]) : bool
+  (if (>= index last)
+    (and (> loads 0) (> stores 0))
+    (let
+      [instr : ir.CompilerIrInstr (array-ref slots index)]
+      (if (not (opt-unroll-body-word-merge-instr-ok? instr))
+        false
+        (opt-unroll-body-word-merge-scan
+          slots
+          (+ index 1)
+          last
+          (match instr
+            [(ir.CompilerIrInstr.Load _ _ _) (+ loads 1)]
+            [_ loads])
+          (match instr
+            [(ir.CompilerIrInstr.StorePtr _ _ _) (+ stores 1)]
+            [_ stores]))))))
+
+(define (opt-unroll-body-word-merge-ok?
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [last : i64]) : bool
+  (opt-unroll-body-word-merge-scan slots index last 0 0))
+
 ;; Body copies the rewrite emits, or 0 for a body no class admits. The shape
 ;; scan refuses a 0 and the rewrite sizes both its copy loop and its guard's
 ;; `bound - K` from the same answer, so admission and factor can never diverge.
@@ -44817,7 +44906,12 @@
     (opt-unroll-body-fill-ok? slots index last))
     (opt-unroll-group-copies)
     (if (opt-unroll-body-load-store-ok? slots index last)
-      (opt-unroll-load-store-group-copies)
+      ;; The word-merge tier is checked INSIDE the load-and-store admission, so
+      ;; it can only ever refine a body that class already accepted -- it can
+      ;; never admit a body of its own.
+      (if (opt-unroll-body-word-merge-ok? slots index last)
+        (opt-unroll-word-merge-group-copies)
+        (opt-unroll-load-store-group-copies))
       0)))
 
 (define (opt-unroll-shape-scan

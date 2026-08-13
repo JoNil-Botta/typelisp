@@ -52204,7 +52204,614 @@
           index
           out)])))
 
+;; ============================================================================
+;; GAP10: memory-destination read-modify-write folding.
+;;
+;; x86 ALU ops take a MEMORY destination -- `orq %rsi, (%rax,%rcx,8)` reads,
+;; combines and writes back in ONE instruction. This backend had never emitted
+;; that form, so `dst[i] = dst[i] op x` always lowered to the three-instruction
+;; register round trip
+;;
+;;   movq (%rax,%rcx,8), %r9 / orq (%rdi,%rcx,8), %r9 / movq %r9, (%rax,%rcx,8)
+;;
+;; where clang emits two (`movq (%rdi,%rcx,8), %rsi; orq %rsi, (%rax,%rcx,8)`),
+;; or ONE when the other operand is already a register or an immediate. That is
+;; the whole of liveness_scan's live-out union bucket L2(a): 3 instructions per
+;; word against clang's 2.
+;;
+;; ADMISSION. The window starts at the gep+load pair this emitter already owns
+;; (g0/`a`) and must continue with EXACTLY one of
+;;
+;;   direct: BinOp c = a op x ; Gep g2 ; StorePtr g2, c              (5 instrs)
+;;   memory: Gep g1 ; Load b = g1 ; BinOp c = a op b ;
+;;           Gep g2 ; StorePtr g2, c                                 (7 instrs)
+;;
+;; with `a` and `c` each read exactly once, every absorbed gep single-use, and
+;; g2's base/offset/element operands syntactically IDENTICAL to g0's. Matching
+;; the window structurally discharges three obligations at once:
+;;
+;;   * INTERVENING STORES. Nothing but the listed instructions may sit between
+;;     the load and the store, and none of them writes memory, so no store to
+;;     the folded address can be skipped over.
+;;   * TRAPS. A BoundsCheck (or any other instruction) INSIDE the window fails
+;;     the match, so nothing that can leave the block is ever moved across the
+;;     folded access. Checks that PRECEDE the load are untouched and still
+;;     precede it, so the fold fires on checked and check-free bodies alike and
+;;     neither gains nor loses a trap: the abort still runs before any memory
+;;     operation, exactly where it ran before. (Contrast the unroll class below,
+;;     whose admission really does require a check-free clone -- there the cost
+;;     is duplicated CHECKS, which this fold never duplicates.)
+;;   * FLAGS. The memory-destination form sets EFLAGS exactly as the register
+;;     form did, on the same result, and the store it replaces wrote none. The
+;;     ALU moves at most two instruction slots later and nothing in between
+;;     reads or writes flags, so any consumer past the store sees what it saw.
+;;
+;; ALIASING is syntactic, never a semantic equality proof: the store address is
+;; admitted only when it is spelled from the SAME base and index VALUES as the
+;; load address, at the same GAP9 displacement. Reordering is safe for the same
+;; reason -- the only memory read that moves ahead of the folded read is a LOAD,
+;; which cannot change the folded location, and when the two addresses happen to
+;; be the same location both orders compute `a op a`.
+;;
+;; ORDINALS. g0's ordinal was consumed by the dispatch site. This fold consumes
+;; g1's and g2's itself, in walk order, and decides admission from
+;; `compiler-backend-gep-fold-peek` (PURE) so a decline leaves every remaining
+;; ordinal for the ordinary emission to consume exactly once. (Rebase note: main
+;; carries the store-pair double-consume fix for this same obligation; this
+;; branch predates it, and the peek-then-consume discipline here is written to
+;; be independent of that fix rather than to depend on it.)
+;;
+;; NARROWER THAN THE SHAPE ALLOWS, deliberately: 64-bit integer operands only
+;; (no narrow widths, where the load's extension and the store's truncation stop
+;; agreeing), dynamic SIB addressing only, and `imul` excluded (x86 has no
+;; memory-destination two-operand form for it).
+(define (compiler-backend-gep-rmw-mnemonic
+  [op : compiler_ir_types.CompilerIrBinOp]) : String
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Add) "add"]
+    [(compiler_ir_types.CompilerIrBinOp.Sub) "sub"]
+    [(compiler_ir_types.CompilerIrBinOp.BitAnd) "and"]
+    [(compiler_ir_types.CompilerIrBinOp.BitOr) "or"]
+    [(compiler_ir_types.CompilerIrBinOp.BitXor) "xor"]
+    [_ ""]))
+
+;; `sub` is the only admitted mnemonic that is not commutative, and the memory
+;; destination is always the folded LEFT operand, so `x - dst[i]` has no
+;; memory-destination spelling at all.
+(define (compiler-backend-gep-rmw-commutative?
+  [op : compiler_ir_types.CompilerIrBinOp]) : bool
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Sub) false]
+    [_ true]))
+
+;; The operand that is NOT the folded load, or No when the load is not an
+;; operand at all (or sits on the right of a non-commutative op).
+(defenum CompilerBackendGepRmwOther
+  (No)
+  (Some compiler_ir_types.CompilerIrValue))
+
+(define (compiler-backend-gep-rmw-other-operand
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [load-dst : i64]) : CompilerBackendGepRmwOther
+  (if (compiler-backend-branch-uses-var? lhs load-dst)
+    (CompilerBackendGepRmwOther.Some rhs)
+    (if (and
+      (compiler-backend-branch-uses-var? rhs load-dst)
+      (compiler-backend-gep-rmw-commutative? op))
+      (CompilerBackendGepRmwOther.Some lhs)
+      (CompilerBackendGepRmwOther.No))))
+
+;; Source spelling for the one-instruction (direct) form: a register home or an
+;; imm32. A spilled operand has neither -- x86 cannot take two memory operands
+;; -- so it declines and keeps the register round trip.
+(define (compiler-backend-gep-rmw-direct-source
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]) : String
+  (let
+    [home : String
+      (compiler-backend-value-scalar-register backend-state assignments value)]
+    (if (not (string.eq home ""))
+      home
+      (match (compiler-backend-value-as-i64 value)
+        [(option_i64.Some n)
+          (if (compiler-backend-imm32? n)
+            (str_cat.str-cat "$" (string.int->string n))
+            "")]
+        [(option_i64.None) ""]))))
+
+;; The folded destination operand, or "" when any component declines: the base
+;; must be register-homed and admissible as an address base (#rbp-base: the gep
+;; index already occupies the SIB index slot), and the index must be a
+;; register-homed dynamic offset.
+(define (compiler-backend-gep-rmw-address
+  [backend-state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [disp : i64]) : String
+  (let
+    [base-home : String
+      (compiler-backend-address-base-filter
+        (compiler-backend-value-scalar-register backend-state assignments base))]
+    [index-home : String
+      (compiler-backend-value-scalar-register backend-state assignments offset)]
+    (if (or (string.eq base-home "") (string.eq index-home ""))
+      ""
+      (compiler-backend-gep-index-address-disp
+        disp
+        base-home
+        (compiler-backend-type-size type-segment-bases elem-ty)
+        index-home))))
+
+;; Does `reg` spell either component of the address built from base/offset?
+;; The staging register is written before both addresses are read, so a hit
+;; declines the fold.
+(define (compiler-backend-gep-rmw-address-uses-register?
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [reg : String]) : bool
+  (or
+    (string.eq
+      (compiler-backend-value-scalar-register backend-state assignments base)
+      reg)
+    (string.eq
+      (compiler-backend-value-scalar-register backend-state assignments offset)
+      reg)))
+
+;; Every 64-bit integer condition the fold needs of one value/type pair.
+(define (compiler-backend-gep-rmw-word-type?
+  [type-segment-bases : i64]
+  [ty : compiler_ast_types.AstType]) : bool
+  (and
+    (= (compiler-backend-type-size type-segment-bases ty) 8)
+    (not (compiler-backend-float-type? ty))))
+
+;; The `Gep g2 ; StorePtr g2, c` tail: g2 must address the same word as g0 and
+;; the store must be the ALU result's only reader. Returns the index just past
+;; the store, or -1.
+(define (compiler-backend-gep-rmw-store-tail
+  [ctx : CompilerBackendEmissionContext]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [alu-dst : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= (+ index 1) instrs.len)
+    (- 0 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Gep gep-dst2 base2 offset2 elem-ty2)
+        (if (and
+          (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
+          (compiler_optimize.opt-value-eq base2 base)
+          (compiler_optimize.opt-value-eq offset2 offset)
+          (=
+            (compiler-backend-type-size ctx.type-segment-bases elem-ty2)
+            (compiler-backend-type-size ctx.type-segment-bases elem-ty)))
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref
+            instrs
+            (+ index 1))
+            [(compiler_ir_types.CompilerIrInstr.StorePtr dst2 value2 store-ty)
+              (if (and
+                (compiler-backend-branch-uses-var? dst2 gep-dst2)
+                (compiler-backend-branch-uses-var? value2 alu-dst)
+                (compiler-backend-gep-rmw-word-type?
+                  ctx.type-segment-bases
+                  store-ty))
+                (+ index 2)
+                (- 0 1))]
+            [_ (- 0 1)])
+          (- 0 1))]
+      [_ (- 0 1)])))
+
+(defenum CompilerBackendMaybeGepRmwEmission
+  (No)
+  (Some ResultCompilerBackend))
+
+;; The one-instruction form: the other operand is already a register or an
+;; immediate, so the whole `load; op; store` triple becomes `op src, (mem)`.
+;; No staging register is written, so there is nothing to exclude -- the
+;; destination's base and index are only READ by the folded instruction, and
+;; reading them from a register that also spells the source is harmless.
+;;
+;; PROBE COST. Every fused gep+load in the program reaches this rule, and only a
+;; handful are read-modify-writes, so the tests are ordered cheapest-and-most-
+;; selective first and NOTHING that allocates runs until the shape has already
+;; matched. Building the destination operand up front instead cost +0.14% on an
+;; opt1 self-compile all by itself: `str-cat` over five pieces, per gep+load,
+;; almost always thrown away.
+(define (compiler-backend-emit-gep-rmw-direct-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [gep-fold-disp : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [load-dst : i64]
+  [alu-dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [alu-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepRmwEmission
+  (let
+    [mnem : String (compiler-backend-gep-rmw-mnemonic op)]
+    (if (or
+      (string.eq mnem "")
+      (not (compiler-backend-var-single-use? ctx.use-counts load-dst))
+      (not (compiler-backend-var-single-use? ctx.use-counts alu-dst))
+      (not (compiler-backend-gep-rmw-word-type? ctx.type-segment-bases alu-ty)))
+      (CompilerBackendMaybeGepRmwEmission.No)
+      (let
+        [after-store : i64
+          (compiler-backend-gep-rmw-store-tail
+            ctx
+            base
+            offset
+            elem-ty
+            alu-dst
+            instrs
+            index)]
+        (if (or
+          (< after-store 0)
+          (compiler-backend-binop-f64?
+            ctx.types
+            ctx.global-types
+            lhs
+            rhs
+            alu-ty)
+          ;; g2's displacement decides whether the store really addresses the
+          ;; word the load read. Peeked, not consumed: a mismatch must decline
+          ;; without touching the cursor.
+          (not
+            (=
+              (compiler-backend-gep-fold-peek
+                ctx.function-state
+                ctx.type-segment-bases
+                0
+                offset
+                elem-ty)
+              gep-fold-disp)))
+          (CompilerBackendMaybeGepRmwEmission.No)
+          (let
+            [src : String
+              (match (compiler-backend-gep-rmw-other-operand
+                op
+                lhs
+                rhs
+                load-dst)
+                [(CompilerBackendGepRmwOther.Some other)
+                  (compiler-backend-gep-rmw-direct-source
+                    ctx.backend-state
+                    ctx.assignments
+                    other)]
+                [(CompilerBackendGepRmwOther.No) ""])]
+            (if (string.eq src "")
+              (CompilerBackendMaybeGepRmwEmission.No)
+              (let
+                [addr : String
+                  (compiler-backend-gep-rmw-address
+                    ctx.backend-state
+                    ctx.type-segment-bases
+                    ctx.assignments
+                    base
+                    offset
+                    elem-ty
+                    gep-fold-disp)]
+                (if (string.eq addr "")
+                  (CompilerBackendMaybeGepRmwEmission.No)
+                  (let
+                    [_g2 : i64
+                      (compiler-backend-gep-fold-next!
+                        ctx.function-state
+                        ctx.type-segment-bases
+                        offset
+                        elem-ty)]
+                    (CompilerBackendMaybeGepRmwEmission.Some
+                      (compiler-backend-emit-fused-result-rest
+                        ctx
+                        fallthrough
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat "    " mnem "q " src ", " addr "\n"))
+                        instrs
+                        after-store
+                        out))))))))))))
+
+;; The two-instruction form: the other operand is a second fused gep+load, so
+;; the source word is staged into the ALU result's own home and consumed as the
+;; register operand of the memory-destination op. The staging register is
+;; WRITTEN before the destination address is read, so it must not spell any
+;; component of either address.
+(define (compiler-backend-emit-gep-rmw-memory-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [gep-fold-disp : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [load-dst : i64]
+  [base1 : compiler_ir_types.CompilerIrValue]
+  [offset1 : compiler_ir_types.CompilerIrValue]
+  [elem-ty1 : compiler_ast_types.AstType]
+  [load-dst1 : i64]
+  [load-ty1 : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepRmwEmission
+  (if (>= index instrs.len)
+    (CompilerBackendMaybeGepRmwEmission.No)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp alu-dst op lhs rhs alu-ty)
+        ;; Same cost discipline as the direct form: cheap structural tests
+        ;; first, no allocation until the whole window has matched.
+        (let
+          [mnem : String (compiler-backend-gep-rmw-mnemonic op)]
+          [other-is-load1 : bool
+            (match (compiler-backend-gep-rmw-other-operand op lhs rhs load-dst)
+              [(CompilerBackendGepRmwOther.Some other)
+                (compiler-backend-branch-uses-var? other load-dst1)]
+              [(CompilerBackendGepRmwOther.No) false])]
+          (if (or
+            (string.eq mnem "")
+            (not other-is-load1)
+            (not (compiler-backend-var-single-use? ctx.use-counts load-dst))
+            (not (compiler-backend-var-single-use? ctx.use-counts load-dst1))
+            (not (compiler-backend-var-single-use? ctx.use-counts alu-dst))
+            (not
+              (compiler-backend-gep-rmw-word-type?
+                ctx.type-segment-bases
+                load-ty1))
+            (not
+              (compiler-backend-gep-rmw-word-type?
+                ctx.type-segment-bases
+                alu-ty)))
+            (CompilerBackendMaybeGepRmwEmission.No)
+            (let
+              [after-store : i64
+                (compiler-backend-gep-rmw-store-tail
+                  ctx
+                  base
+                  offset
+                  elem-ty
+                  alu-dst
+                  instrs
+                  (+ index 1))]
+              [stage : String
+                (compiler-backend-var-register-home
+                  ctx.backend-state
+                  ctx.assignments
+                  alu-dst)]
+              (if (or
+                (< after-store 0)
+                (string.eq stage "")
+                (compiler-backend-binop-f64?
+                  ctx.types
+                  ctx.global-types
+                  lhs
+                  rhs
+                  alu-ty)
+                (compiler-backend-gep-rmw-address-uses-register?
+                  ctx.backend-state
+                  ctx.assignments
+                  base
+                  offset
+                  stage)
+                (compiler-backend-gep-rmw-address-uses-register?
+                  ctx.backend-state
+                  ctx.assignments
+                  base1
+                  offset1
+                  stage)
+                (not
+                  (=
+                    (compiler-backend-gep-fold-peek
+                      ctx.function-state
+                      ctx.type-segment-bases
+                      1
+                      offset
+                      elem-ty)
+                    gep-fold-disp)))
+                (CompilerBackendMaybeGepRmwEmission.No)
+                (let
+                  [addr : String
+                    (compiler-backend-gep-rmw-address
+                      ctx.backend-state
+                      ctx.type-segment-bases
+                      ctx.assignments
+                      base
+                      offset
+                      elem-ty
+                      gep-fold-disp)]
+                  [addr1 : String
+                    (compiler-backend-gep-rmw-address
+                      ctx.backend-state
+                      ctx.type-segment-bases
+                      ctx.assignments
+                      base1
+                      offset1
+                      elem-ty1
+                      (compiler-backend-gep-fold-peek
+                        ctx.function-state
+                        ctx.type-segment-bases
+                        0
+                        offset1
+                        elem-ty1))]
+                  (if (or (string.eq addr "") (string.eq addr1 ""))
+                    (CompilerBackendMaybeGepRmwEmission.No)
+                    (let
+                      [_g1 : i64
+                        (compiler-backend-gep-fold-next!
+                          ctx.function-state
+                          ctx.type-segment-bases
+                          offset1
+                          elem-ty1)]
+                      [_g2 : i64
+                        (compiler-backend-gep-fold-next!
+                          ctx.function-state
+                          ctx.type-segment-bases
+                          offset
+                          elem-ty)]
+                      (CompilerBackendMaybeGepRmwEmission.Some
+                        (compiler-backend-emit-fused-result-rest
+                          ctx
+                          fallthrough
+                          (ResultCompilerBackend.Ok
+                            (str_cat.str-cat
+                              "    movq "
+                              addr1
+                              ", "
+                              stage
+                              "\n    "
+                              mnem
+                              "q "
+                              stage
+                              ", "
+                              addr
+                              "\n"))
+                          instrs
+                          after-store
+                          out)))))))))]
+      [_ (CompilerBackendMaybeGepRmwEmission.No)])))
+
+;; The fold's entry point: dispatch on what follows the gep+load pair.
+(define (compiler-backend-emit-gep-rmw-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [gep-fold-disp : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepRmwEmission
+  ;; A constant gep offset addresses through the base register alone, which this
+  ;; fold does not spell; the dynamic SIB form is the whole admitted family.
+  ;; That value match is the cheapest test available and it retires every
+  ;; constant-offset field access in the program before any type is measured.
+  (if (>= index instrs.len)
+    (CompilerBackendMaybeGepRmwEmission.No)
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some _) (CompilerBackendMaybeGepRmwEmission.No)]
+      [(option_i64.None)
+        (if (not
+          (compiler-backend-gep-rmw-word-type? ctx.type-segment-bases load-ty))
+          (CompilerBackendMaybeGepRmwEmission.No)
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+            [(compiler_ir_types.CompilerIrInstr.BinOp alu-dst op lhs rhs alu-ty)
+              (compiler-backend-emit-gep-rmw-direct-rest
+                ctx
+                fallthrough
+                gep-fold-disp
+                base
+                offset
+                elem-ty
+                load-dst
+                alu-dst
+                op
+                lhs
+                rhs
+                alu-ty
+                instrs
+                (+ index 1)
+                out)]
+            [(compiler_ir_types.CompilerIrInstr.Gep
+                gep-dst1
+                base1
+                offset1
+                elem-ty1)
+              (if (and
+                (compiler-backend-var-single-use? ctx.use-counts gep-dst1)
+                (< (+ index 1) instrs.len))
+                (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                  instrs
+                  (+ index 1))
+                  [(compiler_ir_types.CompilerIrInstr.Load
+                      load-dst1
+                      src1
+                      load-ty1)
+                    (if (compiler-backend-branch-uses-var? src1 gep-dst1)
+                      (match (compiler-backend-value-as-i64 offset1)
+                        [(option_i64.Some _)
+                          (CompilerBackendMaybeGepRmwEmission.No)]
+                        [(option_i64.None)
+                          (compiler-backend-emit-gep-rmw-memory-rest
+                            ctx
+                            fallthrough
+                            gep-fold-disp
+                            base
+                            offset
+                            elem-ty
+                            load-dst
+                            base1
+                            offset1
+                            elem-ty1
+                            load-dst1
+                            load-ty1
+                            instrs
+                            (+ index 2)
+                            out)])
+                      (CompilerBackendMaybeGepRmwEmission.No))]
+                  [_ (CompilerBackendMaybeGepRmwEmission.No)])
+                (CompilerBackendMaybeGepRmwEmission.No))]
+            [_ (CompilerBackendMaybeGepRmwEmission.No)]))])))
+
 (define (compiler-backend-emit-fused-gep-load-rest-tail
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [_gep-dst : i64]
+  [gep-fold-disp : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  ;; GAP10 first: it is the only rule here that retires the STORE as well, so a
+  ;; window it claims would otherwise be split across two rules that each emit
+  ;; one instruction more than the pair needs. Every rule below is offered the
+  ;; window untouched -- GAP10's probe consumes no ordinal until it commits.
+  (match (compiler-backend-emit-gep-rmw-rest
+    ctx
+    fallthrough
+    gep-fold-disp
+    base
+    offset
+    elem-ty
+    load-dst
+    load-ty
+    instrs
+    index
+    out)
+    [(CompilerBackendMaybeGepRmwEmission.Some result) result]
+    [(CompilerBackendMaybeGepRmwEmission.No)
+      (compiler-backend-emit-fused-gep-load-rest-alu-tail
+        ctx
+        fallthrough
+        _gep-dst
+        gep-fold-disp
+        base
+        offset
+        elem-ty
+        load-dst
+        load-ty
+        instrs
+        index
+        out)]))
+
+(define (compiler-backend-emit-fused-gep-load-rest-alu-tail
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [_gep-dst : i64]
@@ -64399,6 +65006,66 @@
                 compiler-backend-function-bool-gep-fold-drift
                 true)
               0)))))))
+
+;; PURE lookahead at an ordinal the walker has not consumed yet: returns exactly
+;; what `compiler-backend-gep-fold-next!` WILL return for the gep sitting
+;; `ahead` positions past the cursor (0 = the very next Gep the walker
+;; dispatches), without advancing the cursor and without ever setting drift.
+;;
+;; ORDINAL SAFETY. Peeking is not consuming: the caller must still consume every
+;; gep it absorbs, exactly once, in walk order. The peek exists for the one
+;; admission question a displacement-blind probe cannot answer -- whether two
+;; syntactically identical geps address the SAME byte. GAP9 folds `i+k` into the
+;; displacement and retargets the gep index to `i`, so two geps can carry equal
+;; base/offset/element operands and still address different words; the RMW fold
+;; below is only sound when their displacements agree, and it must decide that
+;; BEFORE it commits, because a decline after consumption would double-consume
+;; on the fallback path (the store-pair ordinal bug class).
+;;
+;; `ahead` is counted in Gep instructions, which the caller establishes by
+;; matching the intervening instructions structurally: it may only peek past
+;; geps it has already seen in the sequence.
+(define (compiler-backend-gep-fold-peek
+  [function-state : CompilerBackendFunctionState]
+  [type-segment-bases : i64]
+  [ahead : i64]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]) : i64
+  (if (not
+    (compiler-backend-function-state-bool?
+      function-state
+      compiler-backend-function-bool-gep-fold-ready))
+    0
+    (let
+      [cursor : i64
+        (+
+          (compiler-backend-function-state-i64
+            function-state
+            compiler-backend-function-i64-gep-fold-cursor)
+          ahead)]
+      [disp-table : (__tl_dyn-array i64)
+        (compiler-backend-function-state-i64-array
+          function-state
+          compiler-backend-function-i64-array-gep-fold-disp-table)]
+      [kind-table : (__tl_dyn-array i64)
+        (compiler-backend-function-state-i64-array
+          function-state
+          compiler-backend-function-i64-array-gep-fold-kind-table)]
+      [scale-table : (__tl_dyn-array i64)
+        (compiler-backend-function-state-i64-array
+          function-state
+          compiler-backend-function-i64-array-gep-fold-scale-table)]
+      (if (or (< cursor 0) (>= cursor (array-length disp-table)))
+        0
+        (if (and
+          (=
+            (array-ref kind-table cursor)
+            (compiler-backend-gep-fold-offset-kind offset))
+          (=
+            (array-ref scale-table cursor)
+            (compiler-backend-type-size type-segment-bases elem-ty)))
+          (array-ref disp-table cursor)
+          0)))))
 
 (define (compiler-backend-gep-fold-drift?
   [function-state : CompilerBackendFunctionState]) : bool

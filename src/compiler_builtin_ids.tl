@@ -143,6 +143,8 @@
   -1)
 (define compiler-builtin-id-tl-mem-fill8 : i64
   -1)
+(define compiler-builtin-id-tl-mem-copy-fwd : i64
+  -1)
 (define compiler-builtin-id-tl-print-char : i64
   -1)
 (define compiler-builtin-id-tl-print-f64 : i64
@@ -801,7 +803,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (__tl_dyn-array i64) (make-array i64 4)]
-    [ids : (__tl_dyn-array i64) (make-array i64 317)]
+    [ids : (__tl_dyn-array i64) (make-array i64 318)]
     [ctfe-ids : (__tl_dyn-array i64) (make-array i64 284)]
     [i : i64 0]
     (begin
@@ -1294,6 +1296,7 @@
       compiler-builtin-id-tl-arena-debug-assert-pool-install)
     (state-set! state 315 compiler-builtin-id-comptime-type-info-slice-variant)
     (state-set! state 316 compiler-builtin-id-tl-mem-fill8)
+    (state-set! state 317 compiler-builtin-id-tl-mem-copy-fwd)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1350,6 +1353,7 @@
     (set! compiler-builtin-id-tl-array-fill8 (state-ref state 40))
     (set! compiler-builtin-id-tl-array-zero (state-ref state 41))
     (set! compiler-builtin-id-tl-mem-fill8 (state-ref state 316))
+    (set! compiler-builtin-id-tl-mem-copy-fwd (state-ref state 317))
     (set! compiler-builtin-id-tl-print-char (state-ref state 42))
     (set! compiler-builtin-id-tl-print-f64 (state-ref state 43))
     (set! compiler-builtin-id-string-length (state-ref state 44))
@@ -2280,6 +2284,9 @@
     (set!
       compiler-builtin-id-tl-mem-fill8
       (compiler-builtin-resolve-name insert-missing "tl_mem_fill8"))
+    (set!
+      compiler-builtin-id-tl-mem-copy-fwd
+      (compiler-builtin-resolve-name insert-missing "tl_mem_copy_fwd"))
     (set!
       compiler-builtin-id-tl-print-char
       (compiler-builtin-resolve-name insert-missing "tl_print_char"))
@@ -3620,7 +3627,8 @@
         name-id
         compiler-builtin-id-tl-array-fill8
         compiler-builtin-id-tl-array-zero
-        compiler-builtin-id-tl-mem-fill8))))
+        compiler-builtin-id-tl-mem-fill8)
+      (= name-id compiler-builtin-id-tl-mem-copy-fwd))))
 
 (define (compiler-builtin-backend-tl-array-fill8-id? [name-id : i64]) : bool
   (begin
@@ -3636,6 +3644,11 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-mem-fill8)))
+
+(define (compiler-builtin-backend-tl-mem-copy-fwd-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-mem-copy-fwd)))
 
 (define (compiler-builtin-backend-tl-print-char-id? [name-id : i64]) : bool
   (begin

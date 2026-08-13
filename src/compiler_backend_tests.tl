@@ -22137,6 +22137,7 @@
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_mark")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset"))
     (compiler-backend-runtime-global-symbol-ok? asm "tl_mem_fill8")
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_mem_copy_fwd")
     (compiler-backend-runtime-global-symbol-ok? asm "tl_tlci_call_image_entry")
     (compiler-backend-runtime-global-symbol-ok? asm "tl_tlci_call_macro_entry")
     (compiler-backend-runtime-global-symbol-ok?
@@ -22145,7 +22146,7 @@
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 23)
+    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 24)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -22154,7 +22155,7 @@
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 26)
+    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 27)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")

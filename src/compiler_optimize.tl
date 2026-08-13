@@ -46046,6 +46046,497 @@
     func)
     [(OptFunctionCtxResult.Result out _) out]))
 
+;; --- byte copy -> tl_mem_copy_fwd (copy_call) ---------------------------------
+;;
+;; A counted loop whose whole body is `dst[i] = src[i]` on ONE-BYTE elements
+;; becomes one `tl_mem_copy_fwd(&dst[i0], &src[i0], bound)` call. This is the
+;; STORE-side companion to the byte-compose load fold: where that one widens a
+;; shift/or tree of narrow LOADS into a single wide load, this one widens a
+;; whole loop of narrow STORES -- the corpus copies behind `byte_buf.to-string`
+;; and every hand-written `string -> byte vector` loop -- into the runtime's
+;; word-at-a-time copy. The element-wise loop costs 3.5 instructions per byte
+;; after the x2 unroller has had it (two loads, two stores, an add, a compare
+;; and a branch per two bytes); the helper's `rep movsq` is charged one
+;; instruction per EIGHT bytes by the deterministic instruction-count gate, and
+;; the unroller never sees the loop at all because this pass runs ahead of it,
+;; next to fill_call.
+;;
+;; WHY THE HELPER AND NOT `tl_memcpy`: `tl_memcpy` is memmove -- it copies
+;; BACKWARD when the destination overlaps and sits above the source -- and a
+;; wide forward copy is likewise not this loop. A forward byte loop over
+;; `src < dst < src + n` PROPAGATES: it re-reads bytes it has just written, and
+;; neither memmove nor a word-at-a-time forward copy reproduces that.
+;; `tl_mem_copy_fwd` is written to BE the loop for every argument triple (see
+;; its header in compiler_backend_runtime_linux.tl): it takes the wide path only
+;; when `dst <= src` or the ranges are disjoint -- the two cases where reading
+;; ahead of the write cannot matter -- and is a plain `rep movsb`, forward and
+;; byte-granular, otherwise. That TOTAL equivalence is what lets this pass fire
+;; without proving anything about aliasing, which no analysis here could do:
+;; both pointers are opaque loads in every real instance.
+;;
+;; WHY IT IS SOUND TO DROP THE BOUNDS CHECKS: the call touches EXACTLY the byte
+;; addresses the loop touched, in the same order, with the same values, so it
+;; adds no fault site of its own -- a strictly stronger position than fill_call,
+;; which has to argue about the slots it writes. What this pass still needs from
+;; the versioner is the TRIP COUNT, and it takes it the same way fill_call does:
+;; by rewriting ONLY a `__bce_fast` clone whose single non-self predecessor is
+;; in that loop's own `__bce_guard` namespace. The body of a rotated do-while
+;; runs ONCE before any compare, so a loop entered with `seed >= bound` copies
+;; one byte that the call (which writes nothing for a non-positive count) would
+;; not; the guard's `seed < bound` is what rules that out. The CHECKED original
+;; is left untouched, so a program that would abort mid-copy still takes that
+;; path and still aborts at the same element.
+;;
+;; ONE-BYTE ELEMENTS ONLY. The count handed to the helper is the loop's `bound`
+;; read as a BYTE count, which is only the element count when the element is a
+;; byte. It is also the soundness line for overlap: an eight-byte element loop
+;; copies each element atomically, which a byte-granular forward copy does not
+;; reproduce when the overlap is not a multiple of eight.
+;;
+;; The rewrite keeps the block and every other instruction in it, exactly as
+;; fill_call does: it drops the self-edge phi inputs (so the body computes its
+;; FIRST-iteration values, which is what makes the kept address geps spell the
+;; two range starts), replaces the store with the call, redefines the counter's
+;; `next` as its exit value `bound`, and ends with a Jump. The load stays; it
+;; reads one in-range byte once and DCE takes it when it is dead.
+(defstruct OptCopyCallSite
+  (store-index i64)
+  (dst-ptr ir.CompilerIrValue)
+  (src-ptr ir.CompilerIrValue))
+
+(defenum OptCopyCallMaybeSite
+  (No)
+  (Some OptCopyCallSite))
+
+;; Element width one. `rep movsb`'s granularity, and the width at which a
+;; forward byte copy and the source loop agree under every overlap.
+(define (opt-copy-call-byte-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.U8) true]
+    [(ast.AstType.I8) true]
+    [_ false]))
+
+;; The body must be exactly one `store_ptr <gep(base, i)>, <load <gep(base, i)>>`
+;; on byte elements, plus copies, address arithmetic and the counter's own
+;; arithmetic. A BoundsCheck, a second store, a call or anything else rejects --
+;; the check because it would mean the clone is not the check-free copy this
+;; pass reasons about.
+(define (opt-copy-call-scan-body
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [iphi : i64]
+  [found : OptCopyCallMaybeSite]) : OptCopyCallMaybeSite
+  (if (>= index last)
+    found
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.StorePtr ptr value ty)
+        (match found
+          [(OptCopyCallMaybeSite.Some _) (OptCopyCallMaybeSite.No)]
+          [(OptCopyCallMaybeSite.No)
+            (match ptr
+              [(ir.CompilerIrValue.Var ptr-var)
+                (match value
+                  [(ir.CompilerIrValue.Var value-var)
+                    (if (not
+                      (and
+                        (opt-copy-call-byte-type? ty)
+                        (opt-copy-call-gep-tracks? instrs 0 last ptr-var iphi)))
+                      (OptCopyCallMaybeSite.No)
+                      (match (opt-copy-call-load-ptr instrs 0 index value-var)
+                        [(ir.CompilerIrValue.Var src-var)
+                          (if (opt-copy-call-gep-tracks?
+                            instrs
+                            0
+                            last
+                            src-var
+                            iphi)
+                            (opt-copy-call-scan-body
+                              instrs
+                              (+ index 1)
+                              last
+                              iphi
+                              (OptCopyCallMaybeSite.Some
+                                (OptCopyCallSite
+                                  index
+                                  ptr
+                                  (ir.CompilerIrValue.Var src-var))))
+                            (OptCopyCallMaybeSite.No))]
+                        [_ (OptCopyCallMaybeSite.No)]))]
+                  [_ (OptCopyCallMaybeSite.No)])]
+              [_ (OptCopyCallMaybeSite.No)])])]
+      [(ir.CompilerIrInstr.Load _ _ ty)
+        (if (opt-copy-call-byte-type? ty)
+          (opt-copy-call-scan-body instrs (+ index 1) last iphi found)
+          (OptCopyCallMaybeSite.No))]
+      [(ir.CompilerIrInstr.Mov _ _ _)
+        (opt-copy-call-scan-body instrs (+ index 1) last iphi found)]
+      [(ir.CompilerIrInstr.Gep _ _ _ _)
+        (opt-copy-call-scan-body instrs (+ index 1) last iphi found)]
+      [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+        (if (opt-fill-call-binop-ok? op)
+          (opt-copy-call-scan-body instrs (+ index 1) last iphi found)
+          (OptCopyCallMaybeSite.No))]
+      [_ (OptCopyCallMaybeSite.No)])))
+
+;; The pointer operand of the byte Load that defines `value-var`, searched only
+;; BEFORE the store so the read is the one the store consumes. A non-Var result
+;; (including "not found") rejects at the call site.
+(define (opt-copy-call-load-ptr
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [store-index : i64]
+  [value-var : i64]) : ir.CompilerIrValue
+  (if (>= index store-index)
+    (ir.CompilerIrValue.I64 0)
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Load dst ptr ty)
+        (if (and (= dst value-var) (opt-copy-call-byte-type? ty))
+          ptr
+          (opt-copy-call-load-ptr instrs (+ index 1) store-index value-var))]
+      [_ (opt-copy-call-load-ptr instrs (+ index 1) store-index value-var)])))
+
+;; `ptr-var` must be `gep base, <index>` with a ONE-BYTE element, a
+;; loop-invariant base, and an index that advances exactly with the counter:
+;; the counter itself, or `invariant + counter` in either operand order. That is
+;; what makes address(i) = address(0) + i, hence what makes one contiguous copy
+;; of `bound` bytes from address(0) the loop.
+(define (opt-copy-call-gep-tracks?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [ptr-var : i64]
+  [iphi : i64]) : bool
+  (if (>= index last)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Gep dst base offset elem-ty)
+        (if (not (= dst ptr-var))
+          (opt-copy-call-gep-tracks? instrs (+ index 1) last ptr-var iphi)
+          (let
+            [defs : opt_i64_i64_map.Map
+              (opt-unroll-block-defs
+                instrs.slots
+                0
+                last
+                (opt_i64_i64_map.with-capacity 32))]
+            (and
+              (opt-copy-call-byte-type? elem-ty)
+              (not (opt-used-contains defs (opt-fill-call-value-var base)))
+              (opt-copy-call-index-tracks? instrs 0 last offset iphi defs))))]
+      [_ (opt-copy-call-gep-tracks? instrs (+ index 1) last ptr-var iphi)])))
+
+(define (opt-copy-call-index-tracks?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [offset : ir.CompilerIrValue]
+  [iphi : i64]
+  [defs : opt_i64_i64_map.Map]) : bool
+  (match offset
+    [(ir.CompilerIrValue.Var offset-var)
+      (if (= offset-var iphi)
+        true
+        (opt-copy-call-offset-add? instrs index last offset-var iphi defs))]
+    [_ false]))
+
+;; `offset-var = add invariant, counter` (either operand order), defined in this
+;; block. A step other than the counter, or an addend the block itself defines,
+;; rejects.
+(define (opt-copy-call-offset-add?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [offset-var : i64]
+  [iphi : i64]
+  [defs : opt_i64_i64_map.Map]) : bool
+  (if (>= index last)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
+        (if (not (= dst offset-var))
+          (opt-copy-call-offset-add?
+            instrs
+            (+ index 1)
+            last
+            offset-var
+            iphi
+            defs)
+          (match op
+            [(ir.CompilerIrBinOp.Add)
+              (or
+                (opt-copy-call-add-pair? lhs rhs iphi defs)
+                (opt-copy-call-add-pair? rhs lhs iphi defs))]
+            [_ false]))]
+      [_
+        (opt-copy-call-offset-add? instrs (+ index 1) last offset-var iphi defs)])))
+
+;; `counter` on one side, a value the block does not define on the other.
+(define (opt-copy-call-add-pair?
+  [counter-side : ir.CompilerIrValue]
+  [other-side : ir.CompilerIrValue]
+  [iphi : i64]
+  [defs : opt_i64_i64_map.Map]) : bool
+  (match counter-side
+    [(ir.CompilerIrValue.Var v)
+      (and
+        (= v iphi)
+        (not (opt-used-contains defs (opt-fill-call-value-var other-side))))]
+    [_ false]))
+
+;; Same rule as `opt-fill-call-escape-ok?` -- only `inext` (materialised as
+;; `bound`) and the loop compare (which keeps computing `bound < bound` = false)
+;; may be observed from outside the block -- but it must ALSO cover Load, which
+;; this pass's body scan admits and fill_call's never sees. The kept load runs
+;; once at the seed index, so its result is the FIRST iteration's byte where the
+;; loop left the LAST one; an outside use (directly, or through an exit phi
+;; naming it) would read the wrong byte, so it rejects.
+(define (opt-copy-call-escape-ok?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [last : i64]
+  [outside : opt_i64_i64_map.Map]
+  [inext : i64]
+  [cond-var : i64]) : bool
+  (if (>= index last)
+    true
+    (let
+      [dst : i64
+        (match (ir.compiler-ir-instr-seq-ref instrs index)
+          [(ir.CompilerIrInstr.Phi d _ _) d]
+          [(ir.CompilerIrInstr.Mov d _ _) d]
+          [(ir.CompilerIrInstr.Gep d _ _ _) d]
+          [(ir.CompilerIrInstr.Load d _ _) d]
+          [(ir.CompilerIrInstr.BinOp d _ _ _ _) d]
+          [_ (- 0 1)])]
+      (if (and
+        (>= dst 0)
+        (opt-used-contains outside dst)
+        (not (= dst cond-var))
+        (not (= (opt-unroll-resolve-copy instrs phi-count last dst 16) inext)))
+        false
+        (opt-copy-call-escape-ok?
+          instrs
+          (+ index 1)
+          phi-count
+          last
+          outside
+          inext
+          cond-var)))))
+
+(define (opt-copy-call-symbol) : i64
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    cbi.compiler-builtin-id-tl-mem-copy-fwd))
+
+(define (opt-copy-call-emit-body!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [last : i64]
+  [shape : OptFillCallShape]
+  [site : OptCopyCallSite]
+  [frame-cell : (__tl_dyn-array i64)]) : unit
+  (if (>= index last)
+    unit
+    (begin
+      (if (= index site.store-index)
+        ;; The store becomes the copy call. The byte count is `bound - seed`
+        ;; and the recognizer pinned the seed to literal 0, so it is exactly
+        ;; `bound` -- no subtract is emitted.
+        (let
+          [call-var : i64 (opt-fill-call-alloc-var frame-cell)]
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Call
+              call-var
+              (opt-copy-call-symbol)
+              (ir.compiler-ir-call-args-array
+                (ir.compiler-ir-value-cons
+                  site.dst-ptr
+                  (ir.compiler-ir-value-cons
+                    site.src-ptr
+                    (ir.compiler-ir-value-cons
+                      shape.bound
+                      ir.CompilerIrValueList.Nil))))
+              (ast.AstType.Unit))))
+        ;; the counter's `next` is redefined as its exit value, `bound`
+        (if (opt-fill-call-defines-inext? instrs index shape.inext)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Mov shape.inext shape.bound shape.ity))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref instrs index))))
+      (opt-copy-call-emit-body!
+        (&mut builder)
+        instrs
+        (+ index 1)
+        phi-count
+        last
+        shape
+        site
+        frame-cell))))
+
+(define (opt-copy-call-rewrite-block
+  [block : ir.CompilerIrBlock]
+  [shape : OptFillCallShape]
+  [site : OptCopyCallSite]
+  [frame-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [phi-count : i64 shape.phi-count]
+        [builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
+        (begin
+          (opt-fill-call-emit-phis! (&mut builder) instrs 0 phi-count label)
+          (opt-copy-call-emit-body!
+            (&mut builder)
+            instrs
+            phi-count
+            phi-count
+            (- count 1)
+            shape
+            site
+            frame-cell)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Jump shape.exit-label))
+          (ir.CompilerIrBlock.Block
+            label
+            (ir.compiler-ir-instr-builder-to-seq builder))))]))
+
+(defenum OptCopyCallMaybeShapeSite
+  (No)
+  (Some OptFillCallShape OptCopyCallSite))
+
+;; The counted-loop recognizer is fill_call's -- seed 0, step 1, invariant
+;; bound, `__bce_fast` clone entered only from its own `__bce_guard` namespace --
+;; because both rewrites need exactly those facts and sharing it means they
+;; cannot drift apart. Only the BODY recognizer differs.
+(define (opt-copy-call-block-match
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [block : ir.CompilerIrBlock]) : OptCopyCallMaybeShapeSite
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (match (opt-fill-call-shape entry-label block)
+        [(OptFillCallMaybeShape.No) (OptCopyCallMaybeShapeSite.No)]
+        [(OptFillCallMaybeShape.Some shape)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [last : i64 (- count 1)]
+            [prefix : String (opt-fill-call-versioned-prefix label)]
+            (if (not
+              (opt-fill-call-pred-in-version-namespace?
+                blocks
+                prefix
+                shape.pred-label))
+              (OptCopyCallMaybeShapeSite.No)
+              (match (opt-copy-call-scan-body
+                instrs
+                shape.phi-count
+                last
+                shape.iphi
+                (OptCopyCallMaybeSite.No))
+                [(OptCopyCallMaybeSite.No) (OptCopyCallMaybeShapeSite.No)]
+                [(OptCopyCallMaybeSite.Some site)
+                  (if (opt-copy-call-escape-ok?
+                    instrs
+                    0
+                    shape.phi-count
+                    last
+                    (opt-fill-call-outside-uses
+                      blocks
+                      label
+                      (opt_i64_i64_map.with-capacity 64))
+                    shape.inext
+                    shape.cond-var)
+                    (OptCopyCallMaybeShapeSite.Some shape site)
+                    (OptCopyCallMaybeShapeSite.No))])))])]))
+
+(define (opt-copy-call-rewrite-blocks
+  [all-blocks : ir.CompilerIrBlockList]
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [frame-cell : (__tl_dyn-array i64)]
+  [changed-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (match (opt-copy-call-block-match all-blocks entry-label block)
+          [(OptCopyCallMaybeShapeSite.No) block]
+          [(OptCopyCallMaybeShapeSite.Some shape site)
+            (begin
+              (set! (array-ref changed-cell 0) 1)
+              (opt-copy-call-rewrite-block block shape site frame-cell))])
+        (opt-copy-call-rewrite-blocks
+          all-blocks
+          (__tl-box-place rest)
+          entry-label
+          frame-cell
+          changed-cell))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-copy-call-rewrite-blocks
+        all-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        entry-label
+        frame-cell
+        changed-cell)]))
+
+(define (opt-copy-call-function-with-context-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-verify-gate verified? func context)
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+          (let
+            [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [changed-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [_seed : unit (set! (array-ref frame-cell 0) frame)]
+            [_seed2 : unit (set! (array-ref changed-cell 0) 0)]
+            [rewritten : ir.CompilerIrBlockList
+              (opt-copy-call-rewrite-blocks
+                blocks
+                blocks
+                (opt-cfg-entry-label blocks)
+                frame-cell
+                changed-cell)]
+            (if (= (array-ref changed-cell 0) 0)
+              (OptFunctionCtxResult.Result func context)
+              (let
+                [next : ir.CompilerIrFunction
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    (array-ref frame-cell 0)
+                    rewritten)]
+                [next-context : OptCfgContext
+                  (opt-cfg-context-build (opt-function-blocks next))]
+                (match (opt-verify-function-with-context next next-context)
+                  [(ResultCompilerOptimizeVerify.Ok)
+                    (OptFunctionCtxResult.Result next next-context)]
+                  [(ResultCompilerOptimizeVerify.Err _)
+                    (OptFunctionCtxResult.Result func context)]))))])]
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result func context)]))
+
+;; Standalone driver for tests and ad-hoc runs.
+(define (opt-copy-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-copy-call-function-with-context-result
+    (opt-cfg-context-build (opt-function-blocks func))
+    false
+    func)
+    [(OptFunctionCtxResult.Result out _) out]))
+
 ;; --- constant-trip full unrolling ---------------------------------------------
 ;;
 ;; A rotated single-block self-loop whose counter phi has a LITERAL seed, a
@@ -70049,6 +70540,37 @@
                             name
                             _t-fill-call)
                           unit)]
+                      ;; Byte copies become one tl_mem_copy_fwd call, and for
+                      ;; the same reason fills do: it has to happen BEFORE the
+                      ;; unroller, both because the unrolled x2 body is what
+                      ;; costs 3.5 instructions per byte and because the rewrite
+                      ;; reads the versioner's own freshly built `__bce_guard`
+                      ;; for its trip-count fact (see the pass header).
+                      [_t-copy-call : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [copy-call-result : OptFunctionCtxResult
+                        (opt-copy-call-function-with-context-result
+                          fill-call-context
+                          loop-cluster-verified?
+                          fill-call)]
+                      [copy-call : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "copy_call"
+                          (match copy-call-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
+                      [copy-call-context : OptCfgContext
+                        (match copy-call-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
+                      [_p-copy-call : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            summaries.profile-state
+                            "copy_call"
+                            name
+                            _t-copy-call)
+                          unit)]
                       ;; Canonical counted-loop unrolling (x4) runs on
                       ;; the versioned blocks. A successful rewrite
                       ;; versions at most one loop per pipeline iteration and
@@ -70058,9 +70580,9 @@
                       [unroll-result : OptFunctionCtxResult
                         (opt-unroll-function-with-context-result
                           type-segment-bases
-                          fill-call-context
+                          copy-call-context
                           loop-cluster-verified?
-                          fill-call)]
+                          copy-call)]
                       [unrolled : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases

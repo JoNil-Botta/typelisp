@@ -1318,6 +1318,17 @@ tl_thread_entry_ptr:
 ;; volatile-register plan. Its XMM0-XMM3 uses cannot overlap allocator-assigned
 ;; homes in a compiler-emitted user function: the only boundary is the call,
 ;; whose ABI regmask already clobbers all four registers.
+;;
+;; `tl_mem_copy_fwd` is emitted alongside and is deliberately NOT memmove: it is
+;; the machine equivalent of the source-level forward byte loop
+;; `for (i = 0; i < n; i += 1) dst[i] = src[i]` for EVERY argument triple,
+;; including the propagating `src < dst < src + n` overlap that neither a wide
+;; copy nor memmove reproduces (there `rep movsb`, forward and byte-granular, is
+;; that propagation exactly). That total equivalence is what licenses the
+;; copy_call rewrite in compiler_optimize.tl to replace such a loop with a call
+;; without proving the ranges disjoint; see the Linux runtime for the full case
+;; analysis. Win64 passes %rcx = dst, %rdx = src, %r8 = count, and %rdi/%rsi are
+;; callee-saved, so they are shuttled through %rax/%r10 exactly as tl_memcpy does.
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
 tl_memcpy:
@@ -1430,6 +1441,26 @@ tl_memcpy_fresh:
     movq %rdx, %rsi
     movq %r8, %rcx
     jmp .Ltl_memcpy_fwd
+    .globl tl_mem_copy_fwd
+tl_mem_copy_fwd:
+    testq %r8, %r8
+    jle .Ltl_mem_copy_fwd_done
+    movq %rdi, %rax
+    movq %rsi, %r10
+    movq %rcx, %rdi
+    movq %rdx, %rsi
+    movq %r8, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_memcpy_fwd
+    movq %rsi, %rdx
+    addq %r8, %rdx
+    cmpq %rdx, %rdi
+    jae .Ltl_memcpy_fwd
+    rep movsb
+    movq %rax, %rdi
+    movq %r10, %rsi
+.Ltl_mem_copy_fwd_done:
+    ret
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String

@@ -1026,6 +1026,20 @@
   (WindowsAvx512)
   (InlineAggregates))
 
+(defstruct LowerMaskedLoadCacheData
+  (array-vars (__tl_dyn-array i64))
+  (offsets (__tl_dyn-array i64))
+  (masks (__tl_dyn-array i64))
+  (values (__tl_dyn-array ir.CompilerIrValue))
+  (count i64)
+  (mask-vars (__tl_dyn-array i64))
+  (mask-parents (__tl_dyn-array i64))
+  (mask-count i64))
+
+(defenum LowerMaybeMaskedLoadCache
+  (No)
+  (Some (Box LowerMaskedLoadCacheData)))
+
 ;; Lowering threads one state through every expression in a function. Keep the
 ;; public carrier to one word and mutate its function-owned cell in place:
 ;; returning the former wide value from every variable allocation, emission,
@@ -1050,7 +1064,9 @@
   (address-taken lower_i64_i64_map.Map)
   ;; Tail-call-safe current function parameter var range: [start, end).
   (tail-param-start i64)
-  (tail-param-end i64))
+  (tail-param-end i64)
+  ;; Allocated only when this function enters masked SPMD lowering.
+  (masked-load-cache LowerMaybeMaskedLoadCache))
 
 (defenum LowerState
   (State (Box LowerStateData)))
@@ -1088,7 +1104,8 @@
         mode
         address-taken
         tail-param-start
-        tail-param-end))))
+        tail-param-end
+        (LowerMaybeMaskedLoadCache.No)))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
 ;; builders deliberately fork from a shared snapshot; clone only at those
@@ -1186,6 +1203,10 @@
 (defenum LowerMaybeMaskedVectorMap
   (No)
   (Some i64))
+
+(defenum LowerMaybeMaskedLoad
+  (No)
+  (Some ir.CompilerIrValue))
 
 (defenum LowerMaskedMatchMasks
   (Masks LowerState ir.CompilerIrValue ir.CompilerIrValue))
@@ -13288,6 +13309,253 @@
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
     [(LowerState.State data) (__tl-project-field (__tl-box-place data) mode)]))
+
+(define (lower-masked-load-cache-entry-capacity) : i64
+  32)
+
+(define (lower-masked-load-cache-mask-capacity) : i64
+  64)
+
+;; -1 is the symbolic all-active mask; -2 is an uncacheable non-variable mask.
+(define (lower-masked-load-mask-key [mask : ir.CompilerIrMaybeValue]) : i64
+  (match mask
+    [(ir.CompilerIrMaybeValue.No) -1]
+    [(ir.CompilerIrMaybeValue.Some value)
+      (match value
+        [(ir.CompilerIrValue.Var var) var]
+        [_ -2])]))
+
+(define (lower-state-masked-load-cache [state : LowerState]) : LowerMaybeMaskedLoadCache
+  (match state
+    [(LowerState.State data)
+      (__tl-project-field (__tl-box-place data) masked-load-cache)]))
+
+(define (lower-masked-load-cache-enable! [state : LowerState]) : unit
+  (match state
+    [(LowerState.State data)
+      (match (__tl-project-field (__tl-box-place data) masked-load-cache)
+        [(LowerMaybeMaskedLoadCache.No)
+          (__tl-project-set-field
+            (__tl-box-place data)
+            masked-load-cache
+            (LowerMaybeMaskedLoadCache.Some
+              (box
+                (LowerMaskedLoadCacheData
+                  (make-array i64 (lower-masked-load-cache-entry-capacity))
+                  (make-array i64 (lower-masked-load-cache-entry-capacity))
+                  (make-array i64 (lower-masked-load-cache-entry-capacity))
+                  (make-array
+                    ir.CompilerIrValue
+                    (lower-masked-load-cache-entry-capacity))
+                  0
+                  (make-array i64 (lower-masked-load-cache-mask-capacity))
+                  (make-array i64 (lower-masked-load-cache-mask-capacity))
+                  0))))]
+        [(LowerMaybeMaskedLoadCache.Some cache)
+          (begin
+            (__tl-project-set-field (__tl-box-place cache) count 0)
+            (__tl-project-set-field (__tl-box-place cache) mask-count 0))])]))
+
+;; Memory effects retire values but keep the mask ancestry: the control-flow
+;; proof remains true and can classify loads emitted after the effect.
+(define (lower-masked-load-cache-invalidate! [state : LowerState]) : unit
+  (match (lower-state-masked-load-cache state)
+    [(LowerMaybeMaskedLoadCache.No) unit]
+    [(LowerMaybeMaskedLoadCache.Some cache)
+      (__tl-project-set-field (__tl-box-place cache) count 0)]))
+
+(define (lower-masked-load-mask-parent-at
+  [state : LowerState]
+  [mask : i64]
+  [index : i64]) : i64
+  (match (lower-state-masked-load-cache state)
+    [(LowerMaybeMaskedLoadCache.No) -2]
+    [(LowerMaybeMaskedLoadCache.Some cache)
+      (let
+        [count : i64 (__tl-project-field (__tl-box-place cache) mask-count)]
+        (if (>= index count)
+          -2
+          (if (=
+            (array-ref
+              (__tl-project-field (__tl-box-place cache) mask-vars)
+              index)
+            mask)
+            (array-ref
+              (__tl-project-field (__tl-box-place cache) mask-parents)
+              index)
+            (lower-masked-load-mask-parent-at state mask (+ index 1)))))]))
+
+(define (lower-masked-load-mask-dominates-with-fuel?
+  [state : LowerState]
+  [defining-mask : i64]
+  [current-mask : i64]
+  [fuel : i64]) : bool
+  (if (or (= defining-mask -1) (= defining-mask current-mask))
+    true
+    (if (or (<= fuel 0) (< current-mask 0))
+      false
+      (let
+        [parent : i64 (lower-masked-load-mask-parent-at state current-mask 0)]
+        (if (= parent -2)
+          false
+          (lower-masked-load-mask-dominates-with-fuel?
+            state
+            defining-mask
+            parent
+            (- fuel 1)))))))
+
+(define (lower-masked-load-mask-dominates?
+  [state : LowerState]
+  [defining-mask : i64]
+  [current-mask : i64]) : bool
+  (match (lower-state-masked-load-cache state)
+    [(LowerMaybeMaskedLoadCache.No) false]
+    [(LowerMaybeMaskedLoadCache.Some cache)
+      (lower-masked-load-mask-dominates-with-fuel?
+        state
+        defining-mask
+        current-mask
+        (+ (__tl-project-field (__tl-box-place cache) mask-count) 1))]))
+
+(define (lower-masked-load-register-mask!
+  [state : LowerState]
+  [parent : ir.CompilerIrMaybeValue]
+  [child : ir.CompilerIrValue]) : unit
+  (let
+    [parent-key : i64 (lower-masked-load-mask-key parent)]
+    [child-key : i64
+      (lower-masked-load-mask-key (ir.CompilerIrMaybeValue.Some child))]
+    (if (or (< parent-key -1) (< child-key 0) (= parent-key child-key))
+      unit
+      (match (lower-state-masked-load-cache state)
+        [(LowerMaybeMaskedLoadCache.No) unit]
+        [(LowerMaybeMaskedLoadCache.Some cache)
+          (let
+            [count : i64 (__tl-project-field (__tl-box-place cache) mask-count)]
+            (if (or
+              (not (= (lower-masked-load-mask-parent-at state child-key 0) -2))
+              (>= count (lower-masked-load-cache-mask-capacity)))
+              unit
+              (begin
+                (set!
+                  (array-ref
+                    (__tl-project-field (__tl-box-place cache) mask-vars)
+                    count)
+                  child-key)
+                (set!
+                  (array-ref
+                    (__tl-project-field (__tl-box-place cache) mask-parents)
+                    count)
+                  parent-key)
+                (__tl-project-set-field
+                  (__tl-box-place cache)
+                  mask-count
+                  (+ count 1)))))]))))
+
+(define (lower-masked-load-cache-get-at
+  [state : LowerState]
+  [array-var : i64]
+  [offset : i64]
+  [mask : i64]
+  [index : i64]) : LowerMaybeMaskedLoad
+  (match (lower-state-masked-load-cache state)
+    [(LowerMaybeMaskedLoadCache.No) (LowerMaybeMaskedLoad.No)]
+    [(LowerMaybeMaskedLoadCache.Some cache)
+      (let
+        [count : i64 (__tl-project-field (__tl-box-place cache) count)]
+        (if (>= index count)
+          (LowerMaybeMaskedLoad.No)
+          (if (and
+            (=
+              (array-ref
+                (__tl-project-field (__tl-box-place cache) array-vars)
+                index)
+              array-var)
+            (=
+              (array-ref
+                (__tl-project-field (__tl-box-place cache) offsets)
+                index)
+              offset)
+            (lower-masked-load-mask-dominates?
+              state
+              (array-ref
+                (__tl-project-field (__tl-box-place cache) masks)
+                index)
+              mask))
+            (LowerMaybeMaskedLoad.Some
+              (array-ref
+                (__tl-project-field (__tl-box-place cache) values)
+                index))
+            (lower-masked-load-cache-get-at
+              state
+              array-var
+              offset
+              mask
+              (+ index 1)))))]))
+
+(define (lower-masked-load-cache-get
+  [state : LowerState]
+  [array-var : i64]
+  [offset : i64]
+  [active-mask : ir.CompilerIrMaybeValue]) : LowerMaybeMaskedLoad
+  (let
+    [mask : i64 (lower-masked-load-mask-key active-mask)]
+    (if (< mask -1)
+      (LowerMaybeMaskedLoad.No)
+      (lower-masked-load-cache-get-at state array-var offset mask 0))))
+
+(define (lower-masked-load-cache-put!
+  [state : LowerState]
+  [array-var : i64]
+  [offset : i64]
+  [active-mask : ir.CompilerIrMaybeValue]
+  [value : ir.CompilerIrValue]) : unit
+  (let
+    [mask : i64 (lower-masked-load-mask-key active-mask)]
+    (if (< mask -1)
+      unit
+      (match (lower-state-masked-load-cache state)
+        [(LowerMaybeMaskedLoadCache.No) unit]
+        [(LowerMaybeMaskedLoadCache.Some cache)
+          (let
+            [count : i64 (__tl-project-field (__tl-box-place cache) count)]
+            (if (>= count (lower-masked-load-cache-entry-capacity))
+              unit
+              (begin
+                (set!
+                  (array-ref
+                    (__tl-project-field (__tl-box-place cache) array-vars)
+                    count)
+                  array-var)
+                (set!
+                  (array-ref
+                    (__tl-project-field (__tl-box-place cache) offsets)
+                    count)
+                  offset)
+                (set!
+                  (array-ref
+                    (__tl-project-field (__tl-box-place cache) masks)
+                    count)
+                  mask)
+                (set!
+                  (array-ref
+                    (__tl-project-field (__tl-box-place cache) values)
+                    count)
+                  value)
+                (__tl-project-set-field
+                  (__tl-box-place cache)
+                  count
+                  (+ count 1)))))]))))
+
+(define (lower-masked-load-cache-invalidate-result [result : ResultLowerExpr]) : ResultLowerExpr
+  (match result
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr state _ _)
+          (begin
+            (lower-masked-load-cache-invalidate! state)
+            result)])]
+    [(ResultLowerExpr.Err _) result]))
 
 (define (lower-state-register-address-taken-var?
   [state : LowerState]
@@ -51831,7 +52099,7 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [mask : ir.CompilerIrValue]
   [lanes : i64]) : LowerExpr
-  (match active-mask
+  (match (match active-mask
     [(ir.CompilerIrMaybeValue.No)
       (LowerExpr.Expr state mask (ast.AstType.Bool))]
     [(ir.CompilerIrMaybeValue.Some parent-mask)
@@ -51840,7 +52108,11 @@
         (ir.CompilerIrMaskBinOp.And)
         parent-mask
         mask
-        lanes)]))
+        lanes)])
+    [(LowerExpr.Expr child-state child-mask child-ty)
+      (begin
+        (lower-masked-load-register-mask! child-state active-mask child-mask)
+        (LowerExpr.Expr child-state child-mask child-ty))]))
 
 (define (lower-emit-active-load
   [state : LowerState]
@@ -52024,44 +52296,55 @@
     [(LowerMaybeArrayVar.Some array-var elem-ty)
       (let
         [lane-ty : ast.AstType (tc_core.tc-type-without-regions elem-ty)]
-        (if (lower-type-bool? lane-ty)
-          (match (lower-avx512-masked-index-value ctx state index index-var idx)
-            [(ResultLowerExpr.Ok idx-lowered)
-              (match idx-lowered
-                [(LowerExpr.Expr idx-state idx-value _)
-                  (ResultLowerExpr.Ok
-                    (lower-emit-active-load
-                      idx-state
-                      array-var
-                      idx-value
-                      active-mask
-                      lanes
-                      lane-ty))])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])
-          (if (=
-            (lower-simd-lanes-for-elem (lower-state-mode state) lane-ty)
-            lanes)
-            (match (lower-avx512-masked-index-value
-              ctx
-              state
-              index
-              index-var
-              idx)
-              [(ResultLowerExpr.Ok idx-lowered)
-                (match idx-lowered
-                  [(LowerExpr.Expr idx-state idx-value _)
-                    (ResultLowerExpr.Ok
-                      (lower-emit-active-load
-                        idx-state
-                        array-var
-                        idx-value
-                        active-mask
-                        lanes
-                        lane-ty))])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])
+        [offset : i64 (lower-masked-vector-index-offset ctx index idx)]
+        (if (and
+          (not (lower-type-bool? lane-ty))
+          (not
+            (=
+              (lower-simd-lanes-for-elem (lower-state-mode state) lane-ty)
+              lanes)))
+          (lower-avx512-masked-unsupported
+            expr
+            "mixed lane widths inside one masked foreach")
+          (if (< offset 0)
             (lower-avx512-masked-unsupported
               expr
-              "mixed lane widths inside one masked foreach"))))]
+              "non-contiguous array indexes in this AVX-512 slice")
+            (match (lower-masked-load-cache-get
+              state
+              array-var
+              offset
+              active-mask)
+              [(LowerMaybeMaskedLoad.Some value)
+                (ResultLowerExpr.Ok (LowerExpr.Expr state value lane-ty))]
+              [(LowerMaybeMaskedLoad.No)
+                (match (lower-avx512-masked-index-value
+                  ctx
+                  state
+                  index
+                  index-var
+                  idx)
+                  [(ResultLowerExpr.Ok idx-lowered)
+                    (match idx-lowered
+                      [(LowerExpr.Expr idx-state idx-value _)
+                        (match (lower-emit-active-load
+                          idx-state
+                          array-var
+                          idx-value
+                          active-mask
+                          lanes
+                          lane-ty)
+                          [(LowerExpr.Expr load-state load-value load-ty)
+                            (begin
+                              (lower-masked-load-cache-put!
+                                load-state
+                                array-var
+                                offset
+                                active-mask
+                                load-value)
+                              (ResultLowerExpr.Ok
+                                (LowerExpr.Expr load-state load-value load-ty)))])])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]))))]
     [(LowerMaybeArrayVar.No)
       (lower-avx512-masked-unsupported
         expr
@@ -54413,11 +54696,20 @@
                     not-mask
                     lanes)
                     [(LowerExpr.Expr rest-mask-state rest-mask _)
-                      (ResultLowerMaskedMatchMasks.Ok
-                        (LowerMaskedMatchMasks.Masks
+                      (begin
+                        (lower-masked-load-register-mask!
                           rest-mask-state
-                          arm-mask
-                          rest-mask))])])])])]
+                          (ir.CompilerIrMaybeValue.Some active-mask)
+                          arm-mask)
+                        (lower-masked-load-register-mask!
+                          rest-mask-state
+                          (ir.CompilerIrMaybeValue.Some active-mask)
+                          rest-mask)
+                        (ResultLowerMaskedMatchMasks.Ok
+                          (LowerMaskedMatchMasks.Masks
+                            rest-mask-state
+                            arm-mask
+                            rest-mask)))])])])])]
     [(ResultLowerExpr.Err message) (ResultLowerMaskedMatchMasks.Err message)]))
 
 (define (lower-avx512-masked-match-select
@@ -56899,19 +57191,20 @@
           left
           right))]
     [(ast.AstExpr.Call func-box args)
-      (lower-avx512-spmd-call
-        ctx
-        state
-        env
-        type-env
-        lane-locals
-        index
-        index-var
-        active-mask
-        lanes
-        expr
-        (lower-context-expr-get ctx func-box)
-        args)]
+      (lower-masked-load-cache-invalidate-result
+        (lower-avx512-spmd-call
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          expr
+          (lower-context-expr-get ctx func-box)
+          args))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
@@ -56998,18 +57291,21 @@
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr expr message)))])])]
     [(ast.AstExpr.While cond-box body-box)
-      (lower-avx512-masked-while
-        ctx
-        state
-        env
-        type-env
-        lane-locals
-        index
-        index-var
-        active-mask
-        lanes
-        (lower-context-expr-get ctx cond-box)
-        (lower-context-expr-get ctx body-box))]
+      (begin
+        (lower-masked-load-cache-invalidate! state)
+        (lower-masked-load-cache-invalidate-result
+          (lower-avx512-masked-while
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            (lower-context-expr-get ctx cond-box)
+            (lower-context-expr-get ctx body-box))))]
     [(ast.AstExpr.Begin exprs)
       (lower-avx512-masked-begin
         ctx
@@ -57043,20 +57339,21 @@
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (lower-avx512-masked-array-set
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          expr
-          arr
-          idx
-          value))]
+        (lower-masked-load-cache-invalidate-result
+          (lower-avx512-masked-array-set
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expr
+            arr
+            idx
+            value)))]
     [_ (lower-avx512-masked-unsupported expr "this branch expression")]))
 
 (define (lower-avx512-masked-expr-expected
@@ -57290,17 +57587,19 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [body : ast.AstExpr]) : ResultLowerExpr
-  (lower-avx512-masked-expr
-    ctx
-    state
-    (sym_i64_env.sym-i64-bind-id env index-id index-var)
-    (tc_core.tc-bind-id type-env index-id index-ty)
-    (lower-id-set-empty)
-    index
-    index-var
-    active-mask
-    lanes
-    body))
+  (begin
+    (lower-masked-load-cache-enable! state)
+    (lower-avx512-masked-expr
+      ctx
+      state
+      (sym_i64_env.sym-i64-bind-id env index-id index-var)
+      (tc_core.tc-bind-id type-env index-id index-ty)
+      (lower-id-set-empty)
+      index
+      index-var
+      active-mask
+      lanes
+      body)))
 
 (define (lower-avx512-masked-foreach-lowered
   [ctx : tc_core.TcContext]

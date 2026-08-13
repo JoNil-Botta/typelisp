@@ -23,7 +23,7 @@ spmd_short_tail	scalar	typelisp	supported	11052015524
 spmd_short_tail	scalar	clang	supported	6030127918
 spmd_short_tail	avx2	typelisp	supported	2233016046
 spmd_short_tail	avx2	clang	supported	985118676
-spmd_mask	scalar	typelisp	supported	12908752038
+spmd_mask	scalar	typelisp	supported	11062545859
 spmd_mask	scalar	clang	supported	9833559402
-spmd_mask	avx2	typelisp	supported	9838558461
+spmd_mask	avx2	typelisp	supported	7072544870
 spmd_mask	avx2	clang	supported	1770724841

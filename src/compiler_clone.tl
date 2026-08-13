@@ -846,6 +846,12 @@
       (clone-root-entries-add-id
         (clone-root-entries-add-id empty first-qualified)
         second-qualified)]
+    [first-qualified-helper : i64
+      (clone-root-entries-helper-id-or qualified first-qualified -1)]
+    [second-qualified-helper : i64
+      (clone-root-entries-helper-id-or qualified second-qualified -1)]
+    [_materialize-qualified : unit
+      (clone-root-entries-materialize-helper-names! qualified)]
     [unique-root : CloneRootEntries
       (clone-root-entries-add-id empty unique-qualified)]
     (and
@@ -903,6 +909,13 @@
         (clone-root-entries-smoke-key-id 18))
       ;; Qualified keys with one base stay ambiguous; a unique base resolves.
       (= (clone-root-entries-unique-key-for-base-id-or qualified base-id -1) -1)
+      (not (= first-qualified-helper second-qualified-helper))
+      (string.eq
+        (ci.intern-str first-qualified-helper)
+        (ci.intern-str second-qualified-helper))
+      (string.eq
+        (ci.intern-str first-qualified-helper)
+        "clone$CloneDenseSmokeKey")
       (=
         (clone-root-entries-unique-key-for-base-id-or
           unique-root

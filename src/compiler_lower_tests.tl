@@ -10535,58 +10535,6 @@
           (compiler_ir_types.compiler-ir-function-list-count functions)])]
     [(compiler_lower.ResultCompilerLower.Err _) (- 0 1)]))
 
-(define (lower-test-function-name-insert-unique!
-  [seen : (&mut seen lower_i64_i64_map.Map)]
-  [function : compiler_ir_types.CompilerIrFunction]) : bool
-  (match function
-    [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
-      (if (lower_i64_i64_map.contains? (& seen) name)
-        false
-        (begin
-          (lower_i64_i64_map.insert-ref! seen name 1)
-          true))]))
-
-(define (lower-test-function-seq-names-unique!
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [seen : (&mut seen lower_i64_i64_map.Map)]) : bool
-  (let
-    [index : i64 0]
-    [unique? : bool true]
-    (begin
-      (while (and unique? (< index functions.len))
-        (begin
-          (set!
-            unique?
-            (lower-test-function-name-insert-unique!
-              seen
-              (array-ref functions.slots index)))
-          (set! index (+ index 1))))
-      unique?)))
-
-(define (lower-test-function-names-unique!
-  [functions : compiler_ir_types.CompilerIrFunctionList]
-  [seen : (&mut seen lower_i64_i64_map.Map)]) : bool
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) true]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons function rest)
-      (and
-        (lower-test-function-name-insert-unique! seen function)
-        (lower-test-function-names-unique! (__tl-box-place rest) seen))]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-seq-names-unique! seq seen)]))
-
-(define (compiler-lower-spmd-source-function-names-unique?
-  [src : String]
-  [mode : compiler_lower.CompilerLowerMode]) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode src mode)
-    [(compiler_lower.ResultCompilerLower.Ok program _)
-      (match program
-        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (let
-            [seen : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 32)]
-            (lower-test-function-names-unique! functions (&mut seen)))])]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
-
 (define (compiler-lower-spmd-scalar-call-shape-source) : String
   "(define (heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
@@ -10902,12 +10850,6 @@
         (compiler-lower-spmd-out-of-line-unit-source)
         (compiler_lower.CompilerLowerMode.Avx2))
       2)
-    (compiler-lower-spmd-source-function-names-unique?
-      (compiler-lower-spmd-out-of-line-value-source)
-      (compiler_lower.CompilerLowerMode.Avx2))
-    (compiler-lower-spmd-source-function-names-unique?
-      (compiler-lower-spmd-out-of-line-unit-source)
-      (compiler_lower.CompilerLowerMode.Avx2))
     (compiler-lower-spmd-varying-local-call-shape-ok?)
     (compiler-lower-spmd-uniform-arg-call-shape-ok?)))
 

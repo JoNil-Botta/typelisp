@@ -1858,6 +1858,11 @@
       [fields : tc_core.TcInlineFieldLayoutList
         (tc_core.tc-inline-field-layout-list-with-count 4)]
       [storage : i64 (tc_core.tc-agg-layout-cache-storage-arena-handle-value)]
+      [state-storage : i64
+        (arena.raw-handle
+          (__tl-project-field
+            tc_core.tc-lazy-global-table-state
+            agg-layout-storage-owner))]
       [after-fields : i64 (arena.raw-handle (arena.current))]
       [payloads : tc_core.TcInlinePayloadLayoutList
         (tc_core.tc-inline-payload-layout-list-with-count 3)]
@@ -1868,6 +1873,7 @@
       [ok : bool
         (and
           (> storage 0)
+          (= storage state-storage)
           (= storage (tc_core.tc-agg-layout-cache-storage-arena-handle-value))
           (= home after-fields)
           (= home after-payloads)
@@ -1881,7 +1887,13 @@
         (and
           ok
           (= (arena.raw-handle (arena.current)) home)
-          (= (tc_core.tc-agg-layout-cache-storage-arena-handle-value) 0))))))
+          (= (tc_core.tc-agg-layout-cache-storage-arena-handle-value) 0)
+          (=
+            (arena.raw-handle
+              (__tl-project-field
+                tc_core.tc-lazy-global-table-state
+                agg-layout-storage-owner))
+            0))))))
 
 (define (compiler-typecheck-inline-layout-query-ok?) : bool
   (match (parser.parse-ast-source

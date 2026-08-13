@@ -6,9 +6,11 @@
 (import stdlib.io)
 (import tlci_core)
 
+;; These immutable fixtures predate the platform split and deliberately pin
+;; the legacy/ambiguous host-platform value 1.
 (define (tlci-v2-corpus-empty-image) : tlci_core.TlciImage
   (tlci_core.tlci-make-image
-    tlci_core.tlci-host-arch-x86-64
+    tlci_core.tlci-host-platform-x86-64-legacy
     tlci_core.tlci-callback-abi-version
     "tlci-v2-corpus"
     (tlci_core.tlci-make-metadata "v1" "corpus.empty" "1.0.0")
@@ -40,7 +42,7 @@
       (tlci_core.tlci-set-u64! symbols 24 0)
       (tlci_core.tlci-set-u64! symbols 32 3)
       (tlci_core.tlci-make-image
-        tlci_core.tlci-host-arch-x86-64
+        tlci_core.tlci-host-platform-x86-64-legacy
         tlci_core.tlci-callback-abi-version
         "tlci-v2-corpus"
         (tlci_core.tlci-make-metadata "v1" "corpus.sections" "1.0.0")
@@ -60,7 +62,7 @@
 
 (define (tlci-v2-corpus-imports-image) : tlci_core.TlciImage
   (tlci_core.tlci-make-image
-    tlci_core.tlci-host-arch-x86-64
+    tlci_core.tlci-host-platform-x86-64-legacy
     tlci_core.tlci-callback-abi-version
     "tlci-v2-corpus"
     (tlci_core.tlci-make-metadata "v1" "corpus.imports" "1.0.0")

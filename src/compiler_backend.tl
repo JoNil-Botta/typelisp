@@ -21172,11 +21172,18 @@
 ;; Ordinary wide BinOp RHS literals use the same per-site materialisation path.
 ;; This pass gives both kinds a loop-scoped register at the EMISSION-PLAN level:
 ;;
-;;   * candidate loops: natural loops [h..le] (compiler-reg-preheader-loop-ends)
-;;     on the FINAL emitted IR that are LEAF (no call/syscall/tail-call in any
-;;     region block), side-entry-free, and whose single out-of-loop predecessor
-;;     P lies before the loop and ends in an unconditional Jump to the header
-;;     (the M-E preheader shape);
+;;   * candidate loops: the natural loops of the FINAL emitted IR's CFG loop
+;;     nest (compiler-reg-loop-nest-build), taken as MEMBER SETS: a loop is a
+;;     header plus every block that reaches one of its latches without passing
+;;     the header again. A member set is side-entry-free by construction, so
+;;     admission asks only that the loop be LEAF (no call/syscall/tail-call in
+;;     any MEMBER), that the header have exactly one predecessor from outside
+;;     the set -- a P that ends in an unconditional Jump to the header (the M-E
+;;     preheader shape) -- and that the function's ENTRY block be in the set
+;;     only when it IS the header, since block 0 is reached through no
+;;     predecessor and an edge count cannot see that way in. The layout enters
+;;     only where an instruction-point hull has to be named: the span
+;;     [lowest member .. highest member].
 ;;   * sites: constant divmods in the region whose expansion takes the signed or
 ;;     unsigned MAGIC path, plus supported size-8 BinOps with an I64 RHS outside
 ;;     signed imm32; deduplicated by site kind + VALUE;
@@ -21860,22 +21867,35 @@
                 (set! done true))])))
       found)))
 
+;; Call-free over the loop's MEMBERS, walked in emitted order across the span
+;; they occupy. A block inside that span but outside the set is skipped, and
+;; skipping it is sound rather than merely cheap: a non-member does not reach a
+;; latch, so control that enters one has left the loop for good and no later
+;; site can read the register its call clobbered. The range reading charged
+;; those blocks anyway, and refused whole loops over a call on a break arm.
 (define (compiler-backend-const-hoist-region-leaf?
   [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
-  [h : i64]
+  [nest : compiler_regalloc.CompilerRegLoopNest]
+  [generation : i64]
+  [rlo : i64]
   [le : i64]) : bool
   (let
-    [i : i64 h]
+    [i : i64 rlo]
     [clean : bool true]
     (begin
       (while (and (<= i le) clean)
         (begin
-          (match (array-ref orig i)
-            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-              (if (compiler_regalloc.compiler-reg-loop-split-seq-has-call-or-syscall?
-                instrs)
-                (set! clean false)
-                unit)])
+          (if (compiler_regalloc.compiler-reg-loop-nest-member?
+            nest
+            i
+            generation)
+            (match (array-ref orig i)
+              [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                (if (compiler_regalloc.compiler-reg-loop-split-seq-has-call-or-syscall?
+                  instrs)
+                  (set! clean false)
+                  unit)])
+            unit)
           (set! i (+ i 1))))
       clean)))
 
@@ -22123,10 +22143,8 @@
                 (backend_label_i64_map.with-capacity
                   (compiler_regalloc.compiler-reg-bits-map-capacity count))
                 0)]
-            [loop-ends : (__tl_dyn-array i64)
-              (compiler_regalloc.compiler-reg-preheader-loop-ends
-                dense-blocks
-                count)]
+            [nest : compiler_regalloc.CompilerRegLoopNest
+              (compiler_regalloc.compiler-reg-loop-nest-build dense-blocks)]
             [points : (__tl_dyn-array i64)
               (compiler_regalloc.compiler-reg-loop-phi-mb-block-points orig)]
             [interval-index : compiler_regalloc.CompilerRegIntervalIndex
@@ -22170,30 +22188,60 @@
             ;; every region by const-hoist-award-order!.
             [loop-order : (__tl_dyn-array i64) (make-array i64 site-cap)]
             [loop-tally : (__tl_dyn-array i64) (make-array i64 site-cap)]
-            [h : i64 0]
+            [hx : i64 0]
+            [generation : i64 0]
             (begin
-              (while (< h count)
+              (while (<
+                hx
+                (compiler_regalloc.compiler-reg-loop-nest-header-count nest))
                 (let
-                  [le : i64 (array-ref loop-ends h)]
+                  [h : i64
+                    (compiler_regalloc.compiler-reg-loop-nest-header nest hx)]
+                  [total : i64 0]
+                  [rlo : i64 0]
+                  [le : i64 0]
                   (begin
+                    ;; The loop this header owns arrives as a MEMBER SET, not as
+                    ;; a block range. `rlo`/`le` are only the span that set
+                    ;; occupies in the emitted order, which is the language an
+                    ;; instruction-point hull has to be written in.
+                    (set! generation (+ generation 1))
+                    (set!
+                      total
+                      (compiler_regalloc.compiler-reg-loop-nest-header-members!
+                        nest
+                        h
+                        generation))
+                    (set!
+                      rlo
+                      (compiler_regalloc.compiler-reg-loop-nest-member-lo
+                        nest
+                        h
+                        total))
+                    (set!
+                      le
+                      (compiler_regalloc.compiler-reg-loop-nest-member-hi
+                        nest
+                        h
+                        total))
                     (if (and
-                      (>= le h)
                       (< synth-count synth-cap)
-                      (compiler-backend-const-hoist-region-leaf? orig h le))
+                      (compiler-backend-const-hoist-region-leaf?
+                        orig
+                        nest
+                        generation
+                        rlo
+                        le))
                       ;; lint-allow: nested-let
                       (let
                         [h-label : i64
                           (compiler-backend-const-hoist-block-label
                             (array-ref orig h))]
                         [p : i64
-                          (compiler_regalloc.compiler-reg-preheader-scan-outside-preds
-                            orig
+                          (compiler_regalloc.compiler-reg-loop-nest-outside-pred
+                            nest
                             h
-                            le
-                            h-label
-                            count
-                            0
-                            (- 0 1))]
+                            generation)]
                         ;; Two qualifying shapes:
                         ;;  * h > 0 with a single out-of-loop predecessor P
                         ;;    (P < h, ends in Jump h): inject AFTER P's label;
@@ -22202,11 +22250,22 @@
                         ;;    inject BEFORE block 0's label = at prologue end,
                         ;;    executed once per call; back edges re-enter after
                         ;;    it.
+                        ;; A natural loop cannot HAVE a side entry: a block
+                        ;; outside it with an edge to a member other than the
+                        ;; header reaches the latch through that member, and
+                        ;; reaching the latch is what puts a block in the set to
+                        ;; begin with. So the strict shape is admitted on the
+                        ;; predecessor COUNT alone -- one predecessor from
+                        ;; outside the members, and every path into every member
+                        ;; runs through it.
                         ;; Cycle 28: when the strict shape rejects a loop that
                         ;; enters through an unroll guard, resolve the call-free
                         ;; guard chain to its dominator (an unconditional Jump)
                         ;; and inject there, so one register/frame home carries
-                        ;; each magic across the whole unrolled complex.
+                        ;; each magic across the whole unrolled complex. THAT
+                        ;; region is a layout span rather than a loop, so it
+                        ;; still has to be proved side-entry-free -- and the
+                        ;; member set has to lie inside the span being proved.
                         (let
                           [strict-shape? : bool
                             (if (= h 0)
@@ -22230,27 +22289,34 @@
                             (if (= h 0)
                               (= site (- 0 1))
                               (>= site 0))
+                            ;; The function's ENTRY block may be in the set
+                            ;; only when it is the header. Control arrives at
+                            ;; block 0 from the caller and not through any
+                            ;; predecessor at all, so a member set that
+                            ;; contains it under some later header has a way
+                            ;; in that no injection can dominate -- and the
+                            ;; natural-loop walk does produce such a set,
+                            ;; because an irreducible entry makes it run back
+                            ;; past the loop until it runs out of graph.
+                            (or (= h 0) (> rlo 0))
                             (if strict-shape?
-                              (not
-                                (compiler-backend-const-hoist-side-entry?
-                                  orig
-                                  ids
-                                  h
-                                  le))
-                              (not
-                                (compiler-backend-const-hoist-side-entry?
-                                  orig
-                                  ids
-                                  site
-                                  le))))
+                              true
+                              (and
+                                (<= site rlo)
+                                (not
+                                  (compiler-backend-const-hoist-side-entry?
+                                    orig
+                                    ids
+                                    site
+                                    le)))))
                             ;; qualifying loop: collect its unclaimed magic sites
                             (let
                               [loop-count : i64 0]
-                              [b : i64 h]
+                              [b : i64 rlo]
                               [lo : i64
-                                (if (= h 0)
-                                  0
-                                  (array-ref points site))]
+                                (if (and (>= site 0) (< site rlo))
+                                  (array-ref points site)
+                                  (array-ref points rlo))]
                               [hi : i64 (array-ref points (+ le 1))]
                               [inject-label : i64
                                 (if (= h 0)
@@ -22261,60 +22327,67 @@
                               (begin
                                 (while (<= b le)
                                   (begin
-                                    (match (array-ref orig b)
-                                      [(compiler_ir_types.CompilerIrBlock.Block
-                                          _
-                                          instrs)
-                                        (let
-                                          [slots : (__tl_dyn-array
-                                            compiler_ir_types.CompilerIrInstr)
-                                            instrs.slots]
-                                          [icount : i64 instrs.len]
-                                          [k : i64 0]
-                                          (while (< k icount)
-                                            (let
-                                              [instr : compiler_ir_types.CompilerIrInstr
-                                                (array-ref slots k)]
-                                              [magic : i64
-                                                (compiler-backend-const-hoist-instr-constant
-                                                  type-segment-bases
-                                                  instr)]
-                                              [wide? : bool
-                                                (compiler-backend-const-hoist-instr-wide?
-                                                  type-segment-bases
-                                                  instr)]
-                                              [point : i64
-                                                (+ (array-ref points b) (* 2 k))]
-                                              (begin
-                                                (if (and
-                                                  (not (= magic 0))
-                                                  (< loop-count site-cap)
-                                                  (not
-                                                    (compiler-backend-const-hoist-point-recorded?
-                                                      site-points
-                                                      site-count
-                                                      point)))
-                                                  (begin
-                                                    (set!
-                                                      (array-ref
-                                                        loop-points
-                                                        loop-count)
-                                                      point)
-                                                    (set!
-                                                      (array-ref
-                                                        loop-values
-                                                        loop-count)
-                                                      magic)
-                                                    (set!
-                                                      (array-ref
-                                                        loop-wide
-                                                        loop-count)
-                                                      wide?)
-                                                    (set!
-                                                      loop-count
-                                                      (+ loop-count 1)))
-                                                  unit)
-                                                (set! k (+ k 1))))))])
+                                    (if (compiler_regalloc.compiler-reg-loop-nest-member?
+                                      nest
+                                      b
+                                      generation)
+                                      (match (array-ref orig b)
+                                        [(compiler_ir_types.CompilerIrBlock.Block
+                                            _
+                                            instrs)
+                                          (let
+                                            [slots : (__tl_dyn-array
+                                              compiler_ir_types.CompilerIrInstr)
+                                              instrs.slots]
+                                            [icount : i64 instrs.len]
+                                            [k : i64 0]
+                                            (while (< k icount)
+                                              (let
+                                                [instr : compiler_ir_types.CompilerIrInstr
+                                                  (array-ref slots k)]
+                                                [magic : i64
+                                                  (compiler-backend-const-hoist-instr-constant
+                                                    type-segment-bases
+                                                    instr)]
+                                                [wide? : bool
+                                                  (compiler-backend-const-hoist-instr-wide?
+                                                    type-segment-bases
+                                                    instr)]
+                                                [point : i64
+                                                  (+
+                                                    (array-ref points b)
+                                                    (* 2 k))]
+                                                (begin
+                                                  (if (and
+                                                    (not (= magic 0))
+                                                    (< loop-count site-cap)
+                                                    (not
+                                                      (compiler-backend-const-hoist-point-recorded?
+                                                        site-points
+                                                        site-count
+                                                        point)))
+                                                    (begin
+                                                      (set!
+                                                        (array-ref
+                                                          loop-points
+                                                          loop-count)
+                                                        point)
+                                                      (set!
+                                                        (array-ref
+                                                          loop-values
+                                                          loop-count)
+                                                        magic)
+                                                      (set!
+                                                        (array-ref
+                                                          loop-wide
+                                                          loop-count)
+                                                        wide?)
+                                                      (set!
+                                                        loop-count
+                                                        (+ loop-count 1)))
+                                                    unit)
+                                                  (set! k (+ k 1))))))])
+                                      unit)
                                     (set! b (+ b 1))))
                                 ;; assign registers per distinct magic value,
                                 ;; heaviest claim (most static sites) first
@@ -22507,7 +22580,7 @@
                                         (set! o (+ o 1))))))))
                             unit)))
                       unit)
-                    (set! h (+ h 1)))))
+                    (set! hx (+ hx 1)))))
               ;; commit
               (compiler-backend-function-scratch-set-i64!
                 function-state

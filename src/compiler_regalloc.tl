@@ -10739,92 +10739,79 @@
                 (set! edge (+ edge 1)))))))
       total)))
 
-;; One level per loop, not one per back edge: the first edge into a header
-;; claims every other edge into the same header (blanking its target), seeds
-;; all of those latches into one stamped walk, and adds a single level to the
-;; union.
-(define (compiler-reg-loop-nest-apply!
-  [found : i64]
-  [back-source : (__tl_dyn-array i64)]
-  [back-target : (__tl_dyn-array i64)]
-  [pred-offsets : (__tl_dyn-array i64)]
-  [pred-sources : (__tl_dyn-array i64)]
-  [stamp : (__tl_dyn-array i64)]
-  [work : (__tl_dyn-array i64)]
-  [members : (__tl_dyn-array i64)]
-  [depths : (__tl_dyn-array i64)]) : unit
-  (let
-    [cap : i64 (compiler-reg-loop-depth-max)]
-    [index : i64 0]
-    [generation : i64 0]
-    (while (< index found)
-      (begin
-        (let
-          [header : i64 (array-ref back-target index)]
-          (if (< header 0)
-            unit
-            (let
-              [top : i64 0]
-              [total : i64 0]
-              [scan : i64 index]
-              [member : i64 0]
-              (begin
-                (set! generation (+ generation 1))
-                (set! (array-ref stamp header) generation)
-                (while (< scan found)
-                  (begin
-                    (if (= (array-ref back-target scan) header)
-                      (begin
-                        (set! (array-ref back-target scan) -1)
-                        (let
-                          [latch : i64 (array-ref back-source scan)]
-                          (if (= (array-ref stamp latch) generation)
-                            unit
-                            (begin
-                              (set! (array-ref stamp latch) generation)
-                              (set! (array-ref work top) latch)
-                              (set! top (+ top 1))
-                              (set! (array-ref members total) latch)
-                              (set! total (+ total 1))))))
-                      unit)
-                    (set! scan (+ scan 1))))
-                (set!
-                  total
-                  (compiler-reg-loop-nest-walk-preds!
-                    pred-offsets
-                    pred-sources
-                    stamp
-                    work
-                    members
-                    generation
-                    top
-                    total))
-                (if (< (array-ref depths header) cap)
-                  (set!
-                    (array-ref depths header)
-                    (+ (array-ref depths header) 1))
-                  unit)
-                (while (< member total)
-                  (begin
-                    (let
-                      [block : i64 (array-ref members member)]
-                      (if (< (array-ref depths block) cap)
-                        (set!
-                          (array-ref depths block)
-                          (+ (array-ref depths block) 1))
-                        unit))
-                    (set! member (+ member 1))))))))
-        (set! index (+ index 1))))))
+;; A function's CFG loop nest, produced once and read one header at a time.
+;;
+;; The DFS's back edges, the predecessor CSR the natural-loop walk reads, and
+;; the scratch that walk writes, held together so a consumer can ask for a
+;; header's members without rebuilding any of it. `header-members!` stamps one
+;; header's natural loop into `stamp` under a caller-chosen generation and
+;; lists it in `members`; membership is then an O(1) stamp read for as long as
+;; the caller holds that generation. Handing the sets out ONE AT A TIME is what
+;; keeps that linear: every consumer finishes one loop before asking for the
+;; next, so nobody pays for a per-header member TABLE, which in a deep nest is
+;; quadratic in the function.
+;;
+;; `headers` is in ascending block index rather than DFS discovery order, so
+;; the order a consumer walks the loops in is a property of the function and
+;; not of the walk that found them.
+;;
+;; A function with no loop stops at `header-count` = 0. None of the array
+;; fields is read in that state, so the two early exits park them on the
+;; successor offsets instead of allocating placeholders nothing will look at.
+(defstruct CompilerRegLoopNest
+  (count i64)
+  (header-count i64)
+  (headers (__tl_dyn-array i64))
+  (back-count i64)
+  (back-source (__tl_dyn-array i64))
+  (back-target (__tl_dyn-array i64))
+  (pred-offsets (__tl_dyn-array i64))
+  (pred-sources (__tl_dyn-array i64))
+  (stamp (__tl_dyn-array i64))
+  (work (__tl_dyn-array i64))
+  (members (__tl_dyn-array i64)))
 
-(define (compiler-reg-function-loop-depths [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
-    i64)
+;; Distinct back-edge targets, in ascending block order. `mark` is borrowed
+;; scratch the size of the function -- the stamp array, before any generation
+;; has been issued -- and is left back at zero, because generation 1 is about
+;; to read every entry of it as "not a member".
+(define (compiler-reg-loop-nest-collect-headers!
+  [found : i64]
+  [count : i64]
+  [back-target : (__tl_dyn-array i64)]
+  [mark : (__tl_dyn-array i64)]
+  [headers : (__tl_dyn-array i64)]) : i64
   (let
-    [seq : ir.CompilerIrBlockSeq
-      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index found)
+        (begin
+          (let
+            [target : i64 (array-ref back-target index)]
+            (if (and (>= target 0) (< target count))
+              (set! (array-ref mark target) (- 0 1))
+              unit))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index count)
+        (begin
+          (if (= (array-ref mark index) (- 0 1))
+            (begin
+              (set! (array-ref mark index) 0)
+              (set! (array-ref headers total) index)
+              (set! total (+ total 1)))
+            unit)
+          (set! index (+ index 1))))
+      total)))
+
+(define (compiler-reg-loop-nest-build-seq [seq : ir.CompilerIrBlockSeq]) : CompilerRegLoopNest
+  (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
     (if (< count 1)
-      depths
+      (let
+        [none : (__tl_dyn-array i64) (array.make-array i64 0)]
+        (CompilerRegLoopNest count 0 none 0 none none none none none none none))
       (let
         [ids : reg_label_i64_map.Map
           (compiler-reg-loop-depth-block-ids-seq
@@ -10849,7 +10836,18 @@
           ;; already proved it: stop before the DFS rather than walk a graph
           ;; whose answer is known.
           (if (not closes?)
-            depths
+            (CompilerRegLoopNest
+              count
+              0
+              succ-offsets
+              0
+              succ-offsets
+              succ-offsets
+              succ-offsets
+              succ-offsets
+              succ-offsets
+              succ-offsets
+              succ-offsets)
             (let
               [state : (__tl_dyn-array i64) (array.make-array i64 count)]
               [stack-node : (__tl_dyn-array i64)
@@ -10875,7 +10873,18 @@
               ;; predecessor transpose rather than build it for a walk that
               ;; will not run.
               (if (= found 0)
-                depths
+                (CompilerRegLoopNest
+                  count
+                  0
+                  succ-offsets
+                  0
+                  succ-offsets
+                  succ-offsets
+                  succ-offsets
+                  succ-offsets
+                  succ-offsets
+                  succ-offsets
+                  succ-offsets)
                 (let
                   [pred-offsets : (__tl_dyn-array i64)
                     (array.make-array i64 (+ count 1))]
@@ -10887,6 +10896,9 @@
                     (array.make-array i64 (+ count 1))]
                   [members : (__tl_dyn-array i64)
                     (array.make-array i64 (+ count 1))]
+                  [headers : (__tl_dyn-array i64)
+                    (array.make-array i64 (+ found 1))]
+                  [header-count : i64 0]
                   (begin
                     (compiler-reg-loop-nest-fill-pred!
                       count
@@ -10895,7 +10907,18 @@
                       pred-offsets
                       pred-sources
                       cursor)
-                    (compiler-reg-loop-nest-apply!
+                    (set!
+                      header-count
+                      (compiler-reg-loop-nest-collect-headers!
+                        found
+                        count
+                        back-target
+                        stamp
+                        headers))
+                    (CompilerRegLoopNest
+                      count
+                      header-count
+                      headers
                       found
                       back-source
                       back-target
@@ -10903,9 +10926,201 @@
                       pred-sources
                       stamp
                       work
-                      members
-                      depths)
-                    depths))))))))))
+                      members)))))))))))
+
+(define (compiler-reg-loop-nest-build [blocks : ir.CompilerIrBlockList]) : CompilerRegLoopNest
+  (compiler-reg-loop-nest-build-seq
+    (live.compiler-live-ir-block-list-to-seq blocks)))
+
+(define (compiler-reg-loop-nest-header-count [nest : CompilerRegLoopNest]) : i64
+  nest.header-count)
+
+(define (compiler-reg-loop-nest-header
+  [nest : CompilerRegLoopNest]
+  [index : i64]) : i64
+  (if (and (>= index 0) (< index nest.header-count))
+    (array-ref nest.headers index)
+    (- 0 1)))
+
+;; One loop per HEADER, not one per back edge: every back edge into `header`
+;; seeds the same stamped walk, so a `continue` arm or a second body tail joins
+;; the loop it latches instead of opening a second one.
+;;
+;; Stamps `header` and every member with `generation`, lists the members in
+;; `nest.members` -- the header itself excluded, the caller already has it --
+;; and returns how many there are.
+(define (compiler-reg-loop-nest-header-members!
+  [nest : CompilerRegLoopNest]
+  [header : i64]
+  [generation : i64]) : i64
+  (let
+    [back-source : (__tl_dyn-array i64) nest.back-source]
+    [back-target : (__tl_dyn-array i64) nest.back-target]
+    [stamp : (__tl_dyn-array i64) nest.stamp]
+    [work : (__tl_dyn-array i64) nest.work]
+    [members : (__tl_dyn-array i64) nest.members]
+    [found : i64 nest.back-count]
+    [top : i64 0]
+    [total : i64 0]
+    [scan : i64 0]
+    (begin
+      (set! (array-ref stamp header) generation)
+      (while (< scan found)
+        (begin
+          (if (= (array-ref back-target scan) header)
+            (let
+              [latch : i64 (array-ref back-source scan)]
+              (if (= (array-ref stamp latch) generation)
+                unit
+                (begin
+                  (set! (array-ref stamp latch) generation)
+                  (set! (array-ref work top) latch)
+                  (set! top (+ top 1))
+                  (set! (array-ref members total) latch)
+                  (set! total (+ total 1)))))
+            unit)
+          (set! scan (+ scan 1))))
+      (compiler-reg-loop-nest-walk-preds!
+        nest.pred-offsets
+        nest.pred-sources
+        stamp
+        work
+        members
+        generation
+        top
+        total))))
+
+;; Is `block` in the set the last `header-members!` call stamped under
+;; `generation`? One array read, so a consumer can afford to ask it per edge.
+(define (compiler-reg-loop-nest-member?
+  [nest : CompilerRegLoopNest]
+  [block : i64]
+  [generation : i64]) : bool
+  (and
+    (>= block 0)
+    (< block nest.count)
+    (= (array-ref nest.stamp block) generation)))
+
+;; The header's one predecessor from OUTSIDE its loop: -1 when it has none (an
+;; entry-block header), -2 when it has several, which is a loop no single place
+;; dominates. MEMBERSHIP is what "outside" means here, so a latch laid out
+;; anywhere at all still reads as inside; and the unnamed fall-through edge
+;; counts like any other, because a block that runs into the header without
+;; naming it is an entry too.
+(define (compiler-reg-loop-nest-outside-pred
+  [nest : CompilerRegLoopNest]
+  [header : i64]
+  [generation : i64]) : i64
+  (let
+    [pred-offsets : (__tl_dyn-array i64) nest.pred-offsets]
+    [pred-sources : (__tl_dyn-array i64) nest.pred-sources]
+    [edge : i64 (array-ref pred-offsets header)]
+    [stop : i64 (array-ref pred-offsets (+ header 1))]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (< edge stop)
+        (begin
+          (let
+            [source : i64 (array-ref pred-sources edge)]
+            (if (compiler-reg-loop-nest-member? nest source generation)
+              unit
+              (if (= found (- 0 1))
+                (set! found source)
+                (set! found (- 0 2)))))
+          (set! edge (+ edge 1))))
+      found)))
+
+;; The LAYOUT SPAN of the set just stamped: the lowest and the highest block
+;; index any of its members occupies. A consumer that still has to speak in
+;; indices -- an emission hull, a range to scan -- asks for the span here
+;; rather than assume the members are laid out contiguously.
+(define (compiler-reg-loop-nest-member-lo
+  [nest : CompilerRegLoopNest]
+  [header : i64]
+  [total : i64]) : i64
+  (let
+    [members : (__tl_dyn-array i64) nest.members]
+    [index : i64 0]
+    [lo : i64 header]
+    (begin
+      (while (< index total)
+        (begin
+          (if (< (array-ref members index) lo)
+            (set! lo (array-ref members index))
+            unit)
+          (set! index (+ index 1))))
+      lo)))
+
+(define (compiler-reg-loop-nest-member-hi
+  [nest : CompilerRegLoopNest]
+  [header : i64]
+  [total : i64]) : i64
+  (let
+    [members : (__tl_dyn-array i64) nest.members]
+    [index : i64 0]
+    [hi : i64 header]
+    (begin
+      (while (< index total)
+        (begin
+          (if (> (array-ref members index) hi)
+            (set! hi (array-ref members index))
+            unit)
+          (set! index (+ index 1))))
+      hi)))
+
+;; The first consumer of the producer above: one level for every loop a block
+;; is in. The level saturates, so the order the headers arrive in cannot move
+;; the answer -- a block lands on min(cap, how many loops contain it) whichever
+;; loop charged it first.
+(define (compiler-reg-loop-nest-depths!
+  [nest : CompilerRegLoopNest]
+  [depths : (__tl_dyn-array i64)]) : unit
+  (let
+    [cap : i64 (compiler-reg-loop-depth-max)]
+    [members : (__tl_dyn-array i64) nest.members]
+    [headers : i64 nest.header-count]
+    [index : i64 0]
+    [generation : i64 0]
+    (while (< index headers)
+      (begin
+        (let
+          [header : i64 (array-ref nest.headers index)]
+          [total : i64 0]
+          [member : i64 0]
+          (begin
+            (set! generation (+ generation 1))
+            (set!
+              total
+              (compiler-reg-loop-nest-header-members! nest header generation))
+            (if (< (array-ref depths header) cap)
+              (set! (array-ref depths header) (+ (array-ref depths header) 1))
+              unit)
+            (while (< member total)
+              (begin
+                (let
+                  [block : i64 (array-ref members member)]
+                  (if (< (array-ref depths block) cap)
+                    (set!
+                      (array-ref depths block)
+                      (+ (array-ref depths block) 1))
+                    unit))
+                (set! member (+ member 1))))))
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-function-loop-depths [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+    i64)
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
+    (if (< count 1)
+      depths
+      (begin
+        (compiler-reg-loop-nest-depths!
+          (compiler-reg-loop-nest-build-seq seq)
+          depths)
+        depths))))
 
 (define (compiler-reg-ref-counts-add-var-weighted!
   [counts : (__tl_dyn-array i64)]

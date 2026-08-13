@@ -13599,6 +13599,259 @@
       (= (compiler-reg-loop-nest-depth-at depths 1) 1)
       (= (compiler-reg-loop-nest-depth-at depths 2) 1))))
 
+;; --- CFG loop nest: the member set, and what admits a hoist on it -----------
+;;
+;; The const-hoist reads the same nest, but it does not want a DEPTH: it wants
+;; the loop as a SET, because everything it has to prove -- nothing enters the
+;; loop except at the header, so a load placed before the header runs before
+;; every site -- is a question about membership, and the answers the index
+;; range gave to it were answers about the emitted order.
+;; entry / body / latch / header / exit, with the header laid out BELOW the
+;; blocks it heads: what a rotation produces, and the shape the index range
+;; cannot read. `loop-ends` records a back edge only when the source is at or
+;; after the target, so the real latch (block 2, jumping UP to block 3) is
+;; invisible to it; it reads block 1 as a header instead, over the range
+;; [1..3], and then rejects the loop outright, because `entry` -- outside that
+;; range -- branches to block 3, strictly inside it. That false side entry is
+;; the refusal the hoist measured. As a member set the same loop is
+;; unremarkable: {header, body, latch}, entered only at the header, with
+;; `entry` the header's one predecessor from outside it.
+(define (compiler-reg-loop-nest-rotated-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "header")
+    (compiler-reg-loop-nest-block
+      "body"
+      (compiler-reg-loop-nest-jump "latch")
+      (compiler-reg-loop-nest-block
+        "latch"
+        (compiler-reg-loop-nest-jump "header")
+        (compiler-reg-loop-nest-block
+          "header"
+          (compiler-reg-loop-nest-branch "body" "exit")
+          (compiler-reg-loop-nest-block
+            "exit"
+            (compiler-reg-loop-nest-return)
+            ir.CompilerIrBlockList.Nil))))))
+
+(define (compiler-reg-loop-nest-rotated-ok?) : bool
+  (let
+    [nest : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build (compiler-reg-loop-nest-rotated-blocks))]
+    [total : i64 (reg.compiler-reg-loop-nest-header-members! nest 3 1)]
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-rotated-blocks))]
+    (and
+      (= (reg.compiler-reg-loop-nest-header-count nest) 1)
+      (= (reg.compiler-reg-loop-nest-header nest 0) 3)
+      (= total 2)
+      (reg.compiler-reg-loop-nest-member? nest 1 1)
+      (reg.compiler-reg-loop-nest-member? nest 2 1)
+      (reg.compiler-reg-loop-nest-member? nest 3 1)
+      (not (reg.compiler-reg-loop-nest-member? nest 0 1))
+      (not (reg.compiler-reg-loop-nest-member? nest 4 1))
+      ;; The preheader, named without consulting the layout: `entry` is the
+      ;; header's only predecessor that is not itself in the loop.
+      (= (reg.compiler-reg-loop-nest-outside-pred nest 3 1) 0)
+      ;; The span the members occupy is still what an instruction-point hull
+      ;; has to be written in, and it does NOT start at the header.
+      (= (reg.compiler-reg-loop-nest-member-lo nest 3 total) 1)
+      (= (reg.compiler-reg-loop-nest-member-hi nest 3 total) 3)
+      ;; And the rotation costs the frequency ranking nothing either.
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 0))))
+
+;; entry / header / body / latch / second / exit: `second` jumps to the header
+;; as well, so the loop has TWO entries. No single place runs before every
+;; iteration, and a magic loaded at either one is absent on the other path.
+;; Membership cannot express that refusal -- the member set is the honest loop
+;; either way -- so the refusal is the predecessor COUNT: two from outside.
+(define (compiler-reg-loop-nest-two-entry-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-branch "header" "second")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-jump "latch")
+        (compiler-reg-loop-nest-block
+          "latch"
+          (compiler-reg-loop-nest-jump "header")
+          (compiler-reg-loop-nest-block
+            "second"
+            (compiler-reg-loop-nest-jump "header")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; entry / header / body / latch / side / exit, where `side` jumps into the
+;; loop BODY rather than its header. The natural-loop walk stops only at the
+;; header, so it follows `side` back to `entry` and swallows both: an
+;; irreducible entry is answered as a conservative SUPERSET, which is the safe
+;; direction. The header is then left with no predecessor from outside its own
+;; set at all, and the hoist has nowhere to inject -- refused, by the same one
+;; count, without a second predicate.
+(define (compiler-reg-loop-nest-side-entry-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-branch "header" "side")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-jump "latch")
+        (compiler-reg-loop-nest-block
+          "latch"
+          (compiler-reg-loop-nest-jump "header")
+          (compiler-reg-loop-nest-block
+            "side"
+            (compiler-reg-loop-nest-jump "body")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-multi-entry-ok?) : bool
+  (let
+    [two : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build
+        (compiler-reg-loop-nest-two-entry-blocks))]
+    [two-total : i64 (reg.compiler-reg-loop-nest-header-members! two 1 1)]
+    [side : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build
+        (compiler-reg-loop-nest-side-entry-blocks))]
+    ;; WHICH of the two blocks the DFS names the header of an irreducible pair
+    ;; depends on the order it walks `entry`'s arms in -- either answer is a
+    ;; correct natural loop -- so read it from the nest instead of assuming.
+    [side-header : i64 (reg.compiler-reg-loop-nest-header side 0)]
+    [side-total : i64
+      (reg.compiler-reg-loop-nest-header-members! side side-header 1)]
+    (and
+      ;; Two entries into the header: header + body + latch, and `second`
+      ;; stays outside, so the header keeps two predecessors from outside.
+      (= (reg.compiler-reg-loop-nest-header-count two) 1)
+      (= two-total 2)
+      (not (reg.compiler-reg-loop-nest-member? two 4 1))
+      (= (reg.compiler-reg-loop-nest-outside-pred two 1 1) (- 0 2))
+      ;; An entry into the BODY instead. The walk stops only at the header, and
+      ;; this header does not dominate its own latch, so it runs back past the
+      ;; loop until it runs out of graph -- and swallows the function's ENTRY
+      ;; block. That is the shape the hoist has to refuse and CANNOT refuse on
+      ;; a predecessor count: block 0 is reached from the caller, through no
+      ;; predecessor at all, so no injection dominates the set however few
+      ;; edges cross into it. The guard is the entry itself being a member
+      ;; under a header that is not the entry.
+      (= (reg.compiler-reg-loop-nest-header-count side) 1)
+      (reg.compiler-reg-loop-nest-member? side 0 1)
+      (not (= side-header 0))
+      (= (reg.compiler-reg-loop-nest-member-lo side side-header side-total) 0))))
+
+;; The two shapes the range encoding overcharged, read as membership. `early`
+;; is laid out inside the loop's span but reaches the exit and never the latch,
+;; so it is not a member: the leaf scan skips it, and a call there no longer
+;; costs the loop its hoist. The sunk `cold` block's backward-in-layout jump
+;; closes no cycle at all, so the nest offers the hoist no region there to
+;; consider in the first place.
+(define (compiler-reg-loop-nest-non-member-ok?) : bool
+  (let
+    [nest : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build
+        (compiler-reg-loop-nest-early-exit-blocks))]
+    [total : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 1)]
+    [sunk : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build
+        (compiler-reg-loop-nest-sunk-cold-blocks))]
+    (and
+      (= (reg.compiler-reg-loop-nest-header-count nest) 1)
+      (= (reg.compiler-reg-loop-nest-header nest 0) 1)
+      (= total 2)
+      (reg.compiler-reg-loop-nest-member? nest 2 1)
+      (reg.compiler-reg-loop-nest-member? nest 4 1)
+      (not (reg.compiler-reg-loop-nest-member? nest 3 1))
+      (= (reg.compiler-reg-loop-nest-member-lo nest 1 total) 1)
+      (= (reg.compiler-reg-loop-nest-member-hi nest 1 total) 4)
+      (= (reg.compiler-reg-loop-nest-outside-pred nest 1 1) 0)
+      (= (reg.compiler-reg-loop-nest-header-count sunk) 0))))
+
+;; The depth vector is one CONSUMER of the producer and not a second analysis:
+;; charging one level per member set by hand, from the same nest, has to
+;; reproduce `compiler-reg-function-loop-depths` entry for entry.
+(define (compiler-reg-loop-nest-producer-agrees?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths blocks)]
+    [nest : reg.CompilerRegLoopNest (reg.compiler-reg-loop-nest-build blocks)]
+    [count : i64 (array-length depths)]
+    [mine : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< index (reg.compiler-reg-loop-nest-header-count nest))
+        (let
+          [header : i64 (reg.compiler-reg-loop-nest-header nest index)]
+          [generation : i64 (+ index 1)]
+          [_total : i64
+            (reg.compiler-reg-loop-nest-header-members! nest header generation)]
+          [block : i64 0]
+          (begin
+            (while (< block count)
+              (begin
+                (if (reg.compiler-reg-loop-nest-member? nest block generation)
+                  (set! (array-ref mine block) (+ (array-ref mine block) 1))
+                  unit)
+                (set! block (+ block 1))))
+            (set! index (+ index 1)))))
+      (set! index 0)
+      (while (< index count)
+        (begin
+          (if (= (array-ref mine index) (array-ref depths index))
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
+(define (compiler-reg-loop-nest-consumer-ok?) : bool
+  (and
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-nested-blocks))
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-two-latch-blocks))
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-early-exit-blocks))
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-rotated-blocks))
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-fallthrough-blocks))))
+
+;; The producer keeps nothing a later question could inherit: the same header,
+;; asked twice under two generations, answers with the same set, and the inner
+;; loop asked in between neither shrinks nor widens it.
+(define (compiler-reg-loop-nest-regeneration-ok?) : bool
+  (let
+    [nest : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build (compiler-reg-loop-nest-nested-blocks))]
+    [outer : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 1)]
+    [inner : i64 (reg.compiler-reg-loop-nest-header-members! nest 2 2)]
+    [again : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 3)]
+    (and
+      (= outer 3)
+      (= inner 1)
+      (= again outer)
+      (reg.compiler-reg-loop-nest-member? nest 2 3)
+      (reg.compiler-reg-loop-nest-member? nest 3 3)
+      (reg.compiler-reg-loop-nest-member? nest 4 3)
+      (not (reg.compiler-reg-loop-nest-member? nest 0 3))
+      (not (reg.compiler-reg-loop-nest-member? nest 5 3)))))
+
 ;; --- live-in bridge at a block that opens with a call -----------------------
 ;;
 ;; A segment's START is read as the value's own definition, so a clobber AT the
@@ -13709,6 +13962,21 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-nest-deterministic-ok?"
       (compiler-reg-loop-nest-deterministic-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-rotated-ok?"
+      (compiler-reg-loop-nest-rotated-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-multi-entry-ok?"
+      (compiler-reg-loop-nest-multi-entry-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-non-member-ok?"
+      (compiler-reg-loop-nest-non-member-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-consumer-ok?"
+      (compiler-reg-loop-nest-consumer-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-regeneration-ok?"
+      (compiler-reg-loop-nest-regeneration-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-live-in-call-ok?"
       (compiler-reg-live-in-call-ok?))

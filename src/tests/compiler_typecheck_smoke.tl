@@ -5536,7 +5536,12 @@
                   (cis.intern-state-structural-key-raw a-pair)
                   (cis.intern-state-structural-key-raw b-pair)))
               (cis.intern-structural-session-key-owned? session-a a-pair)
-              (not (cis.intern-structural-session-key-owned? session-b a-pair))))
+              (not (cis.intern-structural-session-key-owned? session-b a-pair))
+              ;; B is both explicit and installed. The explicit constructor
+              ;; must keep the transitional legacy fast path coherent for the
+              ;; same owner while leaving unrelated installed owners alone.
+              (ci.intern-composite-pair-id?
+                (cis.intern-state-structural-key-raw b-pair))))
           (let
             [index : i64 0]
             (while (< index 700)

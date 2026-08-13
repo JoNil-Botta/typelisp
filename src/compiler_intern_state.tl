@@ -117,7 +117,14 @@
           left-id
           middle-id
           right-id)]
-      (InternStructuralKey raw))))
+      (begin
+        ;; During the compatibility migration, an explicitly owned session can
+        ;; also be the installed owner. Keep that owner's legacy scalar/address
+        ;; snapshot coherent without touching an unrelated installed table.
+        (if (= (ci.intern-active-table-id) session.table-id)
+          (ci.intern-active-structural-sync! session.structural-table-cell)
+          unit)
+        (InternStructuralKey raw)))))
 
 (define (intern-structural-session-composite-pair-key
   [handle : InternStructuralSessionHandle]

@@ -140,6 +140,37 @@ count_backward_branch() {
     ' "$1"
 }
 
+# Count compares that read back a frame slot an earlier line in the SAME basic
+# block wrote from a register -- `movq %rV, N(%rsp)` ... `cmpq N(%rsp), %rX`.
+# That is the exact give-away of a fused load the M6 family failed to claim:
+# the value was materialised into a scratch, stored to its home, and then read
+# straight back as the compare's memory operand, when the compare could have
+# addressed the element itself. Slots are cleared at every label so only a
+# straight-line write/read pair counts.
+count_store_then_cmp_same_slot() {
+    awk '
+        /^[^[:blank:]:]+:$/ { delete stored; next }
+        /^    movq %[a-z0-9]+, -?[0-9]+\(%rsp\)$/ { stored[$3] = 1; next }
+        /^    cmpq -?[0-9]+\(%rsp\), %[a-z0-9]+$/ {
+            slot = $2
+            sub(/,$/, "", slot)
+            if (slot in stored) n++
+            next
+        }
+        END { print n + 0 }
+    ' "$1"
+}
+
+assert_store_then_cmp_same_slot_eq() {
+    _file=$1
+    _want=$2
+    _label=$3
+    _got=$(count_store_then_cmp_same_slot "$_file")
+    if [ "$_got" -ne "$_want" ]; then
+        fail "$_label expected $_want store-then-compare-the-same-slot pair(s), got $_got"
+    fi
+}
+
 # Count adjacent GP copy chains `movq SRC, TMP; movq TMP, %rax`. Constant
 # quotient lowering must not route a live dividend through its own destination
 # before seeding fixed %rax. A remainder still needs one mutable SRC copy, so
@@ -1014,6 +1045,33 @@ check_load_widen_cast_fold() {
 }
 
 
+check_gep_load_cmp_spilled_stage() {
+    _asm=$(compile_gate gep_load_cmp_spilled_stage         tests/integration/gep_load_cmp_spilled_stage.tl)
+    _changed=$(function_body "$_asm"         _tl_gep_load_cmp_spilled_stage_changed_question)
+    _refused=$(function_body "$_asm" _tl_gep_load_cmp_spilled_stage_refused)
+    # M6-H: `changed?` spills both hoisted base-relative addresses AND the two
+    # compared elements. Every one of its four compare sites (the two bounds-
+    # eliminated clones and their versioned twins) must address the element
+    # through the staged base instead of materialising it:
+    #     movq SPILL(%rsp), %rT
+    #     cmpq (%rT,%rIDX,8), %rOTHER
+    # Before this packet only ONE site folded; the others stored the loaded
+    # element to its home and compared against that home.
+    assert_regex_count_at_least "$_changed"         '^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 4         gep-load-cmp-spilled-stage
+    # And no compare anywhere in the function reads back a slot the same block
+    # had just written from a register. That pair is the defect itself; the
+    # baseline emitted exactly one.
+    assert_store_then_cmp_same_slot_eq "$_changed" 0         gep-load-cmp-spilled-stage
+    # Nearest refused neighbour: `refused` reads each loaded element a SECOND
+    # time to fold it into a sum, so the value is not single-use, the fold
+    # cannot retire it, and its home stays load-bearing. No compare in it
+    # addresses an element directly.
+    assert_regex_count_eq "$_refused"         '^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 0         gep-load-cmp-spilled-stage-refused
+    # The elements are still loaded and still compared there -- the refusal is
+    # a refusal to fold, not a refusal to emit.
+    assert_matches "$_refused"         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$'         gep-load-cmp-spilled-stage-refused
+}
+
 check_divmagic_hoist
 check_hoist_priority
 check_lftr_counter_retire
@@ -1050,5 +1108,6 @@ check_load_widen_cast_fold
 check_mask_test_admission
 check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
+check_gep_load_cmp_spilled_stage
 
 echo "Assembly shape gates passed."

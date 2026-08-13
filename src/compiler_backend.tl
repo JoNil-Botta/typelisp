@@ -48420,12 +48420,27 @@
       false
       (= (array-ref counts var) 1))))
 
-;; --- fusion-pinned gep temps -----------------------------------------------
+;; --- fusion-pinned gep and load temps ---------------------------------------
 ;; A `Gep` whose destination is read by exactly one instruction, and that
 ;; instruction is the very next one in the same block, is the shape the gep
 ;; fusion cluster (compiler-backend-emit-gep-step) folds into the consumer's
 ;; addressing mode. A fused gep needs no register and no home: base and index
 ;; are read where they already live and the address never materialises.
+;;
+;; A `Load` destination in that same position is pinned for the same reason and
+;; on the same terms. Every fold in the M6 family -- the bounds-check length,
+;; the compare+branch, the narrow compare, the widening cast -- is gated on
+;; `compiler-backend-var-single-use?` of the LOADED var, because that is what
+;; proves the fold may retire it without writing its home. So the loaded var's
+;; identity is load-bearing in exactly the way a gep temp's is, and losing it
+;; costs strictly more: the gep temp falls back to a `leaq`, while the loaded
+;; var falls back to a materialising load (a second scratch register, a store to
+;; its home, and -- once the pool is saturated -- an emergency save/restore pair
+;; around each scratch) whose result the consumer then re-reads from that home.
+;; Measured in liveness_scan's change-detection loop, where slot coloring merged
+;; the two compare operands of the two `!=` tests onto ONE representative id:
+;; the merged id's recomputed use count was 2, every M6 probe declined, and each
+;; word compare cost nine instructions where three suffice.
 ;;
 ;; Slot coloring, however, merges non-interfering SPILLED variables onto one
 ;; representative id, and the emitter's use counts are computed on the remapped
@@ -48438,10 +48453,25 @@
 ;;
 ;; Adjacency is read off the DIFFERENCE in the running use counter across a
 ;; single instruction: `counts` accumulates function-wide uses in program order,
-;; so a rise in the pending Gep destination's counter while counting the next
-;; instruction proves that instruction reads it. When the walk finishes,
+;; so a rise in the pending Gep or Load destination's counter while counting the
+;; next instruction proves that instruction reads it. When the walk finishes,
 ;; `counts` holds exactly the ordinary function-wide use counts, which decide
 ;; the "used exactly once" half of the test.
+;;
+;; The pin is withheld from every SHARING mechanism only; a pinned var still
+;; gets a private slot, so a temp whose fold does not fire is unchanged in
+;; instruction count and costs one frame slot. That is the same trade the gep
+;; pin has always made, and it is bounded by the same two conditions: the var
+;; must be spilled (register homes already survive the renumbering) and read by
+;; exactly one instruction, the very next one.
+;;
+;; The pin is deliberately NOT narrowed to the M6 consumers. `single-use?` of a
+;; loaded value gates far more than the compare folds: the GAP8 ALU shapes, the
+;; gep-load pair and divmod bundles, and the load emitters' own direct paths all
+;; ask the same question, and all of them fall back to a materialising load and
+;; a home store when it answers false. Restricting the pin to compares and casts
+;; was measured on an opt2 self-compile and cost more than the frame slots it
+;; saved (+57M at opt2, +25M at opt1), because the ALU shapes lost their folds.
 (define (compiler-backend-gep-fusion-pin-seq!
   [counts : (__tl_dyn-array i64)]
   [adjacent : (__tl_dyn-array bool)]
@@ -48467,6 +48497,10 @@
             pending
             (match instr
               [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _)
+                (if (and (>= dst 0) (< dst (array-length adjacent)))
+                  dst
+                  (- 0 1))]
+              [(compiler_ir_types.CompilerIrInstr.Load dst _ _)
                 (if (and (>= dst 0) (< dst (array-length adjacent)))
                   dst
                   (- 0 1))]
@@ -50908,6 +50942,183 @@
     base
     offset))
 
+;; --- M6-H: the staging register when the LOAD DESTINATION is SPILLED ---------
+;;
+;; M6-D above sources its one staging register from the load destination's own
+;; register home, and a SPILLED destination therefore declines. That refusal
+;; lands exactly where the fold is worth the most. When the base is spilled AND
+;; the destination is spilled -- the shape a saturated register file produces --
+;; the unfolded path emits FOUR instructions plus, under saturation, two
+;; emergency wraps:
+;;
+;;     movq %occupant, EM0        ; emergency-save the base scratch
+;;     movq %occupant2, EM1       ; emergency-save the value scratch
+;;     movq SPILL, %t             ; stage the base
+;;     movq (%t,%i,8), %v         ; load
+;;     movq %v, SLOT              ; store the loaded value to its home
+;;     movq EM1, %occupant2       ; emergency-restore
+;;     movq EM0, %occupant        ; emergency-restore
+;;     cmpq SLOT, %r              ; compare against the slot just written
+;;
+;; measured verbatim in liveness_scan's change-detection loop. Folded, the same
+;; shape is one staging `movq` and one `cmpq` reading `(%t,%i,8)` directly: the
+;; loaded var is never materialised, so it needs no scratch, no home store and
+;; no second emergency wrap. The staging `movq` is the one the unfolded path
+;; was already paying, so the fold never adds an instruction.
+;;
+;; WHY A SCAVENGED STAGING REGISTER IS SOUND HERE. The M6-D argument that the
+;; destination's home is safe has three parts -- nothing reads the loaded var
+;; after the fold, the unfolded path writes that register at this same point,
+;; and the compare's other operand cannot be homed there. Only the third part
+;; needs replacing when the register comes from the scavenger instead, because a
+;; scavenged register can be anything the pool offers, and the EMERGENCY tier
+;; ignores occupancy by design. The replacement is the sound-scavenger's own
+;; device: for the duration of the pick the reserved mask is widened from the
+;; GEP's operand homes to the union of the operand+result homes of the
+;; instructions the fold may swallow (the load's consumer, the compare, and its
+;; branch). Both the ordinary candidate filter and the emergency tier honour
+;; that mask, so the pick provably avoids the compare's other operand, the
+;; branch's condition, and the address's own index -- the three registers that
+;; must survive from the staging write to the compare. The base is register-less
+;; on this path, so it cannot collide, and the loaded var is spilled, so it has
+;; no home to protect.
+;;
+;; TWO-SIDED PINNING. The probe must stay pure (the M-D lesson: a probe that can
+;; still decline must never scavenge, or a rejected fold leaks an
+;; emergency-pending register), so admission PEEKS through
+;; compiler-backend-scavenge-reg-peek -- the documented side-effect-free twin
+;; that predicts the ordinary picker's answer including its emergency tier --
+;; and the committed emitter re-runs the identical pick for real through
+;; compiler-backend-scavenge-reg. The two agree because this one helper is the
+;; only caller of either on this path and it supplies the same arguments to
+;; both: dst-var -1 (so neither appends a destination home), the same empty
+;; exclude array, the same "%r10" fallback, and the same widened reserved mask,
+;; queried at the same emission point -- nothing between the peek and the commit
+;; touches the emit cursor, the occupancy map or the assignment index. `commit?`
+;; is the ONLY difference between the two calls.
+;;
+;; REACH, and why the lookahead is exactly three. The widened mask has to cover
+;; every instruction whose operand homes must survive from the staging write to
+;; the folded compare, and `compiler-backend-cmp-fold-walk` can step over up to
+;; four size-preserving casts before reaching that compare -- further than any
+;; fixed window worth paying for. So the shape test below ADMITS only the two
+;; positions a three-instruction window provably covers: the compare sitting
+;; directly behind the load, or one cast then the compare. A deeper cast chain
+;; is refused rather than half-protected; the direct-address M6-C/M6-D folds,
+;; which need no staging register and therefore no mask, keep the full walk.
+;;
+;; ADMISSION COST. The peek is not free -- an occupancy query, a candidate walk
+;; and the widened mask -- and it would otherwise run at every spilled-base
+;; spilled-destination load in the program, most of which no fold claims. The
+;; same shape test decides the peek before any address work happens: two enum
+;; matches and no allocation.
+(define compiler-backend-gep-load-cmp-staging-lookahead : i64
+  3)
+
+(define (compiler-backend-instr-size-preserving-cast?
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) true]
+    [_ false]))
+
+(define (compiler-backend-gep-load-cmp-staging-compare-here?
+  [load-dst : i64]
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs _)
+      (and
+        (compiler-backend-compare-op? op)
+        (or
+          (compiler-backend-branch-uses-var? lhs load-dst)
+          (compiler-backend-branch-uses-var? rhs load-dst)))]
+    [_ false]))
+
+(define (compiler-backend-gep-load-cmp-staging-shape?
+  [load-dst : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= (+ index 1) instrs.len)
+    false
+    (let
+      [here : compiler_ir_types.CompilerIrInstr
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [next : compiler_ir_types.CompilerIrInstr
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs (+ index 1))]
+      (if (compiler-backend-gep-load-cmp-staging-compare-here? load-dst here)
+        true
+        (match here
+          [(compiler_ir_types.CompilerIrInstr.Cast cast-dst cast-src _ _)
+            (and
+              (compiler-backend-branch-uses-var? cast-src load-dst)
+              ;; One cast, then the consumer. A second cast would let the walk
+              ;; run past the window the mask covers, so it is refused here.
+              (not (compiler-backend-instr-size-preserving-cast? next))
+              (or
+                (compiler-backend-gep-load-cmp-staging-compare-here?
+                  cast-dst
+                  next)
+                ;; M6-G: the widening cast IS the consumer, and its own load is
+                ;; emitted immediately behind the staging write, so nothing but
+                ;; the gep's own operands has to survive.
+                (< (+ index 1) instrs.len)))]
+          [_ false])))))
+
+(define (compiler-backend-gep-load-cmp-staging-reserved-mask
+  [ctx : CompilerBackendEmissionContext]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [remaining : i64]
+  [acc : i64]) : i64
+  (if (or (<= remaining 0) (>= index instrs.len))
+    acc
+    (compiler-backend-gep-load-cmp-staging-reserved-mask
+      ctx
+      instrs
+      (+ index 1)
+      (- remaining 1)
+      (bit-or
+        acc
+        (compiler-backend-instr-reserved-home-mask
+          ctx.function-state
+          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))))))
+
+(define (compiler-backend-gep-load-cmp-scavenged-staging-base
+  [ctx : CompilerBackendEmissionContext]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [commit? : bool]) : String
+  (let
+    [saved-reserved : i64
+      (compiler-backend-current-instr-reserved-mask ctx.function-state)]
+    [_widen : unit
+      (compiler-backend-set-current-instr-reserved-mask!
+        ctx.function-state
+        (compiler-backend-gep-load-cmp-staging-reserved-mask
+          ctx
+          instrs
+          index
+          compiler-backend-gep-load-cmp-staging-lookahead
+          saved-reserved))]
+    [reg : String
+      (if commit?
+        (compiler-backend-scavenge-reg
+          -1
+          (compiler-backend-one-exclude "")
+          1
+          "%r10"
+          ctx.backend-state)
+        (compiler-backend-scavenge-reg-peek
+          -1
+          (compiler-backend-one-exclude "")
+          1
+          "%r10"
+          ctx.backend-state))]
+    [_restore : unit
+      (compiler-backend-set-current-instr-reserved-mask!
+        ctx.function-state
+        saved-reserved)]
+    (compiler-backend-address-base-filter reg)))
+
 ;; True when the instruction would emit the LOCATED runtime-abort tail
 ;; (`tl_oob_abort_at`), which re-reads both compare operands through `pushq`
 ;; after %rsp has already moved. M6-A keeps that tail on the register form it
@@ -51770,6 +51981,11 @@
   ;; address already spelled the operand.
   [staged-value : compiler_ir_types.CompilerIrValue]
   [staged-base : String]
+  ;; M6-H: true when `staged-base` came from the scavenger's PEEK rather than
+  ;; the load destination's home, so the committed emitter has to re-run the
+  ;; pick for real (that is what enqueues the emergency save when the pool is
+  ;; saturated). See compiler-backend-gep-load-cmp-scavenged-staging-base.
+  [staged-scavenged? : bool]
   [staged-addr : String]
   [load-dst : i64]
   [load-ty : compiler_ast_types.AstType]
@@ -51835,7 +52051,13 @@
                   ctx
                   staged-value
                   (if (string.eq addr "")
-                    staged-base
+                    (if staged-scavenged?
+                      (compiler-backend-gep-load-cmp-scavenged-staging-base
+                        ctx
+                        instrs
+                        index
+                        true)
+                      staged-base)
                     "")
                   cmp-asm
                   true-jcc
@@ -51871,7 +52093,13 @@
                       ctx
                       staged-value
                       (if (string.eq addr "")
-                        staged-base
+                        (if staged-scavenged?
+                          (compiler-backend-gep-load-cmp-scavenged-staging-base
+                            ctx
+                            instrs
+                            index
+                            true)
+                          staged-base)
                         "")
                       (if (string.eq addr "")
                         staged-addr
@@ -51910,8 +52138,39 @@
         offset
         elem-ty
         gep-fold-disp)]
-    [staged-base : String
+    [home-staged-base : String
       (compiler-backend-gep-load-cmp-staged-base ctx load-dst)]
+    ;; M6-H: only a spilled load destination reaches the scavenged staging
+    ;; register, and only where the direct address already declined -- otherwise
+    ;; the "fold" would add a staging `movq` nobody was paying. The single-use
+    ;; gate the whole M6 family runs on is re-stated here because it is what
+    ;; retires the loaded var, and the fold is pointless without it.
+    [staged-scavenged? : bool
+      (and
+        (string.eq home-staged-base "")
+        (string.eq direct-addr "")
+        (not (compiler-backend-float-type? load-ty))
+        (compiler-backend-var-single-use? ctx.use-counts load-dst)
+        (compiler-backend-gep-load-cmp-staging-shape? load-dst instrs index))]
+    [staged-base : String
+      (if staged-scavenged?
+        (compiler-backend-gep-load-cmp-scavenged-staging-base
+          ctx
+          instrs
+          index
+          false)
+        home-staged-base)]
+    [staged-addr : String
+      (compiler-backend-gep-load-cmp-staged-address
+        ctx.backend-state
+        ctx.type-segment-bases
+        ctx.assignments
+        base
+        offset
+        elem-ty
+        gep-fold-disp
+        direct-addr
+        staged-base)]
     (match (compiler-backend-gep-load-cmp-fold-rest
       ctx
       fallthrough
@@ -51922,16 +52181,8 @@
         base
         offset)
       staged-base
-      (compiler-backend-gep-load-cmp-staged-address
-        ctx.backend-state
-        ctx.type-segment-bases
-        ctx.assignments
-        base
-        offset
-        elem-ty
-        gep-fold-disp
-        direct-addr
-        staged-base)
+      staged-scavenged?
+      staged-addr
       load-dst
       load-ty
       instrs

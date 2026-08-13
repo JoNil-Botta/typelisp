@@ -16212,6 +16212,7 @@
         (string.eq name "tl_memchr")
         (string.eq name "tl_array_zero")
         (string.eq name "tl_mem_fill8")
+        (string.eq name "tl_mem_copy_fwd")
         (string.eq name "tl_abort_string")
         (string.eq name "tl_tlci_call_image_entry")
         (string.eq name "tl_tlci_call_macro_entry")))))
@@ -35983,6 +35984,14 @@
           (compiler_ast_types.AstType.I64)
           (compiler_ast_types.ast-type-cons
             (compiler_ast_types.AstType.U64)
+            (compiler_ast_types.ast-type-list-new))))]
+    [(cbi.compiler-builtin-backend-tl-mem-copy-fwd-id? name-id)
+      (compiler_ast_types.ast-type-cons
+        (compiler_ast_types.ast-ty-mut-ptr (compiler_ast_types.AstType.U8))
+        (compiler_ast_types.ast-type-cons
+          (compiler_ast_types.ast-ty-ptr (compiler_ast_types.AstType.U8))
+          (compiler_ast_types.ast-type-cons
+            (compiler_ast_types.AstType.I64)
             (compiler_ast_types.ast-type-list-new))))]
     [else (compiler_ast_types.ast-type-list-new)]))
 

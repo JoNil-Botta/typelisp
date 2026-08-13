@@ -2745,6 +2745,10 @@
       "compiler-optimize-licm-unswitch-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-self-test)
       42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-unswitch-chain-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-unswitch-chain-self-test)
+      42)
     (cfg
       test
       (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
@@ -3571,6 +3575,18 @@
       (compiler_optimize_tests.compiler-optimize-cmp-dup-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-ubound-self-test"
+      (compiler_optimize_tests.compiler-optimize-ubound-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-ubound-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-ubound-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-ubound-tangled-self-test"
+      (compiler_optimize_tests.compiler-optimize-ubound-tangled-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-successor-sink-self-test"
       (compiler_optimize_tests.compiler-optimize-successor-sink-self-test)
       42)
@@ -4247,3 +4263,24 @@
     (compiler_optimize_tests.compiler-optimize-dom-cmp-phi-carried-self-test)
     42
     "a rotated loop's header test folds when both joining edges decide it, and is refused when they disagree or one decides nothing"))
+
+(test
+  ubound-narrowed-loop-test
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-ubound-self-test)
+    42
+    "a multi-path advance loop drops its header check for one unsigned test against min(bound, length), and the rewrite is idempotent"))
+
+(test
+  ubound-refusals
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-ubound-refusal-self-test)
+    42
+    "a missing entry guard, an opaque length, an instruction ahead of the check, a second reader of the loop compare and a negative seed are refused"))
+
+(test
+  ubound-tangled-phi-web
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-ubound-tangled-self-test)
+    42
+    "mutually dependent header phis and a three-edge phi terminate the search and are refused"))

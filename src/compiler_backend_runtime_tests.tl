@@ -150,6 +150,23 @@
         "minimal Windows functions keep the general slot fill")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          ".globl tl_mem_copy_fwd")
+        "minimal Linux functions keep the forward byte copy")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-min-functions)
+          ".globl tl_mem_copy_fwd")
+        "minimal Windows functions keep the forward byte copy")
+      ;; The forward copy must never take memmove's backward arm: `std` in this
+      ;; helper would reverse the propagating-overlap case copy_call depends on.
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          "tl_mem_copy_fwd:\n    testq %rdx, %rdx")
+        "Linux forward byte copy guards a non-positive count before rep movsb")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
           (& windows-min-functions)
           ".globl tl_tlci_call_image_entry")
         "minimal Windows functions keep the TLCI image bridge")

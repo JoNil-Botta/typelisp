@@ -3814,12 +3814,16 @@
     [prev-current-count : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
-    [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList
-      (compiler_ir_types.compiler-ir-c-abi-return-slot-cons
+    [slot-data : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 1)]
+    [_fill-slot-data : unit
+      (set!
+        (array-ref slot-data 0)
         (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
           (compiler_ast_types.AstType.I64)
-          0)
-        compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)]
+          0))]
+    [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+      (compiler_ir_types.CompilerIrCAbiReturnSlotSeq slot-data 1)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -3936,16 +3940,22 @@
           (compiler_backend.compiler-backend-string-contains? asm "    addq $")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-c-abi-return-store-two-int-slots) : compiler_ir_types.CompilerIrCAbiReturnSlotList
-  (compiler_ir_types.compiler-ir-c-abi-return-slot-cons
-    (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
-      (compiler_ast_types.AstType.I64)
-      0)
-    (compiler_ir_types.compiler-ir-c-abi-return-slot-cons
-      (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
-        (compiler_ast_types.AstType.I64)
-        8)
-      compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)))
+(define (compiler-backend-c-abi-return-store-two-int-slots) : compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+  (let
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 2)]
+    (begin
+      (set!
+        (array-ref slots 0)
+        (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
+          (compiler_ast_types.AstType.I64)
+          0))
+      (set!
+        (array-ref slots 1)
+        (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
+          (compiler_ast_types.AstType.I64)
+          8))
+      (compiler_ir_types.CompilerIrCAbiReturnSlotSeq slots 2))))
 
 (define (compiler-backend-c-abi-return-stores-r11-occupied-ok?) : bool
   (let
@@ -3976,7 +3986,7 @@
     [prev-current-count : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
-    [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList
+    [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq
       (compiler-backend-c-abi-return-store-two-int-slots)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
@@ -37310,30 +37320,35 @@
     compiler_ir_types.CompilerIrBlockList.Nil))
 
 (define (compiler-backend-scratch-vreg-c-abi-return-test-blocks) : compiler_ir_types.CompilerIrBlockList
-  (compiler_ir_types.compiler-ir-block-cons
-    (compiler_ir_types.compiler-ir-block
-      (compiler_ir_types.compiler-ir-label "entry")
-      (compiler_ir_types.compiler-ir-instr-cons
-        (compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult
-          (box
-            (compiler_ir_types.CompilerIrInstrCallCAbiStoreResultPayload
-              (compiler_ir_types.CompilerIrValue.Var 0)
-              (ci.intern "foreign")
-              (compiler_ir_types.CompilerIrCallArgs.Nil)
-              (compiler_ir_types.compiler-ir-c-abi-return-slot-cons
-                (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
-                  (compiler_ast_types.AstType.I64)
-                  0)
-                compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil))))
+  (let
+    [slot-data : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 1)]
+    [_fill-slot-data : unit
+      (set!
+        (array-ref slot-data 0)
+        (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
+          (compiler_ast_types.AstType.I64)
+          0))]
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
         (compiler_ir_types.compiler-ir-instr-cons
-          ;; Keep the candidate callee-saved home real but outside the call's
-          ;; scratch interval; a missing interval is conservatively occupied.
-          (compiler_ir_types.CompilerIrInstr.Mov
-            1
-            (compiler_ir_types.CompilerIrValue.I64 9)
-            (compiler_ast_types.AstType.I64))
-          compiler_ir_types.CompilerIrInstrList.Nil)))
-    compiler_ir_types.CompilerIrBlockList.Nil))
+          (compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult
+            (box
+              (compiler_ir_types.CompilerIrInstrCallCAbiStoreResultPayload
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (ci.intern "foreign")
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ir_types.CompilerIrCAbiReturnSlotSeq slot-data 1))))
+          (compiler_ir_types.compiler-ir-instr-cons
+            ;; Keep the candidate callee-saved home real but outside the call's
+            ;; scratch interval; a missing interval is conservatively occupied.
+            (compiler_ir_types.CompilerIrInstr.Mov
+              1
+              (compiler_ir_types.CompilerIrValue.I64 9)
+              (compiler_ast_types.AstType.I64))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (compiler-backend-scratch-vreg-c-abi-return-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend

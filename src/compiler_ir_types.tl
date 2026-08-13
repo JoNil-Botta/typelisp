@@ -516,11 +516,6 @@
   (slots (__tl_dyn-array CompilerIrCAbiReturnSlot))
   (len i64))
 
-(defenum CompilerIrCAbiReturnSlotList
-  (Nil)
-  (Cons CompilerIrCAbiReturnSlot (Box CompilerIrCAbiReturnSlotList))
-  (Array CompilerIrCAbiReturnSlotSeq))
-
 (defstruct CompilerIrPhiInput
   (value CompilerIrValue)
   (label i64))
@@ -635,13 +630,13 @@
   (base CompilerIrValue)
   (name i64)
   (args CompilerIrCallArgs)
-  (slots CompilerIrCAbiReturnSlotList))
+  (slots CompilerIrCAbiReturnSlotSeq))
 
 (defstruct CompilerIrInstrCallIndirectCAbiStoreResultPayload
   (base CompilerIrValue)
   (callee CompilerIrValue)
   (args CompilerIrCallArgs)
-  (slots CompilerIrCAbiReturnSlotList))
+  (slots CompilerIrCAbiReturnSlotSeq))
 
 (defstruct CompilerIrInstrSpmdCallPayload
   (callee i64)
@@ -893,7 +888,7 @@
   [base : CompilerIrValue]
   [name : i64]
   [args : CompilerIrCallArgs]
-  [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrInstr
+  [slots : CompilerIrCAbiReturnSlotSeq]) : CompilerIrInstr
   (CompilerIrInstr.CallCAbiStoreResult
     (box (CompilerIrInstrCallCAbiStoreResultPayload base name args slots))))
 
@@ -901,7 +896,7 @@
   [base : CompilerIrValue]
   [callee : CompilerIrValue]
   [args : CompilerIrCallArgs]
-  [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrInstr
+  [slots : CompilerIrCAbiReturnSlotSeq]) : CompilerIrInstr
   (CompilerIrInstr.CallIndirectCAbiStoreResult
     (box
       (CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args slots))))
@@ -1058,80 +1053,6 @@
   (match values
     [(CompilerIrValueList.Array seq) (compiler-ir-value-seq-to-list seq)]
     [_ values]))
-
-(define (compiler-ir-c-abi-return-slot-cons-linked
-  [slot : CompilerIrCAbiReturnSlot]
-  [rest : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
-  (CompilerIrCAbiReturnSlotList.Cons slot (box rest)))
-
-(define (compiler-ir-c-abi-return-slot-cons
-  [slot : CompilerIrCAbiReturnSlot]
-  [rest : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
-  (let
-    [count : i64 (+ 1 (compiler-ir-c-abi-return-slot-list-count rest))]
-    [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)
-      (array.make-array CompilerIrCAbiReturnSlot count)]
-    (begin
-      (set! (array-ref slots 0) slot)
-      (compiler-ir-c-abi-return-slot-list-fill-array rest slots 1)
-      (CompilerIrCAbiReturnSlotList.Array
-        (CompilerIrCAbiReturnSlotSeq slots count)))))
-
-(define (compiler-ir-c-abi-return-slot-list-count
-  [slots : CompilerIrCAbiReturnSlotList]) : i64
-  (match slots
-    [(CompilerIrCAbiReturnSlotList.Nil) 0]
-    [(CompilerIrCAbiReturnSlotList.Cons _ rest)
-      (+ 1 (compiler-ir-c-abi-return-slot-list-count (__tl-box-place rest)))]
-    [(CompilerIrCAbiReturnSlotList.Array seq) seq.len]))
-
-(define (compiler-ir-c-abi-return-slot-list-fill-array
-  [items : CompilerIrCAbiReturnSlotList]
-  [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
-  [index : i64]) : unit
-  (match items
-    [(CompilerIrCAbiReturnSlotList.Nil) unit]
-    [(CompilerIrCAbiReturnSlotList.Cons slot rest)
-      (begin
-        (set! (array-ref slots index) slot)
-        (compiler-ir-c-abi-return-slot-list-fill-array
-          (__tl-box-place rest)
-          slots
-          (+ index 1)))]
-    [(CompilerIrCAbiReturnSlotList.Array seq)
-      (let
-        [read : i64 0]
-        [count : i64 seq.len]
-        [source : (__tl_dyn-array CompilerIrCAbiReturnSlot) seq.slots]
-        (while (< read count)
-          (begin
-            (set! (array-ref slots (+ index read)) (array-ref source read))
-            (set! read (+ read 1)))))]))
-
-(define (compiler-ir-c-abi-return-slot-seq-to-list-rev
-  [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
-  [index : i64]
-  [acc : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
-  (let
-    [cursor : i64 index]
-    [out : CompilerIrCAbiReturnSlotList acc]
-    (begin
-      (while (>= cursor 0)
-        (begin
-          (set!
-            out
-            (compiler-ir-c-abi-return-slot-cons-linked
-              (array-ref slots cursor)
-              out))
-          (set! cursor (- cursor 1))))
-      out)))
-
-(define (compiler-ir-c-abi-return-slot-seq-to-list
-  [seq : CompilerIrCAbiReturnSlotSeq]) : CompilerIrCAbiReturnSlotList
-  (compiler-ir-c-abi-return-slot-seq-to-list-rev
-    seq.slots
-    (- seq.len 1)
-    CompilerIrCAbiReturnSlotList.Nil))
 
 (define (compiler-ir-phi-input-cons-linked
   [value : CompilerIrValue]
@@ -2538,7 +2459,7 @@
         (+ index 1)
         count))))
 
-(define (compiler-ir-clone-c-abi-return-slot-seq
+(define (compiler-ir-clone-c-abi-return-slots
   [pools : ast.AstNodePoolContext]
   [seq : CompilerIrCAbiReturnSlotSeq]) : CompilerIrCAbiReturnSlotSeq
   (let
@@ -2549,19 +2470,6 @@
     (begin
       (compiler-ir-clone-c-abi-return-slot-seq-fill pools src dst 0 count)
       (CompilerIrCAbiReturnSlotSeq dst count))))
-
-(define (compiler-ir-clone-c-abi-return-slots
-  [pools : ast.AstNodePoolContext]
-  [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
-  (match slots
-    [(CompilerIrCAbiReturnSlotList.Nil) (CompilerIrCAbiReturnSlotList.Nil)]
-    [(CompilerIrCAbiReturnSlotList.Cons slot rest)
-      (compiler-ir-c-abi-return-slot-cons
-        (compiler-ir-clone-c-abi-return-slot pools slot)
-        (compiler-ir-clone-c-abi-return-slots pools (__tl-box-place rest)))]
-    [(CompilerIrCAbiReturnSlotList.Array seq)
-      (CompilerIrCAbiReturnSlotList.Array
-        (compiler-ir-clone-c-abi-return-slot-seq pools seq))]))
 
 (define (compiler-ir-clone-phi-input-list-acc
   [inputs : CompilerIrPhiInputList]
@@ -4108,30 +4016,37 @@
               ", "
               (compiler-ir-phi-input-list-render (__tl-box-place rest)))]))]))
 
-(define (compiler-ir-c-abi-return-slot-list-render
+(define (compiler-ir-c-abi-return-slot-seq-render-from
   [type-segment-bases : i64]
-  [slots : CompilerIrCAbiReturnSlotList]) : String
-  (match slots
-    [(CompilerIrCAbiReturnSlotList.Nil) ""]
-    [(CompilerIrCAbiReturnSlotList.Array seq)
-      (compiler-ir-c-abi-return-slot-list-render
-        type-segment-bases
-        (compiler-ir-c-abi-return-slot-seq-to-list seq))]
-    [(CompilerIrCAbiReturnSlotList.Cons slot rest)
-      (match slot
-        [(CompilerIrCAbiReturnSlot.Slot ty offset)
-          (str_cat.str-cat
-            (compiler-ir-type-render type-segment-bases ty)
-            "@"
-            (string.int->string offset)
-            (match (__tl-box-place rest)
-              [(CompilerIrCAbiReturnSlotList.Nil) ""]
-              [_
-                (str_cat.str-cat
-                  ", "
-                  (compiler-ir-c-abi-return-slot-list-render
-                    type-segment-bases
-                    (__tl-box-place rest)))]))])]))
+  [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (match (array-ref slots index)
+      [(CompilerIrCAbiReturnSlot.Slot ty offset)
+        (str_cat.str-cat
+          (compiler-ir-type-render type-segment-bases ty)
+          "@"
+          (string.int->string offset)
+          (if (= (+ index 1) count)
+            ""
+            (str_cat.str-cat
+              ", "
+              (compiler-ir-c-abi-return-slot-seq-render-from
+                type-segment-bases
+                slots
+                (+ index 1)
+                count))))])))
+
+(define (compiler-ir-c-abi-return-slot-seq-render
+  [type-segment-bases : i64]
+  [slots : CompilerIrCAbiReturnSlotSeq]) : String
+  (compiler-ir-c-abi-return-slot-seq-render-from
+    type-segment-bases
+    slots.slots
+    0
+    slots.len))
 
 (define (compiler-ir-instr-render
   [type-segment-bases : i64]
@@ -4552,7 +4467,7 @@
           ") -> "
           (compiler-ir-value-render base)
           " ["
-          (compiler-ir-c-abi-return-slot-list-render type-segment-bases slots)
+          (compiler-ir-c-abi-return-slot-seq-render type-segment-bases slots)
           "]"))]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
@@ -4568,7 +4483,7 @@
           ") -> "
           (compiler-ir-value-render base)
           " ["
-          (compiler-ir-c-abi-return-slot-list-render type-segment-bases slots)
+          (compiler-ir-c-abi-return-slot-seq-render type-segment-bases slots)
           "]"))]
     [(CompilerIrInstr.TailCall name args ty)
       (compiler-ir-tail-call-render type-segment-bases name args ty)]
@@ -8334,30 +8249,27 @@
 (define (compiler-ir-c-abi-return-slot-dense-order-ok?) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
-    [slots : CompilerIrCAbiReturnSlotList
-      (compiler-ir-c-abi-return-slot-cons
-        (CompilerIrCAbiReturnSlot.Slot (ast.AstType.I64) 0)
-        (compiler-ir-c-abi-return-slot-cons
-          (CompilerIrCAbiReturnSlot.Slot (ast.AstType.F64) 8)
-          CompilerIrCAbiReturnSlotList.Nil))]
-    [cloned : CompilerIrCAbiReturnSlotList
+    [slot-data : (__tl_dyn-array CompilerIrCAbiReturnSlot)
+      (array.make-array CompilerIrCAbiReturnSlot 2)]
+    [_fill : unit
+      (begin
+        (set!
+          (array-ref slot-data 0)
+          (CompilerIrCAbiReturnSlot.Slot (ast.AstType.I64) 0))
+        (set!
+          (array-ref slot-data 1)
+          (CompilerIrCAbiReturnSlot.Slot (ast.AstType.F64) 8)))]
+    [slots : CompilerIrCAbiReturnSlotSeq
+      (CompilerIrCAbiReturnSlotSeq slot-data 2)]
+    [cloned : CompilerIrCAbiReturnSlotSeq
       (compiler-ir-clone-c-abi-return-slots pools slots)]
     (and
-      (= (compiler-ir-c-abi-return-slot-list-count slots) 2)
-      (match slots
-        [(CompilerIrCAbiReturnSlotList.Array seq)
-          (and
-            (= seq.len 2)
-            (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? seq 0 0)
-            (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? seq 1 8))]
-        [_ false])
-      (match cloned
-        [(CompilerIrCAbiReturnSlotList.Array seq)
-          (and
-            (= seq.len 2)
-            (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? seq 0 0)
-            (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? seq 1 8))]
-        [_ false]))))
+      (= slots.len 2)
+      (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? slots 0 0)
+      (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? slots 1 8)
+      (= cloned.len 2)
+      (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? cloned 0 0)
+      (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? cloned 1 8))))
 
 (define (compiler-ir-value-seq-entry-var?
   [seq : CompilerIrValueSeq]

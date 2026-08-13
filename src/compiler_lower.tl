@@ -31225,15 +31225,14 @@
             (ir.CompilerIrCAbiReturnSlot.Slot scalar-ty offset))
           (lower-c-abi-ir-return-slots-from slots out (+ index 1) count))])))
 
-(define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : ir.CompilerIrCAbiReturnSlotList
+(define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : ir.CompilerIrCAbiReturnSlotSeq
   (let
     [count : i64 (lower-c-abi-slot-list-count slots)]
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (array.make-array ir.CompilerIrCAbiReturnSlot count)]
     (begin
       (lower-c-abi-ir-return-slots-from slots out 0 count)
-      (ir.CompilerIrCAbiReturnSlotList.Array
-        (ir.CompilerIrCAbiReturnSlotSeq out count)))))
+      (ir.CompilerIrCAbiReturnSlotSeq out count))))
 
 (define (lower-c-abi-materialize-stored-register-result
   [ctx : tc_core.TcContext]

@@ -45285,42 +45285,17 @@
 (define (compiler-backend-emit-c-abi-return-slot-stores
   [type-segment-bases : i64]
   [base-reg : String]
-  [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList]
+  [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq]
   [int-idx : i64]
   [sse-idx : i64]) : String
-  (match slots
-    [(compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil) ""]
-    [(compiler_ir_types.CompilerIrCAbiReturnSlotList.Cons slot rest)
-      (match slot
-        [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot ty _)
-          (let
-            [sse? : bool (compiler-backend-float-type? ty)]
-            (str_cat.str-cat
-              (compiler-backend-emit-c-abi-return-slot-store
-                type-segment-bases
-                base-reg
-                slot
-                int-idx
-                sse-idx)
-              (compiler-backend-emit-c-abi-return-slot-stores
-                type-segment-bases
-                base-reg
-                (__tl-box-place rest)
-                (if sse?
-                  int-idx
-                  (+ int-idx 1))
-                (if sse?
-                  (+ sse-idx 1)
-                  sse-idx))))])]
-    [(compiler_ir_types.CompilerIrCAbiReturnSlotList.Array seq)
-      (compiler-backend-emit-c-abi-return-slot-stores-array
-        type-segment-bases
-        base-reg
-        seq.slots
-        0
-        seq.len
-        int-idx
-        sse-idx)]))
+  (compiler-backend-emit-c-abi-return-slot-stores-array
+    type-segment-bases
+    base-reg
+    slots.slots
+    0
+    slots.len
+    int-idx
+    sse-idx))
 
 (define (compiler-backend-emit-c-abi-return-slot-stores-array
   [type-segment-bases : i64]
@@ -45416,7 +45391,7 @@
 (define (compiler-backend-emit-c-abi-return-stores
   [type-segment-bases : i64]
   [save-offset : i64]
-  [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList]
+  [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq]
   [planned : String]
   [backend-state : CompilerBackendState]) : String
   (let
@@ -53469,7 +53444,7 @@
   [base : compiler_ir_types.CompilerIrValue]
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
-  [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList]
+  [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
   [planned-stage : String]
@@ -53575,7 +53550,7 @@
   [base : compiler_ir_types.CompilerIrValue]
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
-  [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList]
+  [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
   [planned-stage : String]

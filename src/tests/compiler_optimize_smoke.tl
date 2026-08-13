@@ -397,6 +397,222 @@
               [(ir.CompilerIrInstr.Jump target) (= target label)]
               [_ false]))])]))
 
+;; Chain block labels: compare `i` lives in "entry" (i = 0) or "cmp<i>", and
+;; its accepting arm in "case<i>". Used by the tag-list chain builder below,
+;; which the density-tier and chain-shape cases need at lengths the fixed
+;; four-tag builders cannot express.
+(define (opt-switch-test-chain-label [i : i64]) : i64
+  (if (= i 0)
+    (ir.compiler-ir-label "entry")
+    (ir.compiler-ir-label (str_cat.str-cat "cmp" (string.int->string i) ""))))
+
+(define (opt-switch-test-arm-label [i : i64]) : i64
+  (ir.compiler-ir-label (str_cat.str-cat "case" (string.int->string i) "")))
+
+(define (opt-switch-test-tag-array [count : i64] [first : i64] [last : i64]) : (__tl_dyn-array
+    i64)
+  ;; `first`, then 1-apart tags, then `last`: exactly `count` tags whose span is
+  ;; whatever `last` makes it, so a case can name a span directly.
+  (let
+    [tags : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            (array-ref tags i)
+            (if (= i (- count 1))
+              last
+              (+ first i)))
+          (set! i (+ i 1))))
+      tags)))
+
+;; `tags[0..count)` as a compare chain over var 0, appended to `tail`. Chain
+;; position `start + k` carries tag `tags[k]`, branches to its own returning
+;; arm or on to position `start + k + 1`, and the last false edge leaves for
+;; `next-label`; `start` lets one chain be built in two calls with a block of
+;; the caller's choosing wedged between them.
+(define (opt-switch-test-tag-chain-from
+  [tags : (__tl_dyn-array i64)]
+  [start : i64]
+  [k : i64]
+  [count : i64]
+  [next-label : i64]
+  [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (if (>= k count)
+    tail
+    (ir.compiler-ir-block-cons
+      (opt-switch-test-compare-block
+        (opt-switch-test-chain-label (+ start k))
+        (array-ref tags k)
+        (+ (+ start k) 1)
+        (opt-switch-test-arm-label (+ start k))
+        (if (= (+ k 1) count)
+          next-label
+          (opt-switch-test-chain-label (+ (+ start k) 1))))
+      (ir.compiler-ir-block-cons
+        (opt-switch-test-return-block
+          (opt-switch-test-arm-label (+ start k))
+          (+ 10 (+ start k)))
+        (opt-switch-test-tag-chain-from
+          tags
+          start
+          (+ k 1)
+          count
+          next-label
+          tail)))))
+
+;; A whole function body: `count` compares over the given span, then a
+;; returning fallback.
+(define (opt-switch-test-span-blocks [count : i64] [first : i64] [last : i64]) : ir.CompilerIrBlockList
+  (opt-switch-test-tag-chain-from
+    (opt-switch-test-tag-array count first last)
+    0
+    0
+    count
+    (ir.compiler-ir-label "fallback")
+    (ir.compiler-ir-block-cons
+      (opt-switch-test-return-block (ir.compiler-ir-label "fallback") 99)
+      (ir.CompilerIrBlockList.Nil))))
+
+(define (opt-switch-test-jump-block [label : i64] [target : i64]) : ir.CompilerIrBlock
+  (ir.compiler-ir-block
+    label
+    (ir.compiler-ir-instr-cons
+      (ir.CompilerIrInstr.Jump target)
+      (ir.CompilerIrInstrList.Nil))))
+
+;; Four compares, an empty forwarding block, then `after` more compares whose
+;; tags run from `resume`. The forwarding block is what an inlined classifier
+;; leaves between two halves of one `cond` chain. `tail` is appended after the
+;; returning fallback, for a case that needs an extra block somewhere other
+;; than the front (the first block in the list is the function's entry).
+(define (opt-switch-test-hop-blocks
+  [after : i64]
+  [resume : i64]
+  [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (opt-switch-test-tag-chain-from
+    (opt-switch-test-tag-array 4 0 3)
+    0
+    0
+    4
+    (ir.compiler-ir-label "hop")
+    (ir.compiler-ir-block-cons
+      (opt-switch-test-jump-block
+        (ir.compiler-ir-label "hop")
+        (ir.compiler-ir-label "cmp4"))
+      (opt-switch-test-tag-chain-from
+        (opt-switch-test-tag-array after resume (+ resume (- after 1)))
+        4
+        0
+        after
+        (ir.compiler-ir-label "fallback")
+        (ir.compiler-ir-block-cons
+          (opt-switch-test-return-block (ir.compiler-ir-label "fallback") 99)
+          tail)))))
+
+;; The same shape, but a second edge reaches the forwarding block, so the
+;; rewrite may not delete it and the chain must stop in front of it.
+(define (opt-switch-test-hop-shared-blocks) : ir.CompilerIrBlockList
+  (opt-switch-test-hop-blocks
+    2
+    4
+    (ir.compiler-ir-block-cons
+      (opt-switch-test-jump-block
+        (ir.compiler-ir-label "other")
+        (ir.compiler-ir-label "hop"))
+      (ir.CompilerIrBlockList.Nil))))
+
+;; A chain whose fifth compare re-tests a tag the first four already routed:
+;; that block cannot join the table, but the four in front of it still form
+;; one.
+(define (opt-switch-test-repeat-tag-blocks) : ir.CompilerIrBlockList
+  (opt-switch-test-tag-chain-from
+    (opt-switch-test-tag-array 4 0 3)
+    0
+    0
+    4
+    (ir.compiler-ir-label "cmp4")
+    (opt-switch-test-tag-chain-from
+      (opt-switch-test-tag-array 1 0 0)
+      4
+      0
+      1
+      (ir.compiler-ir-label "fallback")
+      (ir.compiler-ir-block-cons
+        (opt-switch-test-return-block (ir.compiler-ir-label "fallback") 99)
+        (ir.CompilerIrBlockList.Nil)))))
+
+;; Four compares whose tag-2 arm only forwards to the real arm body. The table
+;; entry can name the body directly; when the body opens with a phi it cannot,
+;; because the phi has to name the edge it came in on.
+(define (opt-switch-test-forwarded-arm-blocks [phi-body? : bool]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-block-cons
+    (opt-switch-test-compare-block
+      (ir.compiler-ir-label "entry")
+      0
+      1
+      (opt-switch-test-arm-label 0)
+      (ir.compiler-ir-label "cmp1"))
+    (ir.compiler-ir-block-cons
+      (opt-switch-test-return-block (opt-switch-test-arm-label 0) 10)
+      (ir.compiler-ir-block-cons
+        (opt-switch-test-compare-block
+          (ir.compiler-ir-label "cmp1")
+          1
+          2
+          (opt-switch-test-arm-label 1)
+          (ir.compiler-ir-label "cmp2"))
+        (ir.compiler-ir-block-cons
+          (opt-switch-test-return-block (opt-switch-test-arm-label 1) 11)
+          (ir.compiler-ir-block-cons
+            (opt-switch-test-compare-block
+              (ir.compiler-ir-label "cmp2")
+              2
+              3
+              (ir.compiler-ir-label "forward")
+              (ir.compiler-ir-label "cmp3"))
+            (ir.compiler-ir-block-cons
+              (opt-switch-test-jump-block
+                (ir.compiler-ir-label "forward")
+                (ir.compiler-ir-label "body"))
+              (ir.compiler-ir-block-cons
+                (if phi-body?
+                  (ir.compiler-ir-block
+                    (ir.compiler-ir-label "body")
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Phi
+                        12
+                        (ir.compiler-ir-phi-input-cons
+                          (ir.CompilerIrValue.I64 12)
+                          (ir.compiler-ir-label "forward")
+                          (ir.CompilerIrPhiInputList.Nil))
+                        (ast.AstType.I64))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Return
+                          (ir.CompilerIrMaybeValue.Some
+                            (ir.CompilerIrValue.Var 12)))
+                        (ir.CompilerIrInstrList.Nil))))
+                  (opt-switch-test-return-block
+                    (ir.compiler-ir-label "body")
+                    12))
+                (ir.compiler-ir-block-cons
+                  (opt-switch-test-compare-block
+                    (ir.compiler-ir-label "cmp3")
+                    3
+                    4
+                    (opt-switch-test-arm-label 3)
+                    (ir.compiler-ir-label "fallback"))
+                  (ir.compiler-ir-block-cons
+                    (opt-switch-test-return-block
+                      (opt-switch-test-arm-label 3)
+                      13)
+                    (ir.compiler-ir-block-cons
+                      (opt-switch-test-return-block
+                        (ir.compiler-ir-label "fallback")
+                        99)
+                      (ir.CompilerIrBlockList.Nil))))))))))))
+
 (define (opt-switch-test-chain-blocks
   [tag0 : i64]
   [tag1 : i64]
@@ -983,6 +1199,115 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-switch-test-function dense-source)
         2)]
+    ;; Density tiers. Eight compares are enough that the walk dominates, so
+    ;; they may span 66 slots (12%); one slot more, or one compare fewer at the
+    ;; same shape, falls back to the 50% floor and stays a chain.
+    [long-sparse : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-span-blocks 8 0 65)))]
+    [long-sparse-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        (opt.opt-function-blocks long-sparse)
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
+    [long-too-sparse : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-span-blocks 8 0 66)))]
+    [short-sparse : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-span-blocks 7 0 57)))]
+    ;; An empty forwarding block between two halves of one chain: the table
+    ;; spans both halves and the block is gone.
+    [hop : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-hop-blocks 2 4 (ir.CompilerIrBlockList.Nil))))]
+    [hop-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks hop)]
+    [hop-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block hop-blocks (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
+    ;; Reaching across the forwarding block would push the span to 0..80 for
+    ;; five compares, below the short-chain floor. The four in front of it
+    ;; still form their table, and the forwarding block becomes its default.
+    [hop-fallback : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-hop-blocks 1 80 (ir.CompilerIrBlockList.Nil))))]
+    [hop-fallback-blocks : ir.CompilerIrBlockList
+      (opt.opt-function-blocks hop-fallback)]
+    [hop-twice : ir.CompilerIrFunction (opt.opt-switch-form-function hop)]
+    [hop-twice-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        (opt.opt-function-blocks hop-twice)
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
+    [hop-fallback-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        hop-fallback-blocks
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
+    ;; A second edge reaches the forwarding block, so it must survive and the
+    ;; chain has to stop in front of it.
+    [hop-shared : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-hop-shared-blocks)))]
+    [hop-shared-blocks : ir.CompilerIrBlockList
+      (opt.opt-function-blocks hop-shared)]
+    [hop-shared-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        hop-shared-blocks
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
+    ;; A repeated tag cannot join the table, but it may not cost the four
+    ;; compares in front of it their table either.
+    [repeat-tag : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-repeat-tag-blocks)))]
+    [repeat-tag-blocks : ir.CompilerIrBlockList
+      (opt.opt-function-blocks repeat-tag)]
+    [repeat-tag-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        repeat-tag-blocks
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
+    ;; An arm that only forwards: the table entry names the body it forwards
+    ;; to, unless the body opens with a phi that has to name its edge.
+    [forwarded-arm : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-forwarded-arm-blocks false)))]
+    [forwarded-arm-blocks : ir.CompilerIrBlockList
+      (opt.opt-function-blocks forwarded-arm)]
+    [forwarded-arm-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        forwarded-arm-blocks
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
+    [forwarded-phi-arm : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-forwarded-arm-blocks true)))]
+    [forwarded-phi-arm-blocks : ir.CompilerIrBlockList
+      (opt.opt-function-blocks forwarded-phi-arm)]
+    [forwarded-phi-arm-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        forwarded-phi-arm-blocks
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
     (cond
       [(not (= (opt-count-switch-blocks dense-blocks) 1)) 1]
       [(not (= (opt-switch-entry-base dense-blocks) 0)) 2]
@@ -1190,6 +1515,140 @@
                 (= trap-label (ir.compiler-ir-label "trap")))]
             [_ false]))
         59]
+      ;; Density tiers, two-sided. Eight compares afford a 66-slot span (12%);
+      ;; a 67-slot span at eight compares, and a 58-slot span at seven, are
+      ;; both back under the 50% floor and stay chains.
+      [(not
+          (= (opt-count-switch-blocks (opt.opt-function-blocks long-sparse)) 1))
+        70]
+      [(not (= (opt-switch-test-block-tail-case-count long-sparse-entry) 66))
+        71]
+      [(not (= (opt-switch-test-block-tail-base long-sparse-entry) 0)) 72]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            long-sparse-entry
+            65
+            (opt-switch-test-arm-label 7)))
+        73]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            long-sparse-entry
+            9
+            (ir.compiler-ir-label "fallback")))
+        74]
+      [(not (opt.opt-verify-ok? (opt.opt-verify-function long-sparse))) 75]
+      [(not
+          (=
+            (opt-count-switch-blocks (opt.opt-function-blocks long-too-sparse))
+            0))
+        76]
+      [(not
+          (= (opt-count-switch-blocks (opt.opt-function-blocks short-sparse)) 0))
+        77]
+      ;; One empty forwarding block between the halves of one chain: six
+      ;; compares, one table, and the forwarding block is gone with them.
+      [(not (= (opt-count-switch-blocks hop-blocks) 1)) 78]
+      [(not (= (opt-switch-test-block-tail-case-count hop-entry) 6)) 79]
+      [(not (= (opt-switch-test-block-tail-base hop-entry) 0)) 80]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default hop-entry)
+            (ir.compiler-ir-label "fallback")))
+        81]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            hop-entry
+            5
+            (opt-switch-test-arm-label 5)))
+        82]
+      [(compiler_optimize_tests.opt-block-list-has-label?
+          hop-blocks
+          (ir.compiler-ir-label "hop"))
+        83]
+      [(compiler_optimize_tests.opt-block-list-has-label?
+          hop-blocks
+          (ir.compiler-ir-label "cmp4"))
+        84]
+      [(not (opt.opt-verify-ok? (opt.opt-verify-function hop))) 85]
+      ;; Idempotence: the fused head is a Switch, not a compare, so a second
+      ;; run finds nothing left to fuse.
+      [(not (= (opt-count-switch-blocks (opt.opt-function-blocks hop-twice)) 1))
+        109]
+      [(not (= (opt-switch-test-block-tail-case-count hop-twice-entry) 6)) 110]
+      ;; Reaching across it must never cost the chain the table it already had.
+      [(not (= (opt-count-switch-blocks hop-fallback-blocks) 1)) 86]
+      [(not (= (opt-switch-test-block-tail-case-count hop-fallback-entry) 4))
+        87]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default hop-fallback-entry)
+            (ir.compiler-ir-label "hop")))
+        88]
+      [(not
+          (compiler_optimize_tests.opt-block-list-has-label?
+            hop-fallback-blocks
+            (ir.compiler-ir-label "hop")))
+        89]
+      [(not (opt.opt-verify-ok? (opt.opt-verify-function hop-fallback))) 90]
+      ;; A forwarding block something else also reaches cannot be deleted, so
+      ;; the chain stops in front of it and it stays where it is.
+      [(not (= (opt-count-switch-blocks hop-shared-blocks) 1)) 91]
+      [(not (= (opt-switch-test-block-tail-case-count hop-shared-entry) 4)) 92]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default hop-shared-entry)
+            (ir.compiler-ir-label "hop")))
+        93]
+      [(not
+          (compiler_optimize_tests.opt-block-list-has-label?
+            hop-shared-blocks
+            (ir.compiler-ir-label "hop")))
+        94]
+      [(not (opt.opt-verify-ok? (opt.opt-verify-function hop-shared))) 95]
+      ;; A repeated tag stops the chain instead of refusing it.
+      [(not (= (opt-count-switch-blocks repeat-tag-blocks) 1)) 96]
+      [(not (= (opt-switch-test-block-tail-case-count repeat-tag-entry) 4)) 97]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default repeat-tag-entry)
+            (ir.compiler-ir-label "cmp4")))
+        98]
+      [(not
+          (compiler_optimize_tests.opt-block-list-has-label?
+            repeat-tag-blocks
+            (ir.compiler-ir-label "cmp4")))
+        99]
+      [(not (opt.opt-verify-ok? (opt.opt-verify-function repeat-tag))) 100]
+      ;; A forwarding arm is followed to the body it forwards to; the empty
+      ;; block goes with the chain.
+      [(not (= (opt-count-switch-blocks forwarded-arm-blocks) 1)) 101]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            forwarded-arm-entry
+            2
+            (ir.compiler-ir-label "body")))
+        102]
+      [(compiler_optimize_tests.opt-block-list-has-label?
+          forwarded-arm-blocks
+          (ir.compiler-ir-label "forward"))
+        103]
+      [(not (opt.opt-verify-ok? (opt.opt-verify-function forwarded-arm))) 104]
+      ;; A phi in the body has to name the edge it came in on, so that
+      ;; forwarding block stays and the case keeps naming it.
+      [(not (= (opt-count-switch-blocks forwarded-phi-arm-blocks) 1)) 105]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            forwarded-phi-arm-entry
+            2
+            (ir.compiler-ir-label "forward")))
+        106]
+      [(not
+          (compiler_optimize_tests.opt-block-list-has-label?
+            forwarded-phi-arm-blocks
+            (ir.compiler-ir-label "forward")))
+        107]
+      [(not (opt.opt-verify-ok? (opt.opt-verify-function forwarded-phi-arm)))
+        108]
       [else 42])))
 
 (define (smoke-mov-dst-var-type?

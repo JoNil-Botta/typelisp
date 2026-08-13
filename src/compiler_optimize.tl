@@ -33435,18 +33435,48 @@
 (define (opt-switch-density-percent) : i64
   50)
 
+;; That floor prices every chain alike, and it should not. What a table REMOVES
+;; scales with the chain's LENGTH -- a value no arm accepts walks all of it, two
+;; instructions per compare -- while what a table wastes scales with its SPAN.
+;; The span a chain can afford is therefore proportional to the compares it
+;; removes, so a long chain affords a sparser table than a short one, and one
+;; percentage set for the short case refuses exactly the dispatches worth
+;; tabling most. Chains of at least `opt-switch-long-chain-count` compares get
+;; the lower floor; shorter ones keep the 50% floor above.
+;;
+;; Pinned two-sided on the corpus. Admitted at the low floor: the lexer's byte
+;; dispatch -- 13 tags (9, 10, 13, 32, 34, 39, 40, 41, 44, 59, 91, 93, 96) over
+;; a span of 88, 14.7% -- which as a chain walks 26 instructions for every byte
+;; that starts a symbol, and which clang tables here too, over that same 88-slot
+;; range. Refused, in rising density: an 8-compare chain spanning more than 66
+;; slots (below 12%); peephole_lines' 6-tag classifier over a span of 36
+;; (16.7%) and its two 4-tag chains over spans of 22 (18.2%) -- short enough to
+;; keep the 50% floor, and measured: admitting them costs that row +0.23%,
+;; because a sparse early chain preempts a denser later one in the same
+;; function; and the 4-tag span-21 chain (19%) the pass self-test pins.
+(define (opt-switch-long-chain-count) : i64
+  8)
+
+(define (opt-switch-long-chain-density-percent) : i64
+  12)
+
+(define (opt-switch-density-percent-for [count : i64]) : i64
+  (if (>= count (opt-switch-long-chain-count))
+    (opt-switch-long-chain-density-percent)
+    (opt-switch-density-percent)))
+
 ;; Hard ceiling on the emitted table's entry count. The density floor already
-;; bounds the span by twice the compare count, so this only fires for chains
-;; that are pathological in absolute size; it keeps a single match from
-;; emitting an unbounded rodata table (and bounds `opt-switch-build-cases-desc`
-;; recursion) regardless of the source program.
+;; bounds the span by a small multiple of the compare count, so this only fires
+;; for chains that are pathological in absolute size; it keeps a single match
+;; from emitting an unbounded rodata table (and bounds
+;; `opt-switch-build-cases-desc` recursion) regardless of the source program.
 (define (opt-switch-max-table-entries) : i64
   1024)
 
 (define (opt-switch-span-admissible? [count : i64] [span : i64]) : bool
   (and
     (<= span (opt-switch-max-table-entries))
-    (<= (* span (opt-switch-density-percent)) (* count 100))))
+    (<= (* span (opt-switch-density-percent-for count)) (* count 100))))
 
 (define (opt-switch-finalize-chain
   [index : OptCfgIndex]
@@ -33503,12 +33533,21 @@
           (if first?
             resolved-index
             index-var)]
+        ;; This block cannot JOIN the chain -- it re-tests a tag the table
+        ;; already routes, or the rewrite cannot delete it because something
+        ;; other than the compare we walked in on reaches it. Stop the chain
+        ;; here and keep what it collected: the block stays put and becomes the
+        ;; switch's default, which re-tests exactly as it does today. Refusing
+        ;; the whole chain instead would throw away every compare already
+        ;; folded, and does not even refuse consistently -- whether a chain
+        ;; runs into such a block depends on how far it reaches, so a longer
+        ;; reach could lose a table a shorter one formed.
         (if (or
           (opt-switch-candidate-has-tag? items tag)
           (and
             (not first?)
             (not (opt-switch-single-pred-from? index label prev-label))))
-          (OptMaybeSwitchChain.No)
+          (opt-switch-finalize-chain index index-var items label head-prefix)
           (opt-switch-collect-chain
             blocks
             index
@@ -33521,12 +33560,62 @@
               label
               tag
               eq-var
-              arm-label
+              (opt-switch-thread-arm index arm-label)
               next-label
               total-enum?
               items)
             head-prefix
             copies))))))
+
+;; `jump L` and nothing else, or `compiler-ir-label-none` for any other block.
+;; A dispatch chain often runs THROUGH such a block: an inlined classifier
+;; (`(or (= c 32) (= c 9) ...)`) ends its last false edge on an empty join
+;; block that the CFG passes leave in place, and the rest of the `cond` chain
+;; -- the same scrutinee against further literals -- continues past it. Read as
+;; a chain break, that one empty block splits one dispatch into two adjacent
+;; tables, and the second table's range check is then paid on top of the
+;; first's for every value the first does not hold; continuing across it fuses
+;; them into one indexed jump.
+(define (opt-switch-block-sole-jump [block : ir.CompilerIrBlock]) : i64
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Jump target) target]
+          [_ (ir.compiler-ir-label-none)])
+        (ir.compiler-ir-label-none))]))
+
+;; A compare's true edge often lands on an empty block that only forwards to
+;; the real arm -- the `cond` arms of an inlined classifier all join that way.
+;; A table entry can name the join target directly, so follow the forwarding
+;; before the arm is recorded and spend one indexed jump instead of an indexed
+;; jump plus a `jmp`. Unlike the generic CFG straightener this may point SEVERAL
+;; entries at one target: a switch names its destinations positionally, so a
+;; repeated destination is expressible -- but only where no phi has to name its
+;; predecessor edge, hence the phi guard on each hop. The fuel bounds a cycle
+;; of forwarding blocks.
+(define (opt-switch-thread-arm-fuel) : i64
+  8)
+
+(define (opt-switch-thread-arm-from
+  [index : OptCfgIndex]
+  [label : i64]
+  [fuel : i64]) : i64
+  (if (<= fuel 0)
+    label
+    (match (opt-cfg-index-find-block index label)
+      [(OptMaybeBlock.No) label]
+      [(OptMaybeBlock.Some block)
+        (let
+          [target : i64 (opt-switch-block-sole-jump block)]
+          (if (or
+            (= target (ir.compiler-ir-label-none))
+            (opt-switch-block-starts-with-phi? index target))
+            label
+            (opt-switch-thread-arm-from index target (- fuel 1))))])))
+
+(define (opt-switch-thread-arm [index : OptCfgIndex] [label : i64]) : i64
+  (opt-switch-thread-arm-from index label (opt-switch-thread-arm-fuel)))
 
 (define (opt-switch-collect-chain
   [blocks : ir.CompilerIrBlockList]
@@ -33585,12 +33674,51 @@
                           0
                           prefix
                           (OptSwitchCopyEnv.Nil)))])])
-              (opt-switch-finalize-chain
-                index
-                index-var
-                items
-                label
-                head-prefix))]
+              ;; Chain in progress: step across one empty forwarding block if
+              ;; the edge we arrived on is its only one. The rewrite deletes
+              ;; every block the chain walks, so a second predecessor would be
+              ;; left jumping into deleted code; a sole predecessor makes the
+              ;; block unreachable once the head becomes a Switch, and the
+              ;; reachable-order rebuild drops it.
+              ;;
+              ;; Reaching further can only be tried, never assumed: the longer
+              ;; chain may be the one that fails -- its wider span may miss the
+              ;; density floor, or the block it ends on may be a phi join no
+              ;; default edge can name -- while the chain that stops here would
+              ;; have formed a table. So keep the short chain as the fallback.
+              (let
+                [hop : i64 (opt-switch-block-sole-jump block)]
+                (if (and
+                  (!= hop (ir.compiler-ir-label-none))
+                  (opt-switch-single-pred-from? index label prev-label))
+                  (let
+                    [hopped : OptMaybeSwitchChain
+                      (opt-switch-collect-chain
+                        blocks
+                        index
+                        uses
+                        hop
+                        index-var
+                        label
+                        (opt-label-add seen label)
+                        items
+                        head-prefix
+                        copies)]
+                    (match hopped
+                      [(OptMaybeSwitchChain.No)
+                        (opt-switch-finalize-chain
+                          index
+                          index-var
+                          items
+                          label
+                          head-prefix)]
+                      [_ hopped]))
+                  (opt-switch-finalize-chain
+                    index
+                    index-var
+                    items
+                    label
+                    head-prefix))))]
           [(OptSwitchCompare.Some
               candidate-index
               tag

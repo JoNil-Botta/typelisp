@@ -368,10 +368,6 @@
 (define tlci-host-platform-x86-64-windows : i64
   3)
 
-;; Compatibility name for the immutable v2 corpus and old source importers.
-(define tlci-host-arch-x86-64 : i64
-  1)
-
 (define (tlci-build-host-platform) : i64
   (cfg
     windows

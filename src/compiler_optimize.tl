@@ -18944,7 +18944,7 @@
     name
     (bit-or
       (opt-direct-call-clean-memory-bit)
-      (opt-direct-call-clean-element-bit))))
+      (opt-direct-call-clean-unconditional-global-bit))))
 
 ;; Direct callees that DO return. opt-licm-store-state-direct-call filters the
 ;; non-returning trap helpers out ahead of this, so a ControlFlow effect never

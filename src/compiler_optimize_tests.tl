@@ -27760,7 +27760,7 @@
           symbols
           (+
             (compiler_optimize.opt-direct-call-clean-global-bit)
-            (compiler_optimize.opt-direct-call-clean-element-bit))))]
+            (compiler_optimize.opt-direct-call-clean-unconditional-global-bit))))]
     [header-element-call : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks header-element-call-func)]
     [header-global-call-func : compiler_ir_types.CompilerIrFunction
@@ -48558,7 +48558,7 @@
           (compiler_optimize.opt-direct-call-clean-has-bit?
             cycle-clean
             cycle-a
-            (compiler_optimize.opt-direct-call-clean-element-bit)))
+            (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)))
         217]
       [(not (opt-call-memory-summary-is? call-summaries summary-clean 0)) 72]
       [(not extern-call) 73]

@@ -55728,18 +55728,25 @@
                 (+ idx 1)))])])))
 
 (define (lower-spmd-private-helper-name
+  [names : LowerNameCache]
   [hidden-name : i64]
   [result-ty : ast.AstType]
   [result-varying : bool]) : i64
-  (let
-    [hidden-text : String (ir.compiler-ir-symbol-text hidden-name)]
-    [private-name : String
-      (if result-varying
-        (if (lower-type-bool? result-ty)
-          (str_cat.str-cat "__tl_spmd_ret_mask_" hidden-text)
-          (str_cat.str-cat "__tl_spmd_ret_varying_" hidden-text))
-        (str_cat.str-cat "__tl_spmd_ret_uniform_" hidden-text))]
-    (ci.intern-generated-canonical-name private-name)))
+  (begin
+    ;; SPMD names remain a legacy text-derived domain (tracked separately from
+    ;; ordinary generated roles). Materialize the hidden ordinary lambda at
+    ;; this explicit compatibility boundary before SPMD derives its name.
+    (lower-materialize-generated-role-symbols!
+      (compiler-lower-state-from-name-cache names))
+    (let
+      [hidden-text : String (ir.compiler-ir-symbol-text hidden-name)]
+      [private-name : String
+        (if result-varying
+          (if (lower-type-bool? result-ty)
+            (str_cat.str-cat "__tl_spmd_ret_mask_" hidden-text)
+            (str_cat.str-cat "__tl_spmd_ret_varying_" hidden-text))
+          (str_cat.str-cat "__tl_spmd_ret_uniform_" hidden-text))]
+      (ci.intern-generated-canonical-name private-name))))
 
 (define (lower-spmd-helper-index-param-at
   [ctx : tc_core.TcContext]
@@ -56664,6 +56671,7 @@
                                   ir.CompilerIrSpmdBackend.Avx512)]
                               [private-name : i64
                                 (lower-spmd-private-helper-name
+                                  (lower-state-names named-state)
                                   hidden-name
                                   result-ty
                                   result-varying)]

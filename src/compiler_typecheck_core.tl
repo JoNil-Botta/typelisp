@@ -588,7 +588,7 @@
     (begin
       ;; The directory never grows, so TcMacroState may carry its data pointer
       ;; directly. Slot 12 keeps the owner beside the lazy addresses, while
-      ;; slot 13 carries the source-name session handle.
+      ;; slot 13 carries the combined source-name/structural-intern session.
       (set! (array-ref macro-state-addresses 12) owner)
       (set!
         (array-ref cell 0)
@@ -83578,7 +83578,41 @@
 (define (tc-macro-state-bind-source-names!
   [state : TcMacroState]
   [source-names : ci.InternSourceNameSessionHandle]) : unit
-  (tc-macro-state-slot-address-set! state 13 source-names.address))
+  (let
+    [address : i64 (tc-macro-state-slot-address state 13)]
+    [next : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session source-names)]
+    (if (= address 0)
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
+        [cell : (__tl_dyn-array ci.InternSourceNameSession)
+          (array.make-array ci.InternSourceNameSession 1)]
+        [next-address : i64
+          (begin
+            (set! (array-ref cell 0) next)
+            (cast
+              (unsafe
+                (ptr->int
+                  (ptr-cast
+                    (array-data cell)
+                    : (Ptr ci.InternSourceNameSession))))
+              : i64))]
+        (begin
+          (tc-macro-state-slot-address-set! state 13 next-address)
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)))
+      ;; Slot 13 names a record allocated once in the job owner. Every bind is
+      ;; authoritative: same-generation interning can grow the source-name
+      ;; arrays and replace their snapshots. Refreshing the record in place
+      ;; keeps those pointers current and batch retained bytes bounded, while
+      ;; never dereferencing capability cells retired by nested compiler work.
+      (unsafe
+        (ptr-write!
+          (int->ptr (cast address : u64) : (MutPtr ci.InternSourceNameSession))
+          next)))))
 
 (define (tc-macro-state-source-names-initialize [state : TcMacroState]) : ci.InternSourceNameSessionHandle
   (let
@@ -83589,7 +83623,7 @@
       ;; production entry binds its explicit source-name owner before any
       ;; macro cache can be touched.
       (tc-macro-state-bind-source-names! state source-names)
-      source-names)))
+      (ci.InternSourceNameSessionHandle (tc-macro-state-slot-address state 13)))))
 
 (define (tc-macro-state-source-names [state : TcMacroState]) : ci.InternSourceNameSessionHandle
   (let
@@ -108750,7 +108784,7 @@
           program
           paths
           pools
-          source-names
+          (tc-macro-state-source-names (tc-job-state-macro-state job-state))
           job-state
           stdlib-roots
           cfgs)]
@@ -111691,9 +111725,16 @@
   ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
   (ast.ast-node-pool-context-install! pools)
   (ci.intern-compat-state-install! intern-state)
+  (tc-macro-state-bind-source-names!
+    (tc-job-state-macro-state job-state)
+    source-names)
   (let
+    [job-source-names : ci.InternSourceNameSessionHandle
+      (tc-macro-state-source-names (tc-job-state-macro-state job-state))]
     [body-state : TcBodyState
-      (tc-body-state-new-with-job-state-and-source-names job-state source-names)]
+      (tc-body-state-new-with-job-state-and-source-names
+        job-state
+        job-source-names)]
     [_start-body-state : unit
       (tc-body-early-exit-facts-start! body-state pools)]
     [checked : ResultCompilerTypecheckChecked
@@ -111707,7 +111748,7 @@
           stdlib-roots
           cache-scope
           pools
-          source-names
+          job-source-names
           body-state))]
     (begin
       (ast.ast-node-pool-context-capture-active! pools)

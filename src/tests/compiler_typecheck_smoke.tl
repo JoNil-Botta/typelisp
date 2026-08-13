@@ -18,6 +18,7 @@
 (import compiler_symbols)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import stdlib.string)
 (import sym_i64_env)
 
@@ -5453,6 +5454,144 @@
   (unless
     (tc_core.tc-macro-state-isolation-ok?)
     (io.panic "typecheck: macro/CTFE job state isolation smoke failed")))
+
+(define (compiler-typecheck-structural-intern-session-isolation-ok?) : bool
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [job-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [macro-a : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job-a)]
+    [macro-b : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job-b)]
+    [source-a : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-handle-from-state intern-a)]
+    [source-b : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-handle-from-state intern-b)]
+    [_bind-a : unit
+      (tc_core.tc-macro-state-bind-source-names! macro-a source-a)]
+    [_bind-b : unit
+      (tc_core.tc-macro-state-bind-source-names! macro-b source-b)]
+    [body-a : tc_core.TcBodyState
+      (tc_core.tc-body-state-new-with-job-state-and-source-names
+        job-a
+        (tc_core.tc-macro-state-source-names macro-a))]
+    [ctx-a : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-body-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (compiler_symbols.compiler-symbols-empty)
+        (compiler_symbols.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (ast.ast-node-pool-context-capture-active)
+        (tc_core.tc-macro-state-source-names macro-a)
+        body-a)]
+    [hygiene-a : tc_core.MacroHygieneEnv (tc_core.MacroHygieneEnv -1 macro-a)]
+    [macro-a-handle : ci.InternSourceNameSessionHandle
+      (tc_core.tc-macro-state-source-names macro-a)]
+    [macro-b-handle : ci.InternSourceNameSessionHandle
+      (tc_core.tc-macro-state-source-names macro-b)]
+    [body-a-handle : ci.InternSourceNameSessionHandle
+      (tc_core.tc-macro-state-source-names
+        (tc_core.tc-job-state-macro-state body-a.job-state))]
+    [ctx-a-handle : ci.InternSourceNameSessionHandle
+      (tc_core.tc-context-source-names ctx-a)]
+    [hygiene-a-handle : ci.InternSourceNameSessionHandle
+      (tc_core.tc-macro-state-source-names hygiene-a.state)]
+    [session-a : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names macro-a-handle)]
+    [session-b : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names macro-b-handle)]
+    [ok : bool
+      (and
+        (= macro-a-handle.address body-a-handle.address)
+        (= macro-a-handle.address ctx-a-handle.address)
+        (= macro-a-handle.address hygiene-a-handle.address)
+        (not (= macro-a-handle.address macro-b-handle.address)))]
+    (begin
+      ;; Keep B installed while macro expansion and ordinary typecheck views
+      ;; owned by A canonicalize, grow, and decode A's structural records.
+      (ci.intern-compat-state-install! intern-b)
+      (let
+        [a-pair : cis.InternStructuralKey
+          (cis.intern-structural-session-composite-pair-key session-a 71 81)]
+        [a-pair-again : cis.InternStructuralKey
+          (cis.intern-structural-session-composite-pair-key
+            (cis.intern-structural-session-handle-from-source-names
+              ctx-a-handle)
+            71
+            81)]
+        [b-pair : cis.InternStructuralKey
+          (cis.intern-structural-session-composite-pair-key session-b 71 81)]
+        (begin
+          (set!
+            ok
+            (and
+              ok
+              (=
+                (cis.intern-state-structural-key-raw a-pair)
+                (cis.intern-state-structural-key-raw a-pair-again))
+              (not
+                (=
+                  (cis.intern-state-structural-key-raw a-pair)
+                  (cis.intern-state-structural-key-raw b-pair)))
+              (cis.intern-structural-session-key-owned? session-a a-pair)
+              (not (cis.intern-structural-session-key-owned? session-b a-pair))
+              ;; B is both explicit and installed. The explicit constructor
+              ;; must keep the transitional legacy fast path coherent for the
+              ;; same owner while leaving unrelated installed owners alone.
+              (ci.intern-composite-pair-id?
+                (cis.intern-state-structural-key-raw b-pair))))
+          (let
+            [index : i64 0]
+            (while (< index 700)
+              (let
+                [key : cis.InternStructuralKey
+                  (cis.intern-structural-session-composite-triple-key
+                    (cis.intern-structural-session-handle-from-source-names
+                      ctx-a-handle)
+                    (+ 1000 index)
+                    (+ 2000 index)
+                    (+ 3000 index))]
+                (begin
+                  (unless
+                    (=
+                      (cis.intern-structural-session-key-middle session-a key)
+                      (+ 2000 index))
+                    (set! ok false))
+                  (set! index (+ index 1))))))
+          (set!
+            ok
+            (and
+              ok
+              (= (ci.intern-compat-state-structural-count intern-a) 701)
+              (= (ci.intern-compat-state-structural-count intern-b) 1)
+              (=
+                (ci.intern-active-table-id)
+                (ci.intern-compat-state-table-id intern-b))))))
+      (ci.intern-compat-state-install! installed)
+      (ci.intern-compat-state-reset-to! intern-a 0)
+      (let
+        [stale-before-rebind : bool
+          (not (cis.intern-structural-session-valid? session-a))]
+        [next-source-a : ci.InternSourceNameSessionHandle
+          (ci.intern-source-name-session-handle-from-state intern-a)]
+        [_rebind-a : unit
+          (tc_core.tc-macro-state-bind-source-names! macro-a next-source-a)]
+        [next-session-a : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (tc_core.tc-macro-state-source-names macro-a))]
+        (and
+          ok
+          stale-before-rebind
+          (cis.intern-structural-session-valid? next-session-a)
+          (= session-a.address next-session-a.address))))))
+
+(test
+  compiler-typecheck-structural-intern-session-isolation
+  (unless
+    (compiler-typecheck-structural-intern-session-isolation-ok?)
+    (io.panic "typecheck: structural-intern session isolation smoke failed")))
 
 (define (compiler-typecheck-smoke-body-state-diagnostic-reuse-ok?) : bool
   (let

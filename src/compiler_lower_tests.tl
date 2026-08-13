@@ -13129,6 +13129,24 @@
     (compiler-lower-compat-prescan-id-parity-ok?)
     "id-keyed compat prescan matches the string-keyed walks incl. hygiene ids"))
 
+;; The standalone adapter resets the active intern generation after constructing
+;; its lower carrier. Cleanup synthesis must use the refreshed post-reset view;
+;; publishing a pre-reset snapshot would invalidate the active builtin IDs.
+(define (compiler-lower-standalone-cleanup-owner-refresh-ok?) : bool
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (if (compiler-lower-cleanup-struct-shape-ok?)
+      (begin
+        (cbi.compiler-builtin-refresh!)
+        true)
+      false)))
+
+(test
+  compiler-lower-standalone-cleanup-owner-refresh
+  (test.assert-true
+    (compiler-lower-standalone-cleanup-owner-refresh-ok?)
+    "standalone cleanup lowering preserves post-reset intern/builtin ownership"))
+
 ;; Lowerer-owned synthesis must select its compile job's capabilities even
 ;; while a different job is installed as the serial compatibility decoy.
 (define (compiler-lower-cleanup-owner-interleaving-ok?) : bool

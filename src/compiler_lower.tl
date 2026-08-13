@@ -66224,11 +66224,19 @@
   [path : String]
   [program : ast.AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (match (lower-compiler-program-unlocated-mode lower-state program mode)
-    [(ResultCompilerLower.Ok ir spans) (ResultCompilerLower.Ok ir spans)]
-    [(ResultCompilerLower.Err diag)
-      (ResultCompilerLower.Err
-        (box (lower-diagnostic-with-fallback-path (__tl-box-place diag) path)))]))
+  (begin
+    ;; This compatibility adapter receives an already-parsed program. Parsing
+    ;; may have advanced both source and generated intern lanes since its lower
+    ;; carrier was constructed, so snapshot the complete active scalar view at
+    ;; this boundary before explicit lowerer allocation can publish it.
+    (compiler-lower-state-use-intern-state!
+      lower-state
+      (ci.intern-compat-state-capture-active))
+    (match (lower-compiler-program-unlocated-mode lower-state program mode)
+      [(ResultCompilerLower.Ok ir spans) (ResultCompilerLower.Ok ir spans)]
+      [(ResultCompilerLower.Err diag)
+        (ResultCompilerLower.Err
+          (box (lower-diagnostic-with-fallback-path (__tl-box-place diag) path)))])))
 
 (define (lower-compiler-program-with-path-mode
   [path : String]

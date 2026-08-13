@@ -1536,11 +1536,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # the pre-#6526 Windows probe measured 2,183,339 used nodes. #6526's
     # semantic index adds a further 10,890 checked nodes (survivor expr nodes
     # 455,537) and holds the same segment count: the authoritative Windows
-    # probe on the combined tree measured 2,194,229 used nodes, 2,228,224
-    # capacity, and 71,303,168 physical payload bytes, leaving 33,995 nodes of
-    # headroom below the 35-segment line.
+    # probe on the combined tree measured 2,194,229 used nodes. #5961's masked
+    # load cache adds the cache and mask-ancestry types plus their lowering
+    # helpers; the authoritative Windows probe measured 2,228,875 used nodes,
+    # crossing the boundary to 2,293,760 capacity and 73,400,320 physical
+    # payload bytes, with 64,885 nodes of headroom below the 36-segment line.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 34 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 35 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

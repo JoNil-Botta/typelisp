@@ -10762,6 +10762,9 @@
   (match value
     [(ir.CompilerIrValue.Var var)
       (opt-verify-var-use defs doms var use-block use-pos)]
+    [(ir.CompilerIrValue.RuntimeGlobal _)
+      (ResultCompilerOptimizeVerify.Err
+        "optimizer verify: runtime-global marker used as an instruction value")]
     [_ (ResultCompilerOptimizeVerify.Ok)]))
 
 (define (opt-verify-value-list-uses

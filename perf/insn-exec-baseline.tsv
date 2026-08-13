@@ -15,7 +15,7 @@ benchmark/typelisp/hashmap_insert	28941254
 benchmark/c-scalar/hashmap_insert	65952384
 benchmark/typelisp/opt_bytecode_vm	712000792
 benchmark/c-scalar/opt_bytecode_vm	716006209
-benchmark/typelisp/opt_crc32	324504454
+benchmark/typelisp/opt_crc32	324500358
 benchmark/c-scalar/opt_crc32	400704123
 benchmark/typelisp/opt_quicksort	400746301
 benchmark/c-scalar/opt_quicksort	398372863
@@ -23,7 +23,7 @@ benchmark/typelisp/spmd_reduce	1475113843
 benchmark/c-scalar/spmd_reduce	3381322973
 benchmark/typelisp/cfg_domloops	732535935
 benchmark/c-scalar/cfg_domloops	423136951
-benchmark/typelisp/gvn_table	1140930482
+benchmark/typelisp/gvn_table	1139595806
 benchmark/c-scalar/gvn_table	625075892
 benchmark/typelisp/intern_table	592870857
 benchmark/c-scalar/intern_table	296287351

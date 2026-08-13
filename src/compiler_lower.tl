@@ -1011,7 +1011,7 @@
   (Err String))
 
 (defenum ResultLowerCloneAugment
-  (Ok ast.AstProgram ast.AstDeclList)
+  (Ok ast.AstProgram ast.AstDeclList clone_support.CloneRootEntries)
   (Err String))
 
 (defenum CompilerLowerMode
@@ -2606,6 +2606,33 @@
                       (return binding.symbol-id)
                       (set! cursor binding.parent)))))
               fallback))]))))
+
+(define (lower-name-env-lookup-logical-id
+  [names : LowerNameEnv]
+  [source-id : i64]
+  [fallback : i64]) : i64
+  (if (< source-id 0)
+    fallback
+    (match names
+      [(LowerNameEnv.Nil) fallback]
+      [(LowerNameEnv.Inline bind-id logical-id _)
+        (if (= bind-id source-id)
+          logical-id
+          fallback)]
+      [(LowerNameEnv.Dense store head _)
+        (let
+          [cursor : i64 head]
+          (begin
+            (while (>= cursor 0)
+              (let
+                [binding : LowerNameBinding
+                  (lower-name-store-binding-at
+                    (& (__tl-box-place store))
+                    cursor)]
+                (if (= binding.source-id source-id)
+                  (return binding.logical-id)
+                  (set! cursor binding.parent))))
+            fallback))])))
 
 (define (lower-name-env-lookup-with-id [names : LowerNameEnv] [source-id : i64]) : tc_core.TcMaybeString
   (let
@@ -5551,42 +5578,50 @@
 (define (lower-name-env-add-clone-decl-in-module-inner
   [lower-state : CompilerLowerState]
   [names : LowerNameEnv]
+  [roots : clone_support.CloneRootEntries]
+  [bind-syntax? : bool]
   [entry-path : String]
   [decl-path : String]
   [module : String]
   [module-id : i64]
   [decl : ast.AstDecl]) : LowerNameEnv
-  (match decl
-    [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-      (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
-        (if (lower-name-has-clone-prefix? name-str)
-          (lower-name-env-add-decl-module-binding-id
+  (if (not bind-syntax?)
+    names
+    (match decl
+      [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
+        (let
+          [name-str : String (tc_core.tc-env-key-name-text name)]
+          (if (lower-name-has-clone-prefix? name-str)
+            (lower-name-env-add-decl-module-binding-id
+              lower-state
+              names
+              entry-path
+              decl-path
+              module
+              module-id
+              name-str
+              name)
+            names))]
+      [(ast.AstDecl.Unsafe inner-box)
+        (let
+          [inner : ast.AstDecl (__tl-box-place inner-box)]
+          (lower-name-env-add-clone-decl-in-module
             lower-state
             names
+            roots
+            bind-syntax?
             entry-path
             decl-path
             module
             module-id
-            name-str
-            name)
-          names))]
-    [(ast.AstDecl.Unsafe inner-box)
-      (let
-        [inner : ast.AstDecl (__tl-box-place inner-box)]
-        (lower-name-env-add-clone-decl-in-module
-          lower-state
-          names
-          entry-path
-          decl-path
-          module
-          module-id
-          inner))]
-    [_ names]))
+            inner))]
+      [_ names])))
 
 (define (lower-name-env-add-clone-decl-in-module
   [lower-state : CompilerLowerState]
   [names : LowerNameEnv]
+  [roots : clone_support.CloneRootEntries]
+  [bind-syntax? : bool]
   [entry-path : String]
   [decl-path : String]
   [module : String]
@@ -5597,19 +5632,57 @@
       (if (string.eq generator "stdlib.clone/synthesize-helpers")
         (match (ast.ast-decl-unwrapped decl)
           [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-            (lower-name-env-add-decl-module-binding-id
-              lower-state
-              names
-              entry-path
-              decl-path
-              module
-              module-id
-              item
-              name)]
+            (let
+              [with-syntax-id : LowerNameEnv
+                (if bind-syntax?
+                  (lower-name-env-add-decl-module-binding-id
+                    lower-state
+                    names
+                    entry-path
+                    decl-path
+                    module
+                    module-id
+                    item
+                    name)
+                  names)]
+              [root-key-id : i64
+                (lower-clone-handoff-source-helper-root-id name module-id roots)]
+              (if (>= root-key-id 0)
+                (let
+                  [helper-id : i64
+                    (clone_support.clone-root-entries-helper-id-or
+                      roots
+                      root-key-id
+                      -1)]
+                  [syntax-key-id : i64
+                    (lower-module-name-key-id-by-id module-id name)]
+                  [logical-id : i64
+                    (lower-name-env-lookup-logical-id
+                      with-syntax-id
+                      syntax-key-id
+                      -1)]
+                  [symbol-id : i64
+                    (lower-name-env-lookup-symbol-id
+                      with-syntax-id
+                      syntax-key-id
+                      -1)]
+                  ;; Alias the role handle to the declaration's exact
+                  ;; logical/symbol identity. Recomputing from helper-id would
+                  ;; create a second IR symbol for the same helper.
+                  (if (and (>= logical-id 0) (>= symbol-id 0))
+                    (lower-name-env-bind-logical-symbol-id
+                      (lower-module-name-key-id-by-id module-id helper-id)
+                      logical-id
+                      symbol-id
+                      with-syntax-id)
+                    with-syntax-id))
+                with-syntax-id))]
           [_ names])
         (lower-name-env-add-clone-decl-in-module-inner
           lower-state
           names
+          roots
+          bind-syntax?
           entry-path
           decl-path
           module
@@ -5619,6 +5692,8 @@
       (lower-name-env-add-clone-decl-in-module-inner
         lower-state
         names
+        roots
+        bind-syntax?
         entry-path
         decl-path
         module
@@ -5631,6 +5706,8 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
+  [roots : clone_support.CloneRootEntries]
+  [bind-syntax? : bool]
   [initial-module-id : i64]) : LowerNameEnv
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
@@ -5656,6 +5733,8 @@
                   (lower-name-env-add-clone-decl-in-module
                     lower-state
                     cur-names
+                    roots
+                    bind-syntax?
                     entry-path
                     decl-path
                     (ci.intern-str cur-module-id)
@@ -5669,13 +5748,17 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
-  [names : LowerNameEnv]) : LowerNameEnv
+  [names : LowerNameEnv]
+  [roots : clone_support.CloneRootEntries]
+  [bind-syntax? : bool]) : LowerNameEnv
   (lower-name-env-add-clone-decls-in-module
     lower-state
     decls
     paths
     entry-path
     names
+    roots
+    bind-syntax?
     cbi.compiler-builtin-id-fix-empty))
 
 (define (lower-alias-logical-name-id
@@ -9436,7 +9519,12 @@
             able
             roots)]
         [conflict : i64
-          (lower-clone-handoff-source-conflict source-decls handoff-roots)]
+          (begin
+            ;; Clone roots carry structural generated-symbol identities. The
+            ;; macro handoff below is their first text boundary.
+            (clone_support.clone-root-entries-materialize-helper-names!
+              handoff-roots)
+            (lower-clone-handoff-source-conflict source-decls handoff-roots))]
         (if (>= conflict 0)
           (ResultLowerCloneAugment.Err
             (str_cat.str-cat
@@ -9459,7 +9547,8 @@
                     handoff-decls)]
                 (ResultLowerCloneAugment.Ok
                   (ast.ast-program augmented-decls)
-                  handoff-decls))]
+                  handoff-decls
+                  handoff-roots))]
             [(tc_core.ResultMacroDecls.Err diag)
               (ResultLowerCloneAugment.Err
                 (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))]))
@@ -66323,13 +66412,17 @@
                 pools)]
             [checked-program : ast.AstProgram
               (match clone-augmentation
-                [(ResultLowerCloneAugment.Ok augmented _) augmented]
+                [(ResultLowerCloneAugment.Ok augmented _ _) augmented]
                 [(ResultLowerCloneAugment.Err _) program])]
+            [all-clone-roots : clone_support.CloneRootEntries
+              (match clone-augmentation
+                [(ResultLowerCloneAugment.Ok _ _ handoff-roots) handoff-roots]
+                [(ResultLowerCloneAugment.Err _) clone-roots])]
             [_install-augmented-pools : unit
               (ast.ast-node-pool-context-install! pools)]
             [checked-context : ResultLowerCheckedContext
               (match clone-augmentation
-                [(ResultLowerCloneAugment.Ok _ _)
+                [(ResultLowerCloneAugment.Ok _ _ _)
                   (lower-extend-checked-context-with-clone-decls
                     source-ctx
                     source-top-env
@@ -66342,19 +66435,23 @@
                 [(ast.AstProgram.Program decls-box)
                   (let
                     [decls : ast.AstDeclList (__tl-box-place decls-box)]
-                    (if needs-specialization
-                      (lower-name-env-add-clone-decls
-                        lower-state
-                        decls
-                        paths
-                        entry-path
-                        escaped-names)
-                      (lower-name-env-from-decls-with-state
-                        lower-state
-                        decls
-                        paths
-                        entry-path
-                        LowerNameEnv.Nil)))])]
+                    [base-names : LowerNameEnv
+                      (if needs-specialization
+                        escaped-names
+                        (lower-name-env-from-decls-with-state
+                          lower-state
+                          decls
+                          paths
+                          entry-path
+                          LowerNameEnv.Nil))]
+                    (lower-name-env-add-clone-decls
+                      lower-state
+                      decls
+                      paths
+                      entry-path
+                      base-names
+                      all-clone-roots
+                      needs-specialization))])]
             (begin
               (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
               (cfg compile-profile (compiler-lower-profile-start))

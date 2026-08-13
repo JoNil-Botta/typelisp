@@ -2196,8 +2196,18 @@
   13)
 (define compiler-backend-function-bool-gep-fold-drift : i64
   14)
-(define compiler-backend-function-bool-count : i64
+
+;; A frame reference the FPO push prologue does NOT absorb. The callee-save
+;; slot region is spelled through compiler-backend-callee-save-slot, and in FPO
+;; push mode every line that names it is deleted (the mov save/restore pairs) or
+;; rewritten (the pop-run leaq) by the rsp-rebase pass, so a function whose only
+;; frame references are those slots ends up with no frame reference at all.
+;; This flag is the one the slot region's liveness is decided by; bit 9 stays
+;; the "any frame reference at all" fact its own readers were written for.
+(define compiler-backend-function-bool-nonsave-frame-slot-referenced : i64
   15)
+(define compiler-backend-function-bool-count : i64
+  16)
 (define compiler-backend-function-string-shrinkwrap-bare-label : i64
   0)
 (define compiler-backend-function-string-abort-site-path : i64
@@ -13082,10 +13092,15 @@
 ;; never correctness.
 (define (compiler-backend-frame-slot-referenced-reset!
   [function-state : CompilerBackendFunctionState]) : unit
-  (compiler-backend-function-state-set-bool!
-    function-state
-    compiler-backend-function-bool-frame-slot-referenced
-    false))
+  (begin
+    (compiler-backend-function-state-set-bool!
+      function-state
+      compiler-backend-function-bool-frame-slot-referenced
+      false)
+    (compiler-backend-function-state-set-bool!
+      function-state
+      compiler-backend-function-bool-nonsave-frame-slot-referenced
+      false)))
 
 ;; Window size shared by the state-owned retained operand render caches.
 ;; Var-ids/offsets outside this window fall back to rendering fresh.
@@ -13415,7 +13430,7 @@
   [vars : i64]
   [idx : i64]
   [backend-state : CompilerBackendState]) : String
-  (compiler-backend-frame-offset-with-backend-state
+  (compiler-backend-callee-save-frame-offset
     backend-state
     (- 0 (* 8 (+ vars (+ idx 1))))))
 
@@ -15650,6 +15665,10 @@
       (compiler-backend-state-function-state state)
       compiler-backend-function-bool-frame-slot-referenced
       true)
+    (compiler-backend-function-state-set-bool!
+      (compiler-backend-state-function-state state)
+      compiler-backend-function-bool-nonsave-frame-slot-referenced
+      true)
     (if (and (>= var-id 0) (< var-id compiler-backend-slot-cache-capacity))
       (begin
         (compiler-backend-state-slot-frame-cache-storage-ensure! state)
@@ -15681,6 +15700,48 @@
                 text)))))
       (str_cat.str-cat (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)"))))
 
+;; The rendering alone. Both wrappers below record the reference first; nothing
+;; else may call this, or the frame would be sized as if the slot were dead.
+(define (compiler-backend-frame-offset-render
+  [state : CompilerBackendState]
+  [offset : i64]) : String
+  (let
+    [magnitude : i64 (- 0 offset)]
+    (if (and
+      (> magnitude 0)
+      (= (% magnitude 8) 0)
+      (<= magnitude (* 8 compiler-backend-slot-cache-capacity)))
+      (let
+        [idx : i64 (- (/ magnitude 8) 1)]
+        (begin
+          (compiler-backend-state-slot-frame-cache-storage-ensure! state)
+          (let
+            [data : CompilerBackendStateData
+              (compiler-backend-state-data state)]
+            [epoch : i64 data.slot-cache-epoch]
+            [epochs : (__tl_dyn-array i64) data.frame-offset-cache-epochs]
+            [values : (__tl_dyn-array String) data.frame-offset-cache-values]
+            (if (= (array-ref epochs idx) epoch)
+              (array-ref values idx)
+              (let
+                [previous : i64 (arena.tl_arena_current)]
+                [owner : i64
+                  (compiler-backend-state-lazy-table-arena-ensure! state)]
+                [_set-owner : unit
+                  (unsafe
+                    (arena.tl_arena_set owner))]
+                [text : String
+                  (str_cat.str-cat (string.int->string offset) "(%rbp)")]
+                (begin
+                  (compiler-backend-state-lazy-table-arena-finish!
+                    state
+                    previous
+                    owner)
+                  (set! (array-ref values idx) text)
+                  (set! (array-ref epochs idx) epoch)
+                  text))))))
+      (str_cat.str-cat (string.int->string offset) "(%rbp)"))))
+
 (define (compiler-backend-frame-offset-with-backend-state
   [state : CompilerBackendState]
   [offset : i64]) : String
@@ -15689,42 +15750,25 @@
       (compiler-backend-state-function-state state)
       compiler-backend-function-bool-frame-slot-referenced
       true)
-    (let
-      [magnitude : i64 (- 0 offset)]
-      (if (and
-        (> magnitude 0)
-        (= (% magnitude 8) 0)
-        (<= magnitude (* 8 compiler-backend-slot-cache-capacity)))
-        (let
-          [idx : i64 (- (/ magnitude 8) 1)]
-          (begin
-            (compiler-backend-state-slot-frame-cache-storage-ensure! state)
-            (let
-              [data : CompilerBackendStateData
-                (compiler-backend-state-data state)]
-              [epoch : i64 data.slot-cache-epoch]
-              [epochs : (__tl_dyn-array i64) data.frame-offset-cache-epochs]
-              [values : (__tl_dyn-array String) data.frame-offset-cache-values]
-              (if (= (array-ref epochs idx) epoch)
-                (array-ref values idx)
-                (let
-                  [previous : i64 (arena.tl_arena_current)]
-                  [owner : i64
-                    (compiler-backend-state-lazy-table-arena-ensure! state)]
-                  [_set-owner : unit
-                    (unsafe
-                      (arena.tl_arena_set owner))]
-                  [text : String
-                    (str_cat.str-cat (string.int->string offset) "(%rbp)")]
-                  (begin
-                    (compiler-backend-state-lazy-table-arena-finish!
-                      state
-                      previous
-                      owner)
-                    (set! (array-ref values idx) text)
-                    (set! (array-ref epochs idx) epoch)
-                    text))))))
-        (str_cat.str-cat (string.int->string offset) "(%rbp)")))))
+    (compiler-backend-function-state-set-bool!
+      (compiler-backend-state-function-state state)
+      compiler-backend-function-bool-nonsave-frame-slot-referenced
+      true)
+    (compiler-backend-frame-offset-render state offset)))
+
+;; A reference to the CALLEE-SAVE slot region. The FPO push prologue absorbs
+;; every such line (the rebase deletes the mov save/restore pairs and rewrites
+;; the pop-run leaq), so it does not by itself keep the slot region alive; it
+;; still counts as a frame reference for every reader of bit 9.
+(define (compiler-backend-callee-save-frame-offset
+  [state : CompilerBackendState]
+  [offset : i64]) : String
+  (begin
+    (compiler-backend-function-state-set-bool!
+      (compiler-backend-state-function-state state)
+      compiler-backend-function-bool-frame-slot-referenced
+      true)
+    (compiler-backend-frame-offset-render state offset)))
 
 (define (compiler-backend-state-immediate-render
   [state : CompilerBackendState]
@@ -51182,6 +51226,102 @@
   (No)
   (Some String String String i64 i64 i64))
 
+;; --- M6-G: a narrow element load whose only reader is its widening cast ------
+;;
+;; `(cast (array-ref slots i) : i64)` lowers to `Load : u8` followed by
+;; `Cast u8 to i64`, and the x86 load ALREADY performs that extension: `movzbq
+;; addr, %r` leaves the whole 64-bit register holding the byte. When the loaded
+;; value's single reader is a compare the M6-C arm above folds the pair into a
+;; `cmpb` and neither instruction survives. When it has several readers -- a
+;; lexer's dispatch byte, tested against a dozen literals -- M6-C declines and
+;; the pair is emitted in full: one `movzbq addr, %rax` and one `movzbq %al,
+;; %r12` re-extending a register that is already extended.
+;;
+;; The second instruction is the whole of what this arm removes, by giving the
+;; LOAD the cast's own destination register. What makes that sound is the same
+;; single-use condition M6 already demands of every fold in this cluster
+;; (`compiler-backend-gep-load-cmp-fold-rest` refuses a multiply-read load
+;; outright): the loaded var is read by the cast and by nothing else, so its own
+;; home is never observed and need not be written. The cast's destination is
+;; where the value was going to end up either way.
+;;
+;; Rails, each mirroring the M6-C arm that reads the load's extension out of
+;; `load-ty`:
+;;   * the cast's source is exactly the loaded var, so no size-preserving cast
+;;     crossed on the way can have flipped the signedness the width table
+;;     depends on;
+;;   * the cast's source width equals the load's width and their signedness
+;;     agrees, so the extension the load performs IS the extension the cast
+;;     asks for;
+;;   * the cast widens to a full word. A narrower target would need the
+;;     upper bits left alone, which a widening load does not do;
+;;   * no float on any side -- those move through the SSE path, not `movzbq`;
+;;   * the cast's destination has a general-register home that is not `%rbp`.
+;;     A spilled destination still needs the store the ordinary path emits, and
+;;     writing it here would buy nothing.
+;; The address operands are read before the destination is written within one
+;; instruction, so a destination that also spells the address's base or index is
+;; safe; and the destination register belongs to the cast, whose live range
+;; starts here, so nothing live across the pair can be homed in it.
+;;
+;; The M6-D staged address is taken too, on the same terms the compare arms
+;; take it: a base or index the SIB slots cannot spell is materialized into the
+;; LOAD destination's own register home first, and the load then reads through
+;; it. That register is dead the moment the fold retires the loaded var, so
+;; staging into it costs the one `movq` the unfolded path was already paying to
+;; scavenge a base -- and the pair still loses its re-extension.
+;;
+;; destination register spelling, resume index.
+(defenum CompilerBackendGepLoadWidenFold
+  (No)
+  (Some String i64))
+
+(define (compiler-backend-gep-load-widen-cast-probe
+  [ctx : CompilerBackendEmissionContext]
+  [addr : String]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendGepLoadWidenFold
+  (if (or (string.eq addr "") (>= index instrs.len))
+    (CompilerBackendGepLoadWidenFold.No)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Cast cast-dst cast-src from-ty to-ty)
+        (let
+          [width : i64
+            (compiler-backend-type-size ctx.type-segment-bases load-ty)]
+          (if (or
+            (not (compiler-backend-branch-uses-var? cast-src load-dst))
+            (not (or (= width 1) (= width 2) (= width 4)))
+            (compiler-backend-float-type? load-ty)
+            (compiler-backend-float-type? from-ty)
+            (compiler-backend-float-type? to-ty)
+            (not
+              (=
+                (compiler-backend-type-size ctx.type-segment-bases from-ty)
+                width))
+            (not
+              (= (compiler-backend-type-size ctx.type-segment-bases to-ty) 8))
+            (not
+              (=
+                (if (compiler-backend-type-signed? from-ty)
+                  1
+                  0)
+                (if (compiler-backend-type-signed? load-ty)
+                  1
+                  0))))
+            (CompilerBackendGepLoadWidenFold.No)
+            (let
+              [home : String
+                (compiler-backend-var-register-home
+                  ctx.backend-state
+                  ctx.assignments
+                  cast-dst)]
+              (if (or (string.eq home "") (string.eq home "%rbp"))
+                (CompilerBackendGepLoadWidenFold.No)
+                (CompilerBackendGepLoadWidenFold.Some home (+ index 1))))))]
+      [_ (CompilerBackendGepLoadWidenFold.No)])))
+
 ;; The compare's own source operand: the loaded value has been folded into the
 ;; memory operand, so the OTHER side must already be an immediate or a register
 ;; home. "" declines.
@@ -51608,6 +51748,35 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
+;; M6-G emission, in M6-D's order: stage the operand the address needs into the
+;; load destination's home first, then the widening load into the cast's own
+;; register. `staged-base` is "" whenever the fold spelled a direct address.
+(define (compiler-backend-gep-load-widen-emit
+  [ctx : CompilerBackendEmissionContext]
+  [staged-value : compiler_ir_types.CompilerIrValue]
+  [staged-base : String]
+  [addr : String]
+  [load-ty : compiler_ast_types.AstType]
+  [dst-reg : String]) : ResultCompilerBackend
+  (let
+    [load-asm : String
+      (compiler-backend-emit-load-memory-to-reg
+        ctx.type-segment-bases
+        addr
+        load-ty
+        dst-reg)]
+    (if (string.eq staged-base "")
+      (ResultCompilerBackend.Ok load-asm)
+      (match (compiler-backend-emit-load-value-with-plan
+        ctx.assignments
+        staged-value
+        staged-base
+        ctx.backend-state)
+        [(ResultCompilerBackend.Ok stage-asm)
+          (ResultCompilerBackend.Ok (str_cat.str-cat stage-asm load-asm))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
+
 (define (compiler-backend-gep-load-cmp-fold-rest
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -51697,7 +51866,39 @@
                 after-branch
                 out))]
           [(CompilerBackendGepLoadCmpBranchFold.No)
-            (CompilerBackendMaybeGepLoadCmpEmission.No)])])))
+            ;; M6-G last: the compare shapes above retire BOTH instructions of
+            ;; the pair, this one retires the re-extension only, so it is only
+            ;; ever offered a load neither of them claimed.
+            (match (compiler-backend-gep-load-widen-cast-probe
+              ctx
+              (if (string.eq addr "")
+                staged-addr
+                addr)
+              load-dst
+              load-ty
+              instrs
+              index)
+              [(CompilerBackendGepLoadWidenFold.Some dst-reg after-cast)
+                (CompilerBackendMaybeGepLoadCmpEmission.Some
+                  (compiler-backend-emit-fused-result-rest
+                    ctx
+                    fallthrough
+                    (compiler-backend-gep-load-widen-emit
+                      ctx
+                      staged-value
+                      (if (string.eq addr "")
+                        staged-base
+                        "")
+                      (if (string.eq addr "")
+                        staged-addr
+                        addr)
+                      load-ty
+                      dst-reg)
+                    instrs
+                    after-cast
+                    out))]
+              [(CompilerBackendGepLoadWidenFold.No)
+                (CompilerBackendMaybeGepLoadCmpEmission.No)])])])))
 
 (define (compiler-backend-emit-fused-gep-load-rest
   [ctx : CompilerBackendEmissionContext]
@@ -61992,15 +62193,23 @@
                         (if tail
                           (set! ok false)
                           (begin
-                            (set!
-                              buf
-                              (compiler-backend-peephole-append-line
+                            ;; `addq $0` would point rsp where it already is:
+                            ;; with a dead slot region the pushed area starts at
+                            ;; the current rsp, so the pop run needs no rebase
+                            ;; line at all. (The rewrite already replaces a
+                            ;; flag-free `leaq` with a flag-setting `addq`, so
+                            ;; dropping the line cannot lose a live flag.)
+                            (if (= (+ sub-s delta) 0)
+                              unit
+                              (set!
                                 buf
-                                (str_cat.str-cat
-                                  "    addq $"
-                                  (string.int->string (+ sub-s delta))
-                                  ", %rsp")
-                                nl))
+                                (compiler-backend-peephole-append-line
+                                  buf
+                                  (str_cat.str-cat
+                                    "    addq $"
+                                    (string.int->string (+ sub-s delta))
+                                    ", %rsp")
+                                  nl)))
                             (set! tail true)
                             (set! delta (- 0 sub-s))))
                         (if (= csr-kind 3)
@@ -65907,10 +66116,63 @@
                                 (not
                                   (compiler-backend-blocks-have-call?
                                     emit-blocks-list))))]
+                          ;; GAP1 corollary: in PUSH mode the callee-save slot
+                          ;; region is never written -- the rebase deletes the
+                          ;; mov save/restore pairs and rewrites the pop-run
+                          ;; leaq, so the pushes carry those registers instead.
+                          ;; A function whose ONLY frame references were those
+                          ;; slots therefore names nothing in the frame at all,
+                          ;; and its slot region is as dead as a frameless
+                          ;; leaf's. The alignment the region used to supply is
+                          ;; not lost: `S = frame + (n odd ? 0 : 8)` still holds
+                          ;; the total displacement at `D % 16 == 8` for any
+                          ;; frame, so every call in the body stays aligned.
+                          ;; Every other frame consumer must be absent for the
+                          ;; region to be droppable outright: outgoing stack
+                          ;; args and the dynamic emergency/cycle-temp/const-
+                          ;; hoist reservations are %rsp- or bottom-of-frame
+                          ;; relative and are sized into `frame` separately, and
+                          ;; Win64 XMM callee slots are real frame words the
+                          ;; push prologue does not absorb.
+                          ;; This value is used ONLY on the FPO path: the
+                          ;; keep-rbp fallback below re-renders from
+                          ;; `post-prologue` with the full `frame`, where the
+                          ;; mov saves are still present and still need slots.
+                          [fpo-frame : i64
+                            (if (and
+                              fpo-attempt
+                              (> push-count 0)
+                              (not
+                                (compiler-backend-function-state-bool?
+                                  function-state
+                                  compiler-backend-function-bool-nonsave-frame-slot-referenced))
+                              (= outgoing-frame-space 0)
+                              (= dynamic-frame-extra 0)
+                              (=
+                                (compiler-backend-function-scratch-i64
+                                  function-state
+                                  compiler-backend-scratch-i64-const-hoist-frame-count)
+                                0)
+                              (not
+                                (compiler-backend-function-scratch-bool?
+                                  function-state
+                                  compiler-backend-scratch-bool-emergency-used))
+                              (=
+                                (compiler-backend-function-scratch-i64
+                                  function-state
+                                  compiler-backend-scratch-i64-cycle-temp-used-count)
+                                0)
+                              (<
+                                (compiler-backend-win64-xmm-callee-highest
+                                  assignments
+                                  program-index.backend-state)
+                                0))
+                              0
+                              frame)]
                           [rebased : String
                             (compiler-backend-rsp-rebase-full
                               post-prologue
-                              frame
+                              fpo-frame
                               fpo-attempt
                               push-regs
                               push-count
@@ -65976,7 +66238,7 @@
                                     (compiler-backend-emit-function-entry-fpo-windows
                                       backend-state
                                       entry-symbol
-                                      frame
+                                      fpo-frame
                                       assignments
                                       slot-vars
                                       push-regs
@@ -65985,13 +66247,13 @@
                                       (compiler-backend-emit-function-entry-fpo-push
                                         backend-state
                                         entry-symbol
-                                        frame
+                                        fpo-frame
                                         push-regs
                                         push-count)
                                       (compiler-backend-emit-function-entry-fpo
                                         backend-state
                                         entry-symbol
-                                        frame)))
+                                        fpo-frame)))
                                   (compiler-backend-emit-function-entry
                                     target
                                     entry-symbol

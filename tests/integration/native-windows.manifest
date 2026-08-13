@@ -129,6 +129,7 @@ switch_dispatch_scavenge|tests/integration/switch_dispatch_scavenge.tl|42|-|-|st
 total_switch_runtime|tests/integration/total_switch_runtime.tl|42|-|-|stdlib/array.tl
 gap_switch_runtime|tests/integration/gap_switch_runtime.tl|42|-|-|stdlib/array.tl
 cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+load_widen_cast_fold|tests/integration/load_widen_cast_fold.tl|42|-|-|stdlib/array.tl
 alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|
 load_sink_trap_parity|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/load_sink_trap_parity/load_sink_trap_parity.tl:33:37: array index out of bounds: index=4 length=4\n
 gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl
@@ -427,3 +428,4 @@ tlci_native_index_folds|tests/integration/tlci_native_index_folds.tl|42|-|-|stdl
 tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl
 tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|scanner: 1 {} 2\ndone\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
 inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|stdlib/array.tl
+inline_tail_call_boundary|tests/integration/inline_tail_call_boundary.tl|42|-|-|-

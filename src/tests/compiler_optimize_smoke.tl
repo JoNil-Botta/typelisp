@@ -2670,6 +2670,10 @@
       (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-cfg-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dom-cmp-phi-carried-self-test"
+      (compiler_optimize_tests.compiler-optimize-dom-cmp-phi-carried-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-object-bounds-self-test"
       (smoke-object-bounds-self-test)
       42)
@@ -4236,3 +4240,10 @@
     (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
     42
     "Sunk exit checks keep the legacy name when free, step generation when taken, and emit one block per predecessor"))
+
+(test
+  dom-cmp-phi-carried-compare
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-dom-cmp-phi-carried-self-test)
+    42
+    "a rotated loop's header test folds when both joining edges decide it, and is refused when they disagree or one decides nothing"))

@@ -18512,7 +18512,17 @@
 (defstruct OptLicmStoreSummary
   (call-or-unknown? bool)
   (header-or-unknown-store? bool)
-  (element-only-store? bool))
+  (element-only-store? bool)
+  ;; A DIRECT call the call-memory fixpoint proved writes only element storage
+  ;; (opt-direct-call-element-clean?). It is a memory writer, so it is not
+  ;; `clean?`, and it is a call, so it keeps the call BOUNDARY the hoist/allocate
+  ;; interlock prices (opt-licm-store-summary-call-boundary?) -- but it provably
+  ;; cannot change a descriptor header word, so it does NOT close the
+  ;; header-load proofs the way `call-or-unknown?` does. Keeping it in its own
+  ;; field rather than reusing `element-only-store?` is what separates those two
+  ;; verdicts: an in-function element store is not a call boundary and must not
+  ;; start being priced as one.
+  (element-only-call? bool))
 
 (defenum OptLicmPtrKind
   (Unknown)
@@ -18807,16 +18817,19 @@
   (not global-write?))
 
 (define (opt-licm-store-summary-empty) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false false))
+  (OptLicmStoreSummary false false false false))
 
 (define (opt-licm-store-summary-call-or-unknown) : OptLicmStoreSummary
-  (OptLicmStoreSummary true false false))
+  (OptLicmStoreSummary true false false false))
 
 (define (opt-licm-store-summary-header-or-unknown-store) : OptLicmStoreSummary
-  (OptLicmStoreSummary false true false))
+  (OptLicmStoreSummary false true false false))
 
 (define (opt-licm-store-summary-element-only-store) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false true))
+  (OptLicmStoreSummary false false true false))
+
+(define (opt-licm-store-summary-element-only-call) : OptLicmStoreSummary
+  (OptLicmStoreSummary false false false true))
 
 (define (opt-licm-store-summary-merge
   [left : OptLicmStoreSummary]
@@ -18824,17 +18837,28 @@
   (OptLicmStoreSummary
     (or left.call-or-unknown? right.call-or-unknown?)
     (or left.header-or-unknown-store? right.header-or-unknown-store?)
-    (or left.element-only-store? right.element-only-store?)))
+    (or left.element-only-store? right.element-only-store?)
+    (or left.element-only-call? right.element-only-call?)))
 
 (define (opt-licm-store-summary-clean? [summary : OptLicmStoreSummary]) : bool
   (and
     (not summary.call-or-unknown?)
     (not summary.header-or-unknown-store?)
-    (not summary.element-only-store?)))
+    (not summary.element-only-store?)
+    (not summary.element-only-call?)))
 
 (define (opt-licm-store-summary-header-load-safe?
   [summary : OptLicmStoreSummary]) : bool
   (and (not summary.call-or-unknown?) (not summary.header-or-unknown-store?)))
+
+;; The CALL boundary the P6/R7 hoist-vs-allocate interlock prices: a
+;; loop-spanning live range that has to survive a call costs more in spill
+;; staging than the reloads it saves. That is a register-pressure fact about the
+;; emitted call, not a memory fact, so an element-only direct call counts here
+;; exactly like any other call -- its memory verdict is softer, its calling
+;; convention is not.
+(define (opt-licm-store-summary-call-boundary? [summary : OptLicmStoreSummary]) : bool
+  (or summary.call-or-unknown? summary.element-only-call?))
 
 (define (opt-licm-store-summary-from-effect [effect : ir.CompilerIrEffect]) : OptLicmStoreSummary
   (match effect
@@ -18901,20 +18925,60 @@
       (opt-direct-call-clean-memory-bit)
       (opt-direct-call-clean-global-bit))))
 
+;; Writes ONLY element storage -- the descriptor-safety fact. Strictly weaker
+;; than memory-clean and implied by it, so the test takes either bit. This is
+;; what a DESCRIPTOR word's invariance needs: the buffer a data slot names is a
+;; different allocation from the descriptor that names it, so a callee whose
+;; every write lands in element storage cannot change a header word the caller
+;; already loaded -- whatever the caller passed it. Unlike the global-clean
+;; test, this one needs no call-site argument gate: a `GlobalAddr` argument
+;; hands over a CELL's address, and a write through it is not an element write,
+;; so such a callee would not carry the bit in the first place (see
+;; opt-loop-bce-direct-call-clean-bits, which requires `has-param-writes?`
+;; clear).
+(define (opt-direct-call-element-clean?
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (opt-direct-call-clean-has-bit?
+    direct-call-clean
+    name
+    (bit-or
+      (opt-direct-call-clean-memory-bit)
+      (opt-direct-call-clean-unconditional-global-bit))))
+
 ;; Direct callees that DO return. opt-licm-store-state-direct-call filters the
 ;; non-returning trap helpers out ahead of this, so a ControlFlow effect never
 ;; reaches the match below and the `_` arm keeps its old meaning: an ordinary
 ;; direct call of unknown effect.
+;;
+;; The element-only tier is the middle rung between "writes nothing" and "may
+;; write anything". Such a callee gets the same MEMORY verdict an in-function
+;; element-only store already gets (opt-licm-store-summary-for-storeptr): not
+;; clean, so every root-keyed memory proof still refuses it, but header-load-
+;; safe, so a descriptor-header load is not killed by it. Without this the call
+;; fell to `call-or-unknown?`, which kills the descriptor class outright -- the
+;; reason a `xs.slots` / `slots.len` / `slots.data` chain reloads on every trip
+;; of a loop that calls an element-only helper.
+;;
+;; It gets its own field rather than `element-only-store?` because it is still a
+;; CALL: the hoist/allocate interlock reads
+;; opt-licm-store-summary-call-boundary? and keeps pricing it as one. Measured,
+;; that separation is the whole difference between a win and a loss -- routing
+;; the bit through `element-only-store?` instead (so the interlock stopped
+;; seeing the call) cost intern_table 602,891,376 -> 611,411,217 (+1.41%) for a
+;; gvn_table gain of 0.34M.
 (define (opt-licm-store-summary-for-direct-call
   [direct-call-clean : opt_i64_i64_map.Map]
   [name : i64]) : OptLicmStoreSummary
   (if (opt-direct-call-memory-clean? direct-call-clean name)
     (opt-licm-store-summary-empty)
-    (match (ir.compiler-ir-direct-call-effect-id name)
-      [(ir.CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
-      [(ir.CompilerIrEffect.MemoryWrite)
-        (opt-licm-store-summary-header-or-unknown-store)]
-      [_ (opt-licm-store-summary-call-or-unknown)])))
+    (if (opt-direct-call-element-clean? direct-call-clean name)
+      (opt-licm-store-summary-element-only-call)
+      (match (ir.compiler-ir-direct-call-effect-id name)
+        [(ir.CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
+        [(ir.CompilerIrEffect.MemoryWrite)
+          (opt-licm-store-summary-header-or-unknown-store)]
+        [_ (opt-licm-store-summary-call-or-unknown)]))))
 
 (define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
   (match env
@@ -19886,12 +19950,14 @@
         ;; refinement the Gep arm of opt-licm-candidate? already applies, moved
         ;; here so the Load arm shares it. `any-call?` still closes the path for
         ;; indirect, C-ABI and SPMD calls, which set call-or-unknown? in both
-        ;; summaries and therefore fail this disjunct.
+        ;; summaries and therefore fail this disjunct -- as does an element-only
+        ;; direct call, whose softer memory verdict buys it nothing here: this
+        ;; disjunct is the register-pressure boundary, not a memory proof.
         (or
           (not any-call?)
           (and
-            (not root-summary.call-or-unknown?)
-            (not legacy-summary.call-or-unknown?)))
+            (not (opt-licm-store-summary-call-boundary? root-summary))
+            (not (opt-licm-store-summary-call-boundary? legacy-summary))))
         (or
           ;; Root identity is a coarse object-level fact. Preserve the older,
           ;; more precise descriptor-header proof when stores touch only data
@@ -20020,12 +20086,19 @@
         ;; range. The backend otherwise has to preserve it across the call,
         ;; which can spill the descriptor base used by every loop iteration.
         ;; A direct call proven memory-clean retains the established LICM
-        ;; behavior and cannot introduce that borrowed-root regression.
+        ;; behavior and cannot introduce that borrowed-root regression. An
+        ;; element-only direct call does NOT qualify: it still emits a call, so
+        ;; the address still has to survive one, and admitting it here is a
+        ;; measured LOSS -- intern_table 602,891,376 -> 611,411,217 (+1.41%)
+        ;; against gvn_table -0.34M and liveness_scan -0.09M, with every other
+        ;; row unmoved (one cachegrind run each). The memory fact the element
+        ;; bit carries is real; the register pressure it would buy is not worth
+        ;; it at an address-formation site.
         (or
           (not any-call?)
           (and
-            (not store-summary.call-or-unknown?)
-            (not legacy-store-summary.call-or-unknown?)))
+            (not (opt-licm-store-summary-call-boundary? store-summary))
+            (not (opt-licm-store-summary-call-boundary? legacy-store-summary))))
         ;; Gep computes an address from SSA values; it does not read through
         ;; that address. A hidden mutable-global read among the operands is
         ;; admitted only when opt-licm-globals-clean? proves the body cannot
@@ -37052,6 +37125,13 @@
                   (&mut builder)
                   (opt-bounds-dom-fold-compare
                     type-segment-bases
+                    doms
+                    cfg-index
+                    terms
+                    defs
+                    phi-defs
+                    sources
+                    block-id
                     cur-cmp-facts
                     copies
                     instr))])
@@ -37061,31 +37141,447 @@
         cur-facts
         cur-cmp-facts))))
 
+;; --- a compare every joining edge already decided ----------------------------
+;;
+;; The facts above flow DOWN the dominator tree, so a compare over a JOIN's phis
+;; sees nothing: no single edge into a join dominates it. Yet every edge may
+;; decide the same question of the values it carries, and then so is the phi's.
+;; A rotated loop leaves exactly that shape -- rotation copies the entry test
+;; into the latch, so both the preheader edge and the backedge prove the header's
+;; own guard -- and a top-tested loop nested directly under it (an inlined
+;; `while` whose first index is the enclosing test's operand) recomputes it once
+;; per outer trip:
+;;
+;;   header:  lo = phi [lo0, preheader], [lo1, latch]
+;;            hi = phi [hi0, preheader], [hi1, latch]
+;;   body:    t  = lt lo, hi                    ; <- decided, both ways
+;;   latch:   c  = lt lo1, hi1
+;;            branch c, header, exit            ; proves it of the latch inputs
+;;   (preheader is entered only from `branch (lt lo0, hi0), preheader, ...`,
+;;    which proves it of the preheader inputs)
+;;
+;; RULE. `op(a, b)` is decided when at least one operand is a Phi of one block H
+;; that dominates the compare, every operand that is a Phi of H is replaced on
+;; each edge by that edge's own phi input, and EVERY reachable predecessor edge
+;; of H decides the substituted compare the SAME way. An operand that is not a
+;; phi of H is carried unchanged: it is then only ever matched by SSA identity
+;; against an operand of the deciding branch, which is a use at that branch and
+;; so denotes the same runtime value there.
+;;
+;; The per-edge verdict is read through exactly the implication masks a
+;; dominating fact is read through (opt-dom-cmp-edge-fact + opt-dom-cmp-lookup),
+;; so no arithmetic, no range join, and no new spelling rule enters -- only the
+;; place the fact is read from is new. The substituted operands must be
+;; GVN-stable, the same condition the edge facts themselves already carry.
+;;
+;; WHY A PHI INPUT MAY USE ITS OWN EDGE'S FACT. The phi selects that input only
+;; when control arrived along that edge, and arriving along it is precisely what
+;; the branch selecting it decided. Nothing is required of H's OTHER edges for
+;; one input, which is what separates this from the dominator walk; agreement
+;; across all of them is what makes the phi itself decided.
+;;
+;; AN EDGE WHOSE PREDECESSOR DOES NOT BRANCH inherits the fact of its own sole
+;; entry edge: a block whose every other reachable predecessor sits inside its
+;; own dominator subtree is entered only through that edge (control reaching a
+;; backedge already passed through the block, hence through that edge), and an
+;; SSA fact once established stays true. That is the same argument
+;; opt-bounds-dom-child-entered-only-via? makes for the downward walk. The hop
+;; is bounded by a small fuel; the shapes it closes are one or two hops -- a
+;; rotation landing pad, a short-circuit and-chain block.
+(define (opt-dom-phi-carried-fuel) : i64
+  4)
+
+;; A value's defining Phi: its input list and the block it lives in.
+(defenum OptDomPhiCarrier
+  (No)
+  (Some ir.CompilerIrPhiInputList i64))
+
+(defenum OptDomPhiHome
+  (No)
+  (Some i64))
+
+(defenum OptDomPhiInput
+  (No)
+  (Some ir.CompilerIrValue))
+
+(define (opt-bounds-dom-phi-carrier
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : OptDomPhiCarrier
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (not (opt-gvn-stable-var? sources var))
+        (OptDomPhiCarrier.No)
+        (match (opt-bool-branch-def phi-defs var)
+          [(OptBoolBranchDef.No) (OptDomPhiCarrier.No)]
+          [(OptBoolBranchDef.Some instr label)
+            (match instr
+              [(ir.CompilerIrInstr.Phi dst inputs _)
+                (if (= dst var)
+                  (OptDomPhiCarrier.Some inputs label)
+                  (OptDomPhiCarrier.No))]
+              [_ (OptDomPhiCarrier.No)])]))]
+    [_ (OptDomPhiCarrier.No)]))
+
+;; The block whose edges are asked. Two phi operands must share it -- only then
+;; does one edge select both inputs -- and at least one operand must be a phi,
+;; or the ordinary dominating lookup already covered the query.
+(define (opt-bounds-dom-phi-home
+  [carrier-lhs : OptDomPhiCarrier]
+  [carrier-rhs : OptDomPhiCarrier]) : OptDomPhiHome
+  (match carrier-lhs
+    [(OptDomPhiCarrier.Some _ left-label)
+      (match carrier-rhs
+        [(OptDomPhiCarrier.Some _ right-label)
+          (if (= left-label right-label)
+            (OptDomPhiHome.Some left-label)
+            (OptDomPhiHome.No))]
+        [(OptDomPhiCarrier.No) (OptDomPhiHome.Some left-label)])]
+    [(OptDomPhiCarrier.No)
+      (match carrier-rhs
+        [(OptDomPhiCarrier.Some _ right-label) (OptDomPhiHome.Some right-label)]
+        [(OptDomPhiCarrier.No) (OptDomPhiHome.No)])]))
+
+;; The single input this phi carries on `label`. Two inputs on one label mean
+;; the edge does not name one value, so the walk refuses.
+(define (opt-bounds-dom-phi-input-for
+  [inputs : ir.CompilerIrPhiInputList]
+  [label : i64]
+  [found : OptDomPhiInput]) : OptDomPhiInput
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) found]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bounds-dom-phi-input-for
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        label
+        found)]
+    [(ir.CompilerIrPhiInputList.Cons value input-label rest)
+      (if (= input-label label)
+        (match found
+          [(OptDomPhiInput.Some _) (OptDomPhiInput.No)]
+          [(OptDomPhiInput.No)
+            (opt-bounds-dom-phi-input-for
+              (__tl-box-place rest)
+              label
+              (OptDomPhiInput.Some value))])
+        (opt-bounds-dom-phi-input-for (__tl-box-place rest) label found))]))
+
+(define (opt-bounds-dom-phi-edge-operand
+  [carrier : OptDomPhiCarrier]
+  [value : ir.CompilerIrValue]
+  [pred-label : i64]) : OptDomPhiInput
+  (match carrier
+    [(OptDomPhiCarrier.No) (OptDomPhiInput.Some value)]
+    [(OptDomPhiCarrier.Some inputs _)
+      (opt-bounds-dom-phi-input-for inputs pred-label (OptDomPhiInput.No))]))
+
+;; The one reachable predecessor of `id` that is not a backedge from inside
+;; `id`'s own dominator subtree, or -1 when there is not exactly one. Every
+;; other reachable predecessor being such a backedge is what makes this edge the
+;; only way in.
+(define (opt-bounds-dom-sole-entry-pred
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [id : i64]) : i64
+  (let
+    [preds : OptCfgCsr index.preds]
+    [offsets : (__tl_dyn-array i64) preds.offsets]
+    [edges : (__tl_dyn-array i64) preds.edges]
+    (if (or (< id 0) (>= (+ id 1) (array-length offsets)))
+      (- 0 1)
+      (let
+        [edge : i64 (array-ref offsets id)]
+        [end : i64 (array-ref offsets (+ id 1))]
+        [only : i64 (- 0 1)]
+        [ok : bool true]
+        (begin
+          (while (< edge end)
+            (begin
+              (let
+                [pred : i64 (array-ref edges edge)]
+                (cond
+                  [(or
+                      (not (array-ref index.reachable pred))
+                      (opt-dom-info-dominates-id? info id pred))
+                    unit]
+                  [(< only 0) (set! only pred)]
+                  [(= only pred) unit]
+                  [else (set! ok false)]))
+              (set! edge (+ edge 1))))
+          (if ok
+            only
+            (- 0 1)))))))
+
+;; What the edge `pred-id -> to-label` proves about `op(lhs, rhs)`.
+(define (opt-bounds-dom-edge-cmp-verdict
+  [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [pred-id : i64]
+  [to-label : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [fuel : i64]) : OptDomCmpLookup
+  (if (or (<= fuel 0) (< pred-id 0) (>= pred-id (array-length terms)))
+    (OptDomCmpLookup.No)
+    (let
+      [direct : OptDomCmpLookup
+        (match (array-ref terms pred-id)
+          [(OptBoolBranchDef.No) (OptDomCmpLookup.No)]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.Branch cond true-label false-label)
+                ;; A branch whose edges share one label decides nothing.
+                (if (or
+                  (= true-label false-label)
+                  (and
+                    (not (= true-label to-label))
+                    (not (= false-label to-label))))
+                  (OptDomCmpLookup.No)
+                  (opt-dom-cmp-lookup
+                    type-segment-bases
+                    (opt-dom-cmp-edge-fact
+                      defs
+                      copies
+                      sources
+                      cond
+                      (= true-label to-label)
+                      pred-id
+                      (OptDomCmpFacts.Nil))
+                    op
+                    lhs
+                    rhs
+                    ty))]
+              [_ (OptDomCmpLookup.No)])])]
+      (match direct
+        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
+        [(OptDomCmpLookup.No)
+          (let
+            [up : i64 (opt-bounds-dom-sole-entry-pred info index pred-id)]
+            (if (< up 0)
+              (OptDomCmpLookup.No)
+              (opt-bounds-dom-edge-cmp-verdict
+                type-segment-bases
+                info
+                index
+                terms
+                defs
+                sources
+                copies
+                up
+                (array-ref index.labels pred-id)
+                op
+                lhs
+                rhs
+                ty
+                (- fuel 1))))]))))
+
+;; Every reachable edge into `header-id`, each asked about its own phi inputs.
+;; Verdict codes: 0 none seen yet, 1 true, 2 false.
+(define (opt-bounds-dom-phi-carried-scan
+  [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [carrier-lhs : OptDomPhiCarrier]
+  [carrier-rhs : OptDomPhiCarrier]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [op : ir.CompilerIrBinOp]
+  [ty : ast.AstType]
+  [header-id : i64]) : OptDomCmpLookup
+  (let
+    [preds : OptCfgCsr index.preds]
+    [offsets : (__tl_dyn-array i64) preds.offsets]
+    [edges : (__tl_dyn-array i64) preds.edges]
+    (if (or (< header-id 0) (>= (+ header-id 1) (array-length offsets)))
+      (OptDomCmpLookup.No)
+      (let
+        [header-label : i64 (array-ref index.labels header-id)]
+        [edge : i64 (array-ref offsets header-id)]
+        [end : i64 (array-ref offsets (+ header-id 1))]
+        [verdict : i64 0]
+        [ok : bool true]
+        (begin
+          (while (and ok (< edge end))
+            (begin
+              (let
+                [pred : i64 (array-ref edges edge)]
+                (if (not (array-ref index.reachable pred))
+                  unit
+                  (let
+                    [pred-label : i64 (array-ref index.labels pred)]
+                    [edge-lhs : OptDomPhiInput
+                      (opt-bounds-dom-phi-edge-operand
+                        carrier-lhs
+                        lhs
+                        pred-label)]
+                    [edge-rhs : OptDomPhiInput
+                      (opt-bounds-dom-phi-edge-operand
+                        carrier-rhs
+                        rhs
+                        pred-label)]
+                    (match edge-lhs
+                      [(OptDomPhiInput.No) (set! ok false)]
+                      [(OptDomPhiInput.Some raw-lhs)
+                        (match edge-rhs
+                          [(OptDomPhiInput.No) (set! ok false)]
+                          [(OptDomPhiInput.Some raw-rhs)
+                            (let
+                              [clhs : ir.CompilerIrValue
+                                (opt-bounds-dom-resolve copies raw-lhs)]
+                              [crhs : ir.CompilerIrValue
+                                (opt-bounds-dom-resolve copies raw-rhs)]
+                              (if (not
+                                (and
+                                  (opt-gvn-value-stable? sources clhs)
+                                  (opt-gvn-value-stable? sources crhs)))
+                                (set! ok false)
+                                (match (opt-bounds-dom-edge-cmp-verdict
+                                  type-segment-bases
+                                  info
+                                  index
+                                  terms
+                                  defs
+                                  sources
+                                  copies
+                                  pred
+                                  header-label
+                                  op
+                                  clhs
+                                  crhs
+                                  ty
+                                  (opt-dom-phi-carried-fuel))
+                                  [(OptDomCmpLookup.No) (set! ok false)]
+                                  [(OptDomCmpLookup.Some decided)
+                                    (let
+                                      [code : i64
+                                        (if decided
+                                          1
+                                          2)]
+                                      (if (= verdict 0)
+                                        (set! verdict code)
+                                        (if (= verdict code)
+                                          unit
+                                          (set! ok false))))])))])]))))
+              (set! edge (+ edge 1))))
+          (if (and ok (> verdict 0))
+            (OptDomCmpLookup.Some (= verdict 1))
+            (OptDomCmpLookup.No)))))))
+
+(define (opt-bounds-dom-phi-carried-verdict
+  [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [block-id : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (let
+    [carrier-lhs : OptDomPhiCarrier
+      (opt-bounds-dom-phi-carrier phi-defs sources lhs)]
+    [carrier-rhs : OptDomPhiCarrier
+      (opt-bounds-dom-phi-carrier phi-defs sources rhs)]
+    (match (opt-bounds-dom-phi-home carrier-lhs carrier-rhs)
+      [(OptDomPhiHome.No) (OptDomCmpLookup.No)]
+      [(OptDomPhiHome.Some header-label)
+        (match (opt-cfg-index-id index header-label)
+          [(option_i64.None) (OptDomCmpLookup.No)]
+          [(option_i64.Some header-id)
+            ;; SSA already guarantees the phi's block dominates every use; the
+            ;; test keeps the pass's documented non-SSA fallback honest.
+            (if (not
+              (and
+                (>= header-id 0)
+                (< header-id (opt-cfg-index-block-count index))
+                (array-ref index.reachable header-id)
+                (opt-dom-info-dominates-id? info header-id block-id)))
+              (OptDomCmpLookup.No)
+              (opt-bounds-dom-phi-carried-scan
+                type-segment-bases
+                info
+                index
+                terms
+                defs
+                sources
+                copies
+                carrier-lhs
+                carrier-rhs
+                lhs
+                rhs
+                op
+                ty
+                header-id))])])))
+
 ;; Replace a comparison a dominating branch already decided with its constant.
 ;; The move keeps the destination and bool type, so every consumer -- branch,
 ;; select, phi input -- sees an ordinary constant and the later fold/cfg passes
 ;; collapse the control flow.
 (define (opt-bounds-dom-fold-compare
   [type-segment-bases : i64]
+  [info : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [copies : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match instr
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
       (if (and (opt-dom-cmp-foldable-op? op) (opt-integer-type? ty))
-        (match (opt-dom-cmp-lookup-chained
-          type-segment-bases
-          cmp-facts
-          (opt-dom-cmp-canon-op op)
-          (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))
-          (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))
-          ty)
-          [(OptDomCmpLookup.No) instr]
-          [(OptDomCmpLookup.Some value)
-            (ir.CompilerIrInstr.Mov
-              dst
-              (ir.CompilerIrValue.Bool value)
-              (ast.AstType.Bool))])
+        (let
+          [canon-op : ir.CompilerIrBinOp (opt-dom-cmp-canon-op op)]
+          [canon-lhs : ir.CompilerIrValue
+            (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))]
+          [canon-rhs : ir.CompilerIrValue
+            (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))]
+          (match (match (opt-dom-cmp-lookup-chained
+            type-segment-bases
+            cmp-facts
+            canon-op
+            canon-lhs
+            canon-rhs
+            ty)
+            [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
+            [(OptDomCmpLookup.No)
+              (opt-bounds-dom-phi-carried-verdict
+                type-segment-bases
+                info
+                index
+                terms
+                defs
+                phi-defs
+                sources
+                copies
+                block-id
+                canon-op
+                canon-lhs
+                canon-rhs
+                ty)])
+            [(OptDomCmpLookup.No) instr]
+            [(OptDomCmpLookup.Some value)
+              (ir.CompilerIrInstr.Mov
+                dst
+                (ir.CompilerIrValue.Bool value)
+                (ast.AstType.Bool))]))
         instr)]
     [_ instr]))
 
@@ -72985,6 +73481,27 @@
     [(ir.CompilerIrInstr.Switch _ _ _ _) true]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
     [(ir.CompilerIrInstr.Return _) true]
+    ;; A DIRECT tail call is an EXIT of the callee body, not a terminator the
+    ;; merged caller inherits. Leaving it as a tail call would return past the
+    ;; caller's own continuation, so the clone does not leave it as one: it
+    ;; converts the instruction into an ordinary `Call` writing a caller-frame
+    ;; slot, followed by the same `Jump cont` plus phi input that every `Return`
+    ;; already produces (opt-inline-clone-multiblock-instr-seq-from). Nothing
+    ;; downstream ever sees a tail call inside a merged caller, and the exit is
+    ;; wired by the mechanism the multiblock path already owns.
+    ;;
+    ;; What refusing it cost: this clause alone, not any pricing band, held
+    ;; whole bodies out of their single call site whenever ONE arm ended in
+    ;; `(helper ...)`. lex_source's `ls-negative-number-start?`,
+    ;; `ls-colon-token-end` and `ls-number-float?` are each absorbable by every
+    ;; other measure and were refused here.
+    ;;
+    ;; `TailCallIndirect` stays refused. Its target is a computed value, so the
+    ;; converted form would be a `CallIndirect` -- expressible, but not a shape
+    ;; any measurement on this tree asks for, and the census cannot see through
+    ;; a computed target to price the site. The admission stops at the direct
+    ;; form the measurement covers.
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
     [(ir.CompilerIrInstr.Phi dst _ _) (>= dst 0)]
     ;; Bounds checks are inlinable: the instruction remapper freshens the
     ;; ok-label with the site prefix (the same machinery the single-block
@@ -73086,6 +73603,42 @@
             false)])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-inline-blocks-call-free? (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; Does this body carry a direct tail call the multiblock clone will have to
+;; convert into a call plus continuation wiring?
+;;
+;; The conversion needs one caller-frame slot to hold the converted call's
+;; result, and the clone allocates those slots positionally (one per cloned
+;; block, since a tail call is a terminator and a block holds at most one).
+;; Asking this question first is what keeps a tail-call-free callee's frame
+;; growth byte-for-byte what it was before the admission existed: no tail call,
+;; no reserved slots, no change to `vars2` at any site.
+(define (opt-inline-instr-tail-call? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [_ false]))
+
+(define (opt-inline-instr-seq-has-tail-call-from?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-inline-instr-tail-call?
+      (ir.compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-inline-instr-seq-has-tail-call-from? instrs (+ index 1)))))
+
+(define (opt-inline-blocks-have-tail-call? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (opt-inline-instr-seq-has-tail-call-from? instrs 0)
+            true
+            (opt-inline-blocks-have-tail-call? (__tl-box-place rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-blocks-have-tail-call? (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-inline-multiblock-instrs-ok-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -74405,6 +74958,12 @@
       (opt-inline-remap-value value sa np base)]
     [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrValue.Unit)]))
 
+;; `tail-dst` is THIS block's reserved result slot for a converted tail call.
+;; A tail call is a terminator, so a block holds at most one and one slot per
+;; cloned block is exactly enough; opt-inline-clone-multiblock-blocks hands each
+;; block the next slot, and the caller reserves the range above the clone's
+;; rebased frame (opt-inline-multiblock-build-rewrite-seq). It is read only on
+;; the TailCall arm, so a tail-call-free body never touches it.
 (define (opt-inline-clone-multiblock-instr-seq-from
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]
@@ -74412,6 +74971,7 @@
   [cloned-label : i64]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
@@ -74431,6 +74991,28 @@
               (opt-inline-return-value maybe sa np base)
               cloned-label
               ir.CompilerIrPhiInputList.Nil))]
+        ;; `return f(args)` in the callee becomes `t = f(args); goto cont` with
+        ;; `t` as this edge's phi input -- the same exit wiring the Return arm
+        ;; above builds, with the call it was fused into spelled back out. The
+        ;; converted call carries the tail call's own result type, which is the
+        ;; type a non-tail direct call to the same callee would carry, and its
+        ;; arguments go through the ordinary argument remapper, so a forwarded
+        ;; `__sret` pointer stays the buffer the caller supplied.
+        [(ir.CompilerIrInstr.TailCall cname cargs cty)
+          (OptInlineMultiInstrClone.Clone
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                tail-dst
+                (ir.compiler-ir-symbol-clone cname)
+                (opt-inline-remap-args cargs sa np base)
+                (clone cty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump cont-label)
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var tail-dst)
+              cloned-label
+              ir.CompilerIrPhiInputList.Nil))]
         [_
           (let
             [cloned : ir.CompilerIrInstr
@@ -74442,6 +75024,7 @@
               cloned-label
               prefix
               cont-label
+              tail-dst
               sa
               np
               base)
@@ -74455,6 +75038,7 @@
   [cloned-label : i64]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
@@ -74465,6 +75049,7 @@
     cloned-label
     prefix
     cont-label
+    tail-dst
     sa
     np
     base))
@@ -74473,6 +75058,7 @@
   [block : ir.CompilerIrBlock]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiClone
@@ -74485,6 +75071,7 @@
           cloned-label
           prefix
           cont-label
+          tail-dst
           sa
           np
           base)
@@ -74499,6 +75086,7 @@
   [blocks : ir.CompilerIrBlockList]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiClone
@@ -74512,6 +75100,7 @@
         block
         prefix
         cont-label
+        tail-dst
         sa
         np
         base)
@@ -74520,6 +75109,7 @@
             (__tl-box-place rest)
             prefix
             cont-label
+            (+ tail-dst 1)
             sa
             np
             base)
@@ -74534,6 +75124,7 @@
         (ir.compiler-ir-block-seq-to-list seq)
         prefix
         cont-label
+        tail-dst
         sa
         np
         base)]))
@@ -77151,6 +77742,14 @@
               (let
                 [added-blocks : i64
                   (+ (ir.compiler-ir-block-list-count cblocks) 1)]
+                ;; Result slots for converted tail calls: one per cloned block,
+                ;; reserved above the clone's rebased frame, and reserved at all
+                ;; only for a body that carries one. `added-blocks - 1` is the
+                ;; callee's block count, already counted just above.
+                [tail-slots : i64
+                  (if (opt-inline-blocks-have-tail-call? cblocks)
+                    (- added-blocks 1)
+                    0)]
                 [stage-all-args? : bool
                   (opt-inline-param-mutating-blocks? cblocks np)]
                 [stage-args? : bool
@@ -77366,9 +77965,11 @@
                         [vars2 : i64
                           (+
                             prefix-vars
-                            (if stage-args?
-                              cvars
-                              (opt-inline-frame-growth cvars np)))]
+                            (+
+                              (if stage-args?
+                                cvars
+                                (opt-inline-frame-growth cvars np))
+                              tail-slots))]
                         [_hot-loop-bump : unit
                           (if hot-import?
                             (set!
@@ -77442,6 +78043,11 @@
                           (if stage-args?
                             (+ prefix-vars np)
                             prefix-vars)]
+                        ;; The first slot past the clone's rebased frame: the
+                        ;; callee's highest var rebases to `tail-base - 1`, and
+                        ;; `vars2` above reserved `tail-slots` ids from here.
+                        [tail-base : i64
+                          (opt-inline-rebase-var cvars np clone-base)]
                         [prefix-instrs2 : ir.CompilerIrInstrList
                           (opt-inline-append
                             lead
@@ -77456,6 +78062,7 @@
                           cblocks
                           prefix
                           cont-label
+                          tail-base
                           staged-args
                           np
                           clone-base)
@@ -77735,6 +78342,7 @@
   [cloned-label : i64]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -77761,6 +78369,37 @@
               cloned-label
               ir.CompilerIrPhiInputList.Nil)
             out-spans)]
+        ;; Same conversion as the span-free twin. The converted call takes the
+        ;; tail call's span: it is the instruction that keeps the callee's line,
+        ;; and a trap raised inside the called function has to report through it
+        ;; exactly as it did when the site was a real tail call. The `Jump` gets
+        ;; none, matching the Return arm.
+        [(ir.CompilerIrInstr.TailCall cname cargs cty)
+          (let
+            [converted : ir.CompilerIrInstr
+              (ir.CompilerIrInstr.Call
+                tail-dst
+                (ir.compiler-ir-symbol-clone cname)
+                (opt-inline-remap-args cargs sa np base)
+                (clone cty))]
+            (OptInlineMultiSpanInstrClone.Clone
+              (ir.compiler-ir-instr-cons
+                converted
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump cont-label)
+                  ir.CompilerIrInstrList.Nil))
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.Var tail-dst)
+                cloned-label
+                ir.CompilerIrPhiInputList.Nil)
+              (opt-inline-record-clone-span
+                source-spans
+                out-spans
+                caller
+                call-instr
+                callee
+                instr
+                converted)))]
         [_
           (let
             [cloned : ir.CompilerIrInstr
@@ -77781,6 +78420,7 @@
               cloned-label
               prefix
               cont-label
+              tail-dst
               sa
               np
               base
@@ -77803,6 +78443,7 @@
   [cloned-label : i64]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -77818,6 +78459,7 @@
     cloned-label
     prefix
     cont-label
+    tail-dst
     sa
     np
     base
@@ -77831,6 +78473,7 @@
   [block : ir.CompilerIrBlock]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -77848,6 +78491,7 @@
           cloned-label
           prefix
           cont-label
+          tail-dst
           sa
           np
           base
@@ -77868,6 +78512,7 @@
   [blocks : ir.CompilerIrBlockList]
   [prefix : String]
   [cont-label : i64]
+  [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -77887,6 +78532,7 @@
         block
         prefix
         cont-label
+        tail-dst
         sa
         np
         base
@@ -77900,6 +78546,7 @@
             (__tl-box-place rest)
             prefix
             cont-label
+            (+ tail-dst 1)
             sa
             np
             base
@@ -77920,6 +78567,7 @@
         (ir.compiler-ir-block-seq-to-list seq)
         prefix
         cont-label
+        tail-dst
         sa
         np
         base
@@ -78003,6 +78651,14 @@
               (let
                 [added-blocks : i64
                   (+ (ir.compiler-ir-block-list-count cblocks) 1)]
+                ;; Result slots for converted tail calls: one per cloned block,
+                ;; reserved above the clone's rebased frame, and reserved at all
+                ;; only for a body that carries one. `added-blocks - 1` is the
+                ;; callee's block count, already counted just above.
+                [tail-slots : i64
+                  (if (opt-inline-blocks-have-tail-call? cblocks)
+                    (- added-blocks 1)
+                    0)]
                 [stage-all-args? : bool
                   (opt-inline-param-mutating-blocks? cblocks np)]
                 [stage-args? : bool
@@ -78201,9 +78857,11 @@
                         [vars2 : i64
                           (+
                             prefix-vars
-                            (if stage-args?
-                              cvars
-                              (opt-inline-frame-growth cvars np)))]
+                            (+
+                              (if stage-args?
+                                cvars
+                                (opt-inline-frame-growth cvars np))
+                              tail-slots))]
                         [_hot-loop-bump : unit
                           (if hot-import?
                             (set!
@@ -78275,6 +78933,11 @@
                           (if stage-args?
                             (+ prefix-vars np)
                             prefix-vars)]
+                        ;; The first slot past the clone's rebased frame: the
+                        ;; callee's highest var rebases to `tail-base - 1`, and
+                        ;; `vars2` above reserved `tail-slots` ids from here.
+                        [tail-base : i64
+                          (opt-inline-rebase-var cvars np clone-base)]
                         [prefix-instrs2 : ir.CompilerIrInstrList
                           (opt-inline-append
                             lead
@@ -78289,6 +78952,7 @@
                           cblocks
                           prefix
                           cont-label
+                          tail-base
                           staged-args
                           np
                           clone-base
@@ -81505,10 +82169,12 @@
 ;;   bit 61      unknown memory effects
 ;;   bit 62      writes only into descriptor ELEMENT storage
 ;;
-;; The summary map is intentionally partial. Leaves are discovered first and
-;; callers become eligible in later fixed-point rounds. An internal call whose
-;; target is still absent makes the caller unresolved, so recursive cycles are
-;; never accidentally proven clean.
+;; The map is built in two phases. The PESSIMISTIC phase discovers leaves first
+;; and makes callers eligible in later rounds; an internal call whose target is
+;; still absent makes the caller unresolved, so it never proves anything about a
+;; recursive cycle. The OPTIMISTIC phase then resolves exactly what the first
+;; one gave up on, by ascending Kleene iteration from the lattice bottom --
+;; see opt-call-memory-optimistic-fixed.
 (define (opt-call-memory-param-limit) : i64
   60)
 
@@ -82444,19 +83110,250 @@
             (- remaining 1))
           next)])))
 
+;; --- optimistic phase: least fixed point over the recursive residue ---------
+;;
+;; The pass above is a WORKLIST over a DAG: it can only ever commit a function
+;; whose callees are already committed, so a call-graph CYCLE is unresolvable by
+;; construction and every function that reaches one stays absent from the map.
+;; That is the whole reason a self-recursive walker -- `qs-sort`, and most of a
+;; compiler written as recursive list walks -- reloads a descriptor word on
+;; every trip of the loop its own tail call becomes.
+;;
+;; The standard answer is to seed the cycle at the lattice BOTTOM and iterate up.
+;; What makes that sound here, spelled out against this code:
+;;
+;;   THE LATTICE. A summary is a bit set (parameter bits 0..59, global, unknown,
+;;   element). Order it by inclusion; join is `bit-or`; bottom is 0 ("writes
+;;   nothing"); the chain height is 63. Finite, so ascending iteration
+;;   terminates.
+;;
+;;   THE TRANSFER IS MONOTONE in the summaries map. Every path by which a callee
+;;   summary reaches its caller's only ADDS bits:
+;;     - opt-call-memory-apply-direct-call ors in `carried-mask` bits;
+;;     - opt-call-memory-map-callee-param-writes visits index i only when the
+;;       callee's bit i is SET, and each visit either ors in a parameter bit for
+;;       the argument's root or ors in `unknown`; a cleared callee bit is
+;;       skipped. So callee bits can add caller bits, never remove them.
+;;   The two summaries-dependent SHAPE decisions are monotone too:
+;;   opt-call-memory-function-candidate consults `blocks-need-roots?` (which
+;;   reads the map) to decide whether to build the root environment at all, and
+;;   that predicate is false only when the body has no StorePtr/CopyBytes AND no
+;;   callee with parameter writes -- exactly the case in which neither the root
+;;   environment nor the element map is ever consulted, so the skipped
+;;   construction cannot change the result. When a growing callee summary flips
+;;   it to true, the environments get BUILT and the extra parameter bits get
+;;   mapped: strictly more bits, never fewer. `blocks-write-memory?` (the
+;;   element-map gate) reads no summaries at all.
+;;
+;;   WHY THE LEAST FIXED POINT IS THE RIGHT ANSWER. A summary must over-
+;;   approximate the writes of every terminating execution of the function. Any
+;;   such execution performs finitely many nested calls, so its writes are
+;;   covered by F^k(bottom) for some finite k, hence by the lfp. Iterating from
+;;   bottom and committing only a map the transfer REPRODUCES (`changed` false)
+;;   is what makes the committed map a genuine fixed point rather than an
+;;   optimistic guess.
+;;
+;; The budget is what keeps this honest. If the iteration has not stabilized
+;; within opt-call-memory-optimistic-rounds, the optimistic map is DISCARDED and
+;; the pessimistic one is committed unchanged -- so an over-budget program bails
+;; to exactly today's verdict (those functions stay absent, hence opaque) rather
+;; than shipping a non-fixed-point. The same fallback covers the defensive
+;; `Unresolved` arm below, which cannot fire: every function of the list is
+;; seeded, and `function-set` is built from that same list.
+(define (opt-call-memory-optimistic-rounds) : i64
+  4)
+
+;; Round zero: pessimistic rows copied through, residue rows at bottom.
+(define (opt-call-memory-seed-optimistic
+  [functions : ir.CompilerIrFunctionList]
+  [resolved : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) out]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            [seed : i64
+              (match (opt_i64_i64_map.get (& resolved) name-id)
+                [(opt_i64_i64_map.LookupFound summary) summary]
+                [(opt_i64_i64_map.LookupMissing) 0])]
+            (begin
+              (opt_i64_i64_map.insert-ref! (&mut out) name-id seed)
+              (opt-call-memory-seed-optimistic
+                (__tl-box-place rest)
+                resolved
+                out)))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-call-memory-seed-optimistic
+        (ir.compiler-ir-function-seq-to-list seq)
+        resolved
+        out)]))
+
+(define (opt-call-memory-unresolved-count
+  [functions : ir.CompilerIrFunctionList]
+  [resolved : opt_i64_i64_map.Map]
+  [count : i64]) : i64
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) count]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (opt-call-memory-unresolved-count
+            (__tl-box-place rest)
+            resolved
+            (match (opt_i64_i64_map.get
+              (& resolved)
+              (ir.compiler-ir-symbol-id name))
+              [(opt_i64_i64_map.LookupFound _) count]
+              [(opt_i64_i64_map.LookupMissing) (+ count 1)]))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-call-memory-unresolved-count
+        (ir.compiler-ir-function-seq-to-list seq)
+        resolved
+        count)]))
+
+;; `out`, whether any residue row moved this round, and whether the round is
+;; usable at all (see the `Unresolved` arm).
+(defenum OptCallMemoryOptimisticPass
+  (Pass opt_i64_i64_map.Map bool bool))
+
+(define (opt-call-memory-optimistic-pass
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionList]
+  [resolved : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [changed : bool]
+  [usable? : bool]) : OptCallMemoryOptimisticPass
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil)
+      (OptCallMemoryOptimisticPass.Pass out changed usable?)]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            (match (opt_i64_i64_map.get (& resolved) name-id)
+              ;; A pessimistically resolved row was computed from callees that
+              ;; were themselves already committed, so no residue row can reach
+              ;; it: it is a constant of this iteration.
+              [(opt_i64_i64_map.LookupFound summary)
+                (begin
+                  (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                  (opt-call-memory-optimistic-pass
+                    type-segment-bases
+                    (__tl-box-place rest)
+                    resolved
+                    current
+                    function-set
+                    out
+                    changed
+                    usable?))]
+              [(opt_i64_i64_map.LookupMissing)
+                (let
+                  [previous : i64
+                    (match (opt_i64_i64_map.get (& current) name-id)
+                      [(opt_i64_i64_map.LookupFound value) value]
+                      [(opt_i64_i64_map.LookupMissing) 0])]
+                  (match (opt-call-memory-function-candidate
+                    type-segment-bases
+                    current
+                    function-set
+                    func)
+                    ;; Unreachable in practice; taking it abandons the round.
+                    [(OptCallMemoryCandidate.Unresolved)
+                      (OptCallMemoryOptimisticPass.Pass out changed false)]
+                    [(OptCallMemoryCandidate.Known summary)
+                      (begin
+                        (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                        (opt-call-memory-optimistic-pass
+                          type-segment-bases
+                          (__tl-box-place rest)
+                          resolved
+                          current
+                          function-set
+                          out
+                          (or changed (not (= summary previous)))
+                          usable?))]))]))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-call-memory-optimistic-pass
+        type-segment-bases
+        (ir.compiler-ir-function-seq-to-list seq)
+        resolved
+        current
+        function-set
+        out
+        changed
+        usable?)]))
+
+(define (opt-call-memory-optimistic-fixed
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionList]
+  [resolved : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [capacity : i64]
+  [remaining : i64]) : opt_i64_i64_map.Map
+  (if (<= remaining 0)
+    resolved
+    (match (opt-call-memory-optimistic-pass
+      type-segment-bases
+      functions
+      resolved
+      current
+      function-set
+      (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
+      false
+      true)
+      [(OptCallMemoryOptimisticPass.Pass next changed usable?)
+        (if (not usable?)
+          resolved
+          (if changed
+            (opt-call-memory-optimistic-fixed
+              type-segment-bases
+              functions
+              resolved
+              function-set
+              next
+              capacity
+              (- remaining 1))
+            ;; The transfer reproduced this map: it is a fixed point, commit it.
+            next))])))
+
 (define (opt-call-memory-build
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
   [capacity : i64]) : opt_i64_i64_map.Map
-  (opt-call-memory-build-fixed
-    type-segment-bases
-    functions
-    (opt-call-memory-function-set
-      functions
-      (opt_i64_i64_map.with-capacity capacity))
-    (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
-    capacity
-    (+ (opt-function-list-count functions) 1)))
+  (let
+    [function-set : opt_i64_i64_map.Map
+      (opt-call-memory-function-set
+        functions
+        (opt_i64_i64_map.with-capacity capacity))]
+    [resolved : opt_i64_i64_map.Map
+      (opt-call-memory-build-fixed
+        type-segment-bases
+        functions
+        function-set
+        (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
+        capacity
+        (+ (opt-function-list-count functions) 1))]
+    (if (= (opt-call-memory-unresolved-count functions resolved 0) 0)
+      resolved
+      (opt-call-memory-optimistic-fixed
+        type-segment-bases
+        functions
+        resolved
+        function-set
+        (opt-call-memory-seed-optimistic
+          functions
+          resolved
+          (opt-call-memory-seed-builtins
+            (opt_i64_i64_map.with-capacity capacity)))
+        capacity
+        (opt-call-memory-optimistic-rounds)))))
 
 ;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global

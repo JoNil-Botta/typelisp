@@ -6385,6 +6385,126 @@
           rebased
           "    leave\n")))))
 
+;; GAP1 corollary: a function whose ONLY frame references were callee-save
+;; slots reaches the push prologue with a DEAD slot region. `frame = 0` with an
+;; odd push count makes the prologue subq vanish (S = frame + 0), and the
+;; pop-run rebase line -- which points %rsp at the pushed area -- becomes
+;; `addq $0`, i.e. nothing to do, so it vanishes too. The result is the shape
+;; clang emits: pushes in, pops out, no stack adjustment either way.
+;;
+;; The paired neighbour is the SAME text with a live slot region (frame = 16):
+;; both the prologue subq and the pop-run addq must come back, which is what
+;; keeps the drop keyed on the amount being zero rather than on the shape.
+(define (compiler-backend-dead-slot-region-push-body) : String
+  "    movq %r12, -8(%rbp)
+    movq %r13, -16(%rbp)
+    movq %r14, -24(%rbp)
+    movq %rdi, %rax
+    leaq -24(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+")
+
+(define (compiler-backend-dead-slot-region-push-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_abi : unit
+      (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler_backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        push-regs
+        backend-state)]
+    [dead-prologue : String
+      (compiler_backend.compiler-backend-emit-function-entry-fpo-push
+        backend-state
+        "_tl_qsc_dead_slots"
+        0
+        push-regs
+        push-count)]
+    [dead-rebased : String
+      (compiler_backend.compiler-backend-rsp-rebase-full
+        (compiler-backend-dead-slot-region-push-body)
+        0
+        true
+        push-regs
+        push-count
+        0
+        backend-state)]
+    [dead-ok : bool
+      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    [live-prologue : String
+      (compiler_backend.compiler-backend-emit-function-entry-fpo-push
+        backend-state
+        "_tl_qsc_live_slots"
+        16
+        push-regs
+        push-count)]
+    [live-rebased : String
+      (compiler_backend.compiler-backend-rsp-rebase-full
+        (compiler-backend-dead-slot-region-push-body)
+        16
+        true
+        push-regs
+        push-count
+        0
+        backend-state)]
+    [live-ok : bool
+      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    (and
+      (= push-count 3)
+      dead-ok
+      live-ok
+      ;; ADMITTED: no stack adjustment in either direction.
+      (string.eq
+        dead-prologue
+        "_tl_qsc_dead_slots:
+    pushq %r12
+    pushq %r13
+    pushq %r14
+")
+      (string.eq
+        dead-rebased
+        "    movq %rdi, %rax
+    popq %r14
+    popq %r13
+    popq %r12
+    ret
+")
+      ;; REFUSED (live slot region): both adjustments stay.
+      (string.eq
+        live-prologue
+        "_tl_qsc_live_slots:
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    subq $16, %rsp
+")
+      (string.eq
+        live-rebased
+        "    movq %rdi, %rax
+    addq $16, %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    ret
+")
+      (not
+        (compiler_backend.compiler-backend-string-contains? dead-rebased "%rbp"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          dead-rebased
+          "    leave\n")))))
+
 (define (compiler-backend-win64-callee-save-homes-ok?) : bool
   (let
     [backend-state : compiler_backend.CompilerBackendState
@@ -25561,9 +25681,17 @@
     200)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        ;; The narrow compare fold is refused, so the load survives -- and M6-G
+        ;; then claims the pair the refusal leaves behind, giving the load the
+        ;; WIDENING CAST's home (%r9) instead of the loaded value's own (%r13)
+        ;; and retiring the separate re-extension. Both halves are asserted.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movsbq (%r12,%r8,1), %r13\n")
+          "    movsbq (%r12,%r8,1), %r9\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movsbq %r13b, "))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    cmpb ")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -25579,9 +25707,17 @@
     10)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        ;; Same division of labour as the signed-literal refusal above: M6-C
+        ;; declines the ordered narrow compare, M6-G folds the re-extension the
+        ;; refusal leaves behind, so the surviving load writes the widening
+        ;; cast's home %r9 and no `movzbq %r13b, %r9` follows it.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movzbq (%r12,%r8,1), %r13\n")
+          "    movzbq (%r12,%r8,1), %r9\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movzbq %r13b, "))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    cmpb ")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -44566,6 +44702,7 @@ b_keep:
         (compiler-backend-fusion-pin-store-fusion-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)
+        (compiler-backend-dead-slot-region-push-ok?)
         (compiler-backend-win64-callee-save-homes-ok?)
         (compiler-backend-win64-fpo-seh-prologue-ok?)
         (compiler-backend-win64-xmm-callee-save-homes-ok?))

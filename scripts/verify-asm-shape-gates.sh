@@ -412,23 +412,65 @@ check_group_pair_phi_home() {
     assert_not_matches "$_body" '^[[:space:]]+movq [0-9]+\(%rsp\), %r(ax|dx)$' group-pair-phi-home
 }
 
-check_csr_push_prologue() {
-    _asm=$(compile_gate csr_push_prologue tests/integration/csr_push_prologue.tl)
-    _body=$(function_body "$_asm" _tl_csr_push_prologue_churn3)
+# Count the pushed callee-save homes of a function body, failing on an
+# unbalanced or duplicated push/pop for any one register.
+csr_pushed_count() {
+    _body=$1
+    _label=$2
     _saved=0
     for _reg in r12 r13 r14 r15 rbx rbp; do
         _pushes=$(count_fixed "$_body" "pushq %$_reg")
         _pops=$(count_fixed "$_body" "popq %$_reg")
         if [ "$_pushes" -ne "$_pops" ] || [ "$_pushes" -gt 1 ]; then
-            fail "csr-push-prologue unbalanced %$_reg save/restore: $_pushes push, $_pops pop"
+            fail "$_label unbalanced %$_reg save/restore: $_pushes push, $_pops pop"
         fi
         _saved=$((_saved + _pushes))
     done
+    printf '%s' "$_saved"
+}
+
+# A push-mode function that names no frame slot reserves NO slot region: the
+# pushes carry its callee-saves, and the only stack adjustment the frame model
+# still owes is the 8-byte alignment pad an EVEN push count needs to keep the
+# total displacement at D % 16 == 8. An odd push count already lands there, so
+# it pays nothing at all -- prologue and epilogue both.
+#
+# The parity split is what keeps this forcing without pinning the allocator's
+# register count: whichever parity the plan lands on, a reserved slot region
+# reappears as a `subq $N` with N > 8 (pre-change: `subq $64` in churn3,
+# `subq $56` in deeprec) and fails here.
+assert_dead_slot_region() {
+    _body=$1
+    _saved=$2
+    _label=$3
+    if [ $((_saved % 2)) -eq 1 ]; then
+        assert_regex_count_eq "$_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 0 "$_label"
+        assert_regex_count_eq "$_body" '^[[:space:]]+addq \$[0-9]+, %rsp$' 0 "$_label"
+    else
+        assert_regex_count_eq "$_body" '^[[:space:]]+subq \$8, %rsp$' 1 "$_label"
+        assert_regex_count_eq "$_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 "$_label"
+    fi
+}
+
+check_csr_push_prologue() {
+    _asm=$(compile_gate csr_push_prologue tests/integration/csr_push_prologue.tl)
+    _body=$(function_body "$_asm" _tl_csr_push_prologue_churn3)
+    _saved=$(csr_pushed_count "$_body" csr-push-prologue)
     if [ "$_saved" -lt 3 ]; then
         fail "csr-push-prologue expected at least 3 pushed CSR homes, got $_saved"
     fi
-    assert_regex_count_eq "$_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 csr-push-prologue
+    assert_dead_slot_region "$_body" "$_saved" csr-push-prologue
     assert_not_matches "$_body" '^[[:space:]]+movq %r(12|13|14|15|bx|bp), -?[0-9]+\(%rsp\)$' csr-push-prologue
+    # deeprec is the other parity: four pushed homes, so its alignment pad is
+    # the one stack adjustment that survives. Both shapes together pin the
+    # model rather than one function's register count.
+    _deep=$(function_body "$_asm" _tl_csr_push_prologue_deeprec)
+    _deep_saved=$(csr_pushed_count "$_deep" csr-push-prologue-deeprec)
+    if [ "$_deep_saved" -lt 3 ]; then
+        fail "csr-push-prologue-deeprec expected at least 3 pushed CSR homes, got $_deep_saved"
+    fi
+    assert_dead_slot_region "$_deep" "$_deep_saved" csr-push-prologue-deeprec
+    assert_not_matches "$_deep" '^[[:space:]]+movq %r(12|13|14|15|bx|bp), -?[0-9]+\(%rsp\)$' csr-push-prologue-deeprec
 }
 
 check_save_reload_elide() {
@@ -870,6 +912,25 @@ check_inline_alloc_unique_labels_link() {
     [ -x "$_binary" ] || fail "$_name standalone build produced no executable"
 }
 
+check_load_widen_cast_fold() {
+    _asm=$(compile_gate load_widen_cast_fold tests/integration/load_widen_cast_fold.tl)
+    _classify=$(function_body "$_asm" _tl_load_widen_cast_fold_classify)
+    _refused=$(function_body "$_asm" _tl_load_widen_cast_fold_refused)
+    # M6-G: the byte is read eight times, so the M6-C compare fold declines and
+    # the load survives -- but as ONE instruction landing in the cast's own
+    # register. Exactly one byte load, and no register-to-register re-extension
+    # anywhere in the function.
+    assert_regex_count_eq "$_classify"         '^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$' 1         load-widen-cast-fold
+    assert_not_matches "$_classify"         '^[[:space:]]+movzbq %[a-z0-9]+l, %r' load-widen-cast-fold
+    # Nearest refused neighbour: the element is stored back at u8 width, so no
+    # widening cast follows the load and the pair the fold looks for is absent.
+    # The load and the widening still both appear, and the fold has not touched
+    # them.
+    assert_matches "$_refused"         '^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$'         load-widen-cast-fold-refused
+    assert_contains "$_refused" 'movb ' load-widen-cast-fold-refused
+}
+
+
 check_divmagic_hoist
 check_hoist_priority
 check_lftr_counter_retire
@@ -902,6 +963,7 @@ check_param_pin_interval
 check_frame_slot_repacking
 check_gep_value_direct
 check_gep_copy_sib
+check_load_widen_cast_fold
 check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
 

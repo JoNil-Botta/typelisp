@@ -1595,6 +1595,13 @@
   [id : i64]) : i64
   (intern-id-slot-decode (array-ref state.pool-base-id-slots id)))
 
+(define (intern-compat-state-macro-local-name-id?
+  [state : InternCompatState]
+  [id : i64]) : bool
+  (=
+    (array-ref state.pool-macro-prefix-class-slots id)
+    (cast (intern-macro-prefix-class-local) : u8)))
+
 (define (intern-compat-state-install! [state : InternCompatState]) : unit
   (let
     [next-table-id : i64 (intern-compat-state-table-id state)]
@@ -2043,12 +2050,25 @@
         (set! intern-generated-next-id (- id 1))
         id))))
 
-;; State-owned generated allocation.  Generated ids share the same high-end
+(define (intern-compat-state-generated-scalars-publish-if-active!
+  [state : InternCompatState]) : unit
+  (if (= (intern-active-table-id) (intern-compat-state-table-id state))
+    (begin
+      (set! intern-pool-count (array-ref state.pool-count 0))
+      (set! intern-generated-next-id (array-ref state.generated-next-id 0))
+      (set! intern-map-ready (array-ref state.map-ready 0))
+      (set! intern-reset-generation (array-ref state.reset-generation 0)))
+    unit))
+
+;; State-owned generated allocation. Generated ids share the same high-end
 ;; lane as the compatibility allocator, but all metadata and the monotonic
 ;; counter live in the supplied state; no active-table installation is needed.
-(define (intern-compat-state-generated-name
+(define (intern-compat-state-generated-name-store
   [state : InternCompatState]
-  [name : String]) : i64
+  [name : String]
+  [qualified : bool]
+  [module-id : i64]
+  [base-id : i64]) : i64
   (begin
     (if (array-ref state.map-ready 0)
       unit
@@ -2063,10 +2083,15 @@
             (intern-compat-state-persistent-copy state name)]
           (begin
             (set! (array-ref state.pool-slots next-id) persistent-name)
-            (set! (array-ref state.pool-qualified-slots next-id) false)
+            (set! (array-ref state.pool-qualified-slots next-id) qualified)
+            (set!
+              (array-ref state.pool-macro-prefix-class-slots next-id)
+              (intern-private-macro-prefix-class persistent-name))
             (set!
               (array-ref state.pool-last-slash-slots next-id)
-              (cast -1 : i32))
+              (if qualified
+                (cast (intern-private-last-slash persistent-name) : i32)
+                (cast -1 : i32)))
             (set!
               (array-ref state.pool-first-dot-slots next-id)
               (cast -1 : i32))
@@ -2078,12 +2103,141 @@
               (intern-id-slot-encode -1))
             (set!
               (array-ref state.pool-module-id-slots next-id)
-              (intern-id-slot-encode -1))
+              (intern-id-slot-encode module-id))
             (set!
               (array-ref state.pool-base-id-slots next-id)
-              (intern-id-slot-encode next-id))
+              (intern-id-slot-encode
+                (if qualified
+                  base-id
+                  next-id)))
             (set! (array-ref state.generated-next-id 0) (- next-id 1))
+            ;; An installed legacy consumer observes scalar counters through
+            ;; the compatibility globals even though the owned arrays are
+            ;; already shared. Keep that view coherent without installing an
+            ;; inactive state or adding a lowerer-side bridge.
+            (intern-compat-state-generated-scalars-publish-if-active! state)
             next-id))))))
+
+(define (intern-compat-state-generated-name
+  [state : InternCompatState]
+  [name : String]) : i64
+  (intern-compat-state-generated-name-store state name false -1 -1))
+
+(define (intern-compat-state-generated-canonical-name-at
+  [state : InternCompatState]
+  [name : String]
+  [hash : i64]
+  [cursor : i64]
+  [steps : i64]
+  [qualified : bool]
+  [module-id : i64]
+  [base-id : i64]) : i64
+  (let
+    [capacity : i64 (array-length state.generated-map-id-slots)]
+    (if (>= steps capacity)
+      (tl_oob_abort)
+      (let
+        [stored-id : InternSlotId
+          (array-ref state.generated-map-id-slots cursor)]
+        (if (intern-id-slot-empty? stored-id)
+          (let
+            [id : i64
+              (intern-compat-state-generated-name-store
+                state
+                name
+                qualified
+                module-id
+                base-id)]
+            (begin
+              (set!
+                (array-ref state.generated-map-id-slots cursor)
+                (intern-id-slot-encode id))
+              (set! (array-ref state.generated-map-hash-slots cursor) hash)
+              id))
+          (let
+            [slot-id : i64 (intern-id-slot-decode stored-id)]
+            [slot-hash : i64 (array-ref state.generated-map-hash-slots cursor)]
+            (if (and
+              (= slot-hash hash)
+              (intern-private-string-eq-places
+                (array-ref state.pool-slots slot-id)
+                name)
+              (if qualified
+                (and
+                  (intern-compat-state-qualified? state slot-id)
+                  (=
+                    (intern-compat-state-qualified-module-id state slot-id)
+                    module-id)
+                  (=
+                    (intern-compat-state-qualified-base-id state slot-id)
+                    base-id))
+                (and
+                  (not (intern-compat-state-qualified? state slot-id))
+                  (<
+                    (cast (array-ref state.pool-first-dot-slots slot-id) : i64)
+                    0))))
+              slot-id
+              (intern-compat-state-generated-canonical-name-at
+                state
+                name
+                hash
+                (intern-bucket (+ cursor 1) capacity)
+                (+ steps 1)
+                qualified
+                module-id
+                base-id))))))))
+
+;; Canonical generated symbols deduplicate inside the supplied state without
+;; installing it as the process compatibility table.
+(define (intern-compat-state-generated-canonical-name
+  [state : InternCompatState]
+  [name : String]) : i64
+  (begin
+    (if (array-ref state.map-ready 0)
+      unit
+      (intern-compat-state-reset! state))
+    (let
+      [capacity : i64 (array-length state.generated-map-id-slots)]
+      [hash : i64 (intern-hash name)]
+      (intern-compat-state-generated-canonical-name-at
+        state
+        name
+        hash
+        (intern-bucket hash capacity)
+        0
+        false
+        -1
+        -1))))
+
+(define (intern-compat-state-generated-canonical-qualified-name
+  [state : InternCompatState]
+  [name : String]
+  [module-id : i64]
+  [base-id : i64]) : i64
+  (begin
+    (if (or (< module-id 0) (< base-id 0))
+      (tl_oob_abort)
+      unit)
+    (if (array-ref state.map-ready 0)
+      unit
+      (intern-compat-state-reset! state))
+    (let
+      [capacity : i64 (array-length state.generated-map-id-slots)]
+      [hash : i64
+        (bit-xor
+          (intern-hash name)
+          (bit-xor
+            4611686018427387904
+            (bit-xor (shl module-id 1) (shl base-id 18))))]
+      (intern-compat-state-generated-canonical-name-at
+        state
+        name
+        hash
+        (intern-bucket hash capacity)
+        0
+        true
+        module-id
+        base-id))))
 
 ;; Reserve a renderable generated-symbol lane without constructing its text.
 ;; The caller owns the structural record and must materialize the exact spelling
@@ -2117,6 +2271,7 @@
             (array-ref state.pool-base-id-slots next-id)
             (intern-id-slot-encode next-id))
           (set! (array-ref state.generated-next-id 0) (- next-id 1))
+          (intern-compat-state-generated-scalars-publish-if-active! state)
           next-id)))))
 
 (define (intern-compat-state-generated-symbol-materialize!

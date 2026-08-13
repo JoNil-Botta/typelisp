@@ -13129,6 +13129,111 @@
     (compiler-lower-compat-prescan-id-parity-ok?)
     "id-keyed compat prescan matches the string-keyed walks incl. hygiene ids"))
 
+;; Lowerer-owned synthesis must select its compile job's capabilities even
+;; while a different job is installed as the serial compatibility decoy.
+(define (compiler-lower-cleanup-owner-interleaving-ok?) : bool
+  (let
+    [active-intern-before : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [active-pools-before : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [module-a : i64 (ci.intern-compat-state-intern intern-a "owner-a")]
+    [cleanup-a : i64 (ci.intern-compat-state-intern intern-a "cleanup-a")]
+    [_module-b : i64 (ci.intern-compat-state-intern intern-b "decoy-b")]
+    [_cleanup-b : i64 (ci.intern-compat-state-intern intern-b "cleanup-b")]
+    [pools-a : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-new-with-capacities 8 1)]
+    [pools-b : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-new-with-capacities 8 1)]
+    [lower-a : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state intern-a)]
+    [generated-b-before : i64 (ci.intern-compat-state-generated-count intern-b)]
+    [expr-b-before : i64
+      (compiler_ast_types.ast-node-pool-context-expr-len pools-b)]
+    [ok : bool false]
+    (begin
+      (ci.intern-compat-state-install! intern-b)
+      (compiler_ast_types.ast-node-pool-context-install! pools-b)
+      (let
+        [_active-generated-b : i64
+          (ci.intern-compat-state-generated-name intern-b "decoy-generated-b")]
+        [generated-b-after : i64
+          (ci.intern-compat-state-generated-count intern-b)]
+        [param-a : i64 (compiler_lower.lower-struct-cleanup-param-id lower-a)]
+        [param-again-a : i64
+          (compiler_lower.lower-struct-cleanup-param-id lower-a)]
+        [payload-a : i64
+          (compiler_lower.lower-enum-cleanup-payload-id lower-a 0)]
+        [payload-again-a : i64
+          (compiler_lower.lower-enum-cleanup-payload-id lower-a 0)]
+        [qualified-a : i64
+          (ci.intern-compat-state-generated-canonical-qualified-name
+            intern-a
+            "owner-a/cleanup-a"
+            module-a
+            cleanup-a)]
+        [_enum-call-a : i64
+          (compiler_lower.lower-enum-cleanup-call-expr
+            pools-a
+            cleanup-a
+            payload-a)]
+        [_struct-call-a : i64
+          (compiler_lower.lower-struct-cleanup-call-expr
+            pools-a
+            cleanup-a
+            param-a
+            cleanup-a)]
+        (set!
+          ok
+          (and
+            (=
+              (ci.intern-compat-state-table-id
+                (compiler_lower.compiler-lower-state-interns lower-a))
+              (ci.intern-compat-state-table-id intern-a))
+            (= param-a param-again-a)
+            (= payload-a payload-again-a)
+            (= (ci.intern-compat-state-generated-count intern-a) 3)
+            (=
+              (ci.intern-compat-state-generated-count intern-b)
+              generated-b-after)
+            (= generated-b-after (+ generated-b-before 1))
+            (= (ci.intern-generated-count) generated-b-after)
+            (string.eq
+              (ci.intern-compat-state-str intern-a param-a)
+              "__tl_cleanup_value")
+            (string.eq
+              (ci.intern-compat-state-str intern-a payload-a)
+              "__tl_cleanup_payload_0")
+            (ci.intern-compat-state-qualified? intern-a qualified-a)
+            (=
+              (ci.intern-compat-state-qualified-module-id intern-a qualified-a)
+              module-a)
+            (=
+              (ci.intern-compat-state-qualified-base-id intern-a qualified-a)
+              cleanup-a)
+            (= (compiler_ast_types.ast-node-pool-context-expr-len pools-a) 7)
+            (=
+              (compiler_ast_types.ast-node-pool-context-expr-len pools-b)
+              expr-b-before))))
+      (ci.intern-compat-state-install! active-intern-before)
+      (compiler_ast_types.ast-node-pool-context-install! active-pools-before)
+      (compiler_ast_types.ast-node-pool-context-destroy-storage! pools-a)
+      (compiler_ast_types.ast-node-pool-context-destroy-storage! pools-b)
+      (unsafe
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-a))
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-b)))
+      ok)))
+
+(test
+  compiler-lower-cleanup-owner-interleaving
+  (test.assert-true
+    (compiler-lower-cleanup-owner-interleaving-ok?)
+    "cleanup synthesis mutates only its explicit intern and AST-pool owners"))
+
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let
     [source-a-id : i64 (ci.intern-generated-canonical-name "source-a")]

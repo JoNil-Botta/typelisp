@@ -518,6 +518,8 @@
   29)
 (define arenas : i64
   30)
+(define intern-owner : i64
+  31)
 
 (defstruct CompilerLowerState
   (address i64))
@@ -573,9 +575,10 @@
 (define (compiler-lower-state-from-name-cache [cache : LowerNameCache]) : CompilerLowerState
   (compiler-lower-state-from-address cache.owner-address))
 
-(define (compiler-lower-state-new) : CompilerLowerState
+(define (compiler-lower-state-new-with-intern-state
+  [intern-state : ci.InternCompatState]) : CompilerLowerState
   (let
-    [cells : (__tl_dyn-array i64) (array.make-array i64 31)]
+    [cells : (__tl_dyn-array i64) (array.make-array i64 32)]
     [address : i64
       (cast
         (unsafe
@@ -696,10 +699,31 @@
         (compiler-lower-state-cell
           CompilerLowerArenaState
           (compiler-lower-arena-state-new)))
+      (set!
+        (array-ref cells intern-owner)
+        (compiler-lower-state-cell ci.InternCompatState intern-state))
       state)))
+
+;; Serial/test compatibility adapter. Driver-owned jobs construct the lower
+;; carrier with their explicit intern capability instead.
+(define (compiler-lower-state-new) : CompilerLowerState
+  (compiler-lower-state-new-with-intern-state
+    (ci.intern-compat-state-capture-active)))
 
 (define (compiler-lower-state-arenas [state : CompilerLowerState]) : CompilerLowerArenaState
   (compiler-lower-state-read state CompilerLowerArenaState arenas))
+
+(define (compiler-lower-state-interns [state : CompilerLowerState]) : ci.InternCompatState
+  (compiler-lower-state-read state ci.InternCompatState intern-owner))
+
+(define (compiler-lower-state-use-intern-state!
+  [state : CompilerLowerState]
+  [intern-state : ci.InternCompatState]) : unit
+  (compiler-lower-state-write!
+    state
+    ci.InternCompatState
+    intern-owner
+    intern-state))
 
 ;; Scalar snapshot used by state-isolation tests. Each fingerprint covers the
 ;; complete inline representation stored in the field cell (including map
@@ -735,7 +759,8 @@
   (module-decl-index-starts i64)
   (module-decl-index-ends i64)
   (module-decl-index-positions i64)
-  (module-decl-index-arena i64))
+  (module-decl-index-arena i64)
+  (intern-owner i64))
 
 (define (compiler-lower-state-size) : i64
   (comptime (size-of (type CompilerLowerState))))
@@ -852,7 +877,11 @@
       state
       (__tl_dyn-array i64)
       module-decl-index-positions)
-    (compiler-lower-state-field-fingerprint state i64 module-decl-index-arena)))
+    (compiler-lower-state-field-fingerprint state i64 module-decl-index-arena)
+    (compiler-lower-state-field-fingerprint
+      state
+      ci.InternCompatState
+      intern-owner)))
 
 (define (compiler-lower-state-observation-eq?
   [left : CompilerLowerStateObservation]
@@ -887,7 +916,8 @@
     (= left.module-decl-index-starts right.module-decl-index-starts)
     (= left.module-decl-index-ends right.module-decl-index-ends)
     (= left.module-decl-index-positions right.module-decl-index-positions)
-    (= left.module-decl-index-arena right.module-decl-index-arena)))
+    (= left.module-decl-index-arena right.module-decl-index-arena)
+    (= left.intern-owner right.intern-owner)))
 
 (define (lower-active-global-name-cache-current [state : CompilerLowerState]) : LowerNameCache
   (compiler-lower-state-read state LowerNameCache active-global-name-cache))
@@ -12318,6 +12348,8 @@
 
 (define lower-comptime-error-id-generation : i64
   -1)
+(define lower-comptime-error-id-table-id : i64
+  -1)
 (define lower-comptime-error-id : i64
   0)
 (define lower-comptime-error-comptime-dot-id : i64
@@ -12345,48 +12377,64 @@
 (define lower-comptime-error-stdlib-error-slash-slash-id : i64
   0)
 
-(define (lower-comptime-error-ids-ensure!) : unit
-  (if (= lower-comptime-error-id-generation (ci.intern-generation))
-    unit
-    (begin
-      (set! lower-comptime-error-id cbi.compiler-builtin-id-fix-comptime_error)
-      (set!
-        lower-comptime-error-comptime-dot-id
-        cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
-      (set!
-        lower-comptime-error-comptime-slash-id
-        cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
-      (set!
-        lower-comptime-error-comptime-error-dot-id
-        cbi.compiler-builtin-id-fix-comptime_dot_error)
-      (set!
-        lower-comptime-error-comptime-error-slash-id
-        cbi.compiler-builtin-id-fix-comptime_dot_error)
-      (set!
-        lower-comptime-error-stdlib-dot-dot-id
-        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
-      (set!
-        lower-comptime-error-stdlib-dot-slash-id
-        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
-      (set!
-        lower-comptime-error-stdlib-slash-dot-id
-        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
-      (set!
-        lower-comptime-error-stdlib-slash-slash-id
-        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
-      (set!
-        lower-comptime-error-stdlib-error-dot-dot-id
-        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
-      (set!
-        lower-comptime-error-stdlib-error-dot-slash-id
-        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
-      (set!
-        lower-comptime-error-stdlib-error-slash-dot-id
-        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
-      (set!
-        lower-comptime-error-stdlib-error-slash-slash-id
-        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
-      (set! lower-comptime-error-id-generation (ci.intern-generation)))))
+(define (lower-comptime-error-ids-ensure! [lower-state : CompilerLowerState]) : unit
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    (if (and
+      (=
+        lower-comptime-error-id-table-id
+        (ci.intern-compat-state-table-id intern-state))
+      (=
+        lower-comptime-error-id-generation
+        (ci.intern-compat-state-generation intern-state)))
+      unit
+      (begin
+        (set!
+          lower-comptime-error-id
+          cbi.compiler-builtin-id-fix-comptime_error)
+        (set!
+          lower-comptime-error-comptime-dot-id
+          cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
+        (set!
+          lower-comptime-error-comptime-slash-id
+          cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
+        (set!
+          lower-comptime-error-comptime-error-dot-id
+          cbi.compiler-builtin-id-fix-comptime_dot_error)
+        (set!
+          lower-comptime-error-comptime-error-slash-id
+          cbi.compiler-builtin-id-fix-comptime_dot_error)
+        (set!
+          lower-comptime-error-stdlib-dot-dot-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+        (set!
+          lower-comptime-error-stdlib-dot-slash-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+        (set!
+          lower-comptime-error-stdlib-slash-dot-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+        (set!
+          lower-comptime-error-stdlib-slash-slash-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+        (set!
+          lower-comptime-error-stdlib-error-dot-dot-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+        (set!
+          lower-comptime-error-stdlib-error-dot-slash-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+        (set!
+          lower-comptime-error-stdlib-error-slash-dot-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+        (set!
+          lower-comptime-error-stdlib-error-slash-slash-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+        (set!
+          lower-comptime-error-id-table-id
+          (ci.intern-compat-state-table-id intern-state))
+        (set!
+          lower-comptime-error-id-generation
+          (ci.intern-compat-state-generation intern-state))))))
 
 (define (lower-comptime-error-call-id-with-cache? [id : i64]) : bool
   (or
@@ -12404,16 +12452,19 @@
     (= id lower-comptime-error-stdlib-error-slash-dot-id)
     (= id lower-comptime-error-stdlib-error-slash-slash-id)))
 
-(define (lower-comptime-error-call-id? [id : i64]) : bool
+(define (lower-comptime-error-call-id?
+  [lower-state : CompilerLowerState]
+  [id : i64]) : bool
   (begin
-    (lower-comptime-error-ids-ensure!)
+    (lower-comptime-error-ids-ensure! lower-state)
     (lower-comptime-error-call-id-with-cache? id)))
 
 (define (lower-comptime-error-source-or-lookup-id?
+  [lower-state : CompilerLowerState]
   [source-id : i64]
   [lookup-id : i64]) : bool
   (begin
-    (lower-comptime-error-ids-ensure!)
+    (lower-comptime-error-ids-ensure! lower-state)
     (or
       (= source-id lower-comptime-error-id)
       (= source-id lower-comptime-error-comptime-dot-id)
@@ -34915,6 +34966,7 @@
                             result-ty
                             origin)]
                         [(lower-comptime-error-source-or-lookup-id?
+                            (lower-state-owner state)
                             source-id
                             name-id)
                           (ResultLowerExpr.Err
@@ -61480,7 +61532,9 @@
       (let
         [unshadowed : bool (lower-tail-call-var-unshadowed? env name)]
         (cond
-          [(and unshadowed (lower-comptime-error-call-id? name))
+          [(and
+              unshadowed
+              (lower-comptime-error-call-id? (lower-state-owner state) name))
             (ResultLowerState.Err
               (box
                 (lower-diagnostic-at-expr
@@ -63663,51 +63717,84 @@
   -1)
 (define lower-struct-cleanup-param-id-cache-generation : i64
   -1)
+(define lower-struct-cleanup-param-id-cache-table-id : i64
+  -1)
 
-(define (lower-struct-cleanup-param-id) : i64
-  (if (= lower-struct-cleanup-param-id-cache-generation (ci.intern-generation))
-    lower-struct-cleanup-param-id-cache
-    (let
-      [id : i64 (ci.intern-generated-name "__tl_cleanup_value")]
-      (begin
-        (set! lower-struct-cleanup-param-id-cache id)
-        (set!
-          lower-struct-cleanup-param-id-cache-generation
-          (ci.intern-generation))
-        id))))
+(define (lower-struct-cleanup-param-id [lower-state : CompilerLowerState]) : i64
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    (if (and
+      (=
+        lower-struct-cleanup-param-id-cache-table-id
+        (ci.intern-compat-state-table-id intern-state))
+      (=
+        lower-struct-cleanup-param-id-cache-generation
+        (ci.intern-compat-state-generation intern-state)))
+      lower-struct-cleanup-param-id-cache
+      (let
+        [id : i64
+          (ci.intern-compat-state-generated-name
+            intern-state
+            "__tl_cleanup_value")]
+        (begin
+          (set! lower-struct-cleanup-param-id-cache id)
+          (set!
+            lower-struct-cleanup-param-id-cache-table-id
+            (ci.intern-compat-state-table-id intern-state))
+          (set!
+            lower-struct-cleanup-param-id-cache-generation
+            (ci.intern-compat-state-generation intern-state))
+          id)))))
 
 (define (lower-struct-cleanup-qualified-id
+  [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [struct-id : i64]
   [cleanup-id : i64]) : i64
-  (if (or
-    (tc_core.tc-name-qualified-id? cleanup-id)
-    (>= cleanup-id (ci.intern-capacity)))
-    cleanup-id
-    (let
-      [symbols : csym.CompilerSymbols (tc_core.tc-context-symbols ctx)]
-      [handle : i64
-        (csym.compiler-symbols-lookup-type-id-or
-          symbols
-          struct-id
-          (csym.compiler-symbols-missing-handle))]
-      [module-id : i64
-        (if (csym.compiler-symbols-handle-found? handle)
-          (csym.compiler-symbols-owner-module-id-at-index-or
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-lower-state-interns lower-state)]
+    (if (or
+      (< cleanup-id 0)
+      (and
+        (>= cleanup-id 0)
+        (< cleanup-id (ci.intern-capacity))
+        (or
+          (< cleanup-id (ci.intern-compat-state-pool-len intern-state))
+          (not
+            (ci.intern-compat-state-macro-local-name-id?
+              intern-state
+              cleanup-id)))
+        (ci.intern-compat-state-qualified? intern-state cleanup-id))
+      (>= cleanup-id (ci.intern-capacity)))
+      cleanup-id
+      (let
+        [symbols : csym.CompilerSymbols (tc_core.tc-context-symbols ctx)]
+        [handle : i64
+          (csym.compiler-symbols-lookup-type-id-or
             symbols
-            (csym.compiler-symbol-handle-index handle)
-            cbi.compiler-builtin-id-fix-empty)
-          cbi.compiler-builtin-id-fix-empty)]
-      (if (or (< module-id 0) (= module-id cbi.compiler-builtin-id-fix-empty))
-        cleanup-id
-        (ci.intern-generated-canonical-qualified-name
-          (csym.compiler-symbol-module-key
-            (ci.intern-str module-id)
-            (tc_core.tc-env-key-name-text cleanup-id))
-          module-id
-          cleanup-id)))))
+            struct-id
+            (csym.compiler-symbols-missing-handle))]
+        [module-id : i64
+          (if (csym.compiler-symbols-handle-found? handle)
+            (csym.compiler-symbols-owner-module-id-at-index-or
+              symbols
+              (csym.compiler-symbol-handle-index handle)
+              cbi.compiler-builtin-id-fix-empty)
+            cbi.compiler-builtin-id-fix-empty)]
+        (if (or (< module-id 0) (= module-id cbi.compiler-builtin-id-fix-empty))
+          cleanup-id
+          (ci.intern-compat-state-generated-canonical-qualified-name
+            intern-state
+            (csym.compiler-symbol-module-key
+              (ci.intern-compat-state-str intern-state module-id)
+              (ci.intern-compat-state-str intern-state cleanup-id))
+            module-id
+            cleanup-id))))))
 
 (define (lower-struct-cleanup-id-for-struct
+  [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [struct-id : i64]) : tc_core.ResultTcNameId
   (match (tc_core.tc-struct-decl-id ctx struct-id)
@@ -63717,7 +63804,11 @@
           (match cleanup
             [(ast.AstStructCleanup.Fn cleanup-name)
               (tc_core.ResultTcNameId.Ok
-                (lower-struct-cleanup-qualified-id ctx struct-id cleanup-name))]
+                (lower-struct-cleanup-qualified-id
+                  lower-state
+                  ctx
+                  struct-id
+                  cleanup-name))]
             [(ast.AstStructCleanup.No)
               (tc_core.ResultTcNameId.Err
                 (str_cat.str-cat
@@ -63727,6 +63818,7 @@
       (tc_core.ResultTcNameId.Err message)]))
 
 (define (lower-enum-cleanup-id-for-enum
+  [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [enum-id : i64]) : tc_core.ResultTcNameId
   (match (tc_core.tc-enum-decl-id ctx enum-id)
@@ -63736,7 +63828,11 @@
           (match cleanup
             [(ast.AstEnumCleanup.Fn cleanup-name)
               (tc_core.ResultTcNameId.Ok
-                (lower-struct-cleanup-qualified-id ctx enum-id cleanup-name))]
+                (lower-struct-cleanup-qualified-id
+                  lower-state
+                  ctx
+                  enum-id
+                  cleanup-name))]
             [(ast.AstEnumCleanup.No)
               (tc_core.ResultTcNameId.Err
                 (str_cat.str-cat
@@ -63746,17 +63842,21 @@
       (tc_core.ResultTcNameId.Err message)]))
 
 (define (lower-struct-cleanup-id-for-type
+  [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : tc_core.ResultTcNameId
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
     (match resolved
-      [(ast.AstType.Struct name) (lower-struct-cleanup-id-for-struct ctx name)]
+      [(ast.AstType.Struct name)
+        (lower-struct-cleanup-id-for-struct lower-state ctx name)]
       [(ast.AstType.StructArgs name _)
-        (lower-struct-cleanup-id-for-struct ctx name)]
-      [(ast.AstType.Enum name) (lower-enum-cleanup-id-for-enum ctx name)]
-      [(ast.AstType.EnumArgs name _) (lower-enum-cleanup-id-for-enum ctx name)]
+        (lower-struct-cleanup-id-for-struct lower-state ctx name)]
+      [(ast.AstType.Enum name)
+        (lower-enum-cleanup-id-for-enum lower-state ctx name)]
+      [(ast.AstType.EnumArgs name _)
+        (lower-enum-cleanup-id-for-enum lower-state ctx name)]
       [_
         (tc_core.ResultTcNameId.Err
           (str_cat.str-cat
@@ -63764,18 +63864,27 @@
             (tc_core.tc-type-render resolved)))])))
 
 (define (lower-struct-cleanup-call-expr
+  [pools : ast.AstNodePoolContext]
   [cleanup-name-id : i64]
   [value-name-id : i64]
   [field-name-id : i64]) : i64
-  (ast.ast-expr-call
-    (ast.ast-node-push (ast.AstExpr.Var cleanup-name-id))
+  (ast.ast-expr-call-with-pools
+    pools
+    (ast.ast-node-pool-context-expr-push
+      pools
+      (ast.AstExpr.Var cleanup-name-id))
     (ast.ast-expr-cons
-      (ast.ast-expr-struct-get-id
-        (ast.ast-node-push (ast.AstExpr.Var value-name-id))
+      (ast.ast-expr-struct-get-id-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (ast.AstExpr.Var value-name-id))
         field-name-id)
       (ast.ast-expr-list-new))))
 
 (define (lower-struct-cleanup-field-exprs
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
   [value-name-id : i64]
   [field : ast.AstFieldDef]
@@ -63788,16 +63897,18 @@
           (parser.ResultAstExprList.Ok
             (ast.ast-expr-cons
               (lower-struct-cleanup-call-expr
+                pools
                 cleanup-name
                 value-name-id
                 field-name)
               acc))]
         [(ast.AstFieldCleanup.Owned)
-          (match (lower-struct-cleanup-id-for-type ctx ty)
+          (match (lower-struct-cleanup-id-for-type lower-state ctx ty)
             [(tc_core.ResultTcNameId.Ok cleanup-name-id)
               (parser.ResultAstExprList.Ok
                 (ast.ast-expr-cons
                   (lower-struct-cleanup-call-expr
+                    pools
                     cleanup-name-id
                     value-name-id
                     field-name)
@@ -63806,13 +63917,24 @@
               (parser.ResultAstExprList.Err message)])])]))
 
 (define (lower-struct-cleanup-body-fields
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
   [value-name-id : i64]
   [fields : ast.AstFieldDefList]
   [acc : ast.AstExprList]) : parser.ResultAstExprList
-  (lower-struct-cleanup-body-fields-at ctx value-name-id (& fields) acc 0))
+  (lower-struct-cleanup-body-fields-at
+    lower-state
+    pools
+    ctx
+    value-name-id
+    (& fields)
+    acc
+    0))
 
 (define (lower-struct-cleanup-body-fields-at
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
   [value-name-id : i64]
   [fields : (& fields ast.AstFieldDefList)]
@@ -63821,12 +63943,16 @@
   (if (>= index fields.len)
     (parser.ResultAstExprList.Ok acc)
     (match (lower-struct-cleanup-field-exprs
+      lower-state
+      pools
       ctx
       value-name-id
       (ast.ast-field-def-list-get fields index (ast.ast-field-def-fallback))
       acc)
       [(parser.ResultAstExprList.Ok next)
         (lower-struct-cleanup-body-fields-at
+          lower-state
+          pools
           ctx
           value-name-id
           fields
@@ -63846,8 +63972,13 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [value-name-id : i64 (lower-struct-cleanup-param-id)]
+    [lower-state : CompilerLowerState
+      (compiler-lower-state-from-name-cache names)]
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    [value-name-id : i64 (lower-struct-cleanup-param-id lower-state)]
     (match (lower-struct-cleanup-body-fields
+      lower-state
+      pools
       ctx
       value-name-id
       fields
@@ -63902,26 +64033,39 @@
         names
         mode)]))
 
-(define (lower-enum-cleanup-payload-id [index : i64]) : i64
-  (ci.intern-generated-canonical-name
+(define (lower-enum-cleanup-payload-id
+  [lower-state : CompilerLowerState]
+  [index : i64]) : i64
+  (ci.intern-compat-state-generated-canonical-name
+    (compiler-lower-state-interns lower-state)
     (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string index))))
 
 (define (lower-enum-cleanup-call-expr
+  [pools : ast.AstNodePoolContext]
   [cleanup-name-id : i64]
   [value-name-id : i64]) : i64
-  (ast.ast-expr-call
-    (ast.ast-node-push (ast.AstExpr.Var cleanup-name-id))
+  (ast.ast-expr-call-with-pools
+    pools
+    (ast.ast-node-pool-context-expr-push
+      pools
+      (ast.AstExpr.Var cleanup-name-id))
     (ast.ast-expr-cons
-      (ast.ast-node-push (ast.AstExpr.Var value-name-id))
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Var value-name-id))
       (ast.ast-expr-list-new))))
 
-(define (lower-enum-cleanup-payload-patterns [count : i64]) : ast.AstPatternList
+(define (lower-enum-cleanup-payload-patterns
+  [lower-state : CompilerLowerState]
+  [count : i64]) : ast.AstPatternList
   (lower-enum-cleanup-payload-patterns-at
+    lower-state
     count
     0
     (ast.ast-pattern-list-with-capacity count)))
 
 (define (lower-enum-cleanup-payload-patterns-at
+  [lower-state : CompilerLowerState]
   [count : i64]
   [index : i64]
   [out : ast.AstPatternList (:consume)]) : ast.AstPatternList
@@ -63932,14 +64076,23 @@
       (begin
         (ast.ast-pattern-list-push
           (&mut next)
-          (ast.ast-pat-binding-id (lower-enum-cleanup-payload-id index)))
-        (lower-enum-cleanup-payload-patterns-at count (+ index 1) next)))))
+          (ast.ast-pat-binding-id
+            (lower-enum-cleanup-payload-id lower-state index)))
+        (lower-enum-cleanup-payload-patterns-at
+          lower-state
+          count
+          (+ index 1)
+          next)))))
 
 (define (lower-enum-cleanup-payload-exprs
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
   [payloads : ast.AstTypeList]
   [cleanups : ast.AstVariantPayloadCleanupList]) : parser.ResultAstExprList
   (lower-enum-cleanup-payload-exprs-at
+    lower-state
+    pools
     ctx
     (& payloads)
     (& cleanups)
@@ -63947,6 +64100,8 @@
     (ast.ast-expr-list-new)))
 
 (define (lower-enum-cleanup-payload-exprs-at
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
   [payloads : (& payloads ast.AstTypeList)]
   [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
@@ -63960,10 +64115,12 @@
           cleanups
           index
           (ast.ast-variant-payload-cleanup-fallback))]
-      [value-name-id : i64 (lower-enum-cleanup-payload-id index)]
+      [value-name-id : i64 (lower-enum-cleanup-payload-id lower-state index)]
       (match cleanup
         [(ast.AstVariantPayloadCleanup.No)
           (lower-enum-cleanup-payload-exprs-at
+            lower-state
+            pools
             ctx
             payloads
             cleanups
@@ -63971,45 +64128,62 @@
             acc)]
         [(ast.AstVariantPayloadCleanup.Fn cleanup-name)
           (lower-enum-cleanup-payload-exprs-at
+            lower-state
+            pools
             ctx
             payloads
             cleanups
             (+ index 1)
             (ast.ast-expr-cons
-              (lower-enum-cleanup-call-expr cleanup-name value-name-id)
+              (lower-enum-cleanup-call-expr pools cleanup-name value-name-id)
               acc))]
         [(ast.AstVariantPayloadCleanup.Owned)
           (match (lower-struct-cleanup-id-for-type
+            lower-state
             ctx
             (tc_core.tc-context-type-get
               ctx
               (ast.ast-type-list-get payloads index (ast.ast-type-id-fallback))))
             [(tc_core.ResultTcNameId.Ok cleanup-name-id)
               (lower-enum-cleanup-payload-exprs-at
+                lower-state
+                pools
                 ctx
                 payloads
                 cleanups
                 (+ index 1)
                 (ast.ast-expr-cons
-                  (lower-enum-cleanup-call-expr cleanup-name-id value-name-id)
+                  (lower-enum-cleanup-call-expr
+                    pools
+                    cleanup-name-id
+                    value-name-id)
                   acc))]
             [(tc_core.ResultTcNameId.Err message)
               (parser.ResultAstExprList.Err message)])]))))
 
 (define (lower-enum-cleanup-arm
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
   [variant : ast.AstVariantDef]) : parser.ResultAstMatchArm
   (match variant
     [(ast.AstVariantDef.Def name payloads cleanups)
-      (match (lower-enum-cleanup-payload-exprs ctx payloads cleanups)
+      (match (lower-enum-cleanup-payload-exprs
+        lower-state
+        pools
+        ctx
+        payloads
+        cleanups)
         [(parser.ResultAstExprList.Ok exprs)
           (parser.ResultAstMatchArm.Ok
             (ast.ast-match-arm
               (ast.ast-pat-variant-id
                 name
                 (lower-enum-cleanup-payload-patterns
+                  lower-state
                   (ast.ast-type-list-len (& payloads))))
-              (ast.ast-node-push
+              (ast.ast-node-pool-context-expr-push
+                pools
                 (if (= (ast.ast-expr-list-len exprs) 0)
                   (ast.AstExpr.Literal ast.AstLiteral.Unit)
                   (ast.AstExpr.Begin exprs)))))]
@@ -64017,9 +64191,13 @@
           (parser.ResultAstMatchArm.Err message)])]))
 
 (define (lower-enum-cleanup-arms
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
   [variants : ast.AstVariantDefList]) : parser.ResultAstMatchArmList
   (lower-enum-cleanup-arms-at
+    lower-state
+    pools
     ctx
     (& variants)
     0
@@ -64027,6 +64205,8 @@
       (ast.ast-variant-def-list-len (& variants)))))
 
 (define (lower-enum-cleanup-arms-at
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
   [ctx : tc_core.TcContext]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]
@@ -64034,6 +64214,8 @@
   (if (>= index (ast.ast-variant-def-list-len variants))
     (parser.ResultAstMatchArmList.Ok out)
     (match (lower-enum-cleanup-arm
+      lower-state
+      pools
       ctx
       (ast.ast-variant-def-list-get
         variants
@@ -64044,7 +64226,13 @@
           [next : ast.AstMatchArmList out]
           (begin
             (ast.ast-match-arm-list-push (&mut next) arm)
-            (lower-enum-cleanup-arms-at ctx variants (+ index 1) next)))]
+            (lower-enum-cleanup-arms-at
+              lower-state
+              pools
+              ctx
+              variants
+              (+ index 1)
+              next)))]
       [(parser.ResultAstMatchArm.Err message)
         (parser.ResultAstMatchArmList.Err message)])))
 
@@ -64059,8 +64247,11 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [value-name-id : i64 (lower-struct-cleanup-param-id)]
-    (match (lower-enum-cleanup-arms ctx variants)
+    [lower-state : CompilerLowerState
+      (compiler-lower-state-from-name-cache names)]
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    [value-name-id : i64 (lower-struct-cleanup-param-id lower-state)]
+    (match (lower-enum-cleanup-arms lower-state pools ctx variants)
       [(parser.ResultAstMatchArmList.Ok arms)
         (lower-function-escaping
           ctx
@@ -64071,9 +64262,13 @@
             (ast.ast-param-id value-name-id enum-ty false)
             (ast.ast-param-list-new))
           (ast.AstType.Unit)
-          (ast.ast-node-get
-            (ast.ast-expr-match
-              (ast.ast-node-push (ast.AstExpr.Var value-name-id))
+          (ast.ast-node-pool-context-expr-get
+            pools
+            (ast.ast-expr-match-with-pools
+              pools
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (ast.AstExpr.Var value-name-id))
               arms))
           spans
           names
@@ -66621,6 +66816,7 @@
   [source-names : ci.InternSourceNameSessionHandle]
   [intern-state : ci.InternCompatState]) : ResultCompilerLower
   (begin
+    (compiler-lower-state-use-intern-state! lower-state intern-state)
     (cfg compile-profile (compiler-lower-profile-start))
     (tc_core.tc-agg-caches-reset!)
     ;; Generate declaration families before macro expansion (see

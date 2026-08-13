@@ -13852,6 +13852,204 @@
       (not (reg.compiler-reg-loop-nest-member? nest 0 3))
       (not (reg.compiler-reg-loop-nest-member? nest 5 3)))))
 
+;; --- CFG loop nest: the layout hull, and the preheader spliced on it --------
+;;
+;; The last readers of the index range are the ones that still have to speak in
+;; SPANS: the loop-split rescue's region, the leaf-CSR region, the call
+;; region's loop row. What those want is not "the highest block with an edge
+;; into h from at or below it" but "the highest block h's loop actually
+;; reaches" -- the same number only for a layout that keeps every loop
+;; contiguous and header-first, and an answer at all for blocks that head no
+;; loop whatever.
+(define (compiler-reg-loop-nest-hull-at
+  [hulls : (__tl_dyn-array i64)]
+  [index : i64]) : i64
+  (if (and (>= index 0) (< index (array-length hulls)))
+    (array-ref hulls index)
+    (- 0 2)))
+
+(define (compiler-reg-loop-nest-hulls-of [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+    i64)
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    (reg.compiler-reg-loop-nest-hulls-seq
+      seq
+      (ir.compiler-ir-block-seq-count seq))))
+
+(define (compiler-reg-loop-nest-hulls-ok?) : bool
+  (let
+    [nested : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-hulls-of (compiler-reg-loop-nest-nested-blocks))]
+    [early : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-hulls-of
+        (compiler-reg-loop-nest-early-exit-blocks))]
+    [sunk : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-hulls-of
+        (compiler-reg-loop-nest-sunk-cold-blocks))]
+    [rotated : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-hulls-of (compiler-reg-loop-nest-rotated-blocks))]
+    (and
+      ;; A nest: each loop's span is recorded on its OWN header, and the outer
+      ;; span contains the inner one rather than being merged with it.
+      (= (compiler-reg-loop-nest-hull-at nested 1) 4)
+      (= (compiler-reg-loop-nest-hull-at nested 2) 3)
+      (= (compiler-reg-loop-nest-hull-at nested 0) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at nested 3) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at nested 4) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at nested 5) (- 0 1))
+      ;; The break arm is laid out inside the span and is not a member. The
+      ;; span stays the overapproximation it always was -- which is why every
+      ;; consumer of it still re-proves single entry over the range it uses.
+      (= (compiler-reg-loop-nest-hull-at early 1) 4)
+      (= (compiler-reg-loop-nest-hull-at early 3) (- 0 1))
+      ;; The sunk cold block's backward-in-layout jump closes no cycle, so no
+      ;; block is given a span at all -- where the range encoding published one
+      ;; covering [join, cold] and charged a rescue region for it.
+      (= (compiler-reg-loop-nest-hull-at sunk 0) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at sunk 1) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at sunk 2) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at sunk 3) (- 0 1))
+      ;; A ROTATED loop reaches below its own header, so no span STARTING at
+      ;; the header contains it: published to nobody, because every consumer
+      ;; here anchors its region on the header. The range encoding instead
+      ;; handed out a span under a block that heads nothing.
+      (= (compiler-reg-loop-nest-hull-at rotated 0) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at rotated 1) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at rotated 2) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at rotated 3) (- 0 1))
+      (= (compiler-reg-loop-nest-hull-at rotated 4) (- 0 1)))))
+
+;; entry / body / latch / header / other / exit. The rescue's motivating case
+;; under rotation: `header` is laid out BELOW the body and latch it heads, and
+;; `entry` reaches it over a CRITICAL edge (entry has two successors, header
+;; has two predecessors), which is exactly the shape that cannot receive a
+;; once-per-loop INTO copy without a dedicated preheader.
+;;
+;; The index range cannot find that header: it records a back edge only from a
+;; source at or after the target, and every edge into block 3 comes from above
+;; it, so loop-ends[3] stays -1 and block 1 is read as the header of [1..3]
+;; instead -- a block with no out-of-loop predecessor at all. Nothing is
+;; spliced and the rescue is refused. As a member set the loop is
+;; {header, body, latch}, entered only through `entry`, and the preheader goes
+;; in where it belongs.
+(define (compiler-reg-preheader-rotated-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-branch "header" "other")
+    (compiler-reg-loop-nest-block
+      "body"
+      (compiler-reg-loop-nest-jump "latch")
+      (compiler-reg-loop-nest-block
+        "latch"
+        (compiler-reg-loop-nest-jump "header")
+        (compiler-reg-loop-nest-block
+          "header"
+          (compiler-reg-loop-nest-branch "body" "exit")
+          (compiler-reg-loop-nest-block
+            "other"
+            (compiler-reg-loop-nest-jump "exit")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-preheader-label-at
+  [blocks : ir.CompilerIrBlockList]
+  [index : i64]) : i64
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    (if (or (< index 0) (>= index (ir.compiler-ir-block-seq-count seq)))
+      (ir.compiler-ir-label-none)
+      (match (ir.compiler-ir-block-seq-ref seq index)
+        [(ir.CompilerIrBlock.Block label _) label]))))
+
+(define (compiler-reg-preheader-succ-has?
+  [blocks : ir.CompilerIrBlockList]
+  [index : i64]
+  [label : i64]) : bool
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    (if (or (< index 0) (>= index (ir.compiler-ir-block-seq-count seq)))
+      false
+      (live.compiler-live-label-set-contains?
+        (live.compiler-live-block-successors
+          (ir.compiler-ir-block-seq-ref seq index))
+        label))))
+
+(define (compiler-reg-preheader-rotated-splice-ok?) : bool
+  (let
+    [blocks : ir.CompilerIrBlockList (compiler-reg-preheader-rotated-blocks)]
+    [spliced : ir.CompilerIrBlockList
+      (reg.compiler-reg-loop-split-splice-preheader
+        blocks
+        (ir.compiler-ir-label "header"))]
+    ;; Asked a second time, the splice finds the preheader it already made and
+    ;; leaves the function alone.
+    [again : ir.CompilerIrBlockList
+      (reg.compiler-reg-loop-split-splice-preheader
+        spliced
+        (ir.compiler-ir-label "header"))]
+    ;; And asked about the block the RANGE encoding would have called a header
+    ;; of the sunk-cold shape, there is no loop to give a preheader to.
+    [sunk : ir.CompilerIrBlockList
+      (reg.compiler-reg-loop-split-splice-preheader
+        (compiler-reg-loop-nest-sunk-cold-blocks)
+        (ir.compiler-ir-label "join"))]
+    (and
+      (= (ir.compiler-ir-block-list-count blocks) 6)
+      (= (ir.compiler-ir-block-list-count spliced) 7)
+      ;; The new block sits immediately before the header it serves.
+      (=
+        (compiler-reg-preheader-label-at spliced 3)
+        (ir.compiler-ir-label "header.preheader"))
+      (=
+        (compiler-reg-preheader-label-at spliced 4)
+        (ir.compiler-ir-label "header"))
+      ;; `entry`'s critical edge now lands on the preheader, and the latch's
+      ;; back edge -- inside the loop -- is left pointing at the header.
+      (compiler-reg-preheader-succ-has?
+        spliced
+        0
+        (ir.compiler-ir-label "header.preheader"))
+      (not
+        (compiler-reg-preheader-succ-has?
+          spliced
+          0
+          (ir.compiler-ir-label "header")))
+      (compiler-reg-preheader-succ-has?
+        spliced
+        2
+        (ir.compiler-ir-label "header"))
+      (= (ir.compiler-ir-block-list-count again) 7)
+      (= (ir.compiler-ir-block-list-count sunk) 4))))
+
+;; The hull array owns no state across calls either: the same block list asked
+;; twice gives the same spans, and another shape asked in between must not leak
+;; a stamp generation into the second answer.
+(define (compiler-reg-loop-nest-hulls-deterministic-ok?) : bool
+  (let
+    [first : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-hulls-of (compiler-reg-loop-nest-nested-blocks))]
+    [_other : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-hulls-of
+        (compiler-reg-loop-nest-two-latch-blocks))]
+    [second : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-hulls-of (compiler-reg-loop-nest-nested-blocks))]
+    [count : i64 (array-length first)]
+    [index : i64 0]
+    [ok : bool (= count (array-length second))]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref first index) (array-ref second index))
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
 ;; --- live-in bridge at a block that opens with a call -----------------------
 ;;
 ;; A segment's START is read as the value's own definition, so a clobber AT the
@@ -13977,6 +14175,15 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-nest-regeneration-ok?"
       (compiler-reg-loop-nest-regeneration-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-hulls-ok?"
+      (compiler-reg-loop-nest-hulls-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-hulls-deterministic-ok?"
+      (compiler-reg-loop-nest-hulls-deterministic-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-preheader-rotated-splice-ok?"
+      (compiler-reg-preheader-rotated-splice-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-live-in-call-ok?"
       (compiler-reg-live-in-call-ok?))

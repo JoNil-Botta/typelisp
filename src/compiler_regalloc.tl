@@ -10339,80 +10339,6 @@
         (set! i (+ i 1)))
       out)))
 
-(define (compiler-reg-loop-depth-record-succ!
-  [loop-ends : (__tl_dyn-array i64)]
-  [ids : reg_label_i64_map.Map]
-  [source-id : i64]
-  [label : i64]) : unit
-  (match (reg_label_i64_map.get (& ids) label)
-    [(reg_label_i64_map.LookupFound target-id)
-      (if (and (>= target-id 0) (<= target-id source-id))
-        (if (> source-id (array-ref loop-ends target-id))
-          (set! (array-ref loop-ends target-id) source-id)
-          unit)
-        unit)]
-    [(reg_label_i64_map.LookupMissing) unit]))
-
-(define (compiler-reg-loop-depth-record-succs!
-  [loop-ends : (__tl_dyn-array i64)]
-  [ids : reg_label_i64_map.Map]
-  [source-id : i64]
-  [succs : live.CompilerLiveLabelSet]) : unit
-  (match succs
-    [(live.CompilerLiveLabelSet.Nil) unit]
-    [(live.CompilerLiveLabelSet.Dense _ _)
-      (begin
-        (compiler-reg-loop-depth-record-succ!
-          loop-ends
-          ids
-          source-id
-          (live.compiler-live-label-set-ref succs 0))
-        (compiler-reg-loop-depth-record-succs!
-          loop-ends
-          ids
-          source-id
-          (live.compiler-live-label-set-tail succs)))]))
-
-(define (compiler-reg-loop-depth-record-blocks!
-  [blocks : ir.CompilerIrBlockList]
-  [ids : reg_label_i64_map.Map]
-  [loop-ends : (__tl_dyn-array i64)]
-  [index : i64]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (compiler-reg-loop-depth-record-succs!
-          loop-ends
-          ids
-          index
-          (live.compiler-live-block-successors block))
-        (compiler-reg-loop-depth-record-blocks!
-          (__tl-box-place rest)
-          ids
-          loop-ends
-          (+ index 1)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (compiler-reg-loop-depth-record-blocks-seq! seq ids loop-ends index)]))
-
-(define (compiler-reg-loop-depth-record-blocks-seq!
-  [seq : ir.CompilerIrBlockSeq]
-  [ids : reg_label_i64_map.Map]
-  [loop-ends : (__tl_dyn-array i64)]
-  [index : i64]) : unit
-  (let
-    [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [i : i64 index]
-    (while (< i count)
-      (begin
-        (compiler-reg-loop-depth-record-succs!
-          loop-ends
-          ids
-          i
-          (live.compiler-live-block-successors
-            (ir.compiler-ir-block-seq-ref seq i)))
-        (set! i (+ i 1))))))
-
 ;; --- Loop depth: the CFG loop nest ------------------------------------------
 ;;
 ;; Loop depth ranks how often a block runs, and every weight the allocator
@@ -11067,6 +10993,84 @@
             unit)
           (set! index (+ index 1))))
       hi)))
+
+;; Is `block` one of this nest's headers? `headers` holds the distinct
+;; back-edge targets, so the scan runs over the function's LOOPS and not over
+;; its blocks -- what a consumer already holding one block index asks, rather
+;; than stamping a set to find out. A block that is merely the target of an
+;; edge running backward in the EMITTED ORDER answers false here: such an edge
+;; closes no cycle, which is exactly the claim the index range could not make.
+(define (compiler-reg-loop-nest-header?
+  [nest : CompilerRegLoopNest]
+  [block : i64]) : bool
+  (let
+    [headers : (__tl_dyn-array i64) nest.headers]
+    [count : i64 nest.header-count]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref headers index) block)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+;; The LAYOUT HULL of every loop, one entry per block: hulls[h] is the highest
+;; block index any member of the loop headed by h occupies, and -1 for a block
+;; that heads no loop.
+;;
+;; This is the currency of the consumers that still have to name a CONTIGUOUS
+;; SPAN -- an instruction-point region, a block range to scan. They used to
+;; read "the highest block with an edge into h from at or below it", which is
+;; the same number only while a loop's blocks are laid out contiguously with
+;; the header first, and which answered for blocks heading no loop at all.
+;;
+;; A loop whose set reaches BELOW its header is left at -1: no span STARTING at
+;; h describes it, and every consumer of this array anchors its region on the
+;; header. Blocks laid out inside the span that are not members are the same
+;; overapproximation the range encoding always had -- the callers re-prove
+;; single entry over the span they use.
+(define (compiler-reg-loop-nest-hulls!
+  [nest : CompilerRegLoopNest]
+  [hulls : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (array-length hulls)]
+    [headers : i64 nest.header-count]
+    [index : i64 0]
+    [generation : i64 0]
+    (while (< index headers)
+      (begin
+        (let
+          [header : i64 (array-ref nest.headers index)]
+          [total : i64 0]
+          (begin
+            (set! generation (+ generation 1))
+            (set!
+              total
+              (compiler-reg-loop-nest-header-members! nest header generation))
+            (if (and
+              (>= header 0)
+              (< header count)
+              (= (compiler-reg-loop-nest-member-lo nest header total) header))
+              (set!
+                (array-ref hulls header)
+                (compiler-reg-loop-nest-member-hi nest header total))
+              unit)))
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-loop-nest-hulls-seq
+  [seq : ir.CompilerIrBlockSeq]
+  [count : i64]) : (__tl_dyn-array i64)
+  (let
+    [hulls : (__tl_dyn-array i64) (array.make-array i64 count)]
+    (begin
+      (compiler-reg-fill-i64-array hulls (- 0 1))
+      (compiler-reg-loop-nest-hulls!
+        (compiler-reg-loop-nest-build-seq seq)
+        hulls)
+      hulls)))
 
 ;; The first consumer of the producer above: one level for every loop a block
 ;; is in. The level saturates, so the order the headers arrive in cannot move
@@ -13463,13 +13467,6 @@
   (live.compiler-live-label-set-count
     (live.compiler-live-block-successors block)))
 
-(define (compiler-reg-preheader-succ-contains?
-  [block : ir.CompilerIrBlock]
-  [label : i64]) : bool
-  (live.compiler-live-label-set-contains?
-    (live.compiler-live-block-successors block)
-    label))
-
 ;; True iff the block's terminator is a conditional branch -- the only
 ;; critical-edge terminator we know how to redirect (a Jump has a single
 ;; successor, so it is never a critical edge).
@@ -13485,99 +13482,36 @@
             [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) true]
             [_ false])))]))
 
-;; loop-ends[h] = highest block index with a back-edge to block h (-1 if none).
-;; h is a loop header iff loop-ends[h] >= h; [h..loop-ends[h]] is its natural
-;; loop. Same back-edge scan the loop-depth pass uses.
-(define (compiler-reg-preheader-loop-ends
-  [blocks : ir.CompilerIrBlockList]
-  [count : i64]) : (__tl_dyn-array i64)
-  (let
-    [loop-ends : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [ids : reg_label_i64_map.Map
-      (compiler-reg-loop-depth-block-ids
-        blocks
-        (reg_label_i64_map.with-capacity (compiler-reg-bits-map-capacity count))
-        0)]
-    (begin
-      (compiler-reg-fill-i64-array loop-ends (- 0 1))
-      (compiler-reg-loop-depth-record-blocks! blocks ids loop-ends 0)
-      loop-ends)))
-
-(define (compiler-reg-preheader-loop-ends-seq
-  [seq : ir.CompilerIrBlockSeq]
-  [count : i64]) : (__tl_dyn-array i64)
-  (let
-    [loop-ends : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [ids : reg_label_i64_map.Map
-      (compiler-reg-loop-depth-block-ids-seq
-        seq
-        (reg_label_i64_map.with-capacity (compiler-reg-bits-map-capacity count))
-        0)]
-    (begin
-      (compiler-reg-fill-i64-array loop-ends (- 0 1))
-      (compiler-reg-loop-depth-record-blocks-seq! seq ids loop-ends 0)
-      loop-ends)))
-
-;; Scan all blocks for predecessors of header `h` (succ contains h-label) that
-;; lie OUTSIDE the natural-loop range [h..le]. Returns the single such index,
-;; -1 if none, or -2 if more than one (multi-entry -- not this slice).
-(define (compiler-reg-preheader-scan-outside-preds
-  [orig : (__tl_dyn-array ir.CompilerIrBlock)]
-  [h : i64]
-  [le : i64]
-  [h-label : i64]
-  [n : i64]
-  [p : i64]
-  [found : i64]) : i64
-  (if (>= p n)
-    found
-    (if (= found (- 0 2))
-      (- 0 2)
-      (compiler-reg-preheader-scan-outside-preds
-        orig
-        h
-        le
-        h-label
-        n
-        (+ p 1)
-        (if (and
-          (or (< p h) (> p le))
-          (compiler-reg-preheader-succ-contains? (array-ref orig p) h-label))
-          (if (= found (- 0 1))
-            p
-            (- 0 2))
-          found)))))
-
 ;; If the header at block index `h` qualifies for a dedicated preheader, return
 ;; the block index of its single out-of-loop predecessor; otherwise -1.
+;;
+;; `h` has to be a HEADER of the nest -- an edge that merely runs backward in
+;; the emitted order opens no loop and gets no preheader -- and "out of loop"
+;; is MEMBERSHIP rather than an index range, so a latch laid out anywhere at
+;; all still reads as inside and a block laid out between header and latch that
+;; the loop never reaches still reads as outside. The nest's predecessor CSR
+;; also counts the unnamed fall-through edge, so a block that runs into the
+;; header without naming it is seen as the second entry it is.
 (define (compiler-reg-preheader-pred-for-header
   [orig : (__tl_dyn-array ir.CompilerIrBlock)]
-  [loop-ends : (__tl_dyn-array i64)]
+  [nest : CompilerRegLoopNest]
   [ids : reg_label_i64_map.Map]
   [h : i64]
   [h-label : i64]) : i64
   (if (or
     (<= h 0)
-    (>= h (array-length loop-ends))
-    (< (array-ref loop-ends h) h)
+    (not (compiler-reg-loop-nest-header? nest h))
     (reg_label_i64_map.contains?
       (& ids)
       (ir.compiler-ir-label
         (str_cat.str-cat (ir.compiler-ir-label-text h-label) ".preheader"))))
     (- 0 1)
     (let
-      [le : i64 (array-ref loop-ends h)]
-      [n : i64 (array-length orig)]
-      [pred : i64
-        (compiler-reg-preheader-scan-outside-preds
-          orig
-          h
-          le
-          h-label
-          n
-          0
-          (- 0 1))]
-      (if (< pred 0)
+      ;; One header is asked about per nest here, so generation 1 is the only
+      ;; one ever issued: stamp the loop, then read its one outside entry.
+      [_total : i64 (compiler-reg-loop-nest-header-members! nest h 1)]
+      [pred : i64 (compiler-reg-loop-nest-outside-pred nest h 1)]
+      (if (or (< pred 0) (>= pred (array-length orig)))
         (- 0 1)
         (if (and
           (> (compiler-reg-preheader-succ-count (array-ref orig pred)) 1)
@@ -13855,8 +13789,7 @@
             (reg_label_i64_map.with-capacity
               (compiler-reg-bits-map-capacity count))
             0)]
-        [loop-ends : (__tl_dyn-array i64)
-          (compiler-reg-preheader-loop-ends-seq seq count)]
+        [nest : CompilerRegLoopNest (compiler-reg-loop-nest-build-seq seq)]
         [header-pred : (__tl_dyn-array i64) (array.make-array i64 count)]
         (begin
           (compiler-reg-fill-i64-array header-pred (- 0 1))
@@ -13866,7 +13799,7 @@
                 [pred : i64
                   (compiler-reg-preheader-pred-for-header
                     orig
-                    loop-ends
+                    nest
                     ids
                     h
                     header-label)]
@@ -14495,9 +14428,9 @@
 ;; phi-correctness gate (every header-phi input is in the group) guarantees that,
 ;; so the INTO copy cannot race a real phi-lowering move.
 ;;
-;; ADMITTED SHAPE: a natural loop [H..E] (E = loop-ends[H], the highest block with
-;; a back-edge to H) whose BODY blocks (H..E] are each entered only from inside the
-;; region, so the region's ONLY entry is H. That is the soundness witness the
+;; ADMITTED SHAPE: a natural loop spanning [H..E] (E = hulls[H], the highest block
+;; H's loop has a member at) whose BODY blocks (H..E] are each entered only from
+;; inside the region, so the region's ONLY entry is H. That is the soundness witness the
 ;; INTO copy needs: the planner places a header-edge INTO copy at PredEnd (H has
 ;; >1 predecessor, so SuccEntry is unavailable and a multi-successor preheader is
 ;; refused as critical), which puts the `R = slot` load AHEAD of the lowered
@@ -15037,10 +14970,10 @@
       [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
         (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)])))
 
-;; Scan block indices for a natural-loop header (loop-ends[h] > h) at loop
-;; depth>0 whose body blocks (h..loop-ends[h]] are each entered from inside the
-;; region only, then try to home one of its phi-carried groups or, failing that,
-;; one of its spilled loop invariants.
+;; Scan block indices for a loop header whose loop occupies the span
+;; [h..hulls[h]] at loop depth>0 and whose body blocks (h..hulls[h]] are each
+;; entered from inside the region only, then try to home one of its phi-carried
+;; groups or, failing that, one of its spilled loop invariants.
 (define (compiler-reg-loop-phi-mb-select-headers
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -15048,7 +14981,7 @@
   [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
   [points : (__tl_dyn-array i64)]
-  [loop-ends : (__tl_dyn-array i64)]
+  [hulls : (__tl_dyn-array i64)]
   [pred-ranges : (__tl_dyn-array i64)]
   [depths : (__tl_dyn-array i64)]
   [h : i64]
@@ -15064,8 +14997,8 @@
     (CompilerRegLoopSplitCandidate.NoCandidate)
     (let
       [end-idx : i64
-        (if (< h (array-length loop-ends))
-          (array-ref loop-ends h)
+        (if (< h (array-length hulls))
+          (array-ref hulls h)
           (- 0 1))]
       [body : i64 (+ h 1)]
       (if (and
@@ -15130,7 +15063,7 @@
                 live-blocks
                 block-array
                 points
-                loop-ends
+                hulls
                 pred-ranges
                 depths
                 (+ h 1)
@@ -15151,7 +15084,7 @@
           live-blocks
           block-array
           points
-          loop-ends
+          hulls
           pred-ranges
           depths
           (+ h 1)
@@ -15164,7 +15097,7 @@
           merged-roots
           weights)))))
 
-;; Top-level multi-block phi selector: build block array / points / loop-ends /
+;; Top-level multi-block phi selector: build block array / points / loop hulls /
 ;; pred ranges and scan headers. Returns a candidate (with multi-block region
 ;; labels) or NoCandidate. Called as the fallback after the single-block
 ;; select-blocks finds nothing, so the single-block paths stay byte-identical.
@@ -15197,7 +15130,7 @@
         live-blocks
         block-array
         (compiler-reg-loop-phi-mb-block-points block-array)
-        (compiler-reg-preheader-loop-ends-seq seq count)
+        (compiler-reg-loop-nest-hulls-seq seq count)
         (compiler-reg-loop-phi-mb-pred-ranges liveness live-blocks)
         depths
         0
@@ -15818,7 +15751,7 @@
   [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
   [points : (__tl_dyn-array i64)]
-  [loop-ends : (__tl_dyn-array i64)]
+  [hulls : (__tl_dyn-array i64)]
   [depths : (__tl_dyn-array i64)]
   [header : i64]
   [vars : i64]
@@ -15835,8 +15768,8 @@
     CompilerRegLeafCsrSplitCandidate.NoCandidate
     (let
       [end-index : i64
-        (if (< header (array-length loop-ends))
-          (array-ref loop-ends header)
+        (if (< header (array-length hulls))
+          (array-ref hulls header)
           (- 0 1))]
       (if (and
         (>= end-index header)
@@ -15887,7 +15820,7 @@
                 live-blocks
                 block-array
                 points
-                loop-ends
+                hulls
                 depths
                 (+ header 1)
                 vars
@@ -15924,7 +15857,7 @@
           live-blocks
           block-array
           points
-          loop-ends
+          hulls
           depths
           (+ header 1)
           vars
@@ -16208,7 +16141,7 @@
                       live-blocks
                       block-array
                       (compiler-reg-loop-phi-mb-block-points block-array)
-                      (compiler-reg-preheader-loop-ends-seq
+                      (compiler-reg-loop-nest-hulls-seq
                         seq
                         (array-length block-array))
                       depths
@@ -17176,7 +17109,7 @@
 ;; net equally.
 ;;
 ;; kind = compiler-reg-call-region-kind-loop (1): a whole natural loop
-;; [h..loop-ends[h]], anchored at the LAST instruction of the layout
+;; spanning [h..hulls[h]], anchored at the LAST instruction of the layout
 ;; predecessor h-1 (its preheader). The entry reload runs ONCE per loop entry
 ;; while every use runs once per iteration, so the two sides sit at different
 ;; frequencies and the score must weight them separately -- that asymmetry, not
@@ -18758,7 +18691,7 @@
 ;; leave the loop entirely.
 ;;
 ;; So the region model gains a second shape. A LOOP row covers the natural loop
-;; [h..loop-ends[h]] and is anchored at the LAST instruction of block h-1 -- the
+;; spanning [h..hulls[h]] and is anchored at the LAST instruction of block h-1 -- the
 ;; loop's preheader -- which the rewrite already knows how to handle: the
 ;; activation mov is emitted just before the anchor instruction, so it runs once
 ;; per loop entry, and the remap then covers every use inside the loop.
@@ -18859,10 +18792,11 @@
           (set! b (+ b 1))))
       ranges)))
 
-;; Region admission for header `h` with natural-loop end `e` (= loop-ends[h],
-;; so a back edge into h from e is already proven). e == h is the single-block
-;; self-loop, which is admitted: it is the flagship's inner shape, and its
-;; empty body range makes the single-entry scan trivially true.
+;; Region admission for header `h` over the span [h..e] its loop occupies (e =
+;; hulls[h], so h heading a loop whose members all lie at or below e is already
+;; proven). e == h is the single-block self-loop, which is admitted: it is the
+;; flagship's inner shape, and its empty body range makes the single-entry scan
+;; trivially true.
 (define (compiler-reg-call-region-loop-admit?
   [ranges : (__tl_dyn-array i64)]
   [depths : (__tl_dyn-array i64)]
@@ -19146,8 +19080,8 @@
       (let
         [points : (__tl_dyn-array i64)
           (compiler-reg-loop-phi-mb-block-points bslots)]
-        [loop-ends : (__tl_dyn-array i64)
-          (compiler-reg-preheader-loop-ends-seq seq nblocks)]
+        [hulls : (__tl_dyn-array i64)
+          (compiler-reg-loop-nest-hulls-seq seq nblocks)]
         [ranges : (__tl_dyn-array i64)
           (compiler-reg-call-region-pred-ranges
             bslots
@@ -19166,8 +19100,8 @@
           (while (< h nblocks)
             (let
               [e : i64
-                (if (< h (array-length loop-ends))
-                  (array-ref loop-ends h)
+                (if (< h (array-length hulls))
+                  (array-ref hulls h)
                   (- 0 1))]
               (begin
                 (when

@@ -57281,10 +57281,29 @@
 
 ;; Length-relation conjuncts the cross-array fusion derivation has already put
 ;; in the guard, so a second fused check over the same pair of arrays reuses
-;; the conjunct instead of adding a duplicate compare.
-(defenum OptBceMbFused
-  (Nil)
-  (Pair ir.CompilerIrValue ir.CompilerIrValue (Box OptBceMbFused)))
+;; the conjunct instead of adding a duplicate compare. Physical pushes replace
+;; the old Cons/prepend operation; logical readers walk newest-first.
+(defstruct OptBceMbFusedPair
+  (lhs ir.CompilerIrValue)
+  (rhs ir.CompilerIrValue))
+
+(import (vector.vector OptBceMbFusedPair core) as opt_bce_mb_fused_vec)
+
+(defstruct OptBceMbFused
+  (items opt_bce_mb_fused_vec.Vec))
+
+(define (opt-bce-mb-fused-new) : OptBceMbFused
+  (OptBceMbFused (opt_bce_mb_fused_vec.with-capacity 4)))
+
+(define (opt-bce-mb-fused-count [fused : OptBceMbFused]) : i64
+  (opt_bce_mb_fused_vec.len (& fused.items)))
+
+(define (opt-bce-mb-fused-ref [fused : OptBceMbFused] [index : i64]) : OptBceMbFusedPair
+  (let
+    [items : opt_bce_mb_fused_vec.Vec fused.items]
+    (array-ref
+      (opt_bce_mb_fused_vec.slots (& items))
+      (- (- (opt_bce_mb_fused_vec.len (& items)) index) 1))))
 
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
 ;; checks), the kept-check set, how many checks derived -- partial
@@ -58105,12 +58124,121 @@
   [fused : OptBceMbFused]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]) : bool
-  (match fused
-    [(OptBceMbFused.Nil) false]
-    [(OptBceMbFused.Pair a b rest)
-      (if (and (opt-value-eq a lhs) (opt-value-eq b rhs))
-        true
-        (opt-bce-mb-fused-contains? (__tl-box-place rest) lhs rhs))]))
+  (opt-bce-mb-fused-contains-from? fused lhs rhs 0))
+
+(define (opt-bce-mb-fused-contains-from?
+  [fused : OptBceMbFused]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [index : i64]) : bool
+  (if (>= index (opt-bce-mb-fused-count fused))
+    false
+    (match (opt-bce-mb-fused-ref fused index)
+      [(OptBceMbFusedPair item-lhs item-rhs)
+        (if (and (opt-value-eq item-lhs lhs) (opt-value-eq item-rhs rhs))
+          true
+          (opt-bce-mb-fused-contains-from? fused lhs rhs (+ index 1)))])))
+
+(define (opt-bce-mb-fused-prepend
+  [fused : OptBceMbFused (:consume)]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptBceMbFused
+  (let
+    [items : opt_bce_mb_fused_vec.Vec fused.items]
+    (begin
+      (opt_bce_mb_fused_vec.push (&mut items) (OptBceMbFusedPair lhs rhs))
+      (OptBceMbFused items))))
+
+(define (opt-bce-mb-fused-insert
+  [fused : OptBceMbFused (:consume)]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptBceMbFused
+  (if (opt-bce-mb-fused-contains? fused lhs rhs)
+    fused
+    (opt-bce-mb-fused-prepend fused lhs rhs)))
+
+(cfg
+  test
+  (define (opt-bce-mb-fused-test-fill
+    [fused : OptBceMbFused (:consume)]
+    [index : i64]
+    [count : i64]) : OptBceMbFused
+    (if (>= index count)
+      fused
+      (opt-bce-mb-fused-test-fill
+        (opt-bce-mb-fused-insert
+          fused
+          (ir.CompilerIrValue.Var index)
+          (ir.CompilerIrValue.I64 (+ index 100)))
+        (+ index 1)
+        count))))
+
+(cfg
+  test
+  (test
+    optimizer-bce-mb-fused-dense-storage-grows
+    (let
+      [single : OptBceMbFused
+        (opt-bce-mb-fused-insert
+          (opt-bce-mb-fused-new)
+          (ir.CompilerIrValue.Var 40)
+          (ir.CompilerIrValue.I64 140))]
+      [fused : OptBceMbFused
+        (opt-bce-mb-fused-test-fill (opt-bce-mb-fused-new) 0 9)]
+      (begin
+        (test.assert-i64-eq
+          (opt-bce-mb-fused-count (opt-bce-mb-fused-new))
+          0
+          "BCE fused-pair storage starts empty")
+        (test.assert-i64-eq
+          (opt-bce-mb-fused-count single)
+          1
+          "BCE fused-pair storage preserves a singleton")
+        (test.assert-true
+          (opt-bce-mb-fused-contains?
+            single
+            (ir.CompilerIrValue.Var 40)
+            (ir.CompilerIrValue.I64 140))
+          "BCE fused-pair singleton has exact membership")
+        ;; Pair membership is a set: reinsertion must not grow the container.
+        (set!
+          fused
+          (opt-bce-mb-fused-insert
+            fused
+            (ir.CompilerIrValue.Var 8)
+            (ir.CompilerIrValue.I64 108)))
+        (test.assert-i64-eq
+          (opt-bce-mb-fused-count fused)
+          9
+          "BCE fused-pair storage grows once per distinct relation")
+        (test.assert-true
+          (opt-bce-mb-fused-contains?
+            fused
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 100))
+          "BCE fused-pair storage retains its oldest relation")
+        (test.assert-true
+          (opt-bce-mb-fused-contains?
+            fused
+            (ir.CompilerIrValue.Var 8)
+            (ir.CompilerIrValue.I64 108))
+          "BCE fused-pair storage retains its newest relation after growth")
+        (test.assert-true
+          (not
+            (opt-bce-mb-fused-contains?
+              fused
+              (ir.CompilerIrValue.Var 8)
+              (ir.CompilerIrValue.I64 109)))
+          "BCE fused-pair membership distinguishes the rhs")
+        (match (opt-bce-mb-fused-ref fused 0)
+          [(OptBceMbFusedPair lhs rhs)
+            (begin
+              (test.assert-true
+                (opt-value-eq lhs (ir.CompilerIrValue.Var 8))
+                "BCE fused-pair traversal remains newest-first")
+              (test.assert-true
+                (opt-value-eq rhs (ir.CompilerIrValue.I64 108))
+                "BCE fused-pair traversal preserves the paired rhs"))])))))
 
 ;; The one conjunct a fused check needs: `anchor_length <=u target_length`.
 ;; UNSIGNED, exactly matching the order a BoundsCheck tests, so it needs no
@@ -58306,10 +58434,10 @@
                       state.hoists
                       (if related?
                         state.fused
-                        (OptBceMbFused.Pair
+                        (opt-bce-mb-fused-prepend
+                          state.fused
                           anchor-length
-                          length-invariant
-                          (box state.fused))))]))]))]
+                          length-invariant)))]))]))]
       [_ kept])))
 
 ;; Derive one check against a proven-invariant length value: on success the
@@ -58660,27 +58788,108 @@
 ;; counter compare sits at the latch and dominates nothing above it, and the
 ;; trip range is a fact only the versioning pass's own derivations carry, so
 ;; nothing is hoisted there.
-(defenum OptBceMbUppers
-  (Nil)
-  (Cons ir.CompilerIrValue (Box OptBceMbUppers)))
+(import (vector.vector ir.CompilerIrValue core) as opt_bce_mb_upper_vec)
+
+(defstruct OptBceMbUppers
+  (items opt_bce_mb_upper_vec.Vec))
+
+(define (opt-bce-mb-uppers-new) : OptBceMbUppers
+  ;; The production bound is two. Starting at one makes the second distinct
+  ;; upper exercise the same capacity growth path as larger dense families.
+  (OptBceMbUppers (opt_bce_mb_upper_vec.with-capacity 1)))
 
 (define (opt-bce-mb-upper-max) : i64
   2)
 
 (define (opt-bce-mb-uppers-count [uppers : OptBceMbUppers]) : i64
-  (match uppers
-    [(OptBceMbUppers.Nil) 0]
-    [(OptBceMbUppers.Cons _ rest) (+ 1 (opt-bce-mb-uppers-count (deref rest)))]))
+  (opt_bce_mb_upper_vec.len (& uppers.items)))
+
+(define (opt-bce-mb-uppers-ref [uppers : OptBceMbUppers] [index : i64]) : ir.CompilerIrValue
+  (let
+    [items : opt_bce_mb_upper_vec.Vec uppers.items]
+    (array-ref
+      (opt_bce_mb_upper_vec.slots (& items))
+      (- (- (opt_bce_mb_upper_vec.len (& items)) index) 1))))
 
 (define (opt-bce-mb-uppers-contains?
   [uppers : OptBceMbUppers]
   [value : ir.CompilerIrValue]) : bool
-  (match uppers
-    [(OptBceMbUppers.Nil) false]
-    [(OptBceMbUppers.Cons item rest)
-      (if (opt-value-eq item value)
-        true
-        (opt-bce-mb-uppers-contains? (deref rest) value))]))
+  (opt-bce-mb-uppers-contains-from? uppers value 0))
+
+(define (opt-bce-mb-uppers-contains-from?
+  [uppers : OptBceMbUppers]
+  [value : ir.CompilerIrValue]
+  [index : i64]) : bool
+  (if (>= index (opt-bce-mb-uppers-count uppers))
+    false
+    (if (opt-value-eq (opt-bce-mb-uppers-ref uppers index) value)
+      true
+      (opt-bce-mb-uppers-contains-from? uppers value (+ index 1)))))
+
+(define (opt-bce-mb-uppers-insert
+  [uppers : OptBceMbUppers (:consume)]
+  [value : ir.CompilerIrValue]) : OptBceMbUppers
+  (if (or
+    (>= (opt-bce-mb-uppers-count uppers) (opt-bce-mb-upper-max))
+    (opt-bce-mb-uppers-contains? uppers value))
+    uppers
+    (let
+      [items : opt_bce_mb_upper_vec.Vec uppers.items]
+      (begin
+        (opt_bce_mb_upper_vec.push (&mut items) value)
+        (OptBceMbUppers items)))))
+
+(cfg
+  test
+  (test
+    optimizer-bce-mb-upper-dense-storage-grows
+    (let
+      [uppers : OptBceMbUppers (opt-bce-mb-uppers-new)]
+      (begin
+        (test.assert-i64-eq
+          (opt-bce-mb-uppers-count uppers)
+          0
+          "BCE upper storage starts empty")
+        (set!
+          uppers
+          (opt-bce-mb-uppers-insert uppers (ir.CompilerIrValue.Var 10)))
+        (test.assert-i64-eq
+          (opt-bce-mb-uppers-count uppers)
+          1
+          "BCE upper storage preserves a singleton")
+        (test.assert-true
+          (opt-value-eq
+            (opt-bce-mb-uppers-ref uppers 0)
+            (ir.CompilerIrValue.Var 10))
+          "BCE upper singleton keeps its logical order")
+        (set!
+          uppers
+          (opt-bce-mb-uppers-insert uppers (ir.CompilerIrValue.Var 11)))
+        ;; Duplicate insertion and a third distinct bound are both rejected.
+        (set!
+          uppers
+          (opt-bce-mb-uppers-insert uppers (ir.CompilerIrValue.Var 11)))
+        (set!
+          uppers
+          (opt-bce-mb-uppers-insert uppers (ir.CompilerIrValue.Var 12)))
+        (test.assert-i64-eq
+          (opt-bce-mb-uppers-count uppers)
+          2
+          "BCE upper storage grows to its distinct-bound limit")
+        (test.assert-true
+          (opt-bce-mb-uppers-contains? uppers (ir.CompilerIrValue.Var 10))
+          "BCE upper storage retains its oldest bound")
+        (test.assert-true
+          (opt-bce-mb-uppers-contains? uppers (ir.CompilerIrValue.Var 11))
+          "BCE upper storage retains its newest bound")
+        (test.assert-true
+          (not (opt-bce-mb-uppers-contains? uppers (ir.CompilerIrValue.Var 12)))
+          "BCE upper storage rejects a third distinct bound")
+        (test.assert-true
+          (opt-value-eq
+            (opt-bce-mb-uppers-ref uppers 0)
+            (ir.CompilerIrValue.Var 11))
+          "BCE upper traversal remains newest-first")))))
 
 ;; The invariant `X` a branch condition tests the counter's UPPER side against,
 ;; in either spelling (`counter < X`, `X > counter`). `Le` counts too: the
@@ -58755,9 +58964,7 @@
           (match (opt-bce-mb-upper-of-cond body-blocks iphi bound cond)
             [(ir.CompilerIrMaybeValue.No) uppers]
             [(ir.CompilerIrMaybeValue.Some upper)
-              (if (opt-bce-mb-uppers-contains? uppers upper)
-                uppers
-                (OptBceMbUppers.Cons upper (box uppers)))])]
+              (opt-bce-mb-uppers-insert uppers upper)])]
         [_ uppers]))))
 
 (define (opt-bce-mb-upper-scan
@@ -58799,7 +59006,7 @@
 ;; Nothing is hoisted for a loop whose counter compare dominates no body block.
 (define (opt-bce-mb-uppers-for-shape [shape : OptBceMbShape]) : OptBceMbUppers
   (match shape.uncovered
-    [(OptLabelSet.Nil) (OptBceMbUppers.Nil)]
+    [(OptLabelSet.Nil) (opt-bce-mb-uppers-new)]
     [(OptLabelSet.Dense _ _)
       (opt-bce-mb-upper-scan
         shape.body-blocks
@@ -58807,21 +59014,34 @@
         shape.iphi
         shape.bound
         shape.uncovered
-        (OptBceMbUppers.Nil))]))
+        (opt-bce-mb-uppers-new))]))
 
 (define (opt-bce-mb-upper-conds
   [cell : (__tl_dyn-array i64)]
   [bound : ir.CompilerIrValue]
   [uppers : OptBceMbUppers]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match uppers
-    [(OptBceMbUppers.Nil) acc]
-    [(OptBceMbUppers.Cons upper rest)
-      (opt-bce-mb-upper-conds
+  (opt-bce-mb-upper-conds-from cell bound uppers acc 0))
+
+(define (opt-bce-mb-upper-conds-from
+  [cell : (__tl_dyn-array i64)]
+  [bound : ir.CompilerIrValue]
+  [uppers : OptBceMbUppers]
+  [acc : OptBceVersionGuardAcc]
+  [index : i64]) : OptBceVersionGuardAcc
+  (if (>= index (opt-bce-mb-uppers-count uppers))
+    acc
+    (opt-bce-mb-upper-conds-from
+      cell
+      bound
+      uppers
+      (opt-bce-version-cond
         cell
+        (ir.CompilerIrBinOp.Le)
         bound
-        (deref rest)
-        (opt-bce-version-cond cell (ir.CompilerIrBinOp.Le) bound upper acc))]))
+        (opt-bce-mb-uppers-ref uppers index)
+        acc)
+      (+ index 1))))
 
 ;; The counter's executed range, always as the ASCENDING pair every derivation
 ;; downstream reads: an inclusive first value, an exclusive limit, and a
@@ -58993,7 +59213,7 @@
           (OptBceMbKeep.Nil)
           0
           (OptBceMbHoists.Nil)
-          (OptBceMbFused.Nil)))]
+          (opt-bce-mb-fused-new)))]
     (if (or
       ;; No removable check: cloning the loop would only duplicate it. A body
       ;; that duplicates CALL SITES owes more than one -- see

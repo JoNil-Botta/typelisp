@@ -1541,6 +1541,9 @@ if [ "$NL_HOST_OS" = windows ]; then
     # helpers; the authoritative Windows probe measured 2,228,875 used nodes,
     # crossing the boundary to 2,293,760 capacity and 73,400,320 physical
     # payload bytes, with 64,885 nodes of headroom below the 36-segment line.
+    # #5754's explicitly threaded macro-hygiene pool context retains this
+    # 35-segment boundary on the combined tree: the Windows probe measured
+    # 2,229,797 used nodes, leaving 63,963 nodes of headroom.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 35 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

@@ -80,6 +80,24 @@ assert_not_matches() {
     fi
 }
 
+# Assert the line immediately after the FIRST match of `_regex` matches
+# `_next`. Pins an instruction together with the branch that reads its flags:
+# a bit test carrying the WRONG jump sense is still a valid-looking `testq`,
+# assembles, and only shows up as inverted program behaviour.
+assert_next_line_matches() {
+    _file=$1
+    _regex=$2
+    _next=$3
+    _label=$4
+    if ! awk -v pat="$_regex" -v nxt="$_next" '
+        found { exit ($0 ~ nxt) ? 0 : 1 }
+        $0 ~ pat { found = 1 }
+        END { if (!found) exit 2 }
+    ' "$_file"; then
+        fail "$_label expected /$_next/ on the line after /$_regex/"
+    fi
+}
+
 # Count `jmp L` lines whose target `L:` is reached by scanning forward across
 # nothing but label-definition lines -- exactly the shape the assembled-body
 # peephole deletes, because execution falls through zero emitted bytes to the
@@ -891,6 +909,71 @@ check_stdlib_math_sqrt() {
     done
 }
 
+check_mask_test_admission() {
+    _asm=$(compile_gate bit_test_mask_admission \
+        tests/integration/bit_test_mask_admission.tl)
+    _set=$(function_body "$_asm" _tl_bit_test_mask_admission_parity_set)
+    _clear=$(function_body "$_asm" _tl_bit_test_mask_admission_bit3_clear)
+    _pair=$(function_body "$_asm" _tl_bit_test_mask_admission_pair_both_set)
+    _mismatch=$(function_body "$_asm" \
+        _tl_bit_test_mask_admission_mismatched_const)
+    _le=$(function_body "$_asm" _tl_bit_test_mask_admission_mask_le)
+    _dynamic=$(function_body "$_asm" _tl_bit_test_mask_admission_dynamic_mask)
+    _high=$(function_body "$_asm" _tl_bit_test_mask_admission_bit63_set)
+    # Single-bit mask-test admission: `(x & 1) == 1` compares against the MASK,
+    # not zero, and before the admission widened it cost `andq $1` + `cmpq $1`
+    # (three instructions once the mask has to be materialised, as it does in
+    # the spmd_mask lane body). It is one `testq` now -- and the mapping is
+    # INVERTED relative to the compare-against-zero rewrite, because `x & m`
+    # is either 0 or m: equality with the mask means the bit is SET, which is
+    # ZF CLEAR, so the FALSE arm is reached by `je`. Pinning the branch with
+    # the test is the point: a `jne` here would be a silently inverted
+    # program that still passes any instruction-count check.
+    assert_regex_count_eq "$_set" '^[[:space:]]+testq [$]1, %r[a-z0-9]+$' 1 \
+        mask-test-admission-set
+    assert_next_line_matches "$_set" '^[[:space:]]+testq [$]1, %r[a-z0-9]+$' \
+        '^[[:space:]]+je ' mask-test-admission-set
+    assert_not_matches "$_set" '^[[:space:]]+andq [$]1, %r' \
+        mask-test-admission-set
+    assert_not_matches "$_set" '^[[:space:]]+cmpq [$]1, %r' \
+        mask-test-admission-set
+    # The other half of the inverted mapping: `(x & 8) != 8` means the bit is
+    # CLEAR, which is ZF SET, so the FALSE arm is reached by `jne`.
+    assert_regex_count_eq "$_clear" '^[[:space:]]+testq [$]8, %r[a-z0-9]+$' 1 \
+        mask-test-admission-clear
+    assert_next_line_matches "$_clear" '^[[:space:]]+testq [$]8, %r[a-z0-9]+$' \
+        '^[[:space:]]+jne ' mask-test-admission-clear
+    assert_not_matches "$_clear" '^[[:space:]]+andq [$]8, %r' \
+        mask-test-admission-clear
+    # Nearest refused neighbours, each still on the old mov+and+cmp path.
+    # A multi-bit mask asks whether BOTH bits are set, which one `test` cannot
+    # answer; admitting it here would be a miscompile, not a slowdown.
+    assert_matches "$_pair" '^[[:space:]]+andq [$]3, %r' mask-test-admission-pair
+    assert_matches "$_pair" '^[[:space:]]+cmpq [$]3, %r' mask-test-admission-pair
+    assert_not_matches "$_pair" '^[[:space:]]+testq [$]3, %r' \
+        mask-test-admission-pair
+    # A comparison constant that is not the mask names no single bit.
+    assert_matches "$_mismatch" '^[[:space:]]+andq [$]4, %r' \
+        mask-test-admission-mismatch
+    assert_matches "$_mismatch" '^[[:space:]]+cmpq [$]1, %r' \
+        mask-test-admission-mismatch
+    assert_not_matches "$_mismatch" '^[[:space:]]+testq [$]4, %r' \
+        mask-test-admission-mismatch
+    # Ordered compares against the mask are a constant fold, not a bit test.
+    assert_matches "$_le" '^[[:space:]]+andq [$]1, %r' mask-test-admission-le
+    assert_matches "$_le" '^[[:space:]]+cmpq [$]1, %r' mask-test-admission-le
+    # A register mask names no bit at compile time.
+    assert_matches "$_dynamic" \
+        '^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$' \
+        mask-test-admission-dynamic
+    # `1 << 63` is stored negative as i64, so the `> 0` single-bit guard drops
+    # it and the pair survives.
+    assert_matches "$_high" '^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$' \
+        mask-test-admission-high
+    assert_matches "$_high" '^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$' \
+        mask-test-admission-high
+}
+
 check_inline_alloc_unique_labels_link() {
     _name=inline_alloc_unique_labels
     _binary="$WORKDIR/$_name"
@@ -964,6 +1047,7 @@ check_frame_slot_repacking
 check_gep_value_direct
 check_gep_copy_sib
 check_load_widen_cast_fold
+check_mask_test_admission
 check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
 

@@ -3867,6 +3867,226 @@
       [(not (= (smoke-c27-count-binop multi-blocks ir.CompilerIrBinOp.Gt) 1)) 6]
       [else 42])))
 
+;; `1 << 63` as an i64 payload. The single-bit admission guard reads the stored
+;; comparison constant, and this one is stored negative.
+(define (smoke-c27-i64-min) : i64
+  (- (- 0 9223372036854775807) 1))
+
+;; Mask-test admission fixture: `v2 = x & and-mask` immediately followed by
+;; `v3 = v2 <cmp-op> cmp-const`, whose result is returned. `v2` has exactly one
+;; use and the pair is adjacent, so the DCE walk's bookkeeping guards are both
+;; satisfied and only the admission rule itself decides the outcome.
+(define (smoke-c27-mask-compare-function
+  [and-mask : ir.CompilerIrValue]
+  [cmp-op : ir.CompilerIrBinOp]
+  [cmp-const : i64]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (compiler_optimize_tests.opt-test-symbol "c27_mask_test")
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 0)
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "m" (ast.AstType.I64) 1)
+        (ir.CompilerIrParamList.Nil)))
+    (ast.AstType.I64)
+    4
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.BinOp
+            2
+            ir.CompilerIrBinOp.BitAnd
+            (ir.CompilerIrValue.Var 0)
+            and-mask
+            (ast.AstType.I64))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.BinOp
+              3
+              cmp-op
+              (ir.CompilerIrValue.Var 2)
+              (ir.CompilerIrValue.I64 cmp-const)
+              (ast.AstType.I64))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
+              (ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrBlockList.Nil))))
+
+(define (smoke-c27-mask-dce-blocks [fn : ir.CompilerIrFunction]) : ir.CompilerIrBlockList
+  (opt.opt-function-blocks
+    (match fn
+      [(ir.CompilerIrFunction.Function name params ret frame blocks)
+        (ir.CompilerIrFunction.Function
+          name
+          params
+          ret
+          frame
+          (opt.opt-dce-block-list-array
+            (opt.opt-collect-blocks-uses-array frame blocks)
+            blocks))])))
+
+;; 1 when the pair collapsed to BitTestNe, 2 when it collapsed to BitTestEq,
+;; 0 when the `and` survived (the rewrite was refused), -1 for anything else.
+;; A surviving `and` is the refusal witness: admission retires its only use, so
+;; the DCE sweep in the same pass deletes it.
+(define (smoke-c27-mask-shape
+  [and-mask : ir.CompilerIrValue]
+  [cmp-op : ir.CompilerIrBinOp]
+  [cmp-const : i64]) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (smoke-c27-mask-dce-blocks
+        (smoke-c27-mask-compare-function and-mask cmp-op cmp-const))]
+    [ne : i64 (smoke-c27-count-binop blocks ir.CompilerIrBinOp.BitTestNe)]
+    [eq : i64 (smoke-c27-count-binop blocks ir.CompilerIrBinOp.BitTestEq)]
+    [ands : i64 (smoke-c27-count-binop blocks ir.CompilerIrBinOp.BitAnd)]
+    (cond
+      [(and (= ne 1) (= eq 0) (= ands 0)) 1]
+      [(and (= ne 0) (= eq 1) (= ands 0)) 2]
+      [(and (= ne 0) (= eq 0) (= ands 1)) 0]
+      [else (- 0 1)])))
+
+;; A second DCE pass over already-rewritten blocks must be a no-op: the slot
+;; now holds a bit test, not a comparison against a literal.
+(define (smoke-c27-mask-idempotent?) : bool
+  (let
+    [once : ir.CompilerIrBlockList
+      (smoke-c27-mask-dce-blocks
+        (smoke-c27-mask-compare-function
+          (ir.CompilerIrValue.I64 1)
+          ir.CompilerIrBinOp.Eq
+          1))]
+    [twice : ir.CompilerIrBlockList
+      (opt.opt-dce-block-list-array
+        (opt.opt-collect-blocks-uses-array 4 once)
+        once)]
+    (and
+      (= (smoke-c27-count-binop twice ir.CompilerIrBinOp.BitTestNe) 1)
+      (= (smoke-c27-count-binop twice ir.CompilerIrBinOp.BitAnd) 0))))
+
+;; Returns 42 only when single-bit mask-test admission fires on exactly the
+;; admitted shapes, with the INVERTED mapping, and leaves every neighbouring
+;; shape byte-for-byte alone.
+(define (smoke-c27-mask-test-admission-self-test) : i64
+  (cond
+    ;; `(x & 1) == 1` is "bit set", which is ZF CLEAR -> BitTestNe.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 1)
+            ir.CompilerIrBinOp.Eq
+            1)
+          1))
+      1]
+    ;; `(x & 8) != 8` is "bit clear", which is ZF SET -> BitTestEq.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 8)
+            ir.CompilerIrBinOp.Ne
+            8)
+          2))
+      2]
+    ;; Boundary single-bit masks: the 32-bit edge and the highest bit the
+    ;; `> 0` guard still admits.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 2147483648)
+            ir.CompilerIrBinOp.Eq
+            2147483648)
+          1))
+      3]
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 4611686018427387904)
+            ir.CompilerIrBinOp.Ne
+            4611686018427387904)
+          2))
+      4]
+    ;; `1 << 63` is stored negative, so the `> 0` guard refuses it.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 (smoke-c27-i64-min))
+            ir.CompilerIrBinOp.Eq
+            (smoke-c27-i64-min))
+          0))
+      5]
+    ;; A multi-bit mask asks whether BOTH bits are set; `test` cannot answer.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 3)
+            ir.CompilerIrBinOp.Eq
+            3)
+          0))
+      6]
+    ;; The comparison constant is not the mask.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 4)
+            ir.CompilerIrBinOp.Eq
+            1)
+          0))
+      7]
+    ;; Ordered compares against the mask are a constant fold, not a bit test.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 1)
+            ir.CompilerIrBinOp.Le
+            1)
+          0))
+      8]
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 1)
+            ir.CompilerIrBinOp.Gt
+            1)
+          0))
+      9]
+    ;; A non-literal mask names no bit.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.Var 1)
+            ir.CompilerIrBinOp.Eq
+            1)
+          0))
+      10]
+    ;; The compare-against-zero mapping is untouched, in both directions and
+    ;; with the multi-bit mask it still admits.
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 1)
+            ir.CompilerIrBinOp.Eq
+            0)
+          2))
+      11]
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 1)
+            ir.CompilerIrBinOp.Ne
+            0)
+          1))
+      12]
+    [(not
+        (=
+          (smoke-c27-mask-shape
+            (ir.CompilerIrValue.I64 3)
+            ir.CompilerIrBinOp.Eq
+            0)
+          2))
+      13]
+    [(not (smoke-c27-mask-idempotent?)) 14]
+    [else 42]))
+
 (define (smoke-optimizer-late-self-tests) : i64
   (begin
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
@@ -4052,6 +4272,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-c27-if-convert-compare-self-test"
       (smoke-c27-if-convert-compare-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "smoke-c27-mask-test-admission-self-test"
+      (smoke-c27-mask-test-admission-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bit-test-equality-self-test"
@@ -4666,6 +4890,13 @@
     (smoke-c27-if-convert-compare-self-test)
     42
     "IR-only scalar if-conversion and single-use masked-zero lowering"))
+
+(test
+  single-bit-mask-test-admission
+  (test.assert-i64-eq
+    (smoke-c27-mask-test-admission-self-test)
+    42
+    "Comparing a single-bit mask against itself becomes one inverted bit test"))
 
 (test
   inline-multiblock-phi-predecessor

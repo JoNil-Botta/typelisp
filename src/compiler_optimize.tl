@@ -2901,48 +2901,86 @@
           (match lhs
             [(ir.CompilerIrValue.Var and-var)
               (match rhs
-                [(ir.CompilerIrValue.I64 zero)
-                  (if (= zero 0)
-                    (let
-                      [tag : i64 (opt-binop-tag op)]
-                      [safe : bool
-                        (or (= tag 7) (= tag 8) (= tag 10) (= tag 11))]
-                      (if (and safe (= (array-ref items and-var) 1))
-                        (match (ir.compiler-ir-instr-scalar-fact
-                          (array-ref slots (- index 1)))
-                          [(ir.CompilerIrInstrScalarFact.BinOp
-                              actual
-                              (ir.CompilerIrBinOp.BitAnd)
-                              value
-                              mask
-                              _)
-                            (if (and
-                              (= actual and-var)
-                              (or
-                                (not (or (= tag 10) (= tag 11)))
-                                (match mask
-                                  [(ir.CompilerIrValue.I64 n)
-                                    (and (>= n 0) (<= n 127))]
-                                  [_ false])))
-                              (let
-                                [next : ir.CompilerIrInstr
-                                  (ir.CompilerIrInstr.BinOp
-                                    dst
-                                    (if (or (= tag 7) (= tag 10))
-                                      (ir.CompilerIrBinOp.BitTestEq)
-                                      (ir.CompilerIrBinOp.BitTestNe))
-                                    value
-                                    mask
-                                    ty)]
-                                (begin
-                                  (set! (array-ref slots index) next)
-                                  (opt-used-array-dec items and-var)
-                                  (opt-collect-instr-uses-array items next)
-                                  (opt-mirror-rewrite! mirror and-var next)))
-                              unit)]
-                          [_ unit])
-                        unit))
-                    unit)]
+                ;; Two admission shapes share this rewrite.
+                ;;
+                ;; Against ZERO -- `(x & m) == 0` is "none of the selected bits
+                ;; is set" for any mask, so Eq/Le become BitTestEq and Ne/Gt
+                ;; become BitTestNe. Le/Gt additionally require a small
+                ;; non-negative literal mask so the ordered reading of the
+                ;; `and` result cannot disagree with the bit test.
+                ;;
+                ;; Against the MASK ITSELF -- when `m` has exactly one bit set,
+                ;; `x & m` is either 0 or m and nothing else, so `(x & m) == m`
+                ;; is exactly "that bit is set" and `(x & m) != m` is exactly
+                ;; "that bit is clear". The mapping therefore INVERTS relative
+                ;; to the zero case: Eq becomes BitTestNe (bit set means ZF
+                ;; clear) and Ne becomes BitTestEq. Refusals are load-bearing:
+                ;; a multi-bit mask asks a different question (`(x & 3) == 3`
+                ;; wants BOTH bits, which one `test` cannot answer), Le/Gt
+                ;; against the mask is a constant fold rather than a bit test,
+                ;; and the `> 0` guard drops the i64 spelling of `1 << 63`,
+                ;; whose payload is stored negative.
+                [(ir.CompilerIrValue.I64 cmp-const)
+                  (let
+                    [zero? : bool (= cmp-const 0)]
+                    [mask-bit? : bool
+                      (and
+                        (> cmp-const 0)
+                        (= (bit-and cmp-const (- cmp-const 1)) 0))]
+                    (if (or zero? mask-bit?)
+                      (let
+                        [tag : i64 (opt-binop-tag op)]
+                        [safe : bool
+                          (if zero?
+                            (or (= tag 7) (= tag 8) (= tag 10) (= tag 11))
+                            (or (= tag 7) (= tag 8)))]
+                        (if (and safe (= (array-ref items and-var) 1))
+                          (match (ir.compiler-ir-instr-scalar-fact
+                            (array-ref slots (- index 1)))
+                            [(ir.CompilerIrInstrScalarFact.BinOp
+                                actual
+                                (ir.CompilerIrBinOp.BitAnd)
+                                value
+                                mask
+                                _)
+                              (if (and
+                                (= actual and-var)
+                                (if zero?
+                                  (or
+                                    (not (or (= tag 10) (= tag 11)))
+                                    (match mask
+                                      [(ir.CompilerIrValue.I64 n)
+                                        (and (>= n 0) (<= n 127))]
+                                      [_ false]))
+                                  ;; The comparison constant only names the bit
+                                  ;; this `and` isolated when both literals are
+                                  ;; the same single bit.
+                                  (match mask
+                                    [(ir.CompilerIrValue.I64 n) (= n cmp-const)]
+                                    [_ false])))
+                                (let
+                                  [test-eq? : bool
+                                    (if zero?
+                                      (or (= tag 7) (= tag 10))
+                                      (= tag 8))]
+                                  [next : ir.CompilerIrInstr
+                                    (ir.CompilerIrInstr.BinOp
+                                      dst
+                                      (if test-eq?
+                                        (ir.CompilerIrBinOp.BitTestEq)
+                                        (ir.CompilerIrBinOp.BitTestNe))
+                                      value
+                                      mask
+                                      ty)]
+                                  (begin
+                                    (set! (array-ref slots index) next)
+                                    (opt-used-array-dec items and-var)
+                                    (opt-collect-instr-uses-array items next)
+                                    (opt-mirror-rewrite! mirror and-var next)))
+                                unit)]
+                            [_ unit])
+                          unit))
+                      unit))]
                 [_ unit])]
             [_ unit])
           unit)

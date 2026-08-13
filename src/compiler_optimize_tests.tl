@@ -28646,14 +28646,6 @@
     [inner-entry : i64 (compiler_ir_types.compiler-ir-label "inner-entry")]
     [inner-entry-clone : i64
       (compiler_ir_types.compiler-ir-label "inner-entry__licm_false")]
-    [versioned-labels : compiler_optimize.OptLabelSet
-      (compiler_optimize.opt-label-add
-        (compiler_optimize.OptLabelSet.Nil)
-        (compiler_ir_types.compiler-ir-label "inner__bce_fast"))]
-    [plain-labels : compiler_optimize.OptLabelSet
-      (compiler_optimize.opt-label-add
-        (compiler_optimize.OptLabelSet.Nil)
-        (compiler_ir_types.compiler-ir-label "inner"))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -28714,11 +28706,255 @@
             (compiler_optimize.opt-verify-function negative)))
         12]
       [(opt-block-list-has-label? negative-blocks outer-clone) 13]
+      [else 42])))
+
+;; --- the invariant dispatch chain -------------------------------------------
+;;
+;; `dispatch-a` and `dispatch-b` are the two-test dispatch an inlined, versioned
+;; loop leaves inside its enclosing repetition loop. Only `dispatch-b` is ever
+;; SELECTED (it is the one whose arm enters the nested loop), so the chain walk
+;; is what has to reach `dispatch-a`, and the ceiling on the walk is what has to
+;; stop it at `inner`.
+;;
+;; The `invariant-a?` twin is the nearest refused neighbour: identical down to
+;; `dispatch-a` testing a value the outer loop DEFINES, which is the one clause
+;; that keeps a block out of the chain. It must still unswitch -- on
+;; `dispatch-b` alone, resolving its clone against the negation exactly as the
+;; single-branch tier always did.
+(define (opt-licm-unswitch-chain-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "outer-cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "cond-a"
+        (compiler_ast_types.AstType.Bool)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "cond-b"
+          (compiler_ast_types.AstType.Bool)
+          2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+(define (opt-licm-unswitch-chain-header-instrs [invariant-a? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (if invariant-a?
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "dispatch-a"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))
+    ;; The refused twin: `dispatch-a` now tests a value defined in the loop.
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        3
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "dispatch-a"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-licm-unswitch-chain-test-blocks [invariant-a? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "outer-pre")
+          (compiler_ir_types.compiler-ir-label "exit"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "outer-pre")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "outer"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "outer")
+          (opt-licm-unswitch-chain-header-instrs invariant-a?))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "dispatch-a")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (if invariant-a?
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.Var 3))
+                (compiler_ir_types.compiler-ir-label "dispatch-b")
+                (compiler_ir_types.compiler-ir-label "inner-exit"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "dispatch-b")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "inner-pre")
+                  (compiler_ir_types.compiler-ir-label "inner-exit"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "inner-pre")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "inner"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "inner")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      (compiler_ir_types.compiler-ir-label "inner-body")
+                      (compiler_ir_types.compiler-ir-label "inner-exit"))
+                    (compiler_ir_types.CompilerIrInstrList.Nil)))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "inner-body")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "inner"))
+                      (compiler_ir_types.CompilerIrInstrList.Nil)))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.compiler-ir-block
+                      (compiler_ir_types.compiler-ir-label "inner-exit")
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "outer-latch"))
+                        (compiler_ir_types.CompilerIrInstrList.Nil)))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.compiler-ir-block
+                        (compiler_ir_types.compiler-ir-label "outer-latch")
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Branch
+                            (compiler_ir_types.CompilerIrValue.Var 0)
+                            (compiler_ir_types.compiler-ir-label "outer")
+                            (compiler_ir_types.compiler-ir-label "exit"))
+                          (compiler_ir_types.CompilerIrInstrList.Nil)))
+                      (compiler_ir_types.compiler-ir-block-cons
+                        (compiler_ir_types.compiler-ir-block
+                          (compiler_ir_types.compiler-ir-label "exit")
+                          (compiler_ir_types.compiler-ir-instr-cons
+                            (compiler_ir_types.CompilerIrInstr.Return
+                              (compiler_ir_types.CompilerIrMaybeValue.Some
+                                (compiler_ir_types.CompilerIrValue.I64 0)))
+                            (compiler_ir_types.CompilerIrInstrList.Nil)))
+                        (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))))
+
+(define (opt-licm-unswitch-chain-test-function [invariant-a? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "licm_unswitch_chain")
+    (opt-licm-unswitch-chain-test-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (opt-licm-unswitch-chain-test-blocks invariant-a?)))
+
+(define (opt-licm-unswitch-successor-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (compiler_optimize.opt-label-count
+    (compiler_optimize.opt-cfg-index-successors
+      (compiler_optimize.opt-cfg-index-build blocks)
+      label)))
+
+(define (compiler-optimize-licm-unswitch-chain-self-test) : i64
+  (let
+    [chained : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-licm-unswitch-chain-test-function true))]
+    [chained-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks chained)]
+    [repeat : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run chained)]
+    [repeat-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks repeat)]
+    [single : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-licm-unswitch-chain-test-function false))]
+    [single-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks single)]
+    [dispatch-a : i64 (compiler_ir_types.compiler-ir-label "dispatch-a")]
+    [dispatch-a-clone : i64
+      (compiler_ir_types.compiler-ir-label "dispatch-a__licm_false")]
+    [dispatch-b : i64 (compiler_ir_types.compiler-ir-label "dispatch-b")]
+    [dispatch-b-clone : i64
+      (compiler_ir_types.compiler-ir-label "dispatch-b__licm_false")]
+    [outer-clone : i64
+      (compiler_ir_types.compiler-ir-label "outer__licm_false")]
+    (cond
       [(not
-          (compiler_optimize.opt-licm-unswitch-has-versioned-label?
-            versioned-labels))
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function chained)))
+        1]
+      [(not (opt-block-list-has-label? chained-blocks outer-clone)) 2]
+      ;; The kept side resolves the WHOLE dispatch: both tests are gone.
+      [(not
+          (opt-licm-unswitch-one-successor?
+            chained-blocks
+            dispatch-a
+            dispatch-b))
+        3]
+      [(not
+          (opt-licm-unswitch-one-successor?
+            chained-blocks
+            dispatch-b
+            (compiler_ir_types.compiler-ir-label "inner-pre")))
+        4]
+      ;; ...and the clone keeps both, because a negated conjunction convicts no
+      ;; single conjunct.
+      [(not
+          (=
+            (opt-licm-unswitch-successor-count chained-blocks dispatch-a-clone)
+            2))
+        5]
+      [(not
+          (=
+            (opt-licm-unswitch-successor-count chained-blocks dispatch-b-clone)
+            2))
+        6]
+      ;; The nested loop's own test is not dispatch and stays a branch.
+      [(not
+          (=
+            (opt-licm-unswitch-successor-count
+              chained-blocks
+              (compiler_ir_types.compiler-ir-label "inner"))
+            2))
+        7]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function repeat)))
+        8]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count chained-blocks)
+            (compiler_ir_types.compiler-ir-block-list-count repeat-blocks)))
+        9]
+      [(opt-block-list-has-label?
+          repeat-blocks
+          (compiler_ir_types.compiler-ir-label "outer__licm_false__licm_false"))
+        10]
+      ;; The refused neighbour still unswitches, on the selected branch alone.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function single)))
+        11]
+      [(not (opt-block-list-has-label? single-blocks outer-clone)) 12]
+      [(not (= (opt-licm-unswitch-successor-count single-blocks dispatch-a) 2))
+        13]
+      [(not
+          (opt-licm-unswitch-one-successor?
+            single-blocks
+            dispatch-b
+            (compiler_ir_types.compiler-ir-label "inner-pre")))
         14]
-      [(compiler_optimize.opt-licm-unswitch-has-versioned-label? plain-labels)
+      [(not
+          (opt-licm-unswitch-one-successor?
+            single-blocks
+            dispatch-b-clone
+            (compiler_ir_types.compiler-ir-label "inner-exit__licm_false")))
         15]
       [else 42])))
 

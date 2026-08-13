@@ -21473,6 +21473,11 @@
 ;; the outer zero-trip guard, so unswitching does no work when the outer loop
 ;; executes zero times. The transform is deliberately bounded and accepts only
 ;; the scalar instruction subset its cloner handles.
+;;
+;; `chain-labels` is the rest of the invariant DISPATCH the selected branch
+;; opens: the blocks reached along its taken edge that hold nothing but one
+;; more invariant Branch. See opt-licm-unswitch-chain-from for why they can be
+;; resolved together and what the conjunction buys.
 (defstruct OptLicmUnswitchShape
   (header i64)
   (preheader i64)
@@ -21482,11 +21487,16 @@
   (branch-index i64)
   (cond ir.CompilerIrValue)
   (true-label i64)
-  (false-label i64))
+  (false-label i64)
+  (chain-labels OptLabelSet))
 
 (defenum OptMaybeLicmUnswitchShape
   (No)
   (Some OptLicmUnswitchShape))
+
+;; The conjunction the preheader tests, and the And instructions that build it.
+(defenum OptLicmUnswitchFused
+  (Fused ir.CompilerIrInstrList ir.CompilerIrValue))
 
 (define (opt-licm-unswitch-suffix) : String
   "__licm_false")
@@ -21594,17 +21604,6 @@
             (opt-licm-unswitch-clone-label labels (opt-label-ref labels 0))))
         (opt-licm-unswitch-labels-fresh? blocks (opt-label-tail labels)))]))
 
-(define (opt-licm-unswitch-has-versioned-label? [labels : OptLabelSet]) : bool
-  (match labels
-    [(OptLabelSet.Nil) false]
-    [(OptLabelSet.Dense _ _)
-      (let
-        [text : String (ir.compiler-ir-label-text (opt-label-ref labels 0))]
-        [marker : String "__bce_"]
-        (or
-          (string.contains (& text) (& marker))
-          (opt-licm-unswitch-has-versioned-label? (opt-label-tail labels))))]))
-
 (define (opt-licm-unswitch-preheader-jumps-to?
   [blocks : ir.CompilerIrBlockList]
   [preheader : i64]
@@ -21621,6 +21620,212 @@
               (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
                 [(ir.CompilerIrInstr.Jump target) (= target header)]
                 [_ false])))])]))
+
+;; --- the invariant dispatch chain ------------------------------------------
+;;
+;; One unswitched branch buys one branch. The shape this pass exists for
+;; routinely has FOUR, because the guard an inlined loop carries into an
+;; enclosing repetition loop is not one test: a rotated loop contributes its
+;; zero-trip guard, the bounds-check versioner contributes its fast/slow
+;; dispatch, and the unroller contributes a two-term group guard that the late
+;; short-circuit fuser (opt-bool-branch-chain) has already split into two real
+;; edges. LICM hoists all four CONDITIONS to the preheader and none of the four
+;; BRANCHES, so the enclosing loop re-decides an invariant dispatch every trip.
+;; benchmarks/string_scan is the measured case: eight instructions per outer
+;; iteration, 4.1% of the whole row, and unswitching any single one of them
+;; leaves the other six.
+;;
+;; So the shape is the whole chain. Walk the blocks that hold NOTHING BUT one
+;; more terminator -- a Jump to pass through, a Branch on a loop-invariant
+;; condition to collect -- and stop at the first block with any real work in it.
+;; Requiring the block to be exactly one instruction is what makes the walk safe
+;; to state as a conjunction: a collected block computes nothing, so the only
+;; question it asks is its own condition, and the answer is the same on every
+;; trip.
+;;
+;; TWO walks, because the selected branch sits in the MIDDLE of its dispatch.
+;; The candidate scan takes the first branch whose arm enters a nested loop, and
+;; the tests above that one -- an inlined loop's own zero-trip guard, most of the
+;; time -- reach only the loop's exit block on their false arm, so they are never
+;; selected and are not on the selected branch's taken path either. Walking down
+;; from the header's single successor collects them; walking on from the selected
+;; branch's taken label collects the rest; the second walk starts from the first
+;; one's result, so a chain that spans the selected branch is gathered once.
+;;
+;; The preheader then tests the AND of every collected condition. On the true
+;; side each collected Branch becomes a Jump to its taken label -- the
+;; conjunction says every conjunct holds, so that edge is the one taken on every
+;; trip -- and the version is dispatch-free. On the false side the clone keeps
+;; the chain intact, because `not (c1 and ... and ck)` says nothing about any
+;; individual conjunct. That is also why the single-branch case keeps resolving
+;; its clone to the false label: with one conjunct, and only with one, the
+;; negation IS a verdict, and refusing to use it would grow every site this
+;; pass already admits.
+(define (opt-licm-unswitch-chain-fuel) : i64
+  8)
+
+;; The walk stops at a nested loop's header, so the chain is the dispatch that
+;; SELECTS a loop and never the control of one. A nested loop's own exit test
+;; can be invariant in the enclosing loop -- the header of an inner `while (c)`
+;; on an outer-invariant `c` is exactly that -- and resolving it would be sound
+;; (the conjunction says `c` holds, and the original spins on `c` too) but it is
+;; not what this pass is for and it takes the shape past the one the block
+;; ceiling above was measured on.
+(define (opt-licm-unswitch-nested-loop-header?
+  [loops : OptNaturalLoopList]
+  [outer-header : i64]
+  [label : i64]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (or
+        (let
+          [nested : i64 (opt-natural-loop-header loop)]
+          (and (not (= nested outer-header)) (= nested label)))
+        (opt-licm-unswitch-nested-loop-header?
+          (__tl-box-place rest)
+          outer-header
+          label))]))
+
+;; The taken edge of a pure invariant dispatch block, or -1 when `label` is not
+;; one: the clauses are the candidate test of opt-licm-unswitch-find-instrs
+;; plus "this block holds the branch and nothing else".
+(define (opt-licm-unswitch-dispatch-taken
+  [blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [loop-defs : opt_i64_i64_map.Map]
+  [label : i64]) : i64
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
+            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+              [(ir.CompilerIrInstr.Branch cond true-label false-label)
+                (if (and
+                  (opt-label-contains body-labels true-label)
+                  (opt-label-contains body-labels false-label)
+                  (match cond
+                    [(ir.CompilerIrValue.Var var)
+                      (not (opt-used-contains loop-defs var))]
+                    [_ false]))
+                  true-label
+                  (- 0 1))]
+              [_ (- 0 1)])
+            (- 0 1))])]))
+
+;; The condition of a block already accepted by the walk above.
+(define (opt-licm-unswitch-dispatch-cond
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]) : ir.CompilerIrValue
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (ir.CompilerIrValue.Bool true)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
+            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+              [(ir.CompilerIrInstr.Branch cond _ _) cond]
+              [_ (ir.CompilerIrValue.Bool true)])
+            (ir.CompilerIrValue.Bool true))])]))
+
+(define (opt-licm-unswitch-chain-from
+  [blocks : ir.CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
+  [body-labels : OptLabelSet]
+  [loop-defs : opt_i64_i64_map.Map]
+  [header : i64]
+  [latch : i64]
+  [origin : i64]
+  [label : i64]
+  [acc : OptLabelSet]
+  [fuel : i64]) : OptLabelSet
+  (if (or
+    (<= fuel 0)
+    (= label header)
+    (= label latch)
+    (= label origin)
+    (not (opt-label-contains body-labels label))
+    (opt-label-contains acc label)
+    (opt-licm-unswitch-nested-loop-header? loops header label))
+    acc
+    (match (opt-cfg-find-block blocks label)
+      [(OptMaybeBlock.No) acc]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
+              (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                [(ir.CompilerIrInstr.Jump target)
+                  (opt-licm-unswitch-chain-from
+                    blocks
+                    loops
+                    body-labels
+                    loop-defs
+                    header
+                    latch
+                    origin
+                    target
+                    acc
+                    (- fuel 1))]
+                [(ir.CompilerIrInstr.Branch _ _ _)
+                  (let
+                    [taken : i64
+                      (opt-licm-unswitch-dispatch-taken
+                        blocks
+                        body-labels
+                        loop-defs
+                        label)]
+                    (if (< taken 0)
+                      acc
+                      (opt-licm-unswitch-chain-from
+                        blocks
+                        loops
+                        body-labels
+                        loop-defs
+                        header
+                        latch
+                        origin
+                        taken
+                        (opt-label-add acc label)
+                        (- fuel 1))))]
+                [_ acc])
+              acc)])])))
+
+;; `cond AND c1 AND ... AND ck`, built in the preheader from ids past the
+;; caller's frame. The conjuncts are materialized booleans the loop does not
+;; define, so evaluating all of them eagerly is not just cheap but unobservable.
+(define (opt-licm-unswitch-fuse-conds
+  [blocks : ir.CompilerIrBlockList]
+  [labels : OptLabelSet]
+  [index : i64]
+  [cond : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]) : OptLicmUnswitchFused
+  (if (>= index (opt-label-count labels))
+    (OptLicmUnswitchFused.Fused ir.CompilerIrInstrList.Nil cond)
+    (let
+      [next : ir.CompilerIrValue
+        (opt-licm-unswitch-dispatch-cond blocks (opt-label-ref labels index))]
+      [fresh : i64 (array-ref cell 0)]
+      [_bump : unit (set! (array-ref cell 0) (+ fresh 1))]
+      (match (opt-licm-unswitch-fuse-conds
+        blocks
+        labels
+        (+ index 1)
+        (ir.CompilerIrValue.Var fresh)
+        cell)
+        [(OptLicmUnswitchFused.Fused instrs result)
+          (OptLicmUnswitchFused.Fused
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                fresh
+                (ir.CompilerIrBinOp.And)
+                cond
+                next
+                (ast.AstType.Bool))
+              instrs)
+            result)]))))
 
 (define (opt-licm-unswitch-find-instrs
   [loops : OptNaturalLoopList]
@@ -21666,7 +21871,8 @@
                 index
                 cond
                 true-label
-                false-label))
+                false-label
+                (OptLabelSet.Nil)))
             (opt-licm-unswitch-find-instrs
               loops
               header
@@ -21757,11 +21963,31 @@
           (< (opt-label-count body-labels) 3)
           (> (opt-label-count body-labels) 16)
           (> (ir.compiler-ir-block-list-instruction-count body-blocks) 192)
-          ;; Do not clone an already BCE-versioned nested loop. Its fast/slow
-          ;; dispatch is not a zero-trip entry guard, and duplicating both
-          ;; versions inflates function-wide live-range weights enough to spill
-          ;; the hot scalar SPMD loop.
-          (opt-licm-unswitch-has-versioned-label? body-labels)
+          ;; There was a clause here refusing any body carrying a `__bce_`
+          ;; label -- "do not clone an already BCE-versioned nested loop", on
+          ;; the argument that duplicating both versions would inflate
+          ;; function-wide live-range weights enough to spill a hot scalar SPMD
+          ;; loop. It is gone, and the two-sided measurement is why.
+          ;;
+          ;; REFUSE SIDE, re-measured on this tree with the clause dropped and
+          ;; nothing else changed: not one of the twenty-two instruction rows
+          ;; moves against it. Every spmd row -- map, mask, reduce, short_tail,
+          ;; zip, the exact family the clause names -- is identical to the
+          ;; digit, as are cfg_domloops, gvn_table, intern_table, lex_source,
+          ;; peephole_lines, opt_quicksort, opt_bytecode_vm, opt_crc32,
+          ;; arith_loop, borrowed_disjoint_store and all four hashmap rows.
+          ;;
+          ;; ADMIT SIDE: string_scan -75,000,004 (5,050,000,293 ->
+          ;; 4,975,000,289) from the clause alone, array_sum -18,000,
+          ;; liveness_scan -23,940.
+          ;;
+          ;; What the clause was really refusing is the shape this pass was
+          ;; built for. A versioned nested loop is precisely a loop whose entry
+          ;; guard is a dispatch, and once the whole dispatch is resolved
+          ;; together (see the chain above) the rewrite is not a duplication of
+          ;; both versions at all: the kept side keeps the fast version and
+          ;; nothing else, the clone keeps the rest, and CFG cleanup deletes
+          ;; what each side cannot reach.
           (not (opt-licm-unswitch-labels-contained? successors body-labels))
           (not (opt-licm-unswitch-preheader-jumps-to? blocks preheader header))
           (not (opt-licm-unswitch-labels-fresh? blocks body-labels))
@@ -21786,7 +22012,30 @@
                   candidate.branch-index
                   candidate.cond
                   candidate.true-label
-                  candidate.false-label))])))]))
+                  candidate.false-label
+                  (opt-licm-unswitch-chain-from
+                    blocks
+                    loops
+                    body-labels
+                    loop-defs
+                    header
+                    latch
+                    candidate.branch-label
+                    candidate.true-label
+                    (if (= (opt-label-count successors) 1)
+                      (opt-licm-unswitch-chain-from
+                        blocks
+                        loops
+                        body-labels
+                        loop-defs
+                        header
+                        latch
+                        candidate.branch-label
+                        (opt-label-ref successors 0)
+                        (OptLabelSet.Nil)
+                        (opt-licm-unswitch-chain-fuel))
+                      (OptLabelSet.Nil))
+                    (opt-licm-unswitch-chain-fuel))))])))]))
 
 (define (opt-licm-unswitch-switch-cases
   [cases : ir.CompilerIrSwitchCaseList]
@@ -21937,7 +22186,12 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     ir.CompilerIrInstrList.Nil
     (ir.compiler-ir-instr-cons
-      (if (and (= label shape.branch-label) (= index shape.branch-index))
+      ;; A negated conjunction is only a verdict on ONE conjunct, so the clone
+      ;; resolves its branch exactly when the chain is empty.
+      (if (and
+        (= label shape.branch-label)
+        (= index shape.branch-index)
+        (= (opt-label-count shape.chain-labels) 0))
         (ir.CompilerIrInstr.Jump
           (opt-licm-unswitch-clone-label shape.body-labels shape.false-label))
         (opt-licm-unswitch-clone-instr
@@ -22031,13 +22285,22 @@
     (ir.compiler-ir-instr-cons
       (if (and (= label shape.branch-label) (= index shape.branch-index))
         (ir.CompilerIrInstr.Jump shape.true-label)
-        (ir.compiler-ir-instr-seq-ref instrs index))
+        ;; Every collected conjunct holds on this side, so each chain block's
+        ;; Branch is the Jump it always takes here.
+        (if (opt-label-contains shape.chain-labels label)
+          (match (ir.compiler-ir-instr-seq-ref instrs index)
+            [(ir.CompilerIrInstr.Branch _ true-label _)
+              (ir.CompilerIrInstr.Jump true-label)]
+            [_ (ir.compiler-ir-instr-seq-ref instrs index)])
+          (ir.compiler-ir-instr-seq-ref instrs index)))
       (opt-licm-unswitch-original-instrs shape label instrs (+ index 1)))))
 
 (define (opt-licm-unswitch-preheader-instrs
   [shape : OptLicmUnswitchShape]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
+  [fuse-instrs : ir.CompilerIrInstrList]
+  [fused-cond : ir.CompilerIrValue]
   [clone-param-moves : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -22045,19 +22308,23 @@
       ir.CompilerIrInstrList.Nil
       (if (= index (- count 1))
         (opt-licm-unswitch-instrs-onto
-          clone-param-moves
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Branch
-              shape.cond
-              shape.header
-              (opt-licm-unswitch-clone-label shape.body-labels shape.header))
-            ir.CompilerIrInstrList.Nil))
+          fuse-instrs
+          (opt-licm-unswitch-instrs-onto
+            clone-param-moves
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                fused-cond
+                shape.header
+                (opt-licm-unswitch-clone-label shape.body-labels shape.header))
+              ir.CompilerIrInstrList.Nil)))
         (ir.compiler-ir-instr-cons
           (ir.compiler-ir-instr-seq-ref instrs index)
           (opt-licm-unswitch-preheader-instrs
             shape
             instrs
             (+ index 1)
+            fuse-instrs
+            fused-cond
             clone-param-moves))))))
 
 (define (opt-licm-unswitch-extend-phi-inputs
@@ -22114,6 +22381,8 @@
   [shape : OptLicmUnswitchShape]
   [cloned : ir.CompilerIrBlockList]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [fuse-instrs : ir.CompilerIrInstrList]
+  [fused-cond : ir.CompilerIrValue]
   [clone-param-moves : ir.CompilerIrInstrList]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
@@ -22127,6 +22396,8 @@
                 shape
                 cloned
                 remap
+                fuse-instrs
+                fused-cond
                 clone-param-moves)]
             (cond
               [(= label shape.preheader)
@@ -22137,6 +22408,8 @@
                       shape
                       instrs
                       0
+                      fuse-instrs
+                      fused-cond
                       clone-param-moves))
                   tail)]
               [(= label shape.header)
@@ -22169,6 +22442,8 @@
         shape
         cloned
         remap
+        fuse-instrs
+        fused-cond
         clone-param-moves)]))
 
 (define (opt-licm-unswitch-apply
@@ -22187,6 +22462,15 @@
       (let
         [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
+        ;; Allocated before the clone's ids: the conjunction lives in the
+        ;; preheader and is never cloned or remapped.
+        [fused : OptLicmUnswitchFused
+          (opt-licm-unswitch-fuse-conds
+            blocks
+            shape.chain-labels
+            0
+            shape.cond
+            cell)]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
           (array.make-array ir.CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
@@ -22201,15 +22485,19 @@
             shape.body-blocks
             remap
             all-labels)]
-        (OptUnrollResult.Result
-          (opt-licm-unswitch-rewrite-blocks
-            blocks
-            shape
-            cloned
-            remap
-            clone-param-moves)
-          (array-ref cell 0)
-          true)))))
+        (match fused
+          [(OptLicmUnswitchFused.Fused fuse-instrs fused-cond)
+            (OptUnrollResult.Result
+              (opt-licm-unswitch-rewrite-blocks
+                blocks
+                shape
+                cloned
+                remap
+                fuse-instrs
+                fused-cond
+                clone-param-moves)
+              (array-ref cell 0)
+              true)])))))
 
 (define (opt-licm-unswitch-loops
   [blocks : ir.CompilerIrBlockList]

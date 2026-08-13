@@ -26354,6 +26354,230 @@
   [expr : ast.AstExpr]) : ResultLowerExpr
   (lower-expr-origin ctx state env type-env expr expr))
 
+;; Raw-pointer expressions stay grouped outside the main expression dispatcher.
+;; Keeping their lowering helpers adjacent makes the shared representation rule
+;; visible: pointers are scalar values, while pointee aggregates and register
+;; groups still use the ordinary storage helpers on reads and writes.
+(define (lower-ptr-null-expr [state : LowerState] [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-materialize state (ir.CompilerIrValue.I64 0) (ast.AstType.U64))
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr null-state null-value _)
+          (ResultLowerExpr.Ok (LowerExpr.Expr null-state null-value expr-ty))])]
+    [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))
+
+(define (lower-ptr-null-check-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [inner : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env inner)
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr inner-state inner-value _)
+          (ResultLowerExpr.Ok
+            (lower-emit-binop
+              inner-state
+              ir.CompilerIrBinOp.Eq
+              inner-value
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.Bool)))])]
+    [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))
+
+(define (lower-ptr-addr-of-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [place : ast.AstExpr]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match (tc_core.tc-ptr-addr-of-place ctx type-env place)
+    [(tc_core.ResultTcType.Ok _)
+      (match (match (ast.ast-expr-unspan place)
+        [(ast.AstExpr.Var name)
+          (lower-ptr-addr-of-local-address ctx state env type-env name origin)]
+        [_ (lower-mutable-place-address ctx state env type-env place origin)])
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr addr-state addr-value _)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr addr-state addr-value expr-ty))])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+    [(tc_core.ResultTcType.Err message)
+      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))]))
+
+(define (lower-ptr-read-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [ptr : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env ptr)
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr ptr-state ptr-value _)
+          (lower-array-elem-ref-result ctx ptr-state ptr-value expr-ty)])]
+    [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))
+
+(define (lower-ptr-write-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [ptr : ast.AstExpr]
+  [value : ast.AstExpr]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env ptr)
+    [(ResultLowerExpr.Ok ptr-lowered)
+      (match ptr-lowered
+        [(LowerExpr.Expr ptr-state ptr-value ptr-ty)
+          ;; Preserve left-to-right evaluation: the value expression may
+          ;; lower to calls or other effects, so keep the pointer in its own
+          ;; raw pointer temp before lowering the value.
+          (match (lower-state-alloc-var ptr-state)
+            [(LowerAlloc.Alloc ptr-allocated ptr-var)
+              (let
+                [ptr-home-state : LowerState
+                  (lower-state-emit
+                    ptr-allocated
+                    (ir.CompilerIrInstr.Mov
+                      ptr-var
+                      ptr-value
+                      (lower-raw-pointer-ir-type ptr-ty)))]
+                (match (tc_core.tc-mut-pointer-elem
+                  (tc_core.tc-resolve-type ctx ptr-ty)
+                  "lower: ptr-write! requires MutPtr pointer operand")
+                  [(tc_core.ResultTcType.Ok elem-ty)
+                    (match (lower-expr-expected
+                      ctx
+                      ptr-home-state
+                      env
+                      type-env
+                      value
+                      (tc_core.tc-type-without-regions elem-ty)
+                      value)
+                      [(ResultLowerExpr.Ok value-lowered)
+                        (match value-lowered
+                          [(LowerExpr.Expr value-state value-ir value-ty)
+                            (ResultLowerExpr.Ok
+                              (LowerExpr.Expr
+                                ;; Raw-pointer writes use the same storage
+                                ;; contract as array element writes. Memory
+                                ;; aggregates are represented by an address
+                                ;; and must copy their complete inline
+                                ;; representation; StorePtr would otherwise
+                                ;; write that address into only the first word.
+                                ;; Two-word register groups likewise need both
+                                ;; words.
+                                (if (and
+                                  (lower-mode-inline-aggregates?
+                                    (lower-state-mode value-state))
+                                  (lower-type-inline-storage? ctx value-ty)
+                                  (not
+                                    (lower-type-register-resident? ctx value-ty)))
+                                  (lower-copy-bytes
+                                    value-state
+                                    (ir.CompilerIrValue.Var ptr-var)
+                                    0
+                                    value-ir
+                                    0
+                                    (lower-type-size ctx value-ty))
+                                  (if (lower-type-register-group? ctx value-ty)
+                                    (lower-store-group-at-ptr
+                                      ctx
+                                      value-state
+                                      (ir.CompilerIrValue.Var ptr-var)
+                                      value-ir
+                                      value-ty)
+                                    (lower-state-emit-at-expr
+                                      value-state
+                                      (ir.CompilerIrInstr.StorePtr
+                                        (ir.CompilerIrValue.Var ptr-var)
+                                        value-ir
+                                        value-ty)
+                                      origin)))
+                                ir.CompilerIrValue.Unit
+                                expr-ty))])]
+                      [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)])]
+                  [(tc_core.ResultTcType.Err message)
+                    (ResultLowerExpr.Err
+                      (box (lower-diagnostic-at-expr origin message)))]))])])]
+    [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))
+
+(define (lower-ptr-offset-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [ptr : ast.AstExpr]
+  [offset : ast.AstExpr]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env ptr)
+    [(ResultLowerExpr.Ok ptr-lowered)
+      (match ptr-lowered
+        [(LowerExpr.Expr ptr-state ptr-value ptr-ty)
+          (match (lower-expr-expected
+            ctx
+            ptr-state
+            env
+            type-env
+            offset
+            (ast.AstType.I64)
+            offset)
+            [(ResultLowerExpr.Ok offset-lowered)
+              (match offset-lowered
+                [(LowerExpr.Expr offset-state offset-value _)
+                  (match (tc_core.tc-type-strip-region
+                    (tc_core.tc-resolve-type ctx ptr-ty))
+                    [(ast.AstType.Ptr elem-ty)
+                      (match (lower-emit-elem-addr-gep
+                        ctx
+                        offset-state
+                        ptr-value
+                        offset-value
+                        (tc_core.tc-context-type-get ctx elem-ty))
+                        [(LowerExpr.Expr gep-state gep-value _)
+                          (ResultLowerExpr.Ok
+                            (LowerExpr.Expr gep-state gep-value expr-ty))])]
+                    [(ast.AstType.MutPtr elem-ty)
+                      (match (lower-emit-elem-addr-gep
+                        ctx
+                        offset-state
+                        ptr-value
+                        offset-value
+                        (tc_core.tc-context-type-get ctx elem-ty))
+                        [(LowerExpr.Expr gep-state gep-value _)
+                          (ResultLowerExpr.Ok
+                            (LowerExpr.Expr gep-state gep-value expr-ty))])]
+                    [_
+                      (ResultLowerExpr.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            origin
+                            "lower: ptr-offset requires raw pointer")))])])]
+            [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)])])]
+    [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))
+
+(define (lower-ptr-cast-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [inner : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env inner)
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr inner-state inner-value inner-ty)
+          (ResultLowerExpr.Ok
+            (lower-cast-value inner-state inner-value inner-ty expr-ty))])]
+    [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))
+
 (define (lower-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -27228,238 +27452,41 @@
               " is compile-time only"))))]
     ;; `(ptr-null : T)` is a pointer-sized zero (pointer ABI size is 8);
     ;; `(ptr-null? p)` is `p == 0` producing a `bool`. No new IR/asm needed.
-    [(ast.AstExpr.PtrNull _)
-      (match (lower-materialize
-        state
-        (ir.CompilerIrValue.I64 0)
-        (ast.AstType.U64))
-        [(ResultLowerExpr.Ok lowered)
-          (match lowered
-            [(LowerExpr.Expr null-state null-value _)
-              (ResultLowerExpr.Ok
-                (LowerExpr.Expr null-state null-value expr-ty))])]
-        [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)])]
+    [(ast.AstExpr.PtrNull _) (lower-ptr-null-expr state expr-ty)]
     [(ast.AstExpr.PtrNullCheck inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (lower-expr ctx state env type-env inner)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr inner-state inner-value _)
-                (ResultLowerExpr.Ok
-                  (lower-emit-binop
-                    inner-state
-                    ir.CompilerIrBinOp.Eq
-                    inner-value
-                    (ir.CompilerIrValue.I64 0)
-                    (ast.AstType.Bool)))])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+        (lower-ptr-null-check-expr ctx state env type-env inner))]
     [(ast.AstExpr.PtrAddrOf place-box)
       (let
         [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
-        (match (tc_core.tc-ptr-addr-of-place ctx type-env place)
-          [(tc_core.ResultTcType.Ok _)
-            (match (match (ast.ast-expr-unspan place)
-              [(ast.AstExpr.Var name)
-                (lower-ptr-addr-of-local-address
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  origin)]
-              [_
-                (lower-mutable-place-address
-                  ctx
-                  state
-                  env
-                  type-env
-                  place
-                  origin)])
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr addr-state addr-value _)
-                    (ResultLowerExpr.Ok
-                      (LowerExpr.Expr addr-state addr-value expr-ty))])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-          [(tc_core.ResultTcType.Err message)
-            (ResultLowerExpr.Err
-              (box (lower-diagnostic-at-expr origin message)))]))]
+        (lower-ptr-addr-of-expr ctx state env type-env place origin expr-ty))]
     [(ast.AstExpr.PtrRead ptr-box)
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
-        (match (lower-expr ctx state env type-env ptr)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr ptr-state ptr-value _)
-                (lower-array-elem-ref-result ctx ptr-state ptr-value expr-ty)])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+        (lower-ptr-read-expr ctx state env type-env ptr expr-ty))]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (match (lower-expr ctx state env type-env ptr)
-          [(ResultLowerExpr.Ok ptr-lowered)
-            (match ptr-lowered
-              [(LowerExpr.Expr ptr-state ptr-value ptr-ty)
-                ;; Preserve left-to-right evaluation: the value expression may
-                ;; lower to calls or other effects, so keep the pointer in its own
-                ;; raw pointer temp before lowering the value.
-                (match (lower-state-alloc-var ptr-state)
-                  [(LowerAlloc.Alloc ptr-allocated ptr-var)
-                    (let
-                      [ptr-home-state : LowerState
-                        (lower-state-emit
-                          ptr-allocated
-                          (ir.CompilerIrInstr.Mov
-                            ptr-var
-                            ptr-value
-                            (lower-raw-pointer-ir-type ptr-ty)))]
-                      (match (tc_core.tc-mut-pointer-elem
-                        (tc_core.tc-resolve-type ctx ptr-ty)
-                        "lower: ptr-write! requires MutPtr pointer operand")
-                        [(tc_core.ResultTcType.Ok elem-ty)
-                          (match (lower-expr-expected
-                            ctx
-                            ptr-home-state
-                            env
-                            type-env
-                            value
-                            (tc_core.tc-type-without-regions elem-ty)
-                            value)
-                            [(ResultLowerExpr.Ok value-lowered)
-                              (match value-lowered
-                                [(LowerExpr.Expr value-state value-ir value-ty)
-                                  (ResultLowerExpr.Ok
-                                    (LowerExpr.Expr
-                                      ;; Raw-pointer writes use the same storage
-                                      ;; contract as array element writes.
-                                      ;; Memory aggregates are represented by
-                                      ;; an address and must copy their complete
-                                      ;; inline representation; StorePtr would
-                                      ;; otherwise write that address into only
-                                      ;; the first word. Two-word register
-                                      ;; groups likewise need both words.
-                                      (if (and
-                                        (lower-mode-inline-aggregates?
-                                          (lower-state-mode value-state))
-                                        (lower-type-inline-storage?
-                                          ctx
-                                          value-ty)
-                                        (not
-                                          (lower-type-register-resident?
-                                            ctx
-                                            value-ty)))
-                                        (lower-copy-bytes
-                                          value-state
-                                          (ir.CompilerIrValue.Var ptr-var)
-                                          0
-                                          value-ir
-                                          0
-                                          (lower-type-size ctx value-ty))
-                                        (if (lower-type-register-group?
-                                          ctx
-                                          value-ty)
-                                          (lower-store-group-at-ptr
-                                            ctx
-                                            value-state
-                                            (ir.CompilerIrValue.Var ptr-var)
-                                            value-ir
-                                            value-ty)
-                                          (lower-state-emit-at-expr
-                                            value-state
-                                            (ir.CompilerIrInstr.StorePtr
-                                              (ir.CompilerIrValue.Var ptr-var)
-                                              value-ir
-                                              value-ty)
-                                            origin)))
-                                      ir.CompilerIrValue.Unit
-                                      expr-ty))])]
-                            [(ResultLowerExpr.Err diag)
-                              (ResultLowerExpr.Err diag)])]
-                        [(tc_core.ResultTcType.Err message)
-                          (ResultLowerExpr.Err
-                            (box (lower-diagnostic-at-expr origin message)))]))])])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+        (lower-ptr-write-expr ctx state env type-env ptr value origin expr-ty))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
         [offset : ast.AstExpr (lower-context-expr-get ctx offset-box)]
-        (match (lower-expr ctx state env type-env ptr)
-          [(ResultLowerExpr.Ok ptr-lowered)
-            (match ptr-lowered
-              [(LowerExpr.Expr ptr-state ptr-value ptr-ty)
-                (match (lower-expr-expected
-                  ctx
-                  ptr-state
-                  env
-                  type-env
-                  offset
-                  (ast.AstType.I64)
-                  offset)
-                  [(ResultLowerExpr.Ok offset-lowered)
-                    (match offset-lowered
-                      [(LowerExpr.Expr offset-state offset-value _)
-                        (match (tc_core.tc-type-strip-region
-                          (tc_core.tc-resolve-type ctx ptr-ty))
-                          [(ast.AstType.Ptr elem-ty)
-                            (match (lower-emit-elem-addr-gep
-                              ctx
-                              offset-state
-                              ptr-value
-                              offset-value
-                              (tc_core.tc-context-type-get ctx elem-ty))
-                              [(LowerExpr.Expr gep-state gep-value _)
-                                (ResultLowerExpr.Ok
-                                  (LowerExpr.Expr gep-state gep-value expr-ty))])]
-                          [(ast.AstType.MutPtr elem-ty)
-                            (match (lower-emit-elem-addr-gep
-                              ctx
-                              offset-state
-                              ptr-value
-                              offset-value
-                              (tc_core.tc-context-type-get ctx elem-ty))
-                              [(LowerExpr.Expr gep-state gep-value _)
-                                (ResultLowerExpr.Ok
-                                  (LowerExpr.Expr gep-state gep-value expr-ty))])]
-                          [_
-                            (ResultLowerExpr.Err
-                              (box
-                                (lower-diagnostic-at-expr
-                                  origin
-                                  "lower: ptr-offset requires raw pointer")))])])]
-                  [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)])])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+        (lower-ptr-offset-expr ctx state env type-env ptr offset origin expr-ty))]
     [(ast.AstExpr.PtrCast ptr-box _)
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
-        (match (lower-expr ctx state env type-env ptr)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr ptr-state ptr-value ptr-ty)
-                (ResultLowerExpr.Ok
-                  (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+        (lower-ptr-cast-expr ctx state env type-env ptr expr-ty))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
-        (match (lower-expr ctx state env type-env ptr)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr ptr-state ptr-value ptr-ty)
-                (ResultLowerExpr.Ok
-                  (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+        (lower-ptr-cast-expr ctx state env type-env ptr expr-ty))]
     [(ast.AstExpr.IntToPtr value-box _)
       (let
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (match (lower-expr ctx state env type-env value)
-          [(ResultLowerExpr.Ok lowered)
-            (match lowered
-              [(LowerExpr.Expr value-state value-ir value-ty)
-                (ResultLowerExpr.Ok
-                  (lower-cast-value value-state value-ir value-ty expr-ty))])]
-          [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
+        (lower-ptr-cast-expr ctx state env type-env value expr-ty))]
     [(ast.AstExpr.StringData str-box)
       (let
         [str : ast.AstExpr (lower-context-expr-get ctx str-box)]

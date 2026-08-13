@@ -13337,8 +13337,381 @@
       (not idle-after?)
       restored?)))
 
+;; --- CFG loop nest ----------------------------------------------------------
+;;
+;; The depth analysis used to read the block LAYOUT: a backward edge from index
+;; p to index q <= p made every index in [q, p] one level deeper. These fixtures
+;; are the shapes that encoding gets WRONG -- an in-range block that is not in
+;; the loop, and a backward-in-layout edge that is not a loop edge at all -- and
+;; the shapes both readings must agree on, so a future layout permutation is
+;; measured against a nest that does not move with it.
+(define (compiler-reg-loop-nest-jump [target : String]) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label target))
+    ir.CompilerIrInstrList.Nil))
+
+(define (compiler-reg-loop-nest-branch
+  [true-label : String]
+  [false-label : String]) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Branch
+      (ir.CompilerIrValue.Bool false)
+      (ir.compiler-ir-label true-label)
+      (ir.compiler-ir-label false-label))
+    ir.CompilerIrInstrList.Nil))
+
+(define (compiler-reg-loop-nest-return) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+    ir.CompilerIrInstrList.Nil))
+
+;; A block that ends WITHOUT a terminator: control runs on into whatever block
+;; is laid out next, an edge no instruction names.
+(define (compiler-reg-loop-nest-open) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 1) (compiler-reg-i64-ty))
+    ir.CompilerIrInstrList.Nil))
+
+(define (compiler-reg-loop-nest-block
+  [label : String]
+  [instrs : ir.CompilerIrInstrList]
+  [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-block-cons
+    (ir.compiler-ir-block (ir.compiler-ir-label label) instrs)
+    rest))
+
+(define (compiler-reg-loop-nest-depth-at
+  [depths : (__tl_dyn-array i64)]
+  [index : i64]) : i64
+  (if (and (>= index 0) (< index (array-length depths)))
+    (array-ref depths index)
+    -1))
+
+;; entry / header / body / early / latch / exit.
+;;
+;; `early` is the loop's break arm: it is laid out INSIDE [header, latch], so
+;; the range encoding charges it loop frequency, but it reaches the exit and
+;; never the latch, so it runs at most once per loop ENTRY. The CFG nest leaves
+;; it at depth 0.
+(define (compiler-reg-loop-nest-early-exit-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "header")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-branch "early" "latch")
+        (compiler-reg-loop-nest-block
+          "early"
+          (compiler-reg-loop-nest-jump "exit")
+          (compiler-reg-loop-nest-block
+            "latch"
+            (compiler-reg-loop-nest-jump "header")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-early-exit-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-early-exit-blocks))]
+    (and
+      (= (array-length depths) 6)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
+
+;; entry / hot / join / cold. The motivating shape of the layout arc: `cold` is
+;; sunk below every block it can reach, so its jump to `join` runs BACKWARD in
+;; layout. The range encoding reads that as a loop covering [join, cold]; there
+;; is no cycle in the CFG at all, and the nest says depth 0 everywhere.
+(define (compiler-reg-loop-nest-sunk-cold-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-branch "hot" "cold")
+    (compiler-reg-loop-nest-block
+      "hot"
+      (compiler-reg-loop-nest-jump "join")
+      (compiler-reg-loop-nest-block
+        "join"
+        (compiler-reg-loop-nest-return)
+        (compiler-reg-loop-nest-block
+          "cold"
+          (compiler-reg-loop-nest-jump "join")
+          ir.CompilerIrBlockList.Nil)))))
+
+(define (compiler-reg-loop-nest-sunk-cold-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-sunk-cold-blocks))]
+    (and
+      (= (array-length depths) 4)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 0))))
+
+;; entry / header / body / cont / tail / exit. TWO back edges into one header --
+;; a `continue` arm and the body tail. That is one loop with two latches, not
+;; two nested loops: every body block stays at depth 1.
+(define (compiler-reg-loop-nest-two-latch-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "header")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-branch "cont" "tail")
+        (compiler-reg-loop-nest-block
+          "cont"
+          (compiler-reg-loop-nest-jump "header")
+          (compiler-reg-loop-nest-block
+            "tail"
+            (compiler-reg-loop-nest-jump "header")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-two-latch-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-two-latch-blocks))]
+    (and
+      (= (array-length depths) 6)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
+
+;; entry / outer / inner / inner-latch / outer-latch / exit. Containment is what
+;; makes the level count a NEST: `inner-latch` reaches the outer latch through
+;; the inner header, so it carries both levels.
+(define (compiler-reg-loop-nest-nested-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "outer")
+    (compiler-reg-loop-nest-block
+      "outer"
+      (compiler-reg-loop-nest-branch "inner" "exit")
+      (compiler-reg-loop-nest-block
+        "inner"
+        (compiler-reg-loop-nest-branch "inner-latch" "outer-latch")
+        (compiler-reg-loop-nest-block
+          "inner-latch"
+          (compiler-reg-loop-nest-jump "inner")
+          (compiler-reg-loop-nest-block
+            "outer-latch"
+            (compiler-reg-loop-nest-jump "outer")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-nested-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-nested-blocks))]
+    (and
+      (= (array-length depths) 6)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 2)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 2)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
+
+;; entry / header / body / tail / latch / exit, where `body` ends without a
+;; terminator. The ONLY edge into `tail` is the unnamed fall-through, so a nest
+;; built from named successors alone would leave `body` outside its own loop.
+(define (compiler-reg-loop-nest-fallthrough-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "header")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-open)
+        (compiler-reg-loop-nest-block
+          "tail"
+          (compiler-reg-loop-nest-jump "latch")
+          (compiler-reg-loop-nest-block
+            "latch"
+            (compiler-reg-loop-nest-jump "header")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-fallthrough-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-fallthrough-blocks))]
+    (and
+      (= (array-length depths) 6)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
+
+;; A loop among blocks the entry cannot reach is still emitted and still
+;; allocated, so the DFS is a forest and ranks it. Parity with the range
+;; encoding, which never asked about reachability at all.
+(define (compiler-reg-loop-nest-unreachable-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-return)
+    (compiler-reg-loop-nest-block
+      "dead-header"
+      (compiler-reg-loop-nest-jump "dead-latch")
+      (compiler-reg-loop-nest-block
+        "dead-latch"
+        (compiler-reg-loop-nest-jump "dead-header")
+        ir.CompilerIrBlockList.Nil))))
+
+(define (compiler-reg-loop-nest-unreachable-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-unreachable-blocks))]
+    (and
+      (= (array-length depths) 3)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1))))
+
+;; --- live-in bridge at a block that opens with a call -----------------------
+;;
+;; A segment's START is read as the value's own definition, so a clobber AT the
+;; start is that definition's own instruction and is not spanned. That reading
+;; is sound only while the value's linearly-first live POINT really is its def,
+;; which is a property of the block ORDER, not of the program: here `use` is
+;; laid out before `def`, so var 0's first touch would be its READ at the return
+;; -- and the call that opens `use`, which var 0 is live across, would sit below
+;; the hull and read as un-spanned. Handing it a caller-saved home there is a
+;; miscompile. The live-in bridge opens the segment at the odd point below the
+;; block's first instruction, so the call lands inside the hull for every order.
+(define (compiler-reg-live-in-call-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "live_in_call")
+    ir.CompilerIrParamList.Nil
+    (compiler-reg-i64-ty)
+    2
+    (compiler-reg-loop-nest-block
+      "entry"
+      (compiler-reg-loop-nest-jump "def")
+      (compiler-reg-loop-nest-block
+        "use"
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Call
+            1
+            (ir.compiler-ir-test-symbol "side_effect")
+            (ir.CompilerIrCallArgs.Nil)
+            (ast.AstType.Unit))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Return
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+            ir.CompilerIrInstrList.Nil))
+        (compiler-reg-loop-nest-block
+          "def"
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 9)
+              (compiler-reg-i64-ty))
+            (compiler-reg-loop-nest-jump "use"))
+          ir.CompilerIrBlockList.Nil)))))
+
+(define (compiler-reg-live-in-call-ok?) : bool
+  (let
+    [func : ir.CompilerIrFunction (compiler-reg-live-in-call-function)]
+    [liveness : live.CompilerFunctionLiveness
+      (live.compiler-live-analyze-function func)]
+    (match (reg.compiler-reg-live-interval-selection func liveness)
+      [(reg.CompilerRegIntervalSelection.Selection _ index)
+        (and
+          ;; The jump is point 0, so `use` opens at point 2 and the bridge
+          ;; anchors var 0 at point 1 -- the odd slot no instruction occupies.
+          (= (array-ref index.starts 0) 1)
+          ;; And that is what makes the call spanned: hull start 1, exclusive,
+          ;; still admits the call at point 2.
+          (reg.compiler-reg-segments-span-clobber?
+            (array-ref index.segments 0)
+            (reg.compiler-reg-direct-call-points func)
+            (array-ref index.starts 0)
+            false))])))
+
+;; The analysis owns no state across calls: the same block list ranked twice
+;; must give the same vector, and ranking another shape in between must not
+;; leak a stamp generation into it.
+(define (compiler-reg-loop-nest-deterministic-ok?) : bool
+  (let
+    [first : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-nested-blocks))]
+    [_other : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-two-latch-blocks))]
+    [second : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-nested-blocks))]
+    [count : i64 (array-length first)]
+    [index : i64 0]
+    [ok : bool (= count (array-length second))]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref first index) (array-ref second index))
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
 (define (compiler-regalloc-core-self-test?) : bool
   (begin
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-early-exit-ok?"
+      (compiler-reg-loop-nest-early-exit-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-sunk-cold-ok?"
+      (compiler-reg-loop-nest-sunk-cold-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-two-latch-ok?"
+      (compiler-reg-loop-nest-two-latch-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-nested-ok?"
+      (compiler-reg-loop-nest-nested-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-fallthrough-ok?"
+      (compiler-reg-loop-nest-fallthrough-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-unreachable-ok?"
+      (compiler-reg-loop-nest-unreachable-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-deterministic-ok?"
+      (compiler-reg-loop-nest-deterministic-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-live-in-call-ok?"
+      (compiler-reg-live-in-call-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-program-maps-suppression-ok?"
       (compiler-reg-program-maps-suppression-ok?))

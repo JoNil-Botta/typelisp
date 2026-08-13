@@ -3797,6 +3797,101 @@
       (live.compiler-live-block-instr-after live-block)]
     [(live.CompilerLiveMaybeBlock.No) (live.compiler-live-instr-set-vec-empty)]))
 
+;; Both halves of a block's liveness come off ONE lookup: the interval walk
+;; needs the per-instruction after-sets and the block's live-in together, and
+;; `CompilerLiveBlock` is a six-field record, so looking it up twice per block
+;; copies it twice for nothing.
+(define (compiler-reg-live-maybe-block-afters
+  [maybe : live.CompilerLiveMaybeBlock]) : live.CompilerLiveInstrSetVec
+  (match maybe
+    [(live.CompilerLiveMaybeBlock.Some live-block)
+      (live.compiler-live-block-instr-after live-block)]
+    [(live.CompilerLiveMaybeBlock.No) (live.compiler-live-instr-set-vec-empty)]))
+
+(define (compiler-reg-live-maybe-block-live-in
+  [maybe : live.CompilerLiveMaybeBlock]) : live.CompilerLiveI64Set
+  (match maybe
+    [(live.CompilerLiveMaybeBlock.Some live-block)
+      (live.compiler-live-block-live-in live-block)]
+    [(live.CompilerLiveMaybeBlock.No) (live.compiler-live-set-empty)]))
+
+;; Block-entry point for the live-in bridge: instruction points step by two, so
+;; the odd point just below a block's first instruction is a slot no instruction
+;; -- and therefore no clobber -- ever occupies. Opening a live-in value's
+;; segment THERE says exactly what liveness says: the value is already live when
+;; the block is entered, before its first instruction runs.
+;;
+;; This is what keeps the hull-start convention honest. A segment/hull start is
+;; read as the value's own definition, so a clobber AT it is that definition's
+;; own instruction and is not spanned (`compiler-reg-segments-span-clobber?`'s
+;; `inclusive-hull-start?` note). That reading is only sound when the value's
+;; linearly-first live point really is its def. Block LAYOUT decides which block
+;; is linearly first, and a legal permutation -- a rotated loop, a sunk cold arm
+;; -- can put a block where the value merely flows IN ahead of the block that
+;; defines it. If such a block opens with a call, the value's hull started AT
+;; that call and the strict reading declared a value live ACROSS the call not
+;; call-spanning: it was handed a caller-saved home and the call destroyed it.
+;; Anchoring the live-in bridge one point below the instruction removes the
+;; coincidence at the source, for every block order.
+(define (compiler-reg-live-in-block-point [point : i64]) : i64
+  (if (> point 0)
+    (- point 1)
+    0))
+
+(define (compiler-reg-segment-live-in-word!
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [bits : i64]
+  [var-base : i64]
+  [point : i64]) : unit
+  (if (= bits 0)
+    unit
+    (begin
+      (compiler-reg-extend-segment-touch!
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends
+        (+ var-base (compiler-reg-low-bit-index32-nonzero bits))
+        point)
+      (compiler-reg-segment-live-in-word!
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends
+        (bit-and bits (- bits 1))
+        var-base
+        point))))
+
+(define (compiler-reg-segment-live-in!
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [set : live.CompilerLiveI64Set]
+  [point : i64]) : unit
+  (let
+    [count : i64 (live.compiler-live-set-word-count set)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-segment-live-in-word!
+          starts
+          ends
+          segments
+          segment-starts
+          segment-ends
+          (live.compiler-live-set-word-at-bounded set index)
+          (* index (live.compiler-live-set-word-bits))
+          point)
+        (set! index (+ index 1))))))
+
 (define (compiler-reg-live-intervals-blocks-with-live
   [blocks : ir.CompilerIrBlockList]
   [liveness : live.CompilerFunctionLiveness]
@@ -3958,8 +4053,19 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (let
+            [live-block : live.CompilerLiveMaybeBlock
+              (live.compiler-live-function-find-block liveness label)]
             [live-afters : live.CompilerLiveInstrSetVec
-              (compiler-reg-live-intervals-find-afters liveness label)]
+              (compiler-reg-live-maybe-block-afters live-block)]
+            [_live-in : unit
+              (compiler-reg-segment-live-in!
+                starts
+                ends
+                segments
+                segment-starts
+                segment-ends
+                (compiler-reg-live-maybe-block-live-in live-block)
+                (compiler-reg-live-in-block-point point))]
             (compiler-reg-live-interval-selection-blocks
               (__tl-box-place rest)
               liveness
@@ -3988,8 +4094,19 @@
               (match (ir.compiler-ir-block-seq-ref seq i)
                 [(ir.CompilerIrBlock.Block label instrs)
                   (let
+                    [live-block : live.CompilerLiveMaybeBlock
+                      (live.compiler-live-function-find-block liveness label)]
                     [live-afters : live.CompilerLiveInstrSetVec
-                      (compiler-reg-live-intervals-find-afters liveness label)]
+                      (compiler-reg-live-maybe-block-afters live-block)]
+                    [_live-in : unit
+                      (compiler-reg-segment-live-in!
+                        starts
+                        ends
+                        segments
+                        segment-starts
+                        segment-ends
+                        (compiler-reg-live-maybe-block-live-in live-block)
+                        (compiler-reg-live-in-block-point out-point))]
                     (set!
                       out-point
                       (compiler-reg-live-interval-selection-instr-seq
@@ -10296,49 +10413,499 @@
             (ir.compiler-ir-block-seq-ref seq i)))
         (set! i (+ i 1))))))
 
-(define (compiler-reg-loop-depth-bump-range!
-  [depths : (__tl_dyn-array i64)]
-  [index : i64]
-  [end : i64]) : unit
-  (if (or (>= index (array-length depths)) (> index end))
-    unit
-    (begin
-      (if (< (array-ref depths index) (compiler-reg-loop-depth-max))
-        (set! (array-ref depths index) (+ (array-ref depths index) 1))
-        unit)
-      (compiler-reg-loop-depth-bump-range! depths (+ index 1) end))))
+;; --- Loop depth: the CFG loop nest ------------------------------------------
+;;
+;; Loop depth ranks how often a block runs, and every weight the allocator
+;; derives from it -- the spill-weight ladder, greedy priority, the copy-hint
+;; value, the eviction price, the rescue's trip factor -- is only as good as
+;; that ranking.
+;;
+;; The estimate this replaces read the block LAYOUT: an edge from position p
+;; back to a position q <= p made every position in [q, p] one level deeper.
+;; That is the loop nest only while the layout keeps each loop's blocks
+;; contiguous and header-first -- which the lowering order happens to do, and a
+;; legal permutation need not. Rotate a loop so its latch falls through to its
+;; header, or sink a cold in-loop arm below the latch, and the SAME edges read
+;; as a different, much larger nest; the measured cost of getting it wrong is a
+;; spill blowup in the biggest function of the affected program.
+;;
+;; So take the nest from the CFG, where it actually lives. A back edge is an
+;; edge q -> h whose target is still on the DFS stack: in a reducible CFG that
+;; is exactly "h dominates q", and in an irreducible one it is a conservative
+;; superset, which is the safe direction for a frequency estimate. The natural
+;; loop of that edge is h plus every block that reaches q by walking
+;; predecessors without crossing h. Back edges that SHARE a header describe one
+;; loop with several latches -- a `continue` arm, or two tails of the same
+;; body -- so they are grouped and their bodies unioned before a level is
+;; added; charging per edge would read a second latch as a second nesting
+;; level. Layout no longer enters the answer, so a function is ranked the same
+;; way whatever order its blocks are emitted in.
+;;
+;; The DFS is a forest, not a single walk from entry: a block unreachable from
+;; the entry is still emitted and still allocated, so a loop among unreachable
+;; blocks is ranked rather than silently flattened to depth zero.
+(define (compiler-reg-loop-nest-terminator? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Jump _) true]
+    [(ir.CompilerIrInstr.Branch _ _ _) true]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) true]
+    [(ir.CompilerIrInstr.Return _) true]
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(ir.CompilerIrInstr.Switch _ _ _ _) true]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
+    [_ false]))
 
-(define (compiler-reg-loop-depths-from-ends!
-  [loop-ends : (__tl_dyn-array i64)]
-  [depths : (__tl_dyn-array i64)]
-  [index : i64]) : unit
-  (if (>= index (array-length loop-ends))
-    unit
+;; A block whose last instruction is not a terminator continues into the block
+;; laid out after it. That edge belongs to the CFG even though no instruction
+;; names it, and the natural-loop walk needs it: without it, a block that only
+;; reaches the latch by falling through reads as sitting outside the loop.
+(define (compiler-reg-loop-nest-falls-through? [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (<= count 0)
+          true
+          (not
+            (compiler-reg-loop-nest-terminator?
+              (ir.compiler-ir-instr-seq-ref instrs (- count 1))))))]))
+
+;; Capacity for the CSR successor table, read off the terminator SHAPES rather
+;; than off the successor sets. Building a successor set allocates, and the fill
+;; pass below has to build every one of them anyway, so sizing the table must
+;; not pay for a second construction of each. A bound is all the table needs:
+;; `offsets` records where each block's run actually ends, and the successor
+;; sets are deduplicated, so the written edge count can only come in under it.
+(define (compiler-reg-loop-nest-succ-bound-instr [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Jump _) 1]
+    [(ir.CompilerIrInstr.Branch _ _ _) 2]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) 2]
+    [(ir.CompilerIrInstr.Return _) 0]
+    [(ir.CompilerIrInstr.TailCall _ _ _) 0]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) 0]
+    [(ir.CompilerIrInstr.Switch _ _ cases _)
+      (+ 1 (ir.compiler-ir-switch-case-list-count cases))]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases _ _)
+      (+ 2 (ir.compiler-ir-switch-case-list-count cases))]
+    ;; Not a terminator: one unnamed fall-through edge.
+    [_ 1]))
+
+(define (compiler-reg-loop-nest-succ-bound [seq : ir.CompilerIrBlockSeq]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [index : i64 0]
+    [total : i64 0]
     (begin
-      (if (>= (array-ref loop-ends index) index)
-        (compiler-reg-loop-depth-bump-range!
-          depths
-          index
-          (array-ref loop-ends index))
-        unit)
-      (compiler-reg-loop-depths-from-ends! loop-ends depths (+ index 1)))))
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq index)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                (set!
+                  total
+                  (+
+                    total
+                    (if (<= len 0)
+                      1
+                      (compiler-reg-loop-nest-succ-bound-instr
+                        (ir.compiler-ir-instr-seq-ref instrs (- len 1)))))))])
+          (set! index (+ index 1))))
+      total)))
+
+;; A label with no block of its own is written as -1 and skipped by every walk;
+;; an unresolvable successor must not be confused with block 0.
+(define (compiler-reg-loop-nest-fill-labels!
+  [ids : reg_label_i64_map.Map]
+  [targets : (__tl_dyn-array i64)]
+  [write : i64]
+  [labels : live.CompilerLiveLabelSet]) : i64
+  (match labels
+    [(live.CompilerLiveLabelSet.Nil) write]
+    [(live.CompilerLiveLabelSet.Dense _ _)
+      (begin
+        (set!
+          (array-ref targets write)
+          (match (reg_label_i64_map.get
+            (& ids)
+            (live.compiler-live-label-set-ref labels 0))
+            [(reg_label_i64_map.LookupFound target) target]
+            [(reg_label_i64_map.LookupMissing) -1]))
+        (compiler-reg-loop-nest-fill-labels!
+          ids
+          targets
+          (+ write 1)
+          (live.compiler-live-label-set-tail labels)))]))
+
+;; Builds the CSR and answers one question on the way: does any edge run from a
+;; block to a block at or before it in the current order?
+;;
+;; If none does, the current order is a topological order and the CFG is a DAG,
+;; so there is no loop to find and no nest to build. That test is a PROOF, not a
+;; layout assumption: a cycle has to close somewhere, so it must contain at
+;; least one edge that does not advance the index, whatever the order is. A
+;; permutation can only cost the fast path, never its soundness -- a reordered
+;; function that still has no loop simply pays for the DFS to say so.
+(define (compiler-reg-loop-nest-fill-succ!
+  [seq : ir.CompilerIrBlockSeq]
+  [ids : reg_label_i64_map.Map]
+  [offsets : (__tl_dyn-array i64)]
+  [targets : (__tl_dyn-array i64)]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [index : i64 0]
+    [write : i64 0]
+    [closes? : bool false]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref offsets index) write)
+          (let
+            [block : ir.CompilerIrBlock
+              (ir.compiler-ir-block-seq-ref seq index)]
+            (begin
+              (set!
+                write
+                (compiler-reg-loop-nest-fill-labels!
+                  ids
+                  targets
+                  write
+                  (live.compiler-live-block-successors block)))
+              (if (and
+                (compiler-reg-loop-nest-falls-through? block)
+                (< (+ index 1) count))
+                (begin
+                  (set! (array-ref targets write) (+ index 1))
+                  (set! write (+ write 1)))
+                unit)))
+          (let
+            [edge : i64 (array-ref offsets index)]
+            (while (< edge write)
+              (begin
+                (if (and
+                  (>= (array-ref targets edge) 0)
+                  (<= (array-ref targets edge) index))
+                  (set! closes? true)
+                  unit)
+                (set! edge (+ edge 1)))))
+          (set! index (+ index 1))))
+      (set! (array-ref offsets count) write)
+      closes?)))
+
+;; Transpose the successor CSR. `cursor` counts in-edges per block, then
+;; doubles as the per-block write head while the sources are scattered.
+(define (compiler-reg-loop-nest-fill-pred!
+  [count : i64]
+  [succ-offsets : (__tl_dyn-array i64)]
+  [succ-targets : (__tl_dyn-array i64)]
+  [pred-offsets : (__tl_dyn-array i64)]
+  [pred-sources : (__tl_dyn-array i64)]
+  [cursor : (__tl_dyn-array i64)]) : unit
+  (let
+    [block : i64 0]
+    [edge : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< edge (array-ref succ-offsets count))
+        (begin
+          (let
+            [target : i64 (array-ref succ-targets edge)]
+            (if (>= target 0)
+              (set! (array-ref cursor target) (+ (array-ref cursor target) 1))
+              unit))
+          (set! edge (+ edge 1))))
+      (while (< block count)
+        (begin
+          (set! (array-ref pred-offsets block) total)
+          (set! total (+ total (array-ref cursor block)))
+          (set! (array-ref cursor block) (array-ref pred-offsets block))
+          (set! block (+ block 1))))
+      (set! (array-ref pred-offsets count) total)
+      (set! block 0)
+      (while (< block count)
+        (begin
+          (set! edge (array-ref succ-offsets block))
+          (while (< edge (array-ref succ-offsets (+ block 1)))
+            (begin
+              (let
+                [target : i64 (array-ref succ-targets edge)]
+                (if (>= target 0)
+                  (begin
+                    (set!
+                      (array-ref pred-sources (array-ref cursor target))
+                      block)
+                    (set!
+                      (array-ref cursor target)
+                      (+ (array-ref cursor target) 1)))
+                  unit))
+              (set! edge (+ edge 1))))
+          (set! block (+ block 1)))))))
+
+;; Iterative DFS forest. `state` is 0 unvisited / 1 on the stack / 2 finished,
+;; and an edge to a block in state 1 is a back edge.
+(define (compiler-reg-loop-nest-back-edges!
+  [count : i64]
+  [succ-offsets : (__tl_dyn-array i64)]
+  [succ-targets : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [stack-node : (__tl_dyn-array i64)]
+  [stack-edge : (__tl_dyn-array i64)]
+  [back-source : (__tl_dyn-array i64)]
+  [back-target : (__tl_dyn-array i64)]) : i64
+  (let
+    [found : i64 0]
+    [root : i64 0]
+    (begin
+      (while (< root count)
+        (begin
+          (if (= (array-ref state root) 0)
+            (let
+              [depth : i64 1]
+              (begin
+                (set! (array-ref state root) 1)
+                (set! (array-ref stack-node 0) root)
+                (set! (array-ref stack-edge 0) (array-ref succ-offsets root))
+                (while (> depth 0)
+                  (let
+                    [top : i64 (- depth 1)]
+                    [block : i64 (array-ref stack-node top)]
+                    [edge : i64 (array-ref stack-edge top)]
+                    (if (< edge (array-ref succ-offsets (+ block 1)))
+                      (begin
+                        (set! (array-ref stack-edge top) (+ edge 1))
+                        (let
+                          [target : i64 (array-ref succ-targets edge)]
+                          (if (>= target 0)
+                            (cond
+                              [(= (array-ref state target) 0)
+                                (begin
+                                  (set! (array-ref state target) 1)
+                                  (set! (array-ref stack-node depth) target)
+                                  (set!
+                                    (array-ref stack-edge depth)
+                                    (array-ref succ-offsets target))
+                                  (set! depth (+ depth 1)))]
+                              [(= (array-ref state target) 1)
+                                (begin
+                                  (set! (array-ref back-source found) block)
+                                  (set! (array-ref back-target found) target)
+                                  (set! found (+ found 1)))]
+                              [else unit])
+                            unit)))
+                      (begin
+                        (set! (array-ref state block) 2)
+                        (set! depth (- depth 1))))))))
+            unit)
+          (set! root (+ root 1))))
+      found)))
+
+;; Backward closure of the seeded work stack, stopping at the header (already
+;; stamped by the caller). Every block it reaches is a loop member; the caller
+;; bumps them from `members` rather than rescanning the whole function, so the
+;; cost is the size of the loop, not the size of the function.
+(define (compiler-reg-loop-nest-walk-preds!
+  [pred-offsets : (__tl_dyn-array i64)]
+  [pred-sources : (__tl_dyn-array i64)]
+  [stamp : (__tl_dyn-array i64)]
+  [work : (__tl_dyn-array i64)]
+  [members : (__tl_dyn-array i64)]
+  [generation : i64]
+  [top : i64]
+  [count : i64]) : i64
+  (let
+    [head : i64 top]
+    [total : i64 count]
+    (begin
+      (while (> head 0)
+        (begin
+          (set! head (- head 1))
+          (let
+            [block : i64 (array-ref work head)]
+            [edge : i64 (array-ref pred-offsets block)]
+            (while (< edge (array-ref pred-offsets (+ block 1)))
+              (begin
+                (let
+                  [source : i64 (array-ref pred-sources edge)]
+                  (if (= (array-ref stamp source) generation)
+                    unit
+                    (begin
+                      (set! (array-ref stamp source) generation)
+                      (set! (array-ref work head) source)
+                      (set! head (+ head 1))
+                      (set! (array-ref members total) source)
+                      (set! total (+ total 1)))))
+                (set! edge (+ edge 1)))))))
+      total)))
+
+;; One level per loop, not one per back edge: the first edge into a header
+;; claims every other edge into the same header (blanking its target), seeds
+;; all of those latches into one stamped walk, and adds a single level to the
+;; union.
+(define (compiler-reg-loop-nest-apply!
+  [found : i64]
+  [back-source : (__tl_dyn-array i64)]
+  [back-target : (__tl_dyn-array i64)]
+  [pred-offsets : (__tl_dyn-array i64)]
+  [pred-sources : (__tl_dyn-array i64)]
+  [stamp : (__tl_dyn-array i64)]
+  [work : (__tl_dyn-array i64)]
+  [members : (__tl_dyn-array i64)]
+  [depths : (__tl_dyn-array i64)]) : unit
+  (let
+    [cap : i64 (compiler-reg-loop-depth-max)]
+    [index : i64 0]
+    [generation : i64 0]
+    (while (< index found)
+      (begin
+        (let
+          [header : i64 (array-ref back-target index)]
+          (if (< header 0)
+            unit
+            (let
+              [top : i64 0]
+              [total : i64 0]
+              [scan : i64 index]
+              [member : i64 0]
+              (begin
+                (set! generation (+ generation 1))
+                (set! (array-ref stamp header) generation)
+                (while (< scan found)
+                  (begin
+                    (if (= (array-ref back-target scan) header)
+                      (begin
+                        (set! (array-ref back-target scan) -1)
+                        (let
+                          [latch : i64 (array-ref back-source scan)]
+                          (if (= (array-ref stamp latch) generation)
+                            unit
+                            (begin
+                              (set! (array-ref stamp latch) generation)
+                              (set! (array-ref work top) latch)
+                              (set! top (+ top 1))
+                              (set! (array-ref members total) latch)
+                              (set! total (+ total 1))))))
+                      unit)
+                    (set! scan (+ scan 1))))
+                (set!
+                  total
+                  (compiler-reg-loop-nest-walk-preds!
+                    pred-offsets
+                    pred-sources
+                    stamp
+                    work
+                    members
+                    generation
+                    top
+                    total))
+                (if (< (array-ref depths header) cap)
+                  (set!
+                    (array-ref depths header)
+                    (+ (array-ref depths header) 1))
+                  unit)
+                (while (< member total)
+                  (begin
+                    (let
+                      [block : i64 (array-ref members member)]
+                      (if (< (array-ref depths block) cap)
+                        (set!
+                          (array-ref depths block)
+                          (+ (array-ref depths block) 1))
+                        unit))
+                    (set! member (+ member 1))))))))
+        (set! index (+ index 1))))))
 
 (define (compiler-reg-function-loop-depths [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
     i64)
   (let
-    [count : i64 (ir.compiler-ir-block-list-count blocks)]
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [loop-ends : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [ids : reg_label_i64_map.Map
-      (compiler-reg-loop-depth-block-ids
-        blocks
-        (reg_label_i64_map.with-capacity (compiler-reg-bits-map-capacity count))
-        0)]
-    (begin
-      (compiler-reg-fill-i64-array loop-ends (- 0 1))
-      (compiler-reg-loop-depth-record-blocks! blocks ids loop-ends 0)
-      (compiler-reg-loop-depths-from-ends! loop-ends depths 0)
-      depths)))
+    (if (< count 1)
+      depths
+      (let
+        [ids : reg_label_i64_map.Map
+          (compiler-reg-loop-depth-block-ids-seq
+            seq
+            (reg_label_i64_map.with-capacity
+              (compiler-reg-bits-map-capacity count))
+            0)]
+        [succ-bound : i64 (compiler-reg-loop-nest-succ-bound seq)]
+        [succ-offsets : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [succ-targets : (__tl_dyn-array i64)
+          (array.make-array i64 (+ succ-bound 1))]
+        [closes? : bool false]
+        (begin
+          (set!
+            closes?
+            (compiler-reg-loop-nest-fill-succ!
+              seq
+              ids
+              succ-offsets
+              succ-targets))
+          ;; Most functions are loop-free, and for those the CSR pass has
+          ;; already proved it: stop before the DFS rather than walk a graph
+          ;; whose answer is known.
+          (if (not closes?)
+            depths
+            (let
+              [state : (__tl_dyn-array i64) (array.make-array i64 count)]
+              [stack-node : (__tl_dyn-array i64)
+                (array.make-array i64 (+ count 1))]
+              [stack-edge : (__tl_dyn-array i64)
+                (array.make-array i64 (+ count 1))]
+              [back-source : (__tl_dyn-array i64)
+                (array.make-array i64 (+ succ-bound 1))]
+              [back-target : (__tl_dyn-array i64)
+                (array.make-array i64 (+ succ-bound 1))]
+              [found : i64
+                (compiler-reg-loop-nest-back-edges!
+                  count
+                  succ-offsets
+                  succ-targets
+                  state
+                  stack-node
+                  stack-edge
+                  back-source
+                  back-target)]
+              ;; An edge that does not advance the index is only a CANDIDATE
+              ;; back edge; the DFS may still find no cycle. Stop before the
+              ;; predecessor transpose rather than build it for a walk that
+              ;; will not run.
+              (if (= found 0)
+                depths
+                (let
+                  [pred-offsets : (__tl_dyn-array i64)
+                    (array.make-array i64 (+ count 1))]
+                  [pred-sources : (__tl_dyn-array i64)
+                    (array.make-array i64 (+ succ-bound 1))]
+                  [cursor : (__tl_dyn-array i64) (array.make-array i64 count)]
+                  [stamp : (__tl_dyn-array i64) (array.make-array i64 count)]
+                  [work : (__tl_dyn-array i64)
+                    (array.make-array i64 (+ count 1))]
+                  [members : (__tl_dyn-array i64)
+                    (array.make-array i64 (+ count 1))]
+                  (begin
+                    (compiler-reg-loop-nest-fill-pred!
+                      count
+                      succ-offsets
+                      succ-targets
+                      pred-offsets
+                      pred-sources
+                      cursor)
+                    (compiler-reg-loop-nest-apply!
+                      found
+                      back-source
+                      back-target
+                      pred-offsets
+                      pred-sources
+                      stamp
+                      work
+                      members
+                      depths)
+                    depths))))))))))
 
 (define (compiler-reg-ref-counts-add-var-weighted!
   [counts : (__tl_dyn-array i64)]

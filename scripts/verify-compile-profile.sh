@@ -585,6 +585,22 @@ assert_profile_live_counter_at_least_in() {
     fi
 }
 
+assert_profile_live_counter_at_most_in() {
+    _file=$1
+    _phase=$2
+    _max=$3
+    _stdout=$4
+    _stderr=$5
+    _value=$(profile_live_counter_value_in "$_file" "$_phase") || {
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "missing profile live counter $_phase"
+    }
+    if [ "$_value" -gt "$_max" ]; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "profile live counter $_phase crossed $_max: $_value"
+    fi
+}
+
 assert_profile_counter_at_most_in() {
     _file=$1
     _phase=$2
@@ -1603,12 +1619,31 @@ if [ "$NL_HOST_OS" = windows ]; then
         2000000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
-    assert_profile_counter_at_most_in \
+    assert_profile_live_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "lower.name_cache.entries" \
         1500000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    for cache in module_name_cache module_local_view; do
+        cache_lookups=$(profile_live_counter_value_in \
+            "$SELFHOST_STDERR" "lower.$cache.lookups") ||
+            fail "missing lower.$cache.lookups profile counter"
+        cache_hits=$(profile_live_counter_value_in \
+            "$SELFHOST_STDERR" "lower.$cache.hits") ||
+            fail "missing lower.$cache.hits profile counter"
+        cache_entries=$(profile_live_counter_value_in \
+            "$SELFHOST_STDERR" "lower.$cache.entries") ||
+            fail "missing lower.$cache.entries profile counter"
+        [ "$cache_entries" -gt 0 ] ||
+            fail "lower.$cache retained no module entries"
+        [ "$cache_hits" -gt 0 ] ||
+            fail "lower.$cache recorded no repeated-module hits"
+        [ "$cache_lookups" -eq "$((cache_hits + cache_entries))" ] ||
+            fail "lower.$cache lookup accounting mismatch: lookups=$cache_lookups hits=$cache_hits entries=$cache_entries"
+        [ "$cache_entries" -le 1024 ] ||
+            fail "lower.$cache retained too many phase entries: $cache_entries"
+    done
 else
     echo "[compile-profile] selfhost allocation probe and pool pins SKIPPED (windows-gated)"
 fi
@@ -3405,5 +3440,11 @@ assert_lower_row "name_cache.entries"
 assert_lower_row "name_cache.lookups"
 assert_lower_row "name_cache.local_hits"
 assert_lower_row "name_cache.local_misses"
+assert_lower_row "module_name_cache.lookups"
+assert_lower_row "module_name_cache.hits"
+assert_lower_row "module_name_cache.entries"
+assert_lower_row "module_local_view.lookups"
+assert_lower_row "module_local_view.hits"
+assert_lower_row "module_local_view.entries"
 
 echo "[compile-profile] ok"

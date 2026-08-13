@@ -395,9 +395,14 @@
   (No)
   (Some LowerNameCache))
 
-(defenum LowerModuleNameCacheList
-  (Nil)
-  (Cons i64 LowerNameCache (Box LowerModuleNameCacheList)))
+;; Module IDs are sparse logical intern IDs. Map each one to an append-only
+;; dense slot rather than sizing storage by the largest process-wide ID.
+;; Name caches and local views deliberately keep separate indexes: their phase
+;; entry points reset independently before reach/body indexing and decl lowering.
+(defstruct LowerModuleNameCacheStore
+  (modules lower_i64_i64_map.Map)
+  (values (__tl_dyn-array LowerNameCache))
+  (len i64))
 
 (defstruct LowerModuleLocalView
   (local-top-env tc_core.TcTypeEnv)
@@ -412,9 +417,22 @@
   (No)
   (Some LowerModuleLocalView))
 
-(defenum LowerModuleLocalViewList
-  (Nil)
-  (Cons i64 LowerModuleLocalView (Box LowerModuleLocalViewList)))
+(defstruct LowerModuleLocalViewStore
+  (modules lower_i64_i64_map.Map)
+  (values (__tl_dyn-array LowerModuleLocalView))
+  (len i64))
+
+(define (lower-module-name-cache-store-empty) : LowerModuleNameCacheStore
+  (LowerModuleNameCacheStore
+    (lower_i64_i64_map.with-capacity 16)
+    (array.make-array LowerNameCache 8)
+    0))
+
+(define (lower-module-local-view-store-empty) : LowerModuleLocalViewStore
+  (LowerModuleLocalViewStore
+    (lower_i64_i64_map.with-capacity 16)
+    (array.make-array LowerModuleLocalView 8)
+    0))
 
 ;; Contiguous id set: `slots[0, len)` holds the members oldest first, so the old
 ;; head-first cons walk is the descending index walk. `lower-id-set-insert` is
@@ -626,13 +644,13 @@
       (set!
         (array-ref cells active-module-name-caches)
         (compiler-lower-state-cell
-          LowerModuleNameCacheList
-          (LowerModuleNameCacheList.Nil)))
+          LowerModuleNameCacheStore
+          (lower-module-name-cache-store-empty)))
       (set!
         (array-ref cells active-module-local-views)
         (compiler-lower-state-cell
-          LowerModuleLocalViewList
-          (LowerModuleLocalViewList.Nil)))
+          LowerModuleLocalViewStore
+          (lower-module-local-view-store-empty)))
       (set!
         (array-ref cells active-loop-function)
         (compiler-lower-state-cell i64 -1))
@@ -826,11 +844,11 @@
     (compiler-lower-state-field-fingerprint state bool active-symbols-ready)
     (compiler-lower-state-field-fingerprint
       state
-      LowerModuleNameCacheList
+      LowerModuleNameCacheStore
       active-module-name-caches)
     (compiler-lower-state-field-fingerprint
       state
-      LowerModuleLocalViewList
+      LowerModuleLocalViewStore
       active-module-local-views)
     (compiler-lower-state-field-fingerprint state i64 active-loop-function)
     (compiler-lower-state-field-fingerprint
@@ -938,14 +956,14 @@
   (begin
     (compiler-lower-state-write!
       state
-      LowerModuleNameCacheList
+      LowerModuleNameCacheStore
       active-module-name-caches
-      (LowerModuleNameCacheList.Nil))
+      (lower-module-name-cache-store-empty))
     (compiler-lower-state-write!
       state
-      LowerModuleLocalViewList
+      LowerModuleLocalViewStore
       active-module-local-views
-      (LowerModuleLocalViewList.Nil))
+      (lower-module-local-view-store-empty))
     (compiler-lower-state-write! state i64 active-loop-function -1)
     (compiler-lower-state-write! state i64 active-loop-entry-var-limit -1)))
 
@@ -1937,6 +1955,30 @@
   compile-profile
   (define compiler-lower-profile-name-cache-local-misses : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-module-name-cache-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-module-name-cache-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-module-name-cache-entries : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-module-local-view-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-module-local-view-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-module-local-view-entries : i64
+    0))
 
 ;; Non-resetting stage snapshots inside lower.typecheck: the checked-program
 ;; build's retention decomposes across the walk / clone augmentation / context
@@ -2194,7 +2236,13 @@
       (set! compiler-lower-profile-name-cache-entries 0)
       (set! compiler-lower-profile-name-cache-lookups 0)
       (set! compiler-lower-profile-name-cache-local-hits 0)
-      (set! compiler-lower-profile-name-cache-local-misses 0))))
+      (set! compiler-lower-profile-name-cache-local-misses 0)
+      (set! compiler-lower-profile-module-name-cache-lookups 0)
+      (set! compiler-lower-profile-module-name-cache-hits 0)
+      (set! compiler-lower-profile-module-name-cache-entries 0)
+      (set! compiler-lower-profile-module-local-view-lookups 0)
+      (set! compiler-lower-profile-module-local-view-hits 0)
+      (set! compiler-lower-profile-module-local-view-entries 0))))
 
 (cfg
   compile-profile
@@ -2235,7 +2283,25 @@
         compiler-lower-profile-name-cache-local-hits)
       (compiler-lower-profile-counter
         "name_cache.local_misses"
-        compiler-lower-profile-name-cache-local-misses))))
+        compiler-lower-profile-name-cache-local-misses)
+      (compiler-lower-profile-counter
+        "module_name_cache.lookups"
+        compiler-lower-profile-module-name-cache-lookups)
+      (compiler-lower-profile-counter
+        "module_name_cache.hits"
+        compiler-lower-profile-module-name-cache-hits)
+      (compiler-lower-profile-counter
+        "module_name_cache.entries"
+        compiler-lower-profile-module-name-cache-entries)
+      (compiler-lower-profile-counter
+        "module_local_view.lookups"
+        compiler-lower-profile-module-local-view-lookups)
+      (compiler-lower-profile-counter
+        "module_local_view.hits"
+        compiler-lower-profile-module-local-view-hits)
+      (compiler-lower-profile-counter
+        "module_local_view.entries"
+        compiler-lower-profile-module-local-view-entries))))
 
 (cfg
   compile-profile
@@ -3155,25 +3221,93 @@
           (LowerNameParent.Global)
           lower-state.address)))))
 
-(define (lower-module-name-cache-list-lookup
-  [entries : LowerModuleNameCacheList]
+(define (lower-module-name-cache-store-copy-prefix!
+  [source : (__tl_dyn-array LowerNameCache)]
+  [destination : (__tl_dyn-array LowerNameCache)]
+  [len : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index len)
+      (begin
+        (set! (array-ref destination index) (array-ref source index))
+        (set! index (+ index 1))))))
+
+(define (lower-module-name-cache-store-grow [store : LowerModuleNameCacheStore]) : LowerModuleNameCacheStore
+  (let
+    [old-capacity : i64 (array-length store.values)]
+    [next-capacity : i64
+      (if (< old-capacity 1)
+        8
+        (* old-capacity 2))]
+    [next-values : (__tl_dyn-array LowerNameCache)
+      (array.make-array LowerNameCache next-capacity)]
+    (begin
+      (lower-module-name-cache-store-copy-prefix!
+        store.values
+        next-values
+        store.len)
+      (LowerModuleNameCacheStore store.modules next-values store.len))))
+
+(define (lower-module-name-cache-store-lookup
+  [store : LowerModuleNameCacheStore]
   [module-id : i64]) : LowerMaybeModuleNameCache
-  (match entries
-    [(LowerModuleNameCacheList.Nil) (LowerMaybeModuleNameCache.No)]
-    [(LowerModuleNameCacheList.Cons entry-module-id cache rest)
-      (if (= entry-module-id module-id)
-        (LowerMaybeModuleNameCache.Some cache)
-        (lower-module-name-cache-list-lookup (__tl-box-place rest) module-id))]))
+  (match (lower_i64_i64_map.get (& store.modules) module-id)
+    [(lower_i64_i64_map.LookupFound slot)
+      (LowerMaybeModuleNameCache.Some (array-ref store.values slot))]
+    [(lower_i64_i64_map.LookupMissing) (LowerMaybeModuleNameCache.No)]))
+
+(define (lower-module-name-cache-store-insert
+  [store : LowerModuleNameCacheStore]
+  [module-id : i64]
+  [cache : LowerNameCache]) : LowerModuleNameCacheStore
+  (match (lower_i64_i64_map.get (& store.modules) module-id)
+    [(lower_i64_i64_map.LookupFound slot)
+      (begin
+        (set! (array-ref store.values slot) cache)
+        store)]
+    [(lower_i64_i64_map.LookupMissing)
+      (let
+        [ready : LowerModuleNameCacheStore
+          (if (>= store.len (array-length store.values))
+            (lower-module-name-cache-store-grow store)
+            store)]
+        [slot : i64 ready.len]
+        [modules : lower_i64_i64_map.Map ready.modules]
+        (begin
+          (set! (array-ref ready.values slot) cache)
+          (lower_i64_i64_map.insert-ref! (&mut modules) module-id slot)
+          (cfg
+            compile-profile
+            (set!
+              compiler-lower-profile-module-name-cache-entries
+              (+ compiler-lower-profile-module-name-cache-entries 1)))
+          (LowerModuleNameCacheStore modules ready.values (+ slot 1))))]))
 
 (define (lower-active-module-name-cache-lookup
   [lower-state : CompilerLowerState]
   [module-id : i64]) : LowerMaybeModuleNameCache
-  (lower-module-name-cache-list-lookup
-    (compiler-lower-state-read
-      lower-state
-      LowerModuleNameCacheList
-      active-module-name-caches)
-    module-id))
+  (let
+    [result : LowerMaybeModuleNameCache
+      (lower-module-name-cache-store-lookup
+        (compiler-lower-state-read
+          lower-state
+          LowerModuleNameCacheStore
+          active-module-name-caches)
+        module-id)]
+    (begin
+      (cfg
+        compile-profile
+        (begin
+          (set!
+            compiler-lower-profile-module-name-cache-lookups
+            (+ compiler-lower-profile-module-name-cache-lookups 1))
+          (match result
+            [(LowerMaybeModuleNameCache.Some _)
+              (set!
+                compiler-lower-profile-module-name-cache-hits
+                (+ compiler-lower-profile-module-name-cache-hits 1))]
+            [(LowerMaybeModuleNameCache.No) unit])))
+      result)))
 
 (define (lower-active-module-name-cache-insert!
   [lower-state : CompilerLowerState]
@@ -3181,16 +3315,15 @@
   [cache : LowerNameCache]) : unit
   (compiler-lower-state-write!
     lower-state
-    LowerModuleNameCacheList
+    LowerModuleNameCacheStore
     active-module-name-caches
-    (LowerModuleNameCacheList.Cons
+    (lower-module-name-cache-store-insert
+      (compiler-lower-state-read
+        lower-state
+        LowerModuleNameCacheStore
+        active-module-name-caches)
       module-id
-      cache
-      (box
-        (compiler-lower-state-read
-          lower-state
-          LowerModuleNameCacheList
-          active-module-name-caches)))))
+      cache)))
 
 (define (lower-name-cache-with-module-id
   [cache : LowerNameCache]
@@ -7141,15 +7274,93 @@
             module
             module-id))])))
 
-(define (lower-module-local-view-list-lookup
-  [entries : LowerModuleLocalViewList]
+(define (lower-module-local-view-store-copy-prefix!
+  [source : (__tl_dyn-array LowerModuleLocalView)]
+  [destination : (__tl_dyn-array LowerModuleLocalView)]
+  [len : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index len)
+      (begin
+        (set! (array-ref destination index) (array-ref source index))
+        (set! index (+ index 1))))))
+
+(define (lower-module-local-view-store-grow [store : LowerModuleLocalViewStore]) : LowerModuleLocalViewStore
+  (let
+    [old-capacity : i64 (array-length store.values)]
+    [next-capacity : i64
+      (if (< old-capacity 1)
+        8
+        (* old-capacity 2))]
+    [next-values : (__tl_dyn-array LowerModuleLocalView)
+      (array.make-array LowerModuleLocalView next-capacity)]
+    (begin
+      (lower-module-local-view-store-copy-prefix!
+        store.values
+        next-values
+        store.len)
+      (LowerModuleLocalViewStore store.modules next-values store.len))))
+
+(define (lower-module-local-view-store-lookup
+  [store : LowerModuleLocalViewStore]
   [module-id : i64]) : LowerMaybeModuleLocalView
-  (match entries
-    [(LowerModuleLocalViewList.Nil) (LowerMaybeModuleLocalView.No)]
-    [(LowerModuleLocalViewList.Cons entry-module-id view rest)
-      (if (= entry-module-id module-id)
-        (LowerMaybeModuleLocalView.Some view)
-        (lower-module-local-view-list-lookup (__tl-box-place rest) module-id))]))
+  (match (lower_i64_i64_map.get (& store.modules) module-id)
+    [(lower_i64_i64_map.LookupFound slot)
+      (LowerMaybeModuleLocalView.Some (array-ref store.values slot))]
+    [(lower_i64_i64_map.LookupMissing) (LowerMaybeModuleLocalView.No)]))
+
+(define (lower-module-local-view-store-insert
+  [store : LowerModuleLocalViewStore]
+  [module-id : i64]
+  [view : LowerModuleLocalView]) : LowerModuleLocalViewStore
+  (match (lower_i64_i64_map.get (& store.modules) module-id)
+    [(lower_i64_i64_map.LookupFound slot)
+      (begin
+        (set! (array-ref store.values slot) view)
+        store)]
+    [(lower_i64_i64_map.LookupMissing)
+      (let
+        [ready : LowerModuleLocalViewStore
+          (if (>= store.len (array-length store.values))
+            (lower-module-local-view-store-grow store)
+            store)]
+        [slot : i64 ready.len]
+        [modules : lower_i64_i64_map.Map ready.modules]
+        (begin
+          (set! (array-ref ready.values slot) view)
+          (lower_i64_i64_map.insert-ref! (&mut modules) module-id slot)
+          (cfg
+            compile-profile
+            (set!
+              compiler-lower-profile-module-local-view-entries
+              (+ compiler-lower-profile-module-local-view-entries 1)))
+          (LowerModuleLocalViewStore modules ready.values (+ slot 1))))]))
+
+(define (lower-active-module-local-view-lookup
+  [lower-state : CompilerLowerState]
+  [module-id : i64]) : LowerMaybeModuleLocalView
+  (let
+    [result : LowerMaybeModuleLocalView
+      (lower-module-local-view-store-lookup
+        (compiler-lower-state-read
+          lower-state
+          LowerModuleLocalViewStore
+          active-module-local-views)
+        module-id)]
+    (begin
+      (cfg
+        compile-profile
+        (begin
+          (set!
+            compiler-lower-profile-module-local-view-lookups
+            (+ compiler-lower-profile-module-local-view-lookups 1))
+          (match result
+            [(LowerMaybeModuleLocalView.Some _)
+              (set!
+                compiler-lower-profile-module-local-view-hits
+                (+ compiler-lower-profile-module-local-view-hits 1))]
+            [(LowerMaybeModuleLocalView.No) unit])))
+      result)))
 
 (define (lower-active-module-local-view-insert!
   [lower-state : CompilerLowerState]
@@ -7157,16 +7368,106 @@
   [view : LowerModuleLocalView]) : unit
   (compiler-lower-state-write!
     lower-state
-    LowerModuleLocalViewList
+    LowerModuleLocalViewStore
     active-module-local-views
-    (LowerModuleLocalViewList.Cons
+    (lower-module-local-view-store-insert
+      (compiler-lower-state-read
+        lower-state
+        LowerModuleLocalViewStore
+        active-module-local-views)
       module-id
-      view
-      (box
-        (compiler-lower-state-read
-          lower-state
-          LowerModuleLocalViewList
-          active-module-local-views)))))
+      view)))
+
+(define (lower-active-module-name-cache-count
+  [lower-state : CompilerLowerState]) : i64
+  (let
+    [store : LowerModuleNameCacheStore
+      (compiler-lower-state-read
+        lower-state
+        LowerModuleNameCacheStore
+        active-module-name-caches)]
+    store.len))
+
+(define (lower-active-module-local-view-count
+  [lower-state : CompilerLowerState]) : i64
+  (let
+    [store : LowerModuleLocalViewStore
+      (compiler-lower-state-read
+        lower-state
+        LowerModuleLocalViewStore
+        active-module-local-views)]
+    store.len))
+
+;; Structural regression for the phase-local module caches. The high sparse ID
+;; proves storage is dense rather than sized by the global interner range;
+;; repeated inserts must retain one slot, reset must retire both value families,
+;; and a second job-owned state must never observe the first state's entries.
+(define (compiler-lower-module-phase-cache-storage-ok?) : bool
+  (let
+    [state : CompilerLowerState (compiler-lower-state-new)]
+    [independent : CompilerLowerState (compiler-lower-state-new)]
+    [base-cache : LowerNameCache (lower-empty-global-name-cache state.address)]
+    [empty-env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
+    [index : i64 0]
+    [sparse-id : i64 9000001]
+    (begin
+      (while (< index 12)
+        (begin
+          (let
+            [module-id : i64 (+ 1000 index)]
+            [cache : LowerNameCache
+              (lower-name-cache-with-module-id base-cache module-id)]
+            [view : LowerModuleLocalView
+              (LowerModuleLocalView empty-env cache (LowerTypeCache.No))]
+            (begin
+              (lower-active-module-name-cache-insert! state module-id cache)
+              (lower-active-module-local-view-insert! state module-id view)))
+          (set! index (+ index 1))))
+      (let
+        [sparse-cache : LowerNameCache
+          (lower-name-cache-with-module-id base-cache sparse-id)]
+        [sparse-view : LowerModuleLocalView
+          (LowerModuleLocalView empty-env sparse-cache (LowerTypeCache.No))]
+        (begin
+          (lower-active-module-name-cache-insert! state sparse-id sparse-cache)
+          (lower-active-module-local-view-insert! state sparse-id sparse-view)
+          ;; A duplicate publication updates the existing dense slot instead
+          ;; of growing either store.
+          (lower-active-module-name-cache-insert! state sparse-id sparse-cache)
+          (lower-active-module-local-view-insert! state sparse-id sparse-view)))
+      (let
+        [before-reset : bool
+          (and
+            (= (lower-active-module-name-cache-count state) 13)
+            (= (lower-active-module-local-view-count state) 13)
+            (= (lower-active-module-name-cache-count independent) 0)
+            (= (lower-active-module-local-view-count independent) 0)
+            (match (lower-active-module-name-cache-lookup state sparse-id)
+              [(LowerMaybeModuleNameCache.Some cache)
+                (= cache.module-id sparse-id)]
+              [(LowerMaybeModuleNameCache.No) false])
+            (match (lower-active-module-local-view-lookup state sparse-id)
+              [(LowerMaybeModuleLocalView.Some view)
+                (= view.name-cache.module-id sparse-id)]
+              [(LowerMaybeModuleLocalView.No) false])
+            (match (lower-active-module-name-cache-lookup state 7777777)
+              [(LowerMaybeModuleNameCache.No) true]
+              [_ false])
+            (match (lower-active-module-local-view-lookup state 7777777)
+              [(LowerMaybeModuleLocalView.No) true]
+              [_ false]))]
+        (begin
+          (lower-module-phase-caches-reset! state)
+          (and
+            before-reset
+            (= (lower-active-module-name-cache-count state) 0)
+            (= (lower-active-module-local-view-count state) 0)
+            (match (lower-active-module-name-cache-lookup state sparse-id)
+              [(LowerMaybeModuleNameCache.No) true]
+              [_ false])
+            (match (lower-active-module-local-view-lookup state sparse-id)
+              [(LowerMaybeModuleLocalView.No) true]
+              [_ false])))))))
 
 (define (lower-module-local-view-cached
   [lower-state : CompilerLowerState]
@@ -7175,12 +7476,7 @@
   [names : LowerNameEnv]
   [module : String]
   [module-id : i64]) : ResultLowerModuleLocalView
-  (match (lower-module-local-view-list-lookup
-    (compiler-lower-state-read
-      lower-state
-      LowerModuleLocalViewList
-      active-module-local-views)
-    module-id)
+  (match (lower-active-module-local-view-lookup lower-state module-id)
     [(LowerMaybeModuleLocalView.Some view) (ResultLowerModuleLocalView.Ok view)]
     [(LowerMaybeModuleLocalView.No)
       (match (lower-module-local-envs
@@ -7323,6 +7619,16 @@
         lower-state
         lower_i64_i64_map.Map
         reach-active-body-used-types)]
+    [module-name-caches : LowerModuleNameCacheStore
+      (compiler-lower-state-read
+        lower-state
+        LowerModuleNameCacheStore
+        active-module-name-caches)]
+    [module-local-views : LowerModuleLocalViewStore
+      (compiler-lower-state-read
+        lower-state
+        LowerModuleLocalViewStore
+        active-module-local-views)]
     [alias-ids : lower_i64_i64_map.Map
       (compiler-lower-state-read
         lower-state
@@ -7370,18 +7676,10 @@
             active-symbols))
         0)
       (not (compiler-lower-state-read lower-state bool active-symbols-ready))
-      (match (compiler-lower-state-read
-        lower-state
-        LowerModuleNameCacheList
-        active-module-name-caches)
-        [(LowerModuleNameCacheList.Nil) true]
-        [_ false])
-      (match (compiler-lower-state-read
-        lower-state
-        LowerModuleLocalViewList
-        active-module-local-views)
-        [(LowerModuleLocalViewList.Nil) true]
-        [_ false])
+      (= module-name-caches.len 0)
+      (= (lower_i64_i64_map.len (& module-name-caches.modules)) 0)
+      (= module-local-views.len 0)
+      (= (lower_i64_i64_map.len (& module-local-views.modules)) 0)
       (= (compiler-lower-state-read lower-state i64 active-loop-function) -1)
       (=
         (compiler-lower-state-read lower-state i64 active-loop-entry-var-limit)
@@ -10925,9 +11223,9 @@
   (begin
     (compiler-lower-state-write!
       lower-state
-      LowerModuleNameCacheList
+      LowerModuleNameCacheStore
       active-module-name-caches
-      (LowerModuleNameCacheList.Nil))
+      (lower-module-name-cache-store-empty))
     (let
       [name-cache : LowerNameCache
         (lower-name-cache-from-env lower-state names)]
@@ -65936,9 +66234,9 @@
         (lower-active-global-name-cache-set! lower-state dispatch-name-cache)
         (compiler-lower-state-write!
           lower-state
-          LowerModuleLocalViewList
+          LowerModuleLocalViewStore
           active-module-local-views
-          (LowerModuleLocalViewList.Nil))
+          (lower-module-local-view-store-empty))
         (compiler-lower-state-write!
           lower-state
           LowerTypeCache

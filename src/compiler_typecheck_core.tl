@@ -111170,22 +111170,26 @@
 ;; Keep construction and append as ordinary declaration boundaries. Before the
 ;; dotted-constructor cache-domain fix (#6451), these exact helpers changed the
 ;; direct-mapped cache collision order and exposed #6324 during profile selfhost.
-(define (tc-poison-name-list-new) : TcPoisonNameList
-  (TcPoisonNameList (array.make-array i64 0) 0))
+(cfg
+  compile-profile
+  (define (tc-poison-name-list-new) : TcPoisonNameList
+    (TcPoisonNameList (array.make-array i64 0) 0)))
 
-(define (tc-poison-name-list-push [names : TcPoisonNameList] [name : i64]) : TcPoisonNameList
-  (let
-    [len : i64 names.len]
-    [slots : (__tl_dyn-array i64) names.slots]
-    [next : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
-    [index : i64 0]
-    (begin
-      (while (< index len)
-        (begin
-          (set! (array-ref next index) (array-ref slots index))
-          (set! index (+ index 1))))
-      (set! (array-ref next len) name)
-      (TcPoisonNameList next (+ len 1)))))
+(cfg
+  compile-profile
+  (define (tc-poison-name-list-push [names : TcPoisonNameList] [name : i64]) : TcPoisonNameList
+    (let
+      [len : i64 names.len]
+      [slots : (__tl_dyn-array i64) names.slots]
+      [next : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
+      [index : i64 0]
+      (begin
+        (while (< index len)
+          (begin
+            (set! (array-ref next index) (array-ref slots index))
+            (set! index (+ index 1))))
+        (set! (array-ref next len) name)
+        (TcPoisonNameList next (+ len 1))))))
 
 (define (tc-decl-poison-name [module-id : i64] [decl : ast.AstDecl]) : TcMaybePoisonName
   (match decl
@@ -111236,7 +111240,22 @@
   [decl : ast.AstDecl]) : TcPoisonNameList
   (match (tc-decl-poison-name module-id decl)
     [(TcMaybePoisonName.No) names]
-    [(TcMaybePoisonName.Some name) (tc-poison-name-list-push names name)]))
+    [(TcMaybePoisonName.Some name)
+      (cfg
+        compile-profile
+        (tc-poison-name-list-push names name)
+        (let
+          [len : i64 names.len]
+          [slots : (__tl_dyn-array i64) names.slots]
+          [next : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (set! (array-ref next index) (array-ref slots index))
+                (set! index (+ index 1))))
+            (set! (array-ref next len) name)
+            (TcPoisonNameList next (+ len 1)))))]))
 
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
@@ -111300,7 +111319,11 @@
     [cur-cache : TcModuleLocalEnvCache cache]
     [cur-local-env : TcTypeEnv local-env]
     [cur-global-env : TcTypeEnv global-env]
-    [poison-names : TcPoisonNameList (tc-poison-name-list-new)]
+    [poison-names : TcPoisonNameList
+      (cfg
+        compile-profile
+        (tc-poison-name-list-new)
+        (TcPoisonNameList (array.make-array i64 0) 0))]
     [diagnostics : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-empty)]
     [type-module-cache-valid : bool false]

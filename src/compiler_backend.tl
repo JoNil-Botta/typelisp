@@ -51226,6 +51226,102 @@
   (No)
   (Some String String String i64 i64 i64))
 
+;; --- M6-G: a narrow element load whose only reader is its widening cast ------
+;;
+;; `(cast (array-ref slots i) : i64)` lowers to `Load : u8` followed by
+;; `Cast u8 to i64`, and the x86 load ALREADY performs that extension: `movzbq
+;; addr, %r` leaves the whole 64-bit register holding the byte. When the loaded
+;; value's single reader is a compare the M6-C arm above folds the pair into a
+;; `cmpb` and neither instruction survives. When it has several readers -- a
+;; lexer's dispatch byte, tested against a dozen literals -- M6-C declines and
+;; the pair is emitted in full: one `movzbq addr, %rax` and one `movzbq %al,
+;; %r12` re-extending a register that is already extended.
+;;
+;; The second instruction is the whole of what this arm removes, by giving the
+;; LOAD the cast's own destination register. What makes that sound is the same
+;; single-use condition M6 already demands of every fold in this cluster
+;; (`compiler-backend-gep-load-cmp-fold-rest` refuses a multiply-read load
+;; outright): the loaded var is read by the cast and by nothing else, so its own
+;; home is never observed and need not be written. The cast's destination is
+;; where the value was going to end up either way.
+;;
+;; Rails, each mirroring the M6-C arm that reads the load's extension out of
+;; `load-ty`:
+;;   * the cast's source is exactly the loaded var, so no size-preserving cast
+;;     crossed on the way can have flipped the signedness the width table
+;;     depends on;
+;;   * the cast's source width equals the load's width and their signedness
+;;     agrees, so the extension the load performs IS the extension the cast
+;;     asks for;
+;;   * the cast widens to a full word. A narrower target would need the
+;;     upper bits left alone, which a widening load does not do;
+;;   * no float on any side -- those move through the SSE path, not `movzbq`;
+;;   * the cast's destination has a general-register home that is not `%rbp`.
+;;     A spilled destination still needs the store the ordinary path emits, and
+;;     writing it here would buy nothing.
+;; The address operands are read before the destination is written within one
+;; instruction, so a destination that also spells the address's base or index is
+;; safe; and the destination register belongs to the cast, whose live range
+;; starts here, so nothing live across the pair can be homed in it.
+;;
+;; The M6-D staged address is taken too, on the same terms the compare arms
+;; take it: a base or index the SIB slots cannot spell is materialized into the
+;; LOAD destination's own register home first, and the load then reads through
+;; it. That register is dead the moment the fold retires the loaded var, so
+;; staging into it costs the one `movq` the unfolded path was already paying to
+;; scavenge a base -- and the pair still loses its re-extension.
+;;
+;; destination register spelling, resume index.
+(defenum CompilerBackendGepLoadWidenFold
+  (No)
+  (Some String i64))
+
+(define (compiler-backend-gep-load-widen-cast-probe
+  [ctx : CompilerBackendEmissionContext]
+  [addr : String]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendGepLoadWidenFold
+  (if (or (string.eq addr "") (>= index instrs.len))
+    (CompilerBackendGepLoadWidenFold.No)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Cast cast-dst cast-src from-ty to-ty)
+        (let
+          [width : i64
+            (compiler-backend-type-size ctx.type-segment-bases load-ty)]
+          (if (or
+            (not (compiler-backend-branch-uses-var? cast-src load-dst))
+            (not (or (= width 1) (= width 2) (= width 4)))
+            (compiler-backend-float-type? load-ty)
+            (compiler-backend-float-type? from-ty)
+            (compiler-backend-float-type? to-ty)
+            (not
+              (=
+                (compiler-backend-type-size ctx.type-segment-bases from-ty)
+                width))
+            (not
+              (= (compiler-backend-type-size ctx.type-segment-bases to-ty) 8))
+            (not
+              (=
+                (if (compiler-backend-type-signed? from-ty)
+                  1
+                  0)
+                (if (compiler-backend-type-signed? load-ty)
+                  1
+                  0))))
+            (CompilerBackendGepLoadWidenFold.No)
+            (let
+              [home : String
+                (compiler-backend-var-register-home
+                  ctx.backend-state
+                  ctx.assignments
+                  cast-dst)]
+              (if (or (string.eq home "") (string.eq home "%rbp"))
+                (CompilerBackendGepLoadWidenFold.No)
+                (CompilerBackendGepLoadWidenFold.Some home (+ index 1))))))]
+      [_ (CompilerBackendGepLoadWidenFold.No)])))
+
 ;; The compare's own source operand: the loaded value has been folded into the
 ;; memory operand, so the OTHER side must already be an immediate or a register
 ;; home. "" declines.
@@ -51652,6 +51748,35 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
+;; M6-G emission, in M6-D's order: stage the operand the address needs into the
+;; load destination's home first, then the widening load into the cast's own
+;; register. `staged-base` is "" whenever the fold spelled a direct address.
+(define (compiler-backend-gep-load-widen-emit
+  [ctx : CompilerBackendEmissionContext]
+  [staged-value : compiler_ir_types.CompilerIrValue]
+  [staged-base : String]
+  [addr : String]
+  [load-ty : compiler_ast_types.AstType]
+  [dst-reg : String]) : ResultCompilerBackend
+  (let
+    [load-asm : String
+      (compiler-backend-emit-load-memory-to-reg
+        ctx.type-segment-bases
+        addr
+        load-ty
+        dst-reg)]
+    (if (string.eq staged-base "")
+      (ResultCompilerBackend.Ok load-asm)
+      (match (compiler-backend-emit-load-value-with-plan
+        ctx.assignments
+        staged-value
+        staged-base
+        ctx.backend-state)
+        [(ResultCompilerBackend.Ok stage-asm)
+          (ResultCompilerBackend.Ok (str_cat.str-cat stage-asm load-asm))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
+
 (define (compiler-backend-gep-load-cmp-fold-rest
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -51741,7 +51866,39 @@
                 after-branch
                 out))]
           [(CompilerBackendGepLoadCmpBranchFold.No)
-            (CompilerBackendMaybeGepLoadCmpEmission.No)])])))
+            ;; M6-G last: the compare shapes above retire BOTH instructions of
+            ;; the pair, this one retires the re-extension only, so it is only
+            ;; ever offered a load neither of them claimed.
+            (match (compiler-backend-gep-load-widen-cast-probe
+              ctx
+              (if (string.eq addr "")
+                staged-addr
+                addr)
+              load-dst
+              load-ty
+              instrs
+              index)
+              [(CompilerBackendGepLoadWidenFold.Some dst-reg after-cast)
+                (CompilerBackendMaybeGepLoadCmpEmission.Some
+                  (compiler-backend-emit-fused-result-rest
+                    ctx
+                    fallthrough
+                    (compiler-backend-gep-load-widen-emit
+                      ctx
+                      staged-value
+                      (if (string.eq addr "")
+                        staged-base
+                        "")
+                      (if (string.eq addr "")
+                        staged-addr
+                        addr)
+                      load-ty
+                      dst-reg)
+                    instrs
+                    after-cast
+                    out))]
+              [(CompilerBackendGepLoadWidenFold.No)
+                (CompilerBackendMaybeGepLoadCmpEmission.No)])])])))
 
 (define (compiler-backend-emit-fused-gep-load-rest
   [ctx : CompilerBackendEmissionContext]

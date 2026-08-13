@@ -25681,9 +25681,17 @@
     200)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        ;; The narrow compare fold is refused, so the load survives -- and M6-G
+        ;; then claims the pair the refusal leaves behind, giving the load the
+        ;; WIDENING CAST's home (%r9) instead of the loaded value's own (%r13)
+        ;; and retiring the separate re-extension. Both halves are asserted.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movsbq (%r12,%r8,1), %r13\n")
+          "    movsbq (%r12,%r8,1), %r9\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movsbq %r13b, "))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    cmpb ")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
@@ -25699,9 +25707,17 @@
     10)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
+        ;; Same division of labour as the signed-literal refusal above: M6-C
+        ;; declines the ordered narrow compare, M6-G folds the re-extension the
+        ;; refusal leaves behind, so the surviving load writes the widening
+        ;; cast's home %r9 and no `movzbq %r13b, %r9` follows it.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movzbq (%r12,%r8,1), %r13\n")
+          "    movzbq (%r12,%r8,1), %r9\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movzbq %r13b, "))
         (not
           (compiler_backend.compiler-backend-string-contains? asm "    cmpb ")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))

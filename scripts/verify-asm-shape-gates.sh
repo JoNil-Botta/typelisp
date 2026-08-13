@@ -912,6 +912,25 @@ check_inline_alloc_unique_labels_link() {
     [ -x "$_binary" ] || fail "$_name standalone build produced no executable"
 }
 
+check_load_widen_cast_fold() {
+    _asm=$(compile_gate load_widen_cast_fold tests/integration/load_widen_cast_fold.tl)
+    _classify=$(function_body "$_asm" _tl_load_widen_cast_fold_classify)
+    _refused=$(function_body "$_asm" _tl_load_widen_cast_fold_refused)
+    # M6-G: the byte is read eight times, so the M6-C compare fold declines and
+    # the load survives -- but as ONE instruction landing in the cast's own
+    # register. Exactly one byte load, and no register-to-register re-extension
+    # anywhere in the function.
+    assert_regex_count_eq "$_classify"         '^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$' 1         load-widen-cast-fold
+    assert_not_matches "$_classify"         '^[[:space:]]+movzbq %[a-z0-9]+l, %r' load-widen-cast-fold
+    # Nearest refused neighbour: the element is stored back at u8 width, so no
+    # widening cast follows the load and the pair the fold looks for is absent.
+    # The load and the widening still both appear, and the fold has not touched
+    # them.
+    assert_matches "$_refused"         '^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$'         load-widen-cast-fold-refused
+    assert_contains "$_refused" 'movb ' load-widen-cast-fold-refused
+}
+
+
 check_divmagic_hoist
 check_hoist_priority
 check_lftr_counter_retire
@@ -944,6 +963,7 @@ check_param_pin_interval
 check_frame_slot_repacking
 check_gep_value_direct
 check_gep_copy_sib
+check_load_widen_cast_fold
 check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
 

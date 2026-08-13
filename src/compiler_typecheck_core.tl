@@ -3245,15 +3245,36 @@
 (define (tc-context-expr-get [ctx : TcContext] [id : i64]) : ast.AstExpr
   (ast.ast-node-pool-context-expr-get (tc-context-pools ctx) id))
 
+;; Pool selected for type walks that may both read and append. Explicit
+;; compatibility callers intentionally keep following the pool they installed;
+;; ordinary compile jobs stay on the pool owned by their context even when an
+;; unrelated pool is process-global.
+(define (tc-context-type-pools [ctx : TcContext]) : ast.AstNodePoolContext
+  (if (ast.ast-node-pool-compat-context-active?)
+    (ast.ast-node-pool-compat-context-current)
+    (tc-context-pools ctx)))
+
+;; Transitional owner for a resolver result consumed by paths that still read
+;; nested type ids through the installed compatibility reader. An explicitly
+;; installed ctx already names those cells. A captured ctx does not: until its
+;; consumers are threaded, reconstruct into the installed live cells exactly
+;; as the historical global constructors did. The explicit resolver below is
+;; available to callers whose whole consumer chain carries `pools`.
+(define (tc-context-type-resolution-pools [ctx : TcContext]) : ast.AstNodePoolContext
+  (let
+    [owned : ast.AstNodePoolContext (tc-context-type-pools ctx)]
+    (if (ast.ast-node-pool-context-type-installed? owned)
+      owned
+      (if (ast.ast-node-pool-has-active-context?)
+        (ast.ast-node-pool-context-active-live)
+        owned))))
+
 ;; Type segment-bases for a pure read under `ctx`. Lifetime-elision walks may
 ;; append reconstructed nodes, but never install a different pool; the table is
 ;; stable across push/grow. Compatibility callers continue following the
 ;; installed pool that their historical no-context API selected.
 (define (tc-context-type-bases [ctx : TcContext]) : i64
-  (if (ast.ast-node-pool-compat-context-active?)
-    (ast.ast-node-pool-context-type-segment-bases
-      (ast.ast-node-pool-context-capture-active))
-    (ast.ast-node-pool-context-type-segment-bases (tc-context-pools ctx))))
+  (ast.ast-node-pool-context-type-segment-bases (tc-context-type-pools ctx)))
 
 ;; Expression segment-bases for a read-only walk under `ctx`, snapshotted once
 ;; at the walk's entry and threaded down as a scalar.
@@ -19887,22 +19908,36 @@
                 "; region value would escape"))))])))
 
 (define (tc-resolve-type-list [ctx : TcContext] [types : ast.AstTypeList]) : ast.AstTypeList
-  (if (tc-type-list-needs-resolution? types)
-    (tc-resolve-type-list-at ctx (& types) 0)
-    types))
+  (let
+    [pools : ast.AstNodePoolContext (tc-context-type-resolution-pools ctx)]
+    (tc-resolve-type-list-with-pools ctx pools types)))
 
-(define (tc-resolve-type-list-at
+(define (tc-resolve-type-list-with-pools
   [ctx : TcContext]
+  [pools : ast.AstNodePoolContext]
+  [types : ast.AstTypeList]) : ast.AstTypeList
+  (let
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (if (tc-type-list-needs-resolution-for-pools? pools type-bases types)
+      (tc-resolve-type-list-at-with-pools ctx pools (& types) 0)
+      types)))
+
+(define (tc-resolve-type-list-at-with-pools
+  [ctx : TcContext]
+  [pools : ast.AstNodePoolContext]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : ast.AstTypeList
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
-    (ast.ast-type-cons
-      (tc-resolve-type
+    (ast.ast-type-cons-with-pools
+      pools
+      (tc-resolve-type-with-pools
         ctx
-        (ast.ty-node-get
+        pools
+        (ast.ast-node-pool-context-type-get
+          pools
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-resolve-type-list-at ctx types (+ index 1)))))
+      (tc-resolve-type-list-at-with-pools ctx pools types (+ index 1)))))
 
 (define (tc-type-list-needs-resolution? [types : ast.AstTypeList]) : bool
   (tc-type-list-needs-resolution-at? (& types) 0))
@@ -20029,6 +20064,92 @@
     [(ast.AstType.VarArgs _ _) true]
     [(ast.AstType.Var _) true]
     [_ false]))
+
+;; Explicit-pool twin of the installed-pool predicate above. The serial memo is
+;; deliberately not shared here: its epoch is keyed to the process-global pool
+;; generation, while an explicit context can hold the same numeric id in a
+;; different pool. The resolver hoists `type-bases`, so this uncached walk still
+;; avoids both the global load and a context-struct copy at every child.
+(define (tc-type-list-needs-resolution-with-bases?
+  [type-bases : i64]
+  [types : ast.AstTypeList]) : bool
+  (tc-type-list-needs-resolution-at-with-bases? type-bases (& types) 0))
+
+(define (tc-type-list-needs-resolution-at-with-bases?
+  [type-bases : i64]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len types))
+    false
+    (if (tc-type-needs-resolution-id-with-bases?
+      type-bases
+      (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+      true
+      (tc-type-list-needs-resolution-at-with-bases?
+        type-bases
+        types
+        (+ index 1)))))
+
+(define (tc-type-needs-resolution-id-with-bases?
+  [type-bases : i64]
+  [ty-id : i64]) : bool
+  (tc-type-needs-resolution-with-bases?
+    type-bases
+    (ast.ast-type-segment-bases-get type-bases ty-id)))
+
+(define (tc-type-needs-resolution-with-bases?
+  [type-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Func args ret)
+      (if (tc-type-list-needs-resolution-with-bases?
+        type-bases
+        (__tl-box-place args))
+        true
+        (tc-type-needs-resolution-id-with-bases? type-bases ret))]
+    [(ast.AstType.Tuple elems)
+      (tc-type-list-needs-resolution-with-bases?
+        type-bases
+        (__tl-box-place elems))]
+    [(ast.AstType.Array elem _)
+      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(ast.AstType.DynArray elem)
+      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(ast.AstType.Slice elem)
+      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(ast.AstType.Box elem)
+      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(ast.AstType.Ptr elem)
+      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(ast.AstType.MutPtr elem)
+      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(ast.AstType.Ref _ inner)
+      (tc-type-needs-resolution-id-with-bases? type-bases inner)]
+    [(ast.AstType.MutRef _ inner)
+      (tc-type-needs-resolution-id-with-bases? type-bases inner)]
+    [(ast.AstType.Region _ inner)
+      (tc-type-needs-resolution-id-with-bases? type-bases inner)]
+    [(ast.AstType.Consume inner)
+      (tc-type-needs-resolution-id-with-bases? type-bases inner)]
+    [(ast.AstType.VarArgs _ _) true]
+    [(ast.AstType.Var _) true]
+    [_ false]))
+
+(define (tc-type-list-needs-resolution-for-pools?
+  [pools : ast.AstNodePoolContext]
+  [type-bases : i64]
+  [types : ast.AstTypeList]) : bool
+  (if (ast.ast-node-pool-context-type-installed? pools)
+    (tc-type-list-needs-resolution? types)
+    (tc-type-list-needs-resolution-with-bases? type-bases types)))
+
+(define (tc-type-needs-resolution-for-pools?
+  [pools : ast.AstNodePoolContext]
+  [type-bases : i64]
+  [ty : ast.AstType]) : bool
+  (if (ast.ast-node-pool-context-type-installed? pools)
+    (tc-type-needs-resolution? ty)
+    (tc-type-needs-resolution-with-bases? type-bases ty)))
 
 ;; id-keyed variant: reads the O(1) precomputed "contains-'/'" metadata slot
 ;; instead of re-hashing the name. The hygiene check needs the string, which
@@ -24065,46 +24186,114 @@
       (tc-resolve-source-type-name resolution-ctx name name-id))))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
-  (if (tc-type-needs-resolution? ty)
-    (match ty
-      [(ast.AstType.Func args ret)
-        (ast.ast-ty-func
-          (tc-resolve-type-list ctx (__tl-box-place args))
-          (tc-resolve-type ctx (ast.ty-node-get ret)))]
-      [(ast.AstType.Tuple elems)
-        (ast.ast-ty-tuple (tc-resolve-type-list ctx (__tl-box-place elems)))]
-      [(ast.AstType.Array elem len)
-        (ast.ast-ty-array (tc-resolve-type ctx (ast.ty-node-get elem)) len)]
-      [(ast.AstType.DynArray elem)
-        (ast.ast-ty-dyn-array (tc-resolve-type ctx (ast.ty-node-get elem)))]
-      [(ast.AstType.Slice elem)
-        (ast.ast-ty-slice (tc-resolve-type ctx (ast.ty-node-get elem)))]
-      [(ast.AstType.Box elem)
-        (ast.ast-ty-box (tc-resolve-type ctx (ast.ty-node-get elem)))]
-      [(ast.AstType.Ptr elem)
-        (ast.ast-ty-ptr (tc-resolve-type ctx (ast.ty-node-get elem)))]
-      [(ast.AstType.MutPtr elem)
-        (ast.ast-ty-mut-ptr (tc-resolve-type ctx (ast.ty-node-get elem)))]
-      [(ast.AstType.Ref region inner)
-        (ast.ast-ty-ref region (tc-resolve-type ctx (ast.ty-node-get inner)))]
-      [(ast.AstType.MutRef region inner)
-        (ast.ast-ty-mut-ref
-          region
-          (tc-resolve-type ctx (ast.ty-node-get inner)))]
-      [(ast.AstType.Region region inner)
-        (ast.ast-ty-region region (tc-resolve-type ctx (ast.ty-node-get inner)))]
-      [(ast.AstType.Consume inner)
-        (ast.ast-ty-consume (tc-resolve-type ctx (ast.ty-node-get inner)))]
-      [(ast.AstType.VarArgs name lifetimes)
-        (tc-resolve-type-name-with-args
-          ctx
-          (tc-hygiene-name-text-id name)
-          name
-          (__tl-box-place lifetimes))]
-      [(ast.AstType.Var name)
-        (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]
-      [_ ty])
-    ty))
+  (let
+    [pools : ast.AstNodePoolContext (tc-context-type-resolution-pools ctx)]
+    (tc-resolve-type-with-pools ctx pools ty)))
+
+(define (tc-resolve-type-with-pools
+  [ctx : TcContext]
+  [pools : ast.AstNodePoolContext]
+  [ty : ast.AstType]) : ast.AstType
+  (let
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (if (tc-type-needs-resolution-for-pools? pools type-bases ty)
+      (match ty
+        [(ast.AstType.Func args ret)
+          (ast.ast-ty-func-with-pools
+            pools
+            (tc-resolve-type-list-with-pools ctx pools (__tl-box-place args))
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools ret)))]
+        [(ast.AstType.Tuple elems)
+          (ast.AstType.Tuple
+            (box
+              (tc-resolve-type-list-with-pools ctx pools (__tl-box-place elems))))]
+        [(ast.AstType.Array elem len)
+          (ast.ast-ty-array-with-pools
+            pools
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools elem))
+            len)]
+        [(ast.AstType.DynArray elem)
+          (ast.ast-ty-dyn-array-with-pools
+            pools
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Slice elem)
+          (ast.ast-ty-slice-with-pools
+            pools
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Box elem)
+          (ast.ast-ty-box-with-pools
+            pools
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Ptr elem)
+          (ast.ast-ty-ptr-with-pools
+            pools
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.MutPtr elem)
+          (ast.ast-ty-mut-ptr-with-pools
+            pools
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools elem)))]
+        [(ast.AstType.Ref region inner)
+          (ast.ast-ty-ref-with-pools
+            pools
+            region
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools inner)))]
+        [(ast.AstType.MutRef region inner)
+          (ast.ast-ty-mut-ref-with-pools
+            pools
+            region
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools inner)))]
+        [(ast.AstType.Region region inner)
+          (ast.ast-ty-region-with-pools
+            pools
+            region
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools inner)))]
+        [(ast.AstType.Consume inner)
+          (ast.ast-ty-consume-with-pools
+            pools
+            (tc-resolve-type-with-pools
+              ctx
+              pools
+              (ast.ast-node-pool-context-type-get pools inner)))]
+        [(ast.AstType.VarArgs name lifetimes)
+          (tc-resolve-type-name-with-args
+            ctx
+            (tc-hygiene-name-text-id name)
+            name
+            (__tl-box-place lifetimes))]
+        [(ast.AstType.Var name)
+          (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]
+        [_ ty])
+      ty)))
 
 (define (tc-canonicalize-resolved-nominal-type-list-at
   [ctx : TcContext]
@@ -89307,7 +89496,7 @@
             (+ index 1)))])))
 
 (define (macro-spanned-symbol-id [name-id : i64] [span : token.SourceSpan]) : reader.SpannedSexpr
-  (reader.SpannedSexpr.Sym name-id span))
+  (reader.SpannedSexpr.Sym (ci.intern-syntax-id-from-raw name-id) span))
 
 (define (macro-expr-list-with-head-symbol-id
   [name-id : i64]
@@ -89808,7 +89997,8 @@
           (cbi.compiler-builtin-ctfe-ref 209))
         span)]
     [(ast.AstLiteral.Char c) (reader.SpannedSexpr.Char c span)]
-    [(ast.AstLiteral.String string-id) (reader.SpannedSexpr.Str string-id span)]
+    [(ast.AstLiteral.String string-id)
+      (reader.SpannedSexpr.Str (ci.intern-id-from-renderable string-id) span)]
     [(ast.AstLiteral.Unit)
       (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span)]))
 
@@ -90154,7 +90344,10 @@
         [(ast.AstLiteral.Char c)
           (ResultMacroSexpr.Ok (reader.SpannedSexpr.Char c span))]
         [(ast.AstLiteral.String string-id)
-          (ResultMacroSexpr.Ok (reader.SpannedSexpr.Str string-id span))]
+          (ResultMacroSexpr.Ok
+            (reader.SpannedSexpr.Str
+              (ci.intern-id-from-renderable string-id)
+              span))]
         [(ast.AstLiteral.Unit)
           (ResultMacroSexpr.Ok
             (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span))])]
@@ -90682,7 +90875,8 @@
         (macro-form1-id
           (cbi.compiler-builtin-ctfe-ref 213)
           (reader.SpannedSexpr.Str
-            (ci.intern-generated-canonical-name bytes)
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name bytes))
             span)
           span))]
     [(ast.AstExpr.ProgramArgc)

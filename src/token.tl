@@ -167,12 +167,12 @@
     [(Token.Comma) ""]
     [(Token.CommaAt) ""]))
 
-;; Symbol intern id of `Token.Sym` (-1 for any other kind): exposes the compact
-;; lexer representation to callers that can stay id-native.
-(define (sym-id [t : Token]) : i64
+;; Symbol intern id of `Token.Sym`. Callers classify by tag before projecting;
+;; a non-symbol is not represented by a raw negative name sentinel.
+(define (sym-id [t : Token]) : ci.InternId
   (match t
-    [(Token.Sym id) (ci.intern-id-value id)]
-    [_ -1]))
+    [(Token.Sym id) id]
+    [_ (ci.tl_oob_abort)]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
@@ -214,11 +214,12 @@
     [(Token.Comma) ""]
     [(Token.CommaAt) ""]))
 
-;; Parser-assigned identity of a string literal (-1 for any other token).
-(define (str-id [t : Token]) : i64
+;; Parser-assigned renderable identity of a string literal. Callers classify by
+;; tag before projecting, so missing remains outside the name-id type.
+(define (str-id [t : Token]) : ci.InternId
   (match t
-    [(Token.Str id) (ci.intern-id-value id)]
-    [_ -1]))
+    [(Token.Str id) id]
+    [_ (ci.tl_oob_abort)]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it

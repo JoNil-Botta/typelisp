@@ -1667,11 +1667,11 @@
   (let
     [toks : (__tl_dyn-array token.Token) (lex (string-source "literal-id"))]
     [literal : token.Token (array-ref toks 0)]
-    [literal-id : i64 (token.str-id literal)]
+    [literal-id : ci.InternId (token.str-id literal)]
     (and
-      (>= literal-id 0)
-      (string.eq (ci.intern-str literal-id) "literal-id")
-      (= (token.str-id literal) literal-id))))
+      (>= (ci.intern-id-value literal-id) 0)
+      (string.eq (ci.intern-id-str literal-id) "literal-id")
+      (ci.intern-id-eq? (token.str-id literal) literal-id))))
 
 (define (escaped-quote-source-inner) : String
   (str_cat.str-cat

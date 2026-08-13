@@ -13943,14 +13943,14 @@
 
 (define (lower-nullary-variant-object-symbol
   [intern-state : ci.InternCompatState]
-  [enum-name : String]
-  [variant-name : String]) : i64
+  [enum-name-id : i64]
+  [variant-name-id : i64]) : i64
   (let
     [components : i64
       (ci.intern-compat-state-composite-pair-id
         intern-state
-        (ci.intern-compat-state-intern intern-state enum-name)
-        (ci.intern-compat-state-intern intern-state variant-name))]
+        enum-name-id
+        variant-name-id)]
     (ci.intern-compat-state-generated-role-symbol-id
       intern-state
       (ci.intern-generated-symbol-role-nullary-enum-object)
@@ -13958,6 +13958,7 @@
 
 (define (lower-nullary-variant-globals
   [intern-state : ci.InternCompatState]
+  [enum-name-id : i64]
   [enum-name : String]
   [variants : ast.AstVariantDefList]
   [tag : i64]
@@ -13976,8 +13977,8 @@
                 [object-name : i64
                   (lower-nullary-variant-object-symbol
                     intern-state
-                    enum-name
-                    (tc_core.tc-env-key-name-text variant-name))]
+                    enum-name-id
+                    variant-name)]
                 (ir.compiler-ir-global-cons
                   (ir.CompilerIrGlobal.Global
                     object-name
@@ -13987,6 +13988,7 @@
               globals)]
           (lower-nullary-variant-globals
             intern-state
+            enum-name-id
             enum-name
             variants
             (+ tag 1)
@@ -15628,10 +15630,11 @@
   (if (lower-internal-structural-resolved-type? ret-ty)
     (let
       [class : LowerCAbiAggregate
-        (lower-internal-return-class-for-name
+        (lower-internal-return-class-for-symbol
           ctx
           (lower-state-mode state)
-          (lower-state-current-function state)
+          (lower-state-names state)
+          (lower-state-current-function-id state)
           ret-ty)]
       (match class
         [(LowerCAbiAggregate.Integer scalar-ty _)
@@ -20735,12 +20738,18 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [logical-name-text : String (ir.compiler-ir-symbol-text logical-name)]
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+      [global-init? : bool
+        (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
-        (lower-internal-return-class-for-name ctx mode logical-name-text ret-ty)]
+        (lower-internal-return-class-for-symbol
+          ctx
+          mode
+          names
+          logical-name
+          ret-ty)]
       [structural-sret? : bool
         (match ret-class
           [(LowerCAbiAggregate.Sret _) true]
@@ -20749,7 +20758,7 @@
         (and
           (not structural-sret?)
           (lower-mode-inline-aggregates? mode)
-          (not (lower-global-init-function? logical-name-text))
+          (not global-init?)
           (lower-type-inline-struct-or-enum? ctx ret-ty)
           (not (lower-type-register-resident? ctx ret-ty)))]
       [source-start : i64
@@ -24080,7 +24089,7 @@
                     (match (csym.compiler-registries-variant-name-id-indexed
                       symbols
                       handle)
-                      [(option_i64.Some _)
+                      [(option_i64.Some variant-name-id)
                         (ResultLowerExpr.Ok
                           (LowerExpr.Expr
                             args-state
@@ -24088,8 +24097,8 @@
                               (lower-nullary-variant-object-symbol
                                 (compiler-lower-state-interns
                                   (lower-state-owner args-state))
-                                enum-name
-                                variant-name))
+                                (lower-enum-type-name-id-or enum-ty -1)
+                                variant-name-id))
                             enum-ty))]
                       [(option_i64.None)
                         (ResultLowerExpr.Err
@@ -31926,14 +31935,15 @@
   [tail : ir.CompilerIrValueList]) : ir.CompilerIrValueList
   (ir.compiler-ir-value-cons head tail))
 
-(define (lower-internal-return-class-for-name
+(define (lower-internal-return-class-for-symbol
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
-  [name : String]
+  [names : LowerNameCache]
+  [symbol : i64]
   [result-ty : ast.AstType]) : LowerCAbiAggregate
   ;; Global initializers are invoked by startup code, which owns the stable
   ;; arena result path rather than a caller stack slot.
-  (if (lower-global-init-function? name)
+  (if (lower-global-init-function-symbol? names symbol)
     (LowerCAbiAggregate.No)
     (lower-internal-return-class ctx mode result-ty)))
 
@@ -32201,8 +32211,12 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (let
     [mode : CompilerLowerMode (lower-state-mode state)]
-    [result-class : LowerCAbiAggregate
-      (lower-internal-return-class-for-name ctx mode name result-ty)]
+    [result-class
+      : LowerCAbiAggregate
+      ;; Source calls cannot target the backend-only initializer functions.
+      ;; Their text may deliberately equal a rendered initializer spelling,
+      ;; but role identity keeps the ordinary source ABI distinct.
+      (lower-internal-return-class ctx mode result-ty)]
     (match (lower-internal-call-args ctx mode state values param-types origin)
       [(ResultLowerArgs.Ok args-state physical-values)
         (match result-class
@@ -63304,22 +63318,17 @@
         (tc_core.tc-context-type-get ctx inner))]
     [_ true]))
 
-(define (lower-logical-name-has-prefix?
-  [logical-name : String]
-  [prefix : String]) : bool
-  (let
-    [name-len : i64 (string.string-length logical-name)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (and
-      (>= name-len prefix-len)
-      (string.eq (string.substring logical-name 0 prefix-len) prefix))))
-
 ;; sret ABI: a `__global_init_<name>` initializer's result is stored into
 ;; a forever-lived global by the backend's startup sequence (not a normal call
 ;; site), so it must return stable arena storage -- never a caller stack sret
 ;; slot. Keep these on the arena return path.
-(define (lower-global-init-function? [logical-name : String]) : bool
-  (lower-logical-name-has-prefix? logical-name "__global_init_"))
+(define (lower-global-init-function-symbol?
+  [names : LowerNameCache]
+  [symbol : i64]) : bool
+  (ci.intern-compat-state-generated-role-symbol?
+    (compiler-lower-state-interns (compiler-lower-state-from-name-cache names))
+    symbol
+    (ci.intern-generated-symbol-role-global-initializer)))
 
 (define (lower-function
   [ctx : tc_core.TcContext]
@@ -63338,12 +63347,18 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [logical-name-text : String (ir.compiler-ir-symbol-text logical-name)]
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+      [global-init? : bool
+        (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
-        (lower-internal-return-class-for-name ctx mode logical-name-text ret-ty)]
+        (lower-internal-return-class-for-symbol
+          ctx
+          mode
+          names
+          logical-name
+          ret-ty)]
       [structural-sret? : bool
         (match ret-class
           [(LowerCAbiAggregate.Sret _) true]
@@ -63352,7 +63367,7 @@
         (and
           (not structural-sret?)
           (lower-mode-inline-aggregates? mode)
-          (not (lower-global-init-function? logical-name-text))
+          (not global-init?)
           (lower-type-inline-struct-or-enum? ctx ret-ty)
           (not (lower-type-register-resident? ctx ret-ty)))]
       [source-start : i64
@@ -64542,14 +64557,12 @@
       (if (ci.intern-compat-state-composite-pair-id? intern-state components)
         (str_cat.str-cat
           "__enum_obj_"
-          (ci.intern-compat-state-str
-            intern-state
+          (tc_core.tc-nominal-name-id-display
             (ci.intern-compat-state-composite-left-id-unchecked
               intern-state
               components))
           "_"
-          (ci.intern-compat-state-str
-            intern-state
+          (tc_core.tc-env-key-name-text
             (ci.intern-compat-state-composite-right-id-unchecked
               intern-state
               components)))
@@ -66186,6 +66199,14 @@
                           cur-globals
                           (lower-nullary-variant-globals
                             (compiler-lower-state-interns lower-state)
+                            (lower-name-cache-lookup-logical-id
+                              (& decl-name-cache)
+                              (lower-module-name-key-id-by-id
+                                logical-module-id
+                                name)
+                              (lower-module-name-key-id-by-id
+                                logical-module-id
+                                name))
                             (lower-current-decl-logical-name-cache-id
                               decl-name-cache
                               logical-module
@@ -66262,6 +66283,14 @@
                           cur-globals
                           (lower-nullary-variant-globals
                             (compiler-lower-state-interns lower-state)
+                            (lower-name-cache-lookup-logical-id
+                              (& decl-name-cache)
+                              (lower-module-name-key-id-by-id
+                                logical-module-id
+                                name)
+                              (lower-module-name-key-id-by-id
+                                logical-module-id
+                                name))
                             (lower-current-decl-logical-name-cache-id
                               decl-name-cache
                               logical-module

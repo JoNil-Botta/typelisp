@@ -2626,6 +2626,18 @@
       qualification
       components)))
 
+(define (intern-compat-state-generated-role-refresh-active!
+  [state : InternCompatState]) : unit
+  ;; Parsing, macro expansion, and typechecking still have compatibility
+  ;; callers that reserve generated IDs through the installed global view.
+  ;; A driver-owned state captured before those phases shares the arrays but
+  ;; not their scalar frontier cells, so refresh that frontier immediately
+  ;; before a role handle is reserved. Inactive simultaneous states remain
+  ;; fully independent and are never installed here.
+  (if (= (intern-active-table-id) (intern-compat-state-table-id state))
+    (intern-compat-state-capture-from-globals! state)
+    unit))
+
 (define (intern-compat-state-generated-role-symbol-id-from-key
   [state : InternCompatState]
   [role : i64]
@@ -2644,6 +2656,10 @@
       (let
         [id : i64 (intern-compat-state-generated-symbol-handle state)]
         (begin
+          ;; Structural role membership is an internal O(1) query. Generated
+          ;; role names never use source dotted-name metadata, so retain the
+          ;; negative role tag in that lane through materialization.
+          (set! (array-ref state.pool-first-dot-slots id) (cast role : i32))
           (if qualified
             (begin
               (set! (array-ref state.pool-qualified-slots id) true)
@@ -2672,6 +2688,7 @@
   [role : i64]
   [components : i64]) : i64
   (begin
+    (intern-compat-state-generated-role-refresh-active! state)
     (if (array-ref state.map-ready 0)
       unit
       (intern-compat-state-reset! state))
@@ -2695,6 +2712,7 @@
   (if (or (< module-id 0) (< base-id 0))
     (tl_oob_abort)
     (begin
+      (intern-compat-state-generated-role-refresh-active! state)
       (if (array-ref state.map-ready 0)
         unit
         (intern-compat-state-reset! state))
@@ -2801,6 +2819,7 @@
       (let
         [id : i64 (intern-generated-role-symbol-handle)]
         (begin
+          (set! (array-ref intern-pool-first-dot-slots id) (cast role : i32))
           (if qualified
             (begin
               (set! (array-ref intern-pool-qualified-slots id) true)
@@ -2882,6 +2901,25 @@
               compile-profile
               (intern-profile-note-generated-role-render role))
             rendered))))))
+
+(define (intern-compat-state-generated-role-symbol?
+  [state : InternCompatState]
+  [id : i64]
+  [role : i64]) : bool
+  (and
+    (>= (intern-generated-symbol-role-index role) 0)
+    (intern-compat-state-generated-id-active? state id)
+    (= (cast (array-ref state.pool-first-dot-slots id) : i64) role)))
+
+(define (intern-generated-role-symbol? [id : i64] [role : i64]) : bool
+  (and
+    (>= (intern-generated-symbol-role-index role) 0)
+    (intern-generated-id-active? id)
+    (=
+      (cast
+        (array-ref (intern-global-shared-view intern-pool-first-dot-slots) id)
+        : i64)
+      role)))
 
 (define (intern-compat-state-generated-role-record-count
   [state : InternCompatState]) : i64
@@ -4810,6 +4848,24 @@
       (unless (= lambda-a lambda-a-again) (set! ok false))
       (unless (not (= lambda-a clone-a)) (set! ok false))
       (unless (not (= lambda-a source-collision-a)) (set! ok false))
+      (unless
+        (intern-compat-state-generated-role-symbol?
+          state-a
+          lambda-a
+          (intern-generated-symbol-role-lambda))
+        (set! ok false))
+      (when
+        (intern-compat-state-generated-role-symbol?
+          state-a
+          lambda-a
+          (intern-generated-symbol-role-clone-helper))
+        (set! ok false))
+      (when
+        (intern-compat-state-generated-role-symbol?
+          state-a
+          source-collision-a
+          (intern-generated-symbol-role-lambda))
+        (set! ok false))
       ;; Both recipes render as `__enum_obj_A_B_C`; component boundaries stay
       ;; structural so they cannot silently alias before the output boundary.
       (unless (not (= enum-boundary-a enum-boundary-b)) (set! ok false))
@@ -4928,6 +4984,24 @@
             (intern-generated-symbol-role-lambda)
             next-lambda
             "after_reset")))
+      ;; Compatibility macro/typecheck callers may advance the active global
+      ;; generated lane after a driver snapshots its explicit state. The next
+      ;; structural allocation refreshes that frontier and cannot reuse the
+      ;; live compatibility ID.
+      (intern-reset!)
+      (let
+        [active-state : InternCompatState (intern-compat-state-capture-active)]
+        [compat-id : i64 (intern-generated-name "compat-generated")]
+        [role-id : i64
+          (intern-compat-state-generated-role-symbol-id
+            active-state
+            (intern-generated-symbol-role-lambda)
+            99)]
+        (begin
+          (unless (not (= compat-id role-id)) (set! ok false))
+          (unless
+            (intern-private-string-eq (intern-str compat-id) "compat-generated")
+            (set! ok false))))
       ok)))
 
 (define (intern-qualified-metadata-tests-ok?) : bool

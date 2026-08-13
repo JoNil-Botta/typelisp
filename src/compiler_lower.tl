@@ -2102,7 +2102,12 @@
         (spec.spec-profile-name-render-cache-hits-value))
       (compiler-lower-profile-counter
         "specialization.render.cache_misses"
-        (spec.spec-profile-name-render-cache-misses-value))
+        (spec.spec-profile-name-render-cache-misses-value)))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-generated-role-counters-all) : unit
+    (begin
       (compiler-lower-profile-generated-role-counters
         "clone_helper"
         (ci.intern-generated-symbol-role-clone-helper))
@@ -66485,6 +66490,9 @@
                   ;; diagnostics, optimizers, and backend emitters may inspect
                   ;; symbol spellings, while construction above uses handles.
                   (lower-materialize-generated-role-symbols! lower-state)
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-generated-role-counters-all))
                   (ResultCompilerLower.Ok
                     (ir.CompilerIrProgram.Program
                       success.globals

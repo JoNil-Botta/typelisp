@@ -644,7 +644,7 @@
   ;; Only outer generated-role records populate this lane. Structural
   ;; component records leave it at zero, so role identity is independent of
   ;; both allocation order and eventual display spelling.
-  (generated-symbol-handles (__tl_dyn-array i64))
+  (generated-symbol-handles (__tl_dyn-array InternSlotId))
   (map-slots (__tl_dyn-array i64))
   (structural-cache-raws (__tl_dyn-array i64))
   (len i64))
@@ -696,7 +696,7 @@
     (make-array i64 256)
     (make-array i64 256)
     (make-array String 256)
-    (make-array i64 256)
+    (make-array InternSlotId 256)
     (make-array i64 512)
     (make-array i64 (intern-structural-cache-capacity))
     0))
@@ -871,8 +871,8 @@
         [next-rights : (__tl_dyn-array i64) (make-array i64 new-capacity)]
         [next-rendered-names : (__tl_dyn-array String)
           (make-array String new-capacity)]
-        [next-generated-symbol-handles : (__tl_dyn-array i64)
-          (make-array i64 new-capacity)]
+        [next-generated-symbol-handles : (__tl_dyn-array InternSlotId)
+          (make-array InternSlotId new-capacity)]
         (begin
           (unsafe
             (tl_arena_set previous-arena))
@@ -883,7 +883,7 @@
           (intern-structural-copy-array!
             table.generated-symbol-handles
             next-generated-symbol-handles
-            (* count 8))
+            (* count 4))
           (let
             [index : i64 0]
             (while (< index count)
@@ -1000,7 +1000,7 @@
     [table : InternStructuralTable (array-ref cell 0)]
     [slots : (__tl_dyn-array i64) table.map-slots]
     [rendered-names : (__tl_dyn-array String) table.rendered-names]
-    [generated-symbol-handles : (__tl_dyn-array i64)
+    [generated-symbol-handles : (__tl_dyn-array InternSlotId)
       table.generated-symbol-handles]
     [structural-cache-raws : (__tl_dyn-array i64) table.structural-cache-raws]
     [index : i64 0]
@@ -1013,7 +1013,9 @@
       (while (< index table.len)
         (begin
           (set! (array-ref rendered-names index) "")
-          (set! (array-ref generated-symbol-handles index) 0)
+          (set!
+            (array-ref generated-symbol-handles index)
+            (intern-id-slot-empty))
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index (array-length structural-cache-raws))
@@ -2648,12 +2650,14 @@
   (let
     [index : i64 (- (bit-and key (intern-structural-key-index-mask)) 1)]
     [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
-    [existing : i64 (array-ref table.generated-symbol-handles index)]
-    (if (> existing 0)
+    [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
+    (if (not (intern-id-slot-empty? existing))
       (begin
         (cfg compile-profile (intern-profile-note-generated-role-reuse role))
-        existing)
+        (intern-id-slot-decode existing))
       (let
+        [_refresh-active : unit
+          (intern-compat-state-generated-role-refresh-active! state)]
         [id : i64 (intern-compat-state-generated-symbol-handle state)]
         (begin
           ;; Structural role membership is an internal O(1) query. Generated
@@ -2679,7 +2683,7 @@
                 (array-ref state.structural-table-cell 0)
                 generated-symbol-handles)
               index)
-            id)
+            (intern-id-slot-encode id))
           (cfg compile-profile (intern-profile-note-generated-role-create role))
           id)))))
 
@@ -2688,7 +2692,6 @@
   [role : i64]
   [components : i64]) : i64
   (begin
-    (intern-compat-state-generated-role-refresh-active! state)
     (if (array-ref state.map-ready 0)
       unit
       (intern-compat-state-reset! state))
@@ -2712,7 +2715,6 @@
   (if (or (< module-id 0) (< base-id 0))
     (tl_oob_abort)
     (begin
-      (intern-compat-state-generated-role-refresh-active! state)
       (if (array-ref state.map-ready 0)
         unit
         (intern-compat-state-reset! state))
@@ -2811,11 +2813,11 @@
     [index : i64 (- (bit-and key (intern-structural-key-index-mask)) 1)]
     [table : InternStructuralTable
       (array-ref (intern-global-shared-view intern-structural-table-cell) 0)]
-    [existing : i64 (array-ref table.generated-symbol-handles index)]
-    (if (> existing 0)
+    [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
+    (if (not (intern-id-slot-empty? existing))
       (begin
         (cfg compile-profile (intern-profile-note-generated-role-reuse role))
-        existing)
+        (intern-id-slot-decode existing))
       (let
         [id : i64 (intern-generated-role-symbol-handle)]
         (begin
@@ -2838,7 +2840,7 @@
                   0)
                 generated-symbol-handles)
               index)
-            id)
+            (intern-id-slot-encode id))
           (cfg compile-profile (intern-profile-note-generated-role-create role))
           id)))))
 
@@ -2932,7 +2934,11 @@
     [table : InternStructuralTable (array-ref state.structural-table-cell 0)]
     (if (or (< index 0) (>= index table.len))
       0
-      (array-ref table.generated-symbol-handles index))))
+      (let
+        [handle : InternSlotId (array-ref table.generated-symbol-handles index)]
+        (if (intern-id-slot-empty? handle)
+          0
+          (intern-id-slot-decode handle))))))
 
 (define (intern-compat-state-generated-role-record-role-at
   [state : InternCompatState]
@@ -2942,7 +2948,7 @@
     (if (or
       (< index 0)
       (>= index table.len)
-      (= (array-ref table.generated-symbol-handles index) 0)
+      (intern-id-slot-empty? (array-ref table.generated-symbol-handles index))
       (not
         (=
           (cast (array-ref table.kinds index) : i64)

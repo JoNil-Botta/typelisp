@@ -1539,8 +1539,15 @@ if [ "$NL_HOST_OS" = windows ]; then
     # probe on the combined tree measured 2,194,229 used nodes, 2,228,224
     # capacity, and 71,303,168 physical payload bytes, leaving 33,995 nodes of
     # headroom below the 35-segment line.
+    # #6557 (typecheck: isolate type resolution pools) lands the merged tree
+    # 90 nodes past the 34-segment line: the authoritative Windows CI probe
+    # measured 2,228,314 used nodes, 2,293,760 capacity, 73,400,320 physical
+    # payload bytes on the #6543 merge ref. The boundary had 6,826 nodes of
+    # headroom before the merge and was flagged as the tightest expr
+    # boundary; the crossing is the fleet commit plus this series, measured
+    # not reconstructed.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 34 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 35 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

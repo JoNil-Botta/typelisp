@@ -27,21 +27,16 @@
   (len i64)
   (deleted i64))
 
-;; Keep the effective module owner used by name resolution separate from the
-;; declaration's original package-path provenance. Module materialization may
-;; rewrite the former, while dependency catalog selection must retain the
-;; latter until after ordinary lookup has selected a dense declaration.
-(defstruct CompilerSymbolsDeclOwners
-  (module-ids (__tl_dyn-array i64))
-  (provenance-ids (__tl_dyn-array i64)))
-
 (defenum CompilerSymbols
   (CompilerSymbols
     CompilerSymbolMap
     CompilerSymbolMap
     CompilerSymbolMap
     (__tl_dyn-array ast.AstDecl)
-    CompilerSymbolsDeclOwners
+    ;; One allocation with two capacity-sized lanes: effective module owners,
+    ;; then physical provenance. Keeping the sidecar in the existing field
+    ;; preserves TcContext's hot pass-by-value width.
+    (__tl_dyn-array i64)
     i64))
 
 (defenum ResultCompilerSymbols
@@ -490,9 +485,7 @@
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
     (make-array ast.AstDecl capacity)
-    (CompilerSymbolsDeclOwners
-      (make-array i64 capacity)
-      (make-array i64 capacity))
+    (make-array i64 (* capacity 2))
     decl-count))
 
 (define (compiler-symbols-empty-with-decls [decl-count : i64]) : CompilerSymbols
@@ -613,12 +606,7 @@
 (define (compiler-symbols-owner-module-ids [symbols : CompilerSymbols]) : (__tl_dyn-array
     i64)
   (match symbols
-    [(CompilerSymbols _ _ _ _ owners _) owners.module-ids]))
-
-(define (compiler-symbols-provenance-ids [symbols : CompilerSymbols]) : (__tl_dyn-array
-    i64)
-  (match symbols
-    [(CompilerSymbols _ _ _ _ owners _) owners.provenance-ids]))
+    [(CompilerSymbols _ _ _ _ owner-module-ids _) owner-module-ids]))
 
 (define (compiler-symbols-decl-count [symbols : CompilerSymbols]) : i64
   (match symbols
@@ -641,7 +629,7 @@
   [symbols : CompilerSymbols]
   [required : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owners decl-count)
+    [(CompilerSymbols values types macros decls owner-module-ids decl-count)
       (let
         [capacity : i64 (array-length decls)]
         (if (>= capacity required)
@@ -652,9 +640,7 @@
             [next-decls : (__tl_dyn-array ast.AstDecl)
               (make-array ast.AstDecl next-capacity)]
             [next-owner-module-ids : (__tl_dyn-array i64)
-              (make-array i64 next-capacity)]
-            [next-provenance-ids : (__tl_dyn-array i64)
-              (make-array i64 next-capacity)]
+              (make-array i64 (* next-capacity 2))]
             [index : i64 0]
             (begin
               (while (< index decl-count)
@@ -662,27 +648,25 @@
                   (set! (array-ref next-decls index) (array-ref decls index))
                   (set!
                     (array-ref next-owner-module-ids index)
-                    (array-ref owners.module-ids index))
+                    (array-ref owner-module-ids index))
                   (set!
-                    (array-ref next-provenance-ids index)
-                    (array-ref owners.provenance-ids index))
+                    (array-ref next-owner-module-ids (+ next-capacity index))
+                    (array-ref owner-module-ids (+ capacity index)))
                   (set! index (+ index 1))))
               (CompilerSymbols
                 values
                 types
                 macros
                 next-decls
-                (CompilerSymbolsDeclOwners
-                  next-owner-module-ids
-                  next-provenance-ids)
+                next-owner-module-ids
                 decl-count)))))]))
 
 (define (compiler-symbols-with-decl-count
   [symbols : CompilerSymbols]
   [decl-count : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owners _)
-      (CompilerSymbols values types macros decls owners decl-count)]))
+    [(CompilerSymbols values types macros decls owner-module-ids _)
+      (CompilerSymbols values types macros decls owner-module-ids decl-count)]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
   (str_cat.str-cat "symbols: duplicate value declaration " name))
@@ -2590,7 +2574,9 @@
         (array-ref (compiler-symbols-owner-module-ids symbols) index)
         module-id)
       (set!
-        (array-ref (compiler-symbols-provenance-ids symbols) index)
+        (array-ref
+          (compiler-symbols-owner-module-ids symbols)
+          (+ (array-length (compiler-symbols-decls symbols)) index))
         provenance-id))))
 
 (define (compiler-symbols-owner-module-id-at-index-or
@@ -2609,11 +2595,13 @@
   [target : i64]
   [fallback : i64]) : i64
   (let
-    [provenance-ids : (__tl_dyn-array i64)
-      (compiler-symbols-provenance-ids symbols)]
+    [owner-module-ids : (__tl_dyn-array i64)
+      (compiler-symbols-owner-module-ids symbols)]
     (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       fallback
-      (array-ref provenance-ids target))))
+      (array-ref
+        owner-module-ids
+        (+ (array-length (compiler-symbols-decls symbols)) target)))))
 
 (define (compiler-symbols-owner-id-at-index-or
   [symbols : CompilerSymbols]

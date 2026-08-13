@@ -505,6 +505,13 @@
   (entries (__tl_dyn-array CompilerLoadDependencyCatalogList))
   (generation (__tl_dyn-array i64)))
 
+;; Small lifetime-bound capability used by typechecking after dependency
+;; discovery is complete. The address points at the registry's stable one-slot
+;; `entries` cell; it avoids embedding the much wider load-session value in the
+;; hot macro-walk record while retaining the session ownership boundary.
+(defstruct CompilerLoadDependencyCatalogHandle
+  (address i64))
+
 (defenum CompilerLoadDependencyCatalogLookup
   (NoCatalog)
   (MetadataOnly)
@@ -710,6 +717,25 @@
   [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogRegistry
   state.dependency-catalog)
 
+(define (compiler-load-session-state-dependency-catalog-handle
+  [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogHandle
+  (CompilerLoadDependencyCatalogHandle
+    (cast
+      (unsafe
+        (ptr->int
+          (ptr-cast
+            (array-data state.dependency-catalog.entries)
+            : (Ptr CompilerLoadDependencyCatalogList))))
+      : i64)))
+
+(define (compiler-load-dependency-catalog-handle-items
+  [handle : CompilerLoadDependencyCatalogHandle]) : CompilerLoadDependencyCatalogList
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast handle.address : u64)
+        : (Ptr CompilerLoadDependencyCatalogList)))))
+
 (define (compiler-load-dependency-catalog-owner-arena
   [state : CompilerLoadSessionState]) : i64
   (array-ref state.dependency-catalog.owner-arena 0))
@@ -902,13 +928,20 @@
 (define (compiler-load-dependency-catalog-slot-for-provenance-id
   [state : CompilerLoadSessionState]
   [provenance-id : i64]) : i64
+  (compiler-load-dependency-catalog-handle-slot-for-provenance-id
+    (compiler-load-session-state-dependency-catalog-handle state)
+    provenance-id))
+
+(define (compiler-load-dependency-catalog-handle-slot-for-provenance-id
+  [handle : CompilerLoadDependencyCatalogHandle]
+  [provenance-id : i64]) : i64
   (if (< provenance-id 0)
     -1
     (let
       [path : String
         (compiler-load-canonical-path (ci.intern-str provenance-id))]
       [items : CompilerLoadDependencyCatalogList
-        (array-ref state.dependency-catalog.entries 0)]
+        (compiler-load-dependency-catalog-handle-items handle)]
       [index : i64 0]
       [best : i64 -1]
       [best-len : i64 -1]
@@ -934,9 +967,18 @@
   [state : CompilerLoadSessionState]
   [slot : i64]
   [identity : String]) : CompilerLoadDependencyCatalogLookup
+  (compiler-load-dependency-catalog-handle-lookup-macro
+    (compiler-load-session-state-dependency-catalog-handle state)
+    slot
+    identity))
+
+(define (compiler-load-dependency-catalog-handle-lookup-macro
+  [handle : CompilerLoadDependencyCatalogHandle]
+  [slot : i64]
+  [identity : String]) : CompilerLoadDependencyCatalogLookup
   (let
     [items : CompilerLoadDependencyCatalogList
-      (array-ref state.dependency-catalog.entries 0)]
+      (compiler-load-dependency-catalog-handle-items handle)]
     (if (or (< slot 0) (>= slot items.len))
       CompilerLoadDependencyCatalogLookup.NoCatalog
       (let
@@ -3441,7 +3483,8 @@
     [right-len : i64 (ast.ast-decl-path-list-len (& right))]
     [right-slots : (__tl_dyn-array String) right.slots]
     [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
-    [right-provenance-ids : (__tl_dyn-array i64) right.provenance-ids]
+    [left-capacity : i64 (array-length left.slots)]
+    [right-capacity : i64 (array-length right.slots)]
     (if (and
       (<= left-len right.offset)
       right.prependable
@@ -3468,16 +3511,15 @@
             0
             left-len)
           (ast.ast-decl-module-list-copy-to
-            (&mut right-provenance-ids)
-            (& left.provenance-ids)
-            left.offset
-            new-offset
+            (&mut right-owner-ids)
+            (& left.owner-ids)
+            (+ left-capacity left.offset)
+            (+ right-capacity new-offset)
             0
             left-len)
           (ast.AstDeclPathList
             right-slots
             right-owner-ids
-            right-provenance-ids
             new-offset
             (+ left-len right-len)
             true)))

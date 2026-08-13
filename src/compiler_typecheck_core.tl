@@ -83438,7 +83438,7 @@
   (macro-expand-program-structurally-changed bool)
   (macro-active-decl-owner-id i64)
   (macro-active-decl-provenance-id i64)
-  (macro-load-state cload.CompilerLoadSessionState)
+  (macro-dependency-catalog-handle cload.CompilerLoadDependencyCatalogHandle)
   ;; -1 means no dependency catalog. Embedded stdlib is selected through the
   ;; same post-resolution helper using its existing trusted-source route.
   (macro-active-dependency-catalog-slot i64)
@@ -83501,7 +83501,8 @@
     false
     cbi.compiler-builtin-id-fix-empty
     cbi.compiler-builtin-id-fix-empty
-    (cload.compiler-load-serial-test-session-state)
+    (cload.compiler-load-session-state-dependency-catalog-handle
+      (cload.compiler-load-serial-test-session-state))
     -1
     false
     (array.make-array ast.AstNodePoolContext 0)
@@ -85513,12 +85514,10 @@
     items
     (let
       [count : i64 (ast.ast-decl-path-list-len (& items))]
-      [slots : (__tl_dyn-array String)
-        (array.make-array String (+ reserve count))]
-      [owner-ids : (__tl_dyn-array i64)
-        (array.make-array i64 (+ reserve count))]
-      [provenance-ids : (__tl_dyn-array i64)
-        (array.make-array i64 (+ reserve count))]
+      [capacity : i64 (+ reserve count)]
+      [items-capacity : i64 (array-length items.slots)]
+      [slots : (__tl_dyn-array String) (array.make-array String capacity)]
+      [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
       (begin
         (ast.ast-decl-path-list-copy-to
           (&mut slots)
@@ -85535,13 +85534,13 @@
           0
           count)
         (ast.ast-decl-module-list-copy-to
-          (&mut provenance-ids)
-          (& items.provenance-ids)
-          items.offset
-          reserve
+          (&mut owner-ids)
+          (& items.owner-ids)
+          (+ items-capacity items.offset)
+          (+ capacity reserve)
           0
           count)
-        (ast.AstDeclPathList slots owner-ids provenance-ids reserve count true)))))
+        (ast.AstDeclPathList slots owner-ids reserve count true)))))
 
 (define (macro-decl-path-list-append-from
   [out : (&mut out ast.AstDeclPathList)]
@@ -85572,7 +85571,8 @@
     [right-len : i64 (ast.ast-decl-path-list-len (& right))]
     [right-slots : (__tl_dyn-array String) right.slots]
     [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
-    [right-provenance-ids : (__tl_dyn-array i64) right.provenance-ids]
+    [left-capacity : i64 (array-length left.slots)]
+    [right-capacity : i64 (array-length right.slots)]
     (if (and
       (<= left-len right.offset)
       right.prependable
@@ -85599,16 +85599,15 @@
             0
             left-len)
           (ast.ast-decl-module-list-copy-to
-            (&mut right-provenance-ids)
-            (& left.provenance-ids)
-            left.offset
-            new-offset
+            (&mut right-owner-ids)
+            (& left.owner-ids)
+            (+ left-capacity left.offset)
+            (+ right-capacity new-offset)
             0
             left-len)
           (ast.AstDeclPathList
             right-slots
             right-owner-ids
-            right-provenance-ids
             new-offset
             (+ left-len right-len)
             true)))
@@ -85729,15 +85728,13 @@
       [alias-left : ast.AstDeclPathList
         (begin
           (set! (array-ref right.slots 0) "alias")
-          (set! (array-ref right.owner-ids 0) alias-id)
-          (set! (array-ref right.provenance-ids 0) alias-id)
-          (ast.AstDeclPathList
-            right.slots
+          (ast.ast-decl-path-list-set-owner-and-provenance-id-at-physical-index!
             right.owner-ids
-            right.provenance-ids
+            (array-length right.slots)
             0
-            1
-            false))]
+            alias-id
+            alias-id)
+          (ast.AstDeclPathList right.slots right.owner-ids 0 1 false))]
       [copied : ast.AstDeclPathList
         (macro-decl-path-list-append alias-left right)]
       [reserved : ast.AstDeclPathList
@@ -85852,16 +85849,17 @@
                 [(ast.AstDeclPathListStep.Cons path rest)
                   (begin
                     (set! (array-ref suffix.slots write-index) path)
-                    (set! (array-ref suffix.owner-ids write-index) owner-id)
-                    (set!
-                      (array-ref suffix.provenance-ids write-index)
+                    (ast.ast-decl-path-list-set-owner-and-provenance-id-at-physical-index!
+                      suffix.owner-ids
+                      (array-length suffix.slots)
+                      write-index
+                      owner-id
                       provenance-id)
                     (set! write-index (- write-index 1))
                     (set! cursor rest))])))
           (ast.AstDeclPathList
             suffix.slots
             suffix.owner-ids
-            suffix.provenance-ids
             (- suffix-offset prefix-count)
             (+ prefix-count suffix.len)
             false)))
@@ -86094,7 +86092,6 @@
     (ast.AstDeclPathList
       paths.slots
       paths.owner-ids
-      paths.provenance-ids
       (+ paths.offset drop)
       (- len drop)
       false)))
@@ -86129,8 +86126,7 @@
         1
         decl-count)]
     [slots : (__tl_dyn-array String) (array.make-array String capacity)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    [provenance-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
     [index : i64 0]
     (begin
       (while (< index decl-count)
@@ -86145,13 +86141,13 @@
               index
               cbi.compiler-builtin-id-fix-empty))
           (set!
-            (array-ref provenance-ids index)
+            (array-ref owner-ids (+ capacity index))
             (ast.ast-decl-path-list-provenance-id
               (& paths)
               index
               cbi.compiler-builtin-id-fix-empty))
           (set! index (+ index 1))))
-      (ast.AstDeclPathList slots owner-ids provenance-ids 0 decl-count true))))
+      (ast.AstDeclPathList slots owner-ids 0 decl-count true))))
 
 (define (macro-segmented-program-splice-current-in-scratch!
   [state : TcJobState]
@@ -86617,8 +86613,7 @@
     [decl-slots : (__tl_dyn-array ast.AstDecl)
       (array.make-array ast.AstDecl capacity)]
     [path-slots : (__tl_dyn-array String) (array.make-array String capacity)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    [provenance-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
@@ -86648,7 +86643,7 @@
               (- (- prefix-count 1) index)
               cbi.compiler-builtin-id-fix-empty))
           (set!
-            (array-ref provenance-ids index)
+            (array-ref owner-ids (+ capacity index))
             (ast.ast-decl-path-list-provenance-id
               (& prefix-paths)
               (- (- prefix-count 1) index)
@@ -86680,7 +86675,7 @@
                       node-index
                       cbi.compiler-builtin-id-fix-empty))
                   (set!
-                    (array-ref provenance-ids index)
+                    (array-ref owner-ids (+ capacity index))
                     (ast.ast-decl-path-list-provenance-id
                       (& paths)
                       node-index
@@ -86691,7 +86686,7 @@
               (set! node-index 0)))))
       (MacroSegmentedProgramFlatView
         (ast.AstDeclList decl-slots 0 count true)
-        (ast.AstDeclPathList path-slots owner-ids provenance-ids 0 count true)))))
+        (ast.AstDeclPathList path-slots owner-ids 0 count true)))))
 
 ;; Intermediate materialization is reserved for the documented conservative
 ;; source-file/alias fallback. Ordinary marker and generated-module splices
@@ -95010,8 +95005,10 @@
         target
         cbi.compiler-builtin-id-fix-empty)]
     [catalog-slot : i64
-      (cload.compiler-load-dependency-catalog-slot-for-provenance-id
-        (tc-macro-walk-field (tc-context-macro-state ctx) macro-load-state)
+      (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-id
+        (tc-macro-walk-field
+          (tc-context-macro-state ctx)
+          macro-dependency-catalog-handle)
         provenance-id)]
     (begin
       ;; Catalog selection happens only after normal visibility, alias, and
@@ -100184,8 +100181,8 @@
     [state : TcMacroState (tc-context-macro-state ctx)]
     [slot : i64
       (tc-macro-walk-field state macro-active-dependency-catalog-slot)]
-    (cload.compiler-load-dependency-catalog-lookup-macro
-      (tc-macro-walk-field state macro-load-state)
+    (cload.compiler-load-dependency-catalog-handle-lookup-macro
+      (tc-macro-walk-field state macro-dependency-catalog-handle)
       slot
       identity)))
 
@@ -108681,8 +108678,8 @@
       source-names)
     (tc-macro-walk-set!
       (tc-job-state-macro-state job-state)
-      macro-load-state
-      load-state)
+      macro-dependency-catalog-handle
+      (cload.compiler-load-session-state-dependency-catalog-handle load-state))
     (tc-macro-walk-set!
       (tc-job-state-macro-state job-state)
       macro-active-dependency-catalog-slot
@@ -110892,7 +110889,6 @@
       (ast.AstDeclPathList
         paths.slots
         paths.owner-ids
-        paths.provenance-ids
         paths.offset
         take-count
         false))))
@@ -110916,7 +110912,6 @@
         (ast.AstDeclPathList
           paths.slots
           paths.owner-ids
-          paths.provenance-ids
           (+ paths.offset count)
           (- len count)
           false)))))

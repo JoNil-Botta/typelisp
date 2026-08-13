@@ -1260,15 +1260,14 @@
             (codec.surface-ast-write-name!
               out
               context
-              (array-ref paths.provenance-ids (+ paths.offset index)))
+              (ast.ast-decl-path-list-provenance-id (& paths) index 0))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-paths! [reader : codec.SurfaceAstReader]) : ast.AstDeclPathList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array String) (make-array String count)]
-    [owners : (__tl_dyn-array i64) (make-array i64 count)]
-    [provenance : (__tl_dyn-array i64) (make-array i64 count)]
+    [owners : (__tl_dyn-array i64) (make-array i64 (* count 2))]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1276,10 +1275,10 @@
           (set! (array-ref slots index) (codec.surface-ast-read-string! reader))
           (set! (array-ref owners index) (codec.surface-ast-read-name! reader))
           (set!
-            (array-ref provenance index)
+            (array-ref owners (+ count index))
             (codec.surface-ast-read-name! reader))
           (set! index (+ index 1))))
-      (ast.AstDeclPathList slots owners provenance 0 count true))))
+      (ast.AstDeclPathList slots owners 0 count true))))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
@@ -1664,8 +1663,7 @@
         (make-array ast.AstParam 1)]
       [decl-slots : (__tl_dyn-array ast.AstDecl) (make-array ast.AstDecl 2)]
       [path-slots : (__tl_dyn-array String) (make-array String 2)]
-      [owner-slots : (__tl_dyn-array i64) (make-array i64 2)]
-      [provenance-slots : (__tl_dyn-array i64) (make-array i64 2)]
+      [owner-slots : (__tl_dyn-array i64) (make-array i64 4)]
       [module-slots : (__tl_dyn-array i64) (make-array i64 2)]
       [key-modules : (__tl_dyn-array String) (make-array String 1)]
       (begin
@@ -1714,21 +1712,15 @@
         (set! (array-ref path-slots 1) "test.tl")
         (set! (array-ref owner-slots 0) module-id)
         (set! (array-ref owner-slots 1) module-id)
-        (set! (array-ref provenance-slots 0) path-id)
-        (set! (array-ref provenance-slots 1) path-id)
+        (set! (array-ref owner-slots 2) path-id)
+        (set! (array-ref owner-slots 3) path-id)
         (set! (array-ref module-slots 0) module-id)
         (set! (array-ref module-slots 1) module-id)
         (set! (array-ref key-modules 0) "test.tl")
         (let
           [decls : ast.AstDeclList (ast.AstDeclList decl-slots 0 2 true)]
           [paths : ast.AstDeclPathList
-            (ast.AstDeclPathList
-              path-slots
-              owner-slots
-              provenance-slots
-              0
-              2
-              true)]
+            (ast.AstDeclPathList path-slots owner-slots 0 2 true)]
           [modules : ast.AstDeclModuleList
             (ast.AstDeclModuleList module-slots 0 2 true)]
           [seen : sym_i64_env.SymI64Env

@@ -9331,11 +9331,12 @@
   (let
     [macro-state : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     (begin
       (tc_core.macro-hygiene-env-reset! macro-state)
       (let
         [empty : tc_core.MacroHygieneEnv
-          (tc_core.macro-hygiene-env-empty macro-state)]
+          (tc_core.macro-hygiene-env-empty macro-state pools)]
         [parent : tc_core.MacroHygieneEnv
           (tc_core.macro-hygiene-env-bind-raw empty 7 70)]
         [left : tc_core.MacroHygieneEnv

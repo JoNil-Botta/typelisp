@@ -2234,8 +2234,13 @@
   4)
 (define compiler-backend-function-i64-array-gep-fold-scale-table : i64
   5)
-(define compiler-backend-function-i64-array-count : i64
+
+;; #jump-forward: flat (from-label, to-label) pairs for this function's
+;; jump-only blocks. Empty for every function that has none.
+(define compiler-backend-function-i64-array-jump-forward : i64
   6)
+(define compiler-backend-function-i64-array-count : i64
+  7)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -2725,6 +2730,9 @@
           compiler-backend-function-i64-array-gep-fold-scale-table)
         empty-i64-array)
       (set!
+        (array-ref i64-arrays compiler-backend-function-i64-array-jump-forward)
+        empty-i64-array)
+      (set!
         (array-ref live-sets compiler-backend-function-live-set-group-vars)
         empty-live-set)
       (set!
@@ -3153,6 +3161,11 @@
         (array-ref
           data.i64-arrays
           compiler-backend-function-i64-array-gep-fold-scale-table)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-jump-forward)
         data.empty-i64-array)
       (set! (array-ref data.assignment-indexes 0) data.empty-assignment-index)
       (set!
@@ -28089,6 +28102,62 @@
     [(CompilerBackendMaybeLabel.Some label) (= target label)]
     [(CompilerBackendMaybeLabel.No) false]))
 
+;; #jump-forward: the label a jump-only block hands its incoming jumps on to,
+;; or `label` itself when the block is not jump-only. `pairs` is the flat
+;; (from, to) table built once per function; `count` is its pair count.
+(define (compiler-backend-jump-forward-pair-lookup
+  [pairs : (__tl_dyn-array i64)]
+  [count : i64]
+  [label : i64]) : i64
+  (let
+    [i : i64 0]
+    [out : i64 label]
+    (begin
+      (while (< i count)
+        (if (= (array-ref pairs (* 2 i)) label)
+          (begin
+            (set! out (array-ref pairs (+ (* 2 i) 1)))
+            (set! i count))
+          (set! i (+ i 1))))
+      out)))
+
+(define (compiler-backend-jump-forward-lookup
+  [backend-state : CompilerBackendState]
+  [label : i64]) : i64
+  (let
+    [pairs : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-function-i64-array-jump-forward)]
+    (compiler-backend-jump-forward-pair-lookup
+      pairs
+      (/ (array-length pairs) 2)
+      label)))
+
+;; #jump-forward: the label a jump at this site should name. A target that is
+;; already the fallthrough is left alone -- eliding the jump and letting the
+;; block's own (equally forwarded) terminator run is never worse, and is
+;; strictly better when that terminator is itself elided.
+(define (compiler-backend-jump-resolve-target
+  [backend-state : CompilerBackendState]
+  [target : i64]
+  [fallthrough : CompilerBackendMaybeLabel]) : i64
+  (if (compiler-backend-jump-target-is-fallthrough? target fallthrough)
+    target
+    (compiler-backend-jump-forward-lookup backend-state target)))
+
+;; #jump-forward drift rail: a block admitted to the forwarding table must emit
+;; nothing but its jump. If its own phi-edge copies turn out non-empty after
+;; all, jumps that skipped past it would skip those copies, so fail the compile
+;; loudly instead of emitting wrong code.
+(define (compiler-backend-jump-forward-drift?
+  [backend-state : CompilerBackendState]
+  [label : i64]
+  [copies : String]) : bool
+  (if (string.eq copies "")
+    false
+    (not (= (compiler-backend-jump-forward-lookup backend-state label) label))))
+
 (define (compiler-backend-emit-branch-jumps
   [function : String]
   [true-label : i64]
@@ -28100,26 +28169,38 @@
   ;; jumps-asm bound to a local (behavior-neutral) to avoid a seed-typechecker
   ;; spurious mismatch on the enclosing append operand.
   (let
+    [true-target : i64
+      (compiler-backend-jump-resolve-target
+        backend-state
+        true-label
+        fallthrough)]
+    [false-target : i64
+      (compiler-backend-jump-resolve-target
+        backend-state
+        false-label
+        fallthrough)]
     [jumps-asm : String
-      (if (compiler-backend-jump-target-is-fallthrough? false-label fallthrough)
+      (if (compiler-backend-jump-target-is-fallthrough?
+        false-target
+        fallthrough)
         (str_cat.str-cat
           "    jne "
-          (compiler-backend-asm-label function true-label)
+          (compiler-backend-asm-label function true-target)
           "\n"
           "")
         (if (compiler-backend-jump-target-is-fallthrough?
-          true-label
+          true-target
           fallthrough)
           (str_cat.str-cat
             "    je "
-            (compiler-backend-asm-label function false-label)
+            (compiler-backend-asm-label function false-target)
             "\n"
             "")
           (str_cat.str-cat
             "    jne "
-            (compiler-backend-asm-label function true-label)
+            (compiler-backend-asm-label function true-target)
             "\n    jmp "
-            (compiler-backend-asm-label function false-label)
+            (compiler-backend-asm-label function false-target)
             "\n")))]
     (str_cat.str-cat
       (compiler-backend-emergency-restore-before-jumps backend-state)
@@ -28212,19 +28293,18 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match cond
     [(compiler_ir_types.CompilerIrValue.Bool b)
-      (if b
+      (let
+        [taken : i64
+          (compiler-backend-jump-resolve-target
+            backend-state
+            (if b
+              true-label
+              false-label)
+            fallthrough)]
         (ResultCompilerBackend.Ok
-          (if (compiler-backend-jump-target-is-fallthrough?
-            true-label
-            fallthrough)
+          (if (compiler-backend-jump-target-is-fallthrough? taken fallthrough)
             ""
-            (compiler-backend-jump-label function true-label)))
-        (ResultCompilerBackend.Ok
-          (if (compiler-backend-jump-target-is-fallthrough?
-            false-label
-            fallthrough)
-            ""
-            (compiler-backend-jump-label function false-label))))]
+            (compiler-backend-jump-label function taken))))]
     [(compiler_ir_types.CompilerIrValue.Var id)
       (let
         [test-asm : String
@@ -28257,6 +28337,16 @@
             5
             "%rax"
             backend-state)]
+        [true-target : i64
+          (compiler-backend-jump-resolve-target
+            backend-state
+            true-label
+            fallthrough)]
+        [false-target : i64
+          (compiler-backend-jump-resolve-target
+            backend-state
+            false-label
+            fallthrough)]
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           cond
@@ -28268,28 +28358,28 @@
                 load
                 (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
                 (if (compiler-backend-jump-target-is-fallthrough?
-                  false-label
+                  false-target
                   fallthrough)
                   (str_cat.str-cat
                     "    jne "
-                    (compiler-backend-asm-label function true-label)
+                    (compiler-backend-asm-label function true-target)
                     "\n"
                     "")
                   (if (compiler-backend-jump-target-is-fallthrough?
-                    true-label
+                    true-target
                     fallthrough)
                     (str_cat.str-cat
                       "    je "
-                      (compiler-backend-asm-label function false-label)
+                      (compiler-backend-asm-label function false-target)
                       "\n"
                       "")
                     (str_cat.str-cat
                       "    jne "
                       (compiler-backend-asm-label
                         (string.copy function)
-                        true-label)
+                        true-target)
                       "\n    jmp "
-                      (compiler-backend-asm-label function false-label)
+                      (compiler-backend-asm-label function false-target)
                       "\n")))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]))
@@ -28432,16 +28522,28 @@
   ;; jumps-asm bound to a local (behavior-neutral) to avoid a seed-typechecker
   ;; spurious mismatch on the enclosing append operand.
   (let
+    [true-target : i64
+      (compiler-backend-jump-resolve-target
+        backend-state
+        true-label
+        fallthrough)]
+    [false-target : i64
+      (compiler-backend-jump-resolve-target
+        backend-state
+        false-label
+        fallthrough)]
     [jumps-asm : String
-      (if (compiler-backend-jump-target-is-fallthrough? false-label fallthrough)
-        (compiler-backend-emit-jcc-label true-jcc function true-label)
+      (if (compiler-backend-jump-target-is-fallthrough?
+        false-target
+        fallthrough)
+        (compiler-backend-emit-jcc-label true-jcc function true-target)
         (if (compiler-backend-jump-target-is-fallthrough?
-          true-label
+          true-target
           fallthrough)
-          (compiler-backend-emit-jcc-label false-jcc function false-label)
+          (compiler-backend-emit-jcc-label false-jcc function false-target)
           (str_cat.str-cat
-            (compiler-backend-emit-jcc-label true-jcc function true-label)
-            (compiler-backend-jump-label function false-label))))]
+            (compiler-backend-emit-jcc-label true-jcc function true-target)
+            (compiler-backend-jump-label function false-target))))]
     (str_cat.str-cat
       (compiler-backend-emergency-restore-before-jumps backend-state)
       jumps-asm)))
@@ -41742,6 +41844,224 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]) : BackendSymbolSeq
   (compiler-backend-phi-target-labels blocks (compiler-backend-empty-label-seq)))
 
+;; #jump-forward. A block "emits nothing but one jmp" when every instruction
+;; ahead of its terminator is a Phi (those emit no code of their own; the
+;; incoming values are marshalled on the edges INTO the block) and the
+;; terminator is `Jump M` whose own emission reduces to that one jump. Three
+;; further conditions decide the latter, all readable before emission:
+;;
+;;   * no loop-constant hoist is injected at the block's label (const-hoist is
+;;     built per function, ahead of emit-blocks, so its table is already final);
+;;   * M does not end in a Return -- a returning target turns the edge into an
+;;     inline return tail rather than a jump;
+;;   * the M-phi copies for THIS predecessor all coalesce away, i.e. the copy
+;;     list `compiler-backend-leading-phi-copies-seq` builds -- the very list
+;;     the emitter renders -- comes out empty.
+;;
+;; Traversing such a block does nothing but arrive at M, so a jump aimed at it
+;; may name M instead. The block itself is still emitted unchanged; only jump
+;; operands move, so every label, span and switch-table entry stays valid.
+(define (compiler-backend-jump-only-leading-phis?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [limit : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i limit)
+        (begin
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)
+            [(compiler_ir_types.CompilerIrInstr.Phi _ _ _) unit]
+            [_
+              (begin
+                (set! ok false)
+                (set! i limit))])
+          (set! i (+ i 1))))
+      ok)))
+
+(define (compiler-backend-jump-only-edge-clean?
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockSeq]
+  [target : i64]
+  [from-label : i64]) : bool
+  (let
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    [i : i64 0]
+    [clean : bool false]
+    (begin
+      (while (< i n)
+        (match (compiler_ir_types.compiler-ir-block-seq-ref blocks i)
+          [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
+            (if (= block-label target)
+              (begin
+                (set!
+                  clean
+                  (and
+                    (not (compiler-backend-instr-seq-ends-in-return? instrs))
+                    (match (compiler-backend-leading-phi-copies-seq
+                      backend-state
+                      assignments
+                      instrs
+                      from-label)
+                      [(ResultBackendPhiCopies.Ok copies) (= copies.len 0)]
+                      [(ResultBackendPhiCopies.Err _) false])))
+                (set! i n))
+              (set! i (+ i 1)))]))
+      clean)))
+
+(define (compiler-backend-instr-seq-ends-in-return?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+    (if (< count 1)
+      false
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(compiler_ir_types.CompilerIrInstr.Return _) true]
+        [_ false]))))
+
+(define (compiler-backend-jump-only-target
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockSeq]
+  [index : i64]) : i64
+  (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+    [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+      (let
+        [function-state : CompilerBackendFunctionState
+          (compiler-backend-state-function-state backend-state)]
+        [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+        [target : i64
+          (if (< count 1)
+            (compiler_ir_types.compiler-ir-label-none)
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref
+              instrs
+              (- count 1))
+              [(compiler_ir_types.CompilerIrInstr.Jump next) next]
+              [_ (compiler_ir_types.compiler-ir-label-none)]))]
+        (if (or
+          (= target (compiler_ir_types.compiler-ir-label-none))
+          (= target label)
+          (not (compiler-backend-jump-only-leading-phis? instrs (- count 1)))
+          (not
+            (string.eq
+              (compiler-backend-const-hoist-injection-for
+                function-state
+                label
+                true)
+              ""))
+          (not
+            (string.eq
+              (compiler-backend-const-hoist-injection-for
+                function-state
+                label
+                false)
+              "")))
+          (compiler_ir_types.compiler-ir-label-none)
+          (if (compiler-backend-jump-only-edge-clean?
+            backend-state
+            assignments
+            blocks
+            target
+            label)
+            target
+            (compiler_ir_types.compiler-ir-label-none))))]))
+
+;; Follow each raw (from -> immediate target) hop to the end of its chain.
+;; `fuel` bounds the walk, so a jump-only cycle -- `while (true) {}` lowered to
+;; a pair of empty blocks -- terminates instead of spinning; a chain that walks
+;; back onto its own start is dropped so a self-loop keeps its jump.
+(define (compiler-backend-jump-forward-resolve!
+  [pairs : (__tl_dyn-array i64)]
+  [used : i64]) : i64
+  (let
+    [i : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< i used)
+        (let
+          [from : i64 (array-ref pairs (* 2 i))]
+          [to : i64 (array-ref pairs (+ (* 2 i) 1))]
+          [fuel : i64 used]
+          (begin
+            (while (and (> fuel 0) (not (= to from)))
+              (let
+                [next : i64
+                  (compiler-backend-jump-forward-pair-lookup pairs used to)]
+                (if (= next to)
+                  (set! fuel 0)
+                  (begin
+                    (set! to next)
+                    (set! fuel (- fuel 1))))))
+            (if (= to from)
+              unit
+              (begin
+                (set! (array-ref pairs (* 2 count)) from)
+                (set! (array-ref pairs (+ (* 2 count) 1)) to)
+                (set! count (+ count 1))))
+            (set! i (+ i 1)))))
+      count)))
+
+(define (compiler-backend-jump-forward-build
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : (__tl_dyn-array i64)
+  (let
+    ;; Normalised to a seq: after stack colouring and the call-save rewrite the
+    ;; emitted block list is not always the array form.
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [raw : (__tl_dyn-array i64) (array.make-array i64 (* 2 n))]
+    [used : i64 0]
+    ;; The shrink-wrap guard prefix and the saving block it branches to are off
+    ;; limits: the guard is re-rendered as a splice needle before this table
+    ;; exists, and forwarding past the saving block would step over the
+    ;; prologue spliced in at its label.
+    [guard-prefix : i64
+      (compiler_regalloc.compiler-reg-early-exit-prefix-count-current)]
+    [saving-label : i64
+      (compiler_regalloc.compiler-reg-early-exit-saving-label-current)]
+    [i : i64 guard-prefix]
+    (begin
+      (while (< i n)
+        (let
+          [label : i64
+            (compiler-backend-const-hoist-block-label
+              (compiler_ir_types.compiler-ir-block-seq-ref seq i))]
+          [target : i64
+            (if (= label saving-label)
+              (compiler_ir_types.compiler-ir-label-none)
+              (compiler-backend-jump-only-target
+                backend-state
+                assignments
+                seq
+                i))]
+          (begin
+            (if (= target (compiler_ir_types.compiler-ir-label-none))
+              unit
+              (begin
+                (set! (array-ref raw (* 2 used)) label)
+                (set! (array-ref raw (+ (* 2 used) 1)) target)
+                (set! used (+ used 1))))
+            (set! i (+ i 1)))))
+      (compiler-backend-jump-forward-pack
+        raw
+        (compiler-backend-jump-forward-resolve! raw used)))))
+
+(define (compiler-backend-jump-forward-pack
+  [raw : (__tl_dyn-array i64)]
+  [count : i64]) : (__tl_dyn-array i64)
+  (let
+    [out : (__tl_dyn-array i64) (array.make-array i64 (* 2 count))]
+    [i : i64 0]
+    (begin
+      (while (< i (* 2 count))
+        (begin
+          (set! (array-ref out i) (array-ref raw i))
+          (set! i (+ i 1))))
+      out)))
+
 (define (compiler-backend-function-state-install-phi-targets!
   [function-state : CompilerBackendFunctionState]
   [targets : BackendSymbolSeq]) : unit
@@ -41799,27 +42119,43 @@
         (compiler-backend-branch-edge-label current-label "false"))
       fallthrough)))
 
+;; `edge-next` is what physically follows this edge block: the other edge block
+;; when one is still to come, else the next IR block. An edge block's trailing
+;; jump was previously unconditional, which is where a `jmp` to the very next
+;; address came from.
 (define (compiler-backend-emit-branch-edge-block
+  [backend-state : CompilerBackendState]
   [function : String]
   [edge-label : i64]
   [target-label : i64]
-  [copies : String]) : String
+  [copies : String]
+  [edge-next : CompilerBackendMaybeLabel]) : String
   (if (string.eq copies "")
     ""
-    (str_cat.str-cat
-      (compiler-backend-asm-label function edge-label)
-      ":\n"
-      copies
-      (compiler-backend-jump-label function target-label)
-      "")))
+    (let
+      [taken : i64
+        (compiler-backend-jump-resolve-target
+          backend-state
+          target-label
+          edge-next)]
+      (str_cat.str-cat
+        (compiler-backend-asm-label function edge-label)
+        ":\n"
+        copies
+        (if (compiler-backend-jump-target-is-fallthrough? taken edge-next)
+          ""
+          (compiler-backend-jump-label function taken))
+        ""))))
 
 (define (compiler-backend-emit-branch-edges
+  [backend-state : CompilerBackendState]
   [function : String]
   [current-label : i64]
   [true-label : i64]
   [false-label : i64]
   [true-copies : String]
   [false-copies : String]
+  [fallthrough : CompilerBackendMaybeLabel]
   [branch-asm : String]) : String
   (let
     [true-edge : i64 (compiler-backend-branch-edge-label current-label "true")]
@@ -41828,15 +42164,21 @@
     (str_cat.str-cat
       branch-asm
       (compiler-backend-emit-branch-edge-block
+        backend-state
         function
         true-edge
         true-label
-        true-copies)
+        true-copies
+        (if (string.eq false-copies "")
+          fallthrough
+          (CompilerBackendMaybeLabel.Some false-edge)))
       (compiler-backend-emit-branch-edge-block
+        backend-state
         function
         false-edge
         false-label
-        false-copies))))
+        false-copies
+        fallthrough))))
 
 ;; A branch's own flag-setting step, or none at all. An empty `true-jcc` is the
 ;; ordinary branch: load/test the condition and jump on ZF. A non-empty one is a
@@ -41969,12 +42311,14 @@
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
+                      program-index.backend-state
                       function
                       current-label
                       true-label
                       false-label
                       true-copies
                       false-copies
+                      fallthrough
                       branch-asm))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))]
@@ -42084,12 +42428,14 @@
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
+                      program-index.backend-state
                       function
                       current-label
                       true-label
                       false-label
                       true-copies
                       false-copies
+                      fallthrough
                       branch-asm))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))]
@@ -42234,12 +42580,14 @@
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
+                      program-index.backend-state
                       function
                       current-label
                       true-label
                       false-label
                       true-copies
                       false-copies
+                      fallthrough
                       branch-asm))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))]
@@ -42355,12 +42703,14 @@
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
+                      program-index.backend-state
                       function
                       current-label
                       true-label
                       false-label
                       true-copies
                       false-copies
+                      fallthrough
                       branch-asm))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))]
@@ -47826,18 +48176,35 @@
                 planned-scratch1
                 planned-scratch2)
                 [(ResultCompilerBackend.Ok copies)
-                  (ResultCompilerBackend.Ok
-                    (str_cat.str-cat
-                      copies
-                      (if (compiler-backend-jump-target-is-fallthrough?
-                        target
-                        fallthrough)
-                        ""
-                        (str_cat.str-cat
-                          "    jmp "
-                          (compiler-backend-asm-label ctx.function target)
-                          "\n"
-                          ""))))]
+                  (if (compiler-backend-jump-forward-drift?
+                    ctx.backend-state
+                    ctx.current-label
+                    copies)
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (compiler_diagnostic.compiler-diagnostic-at-start
+                            ""
+                            "backend: jump-forward drift on a jump-only block")
+                          instr-diag)))
+                    (ResultCompilerBackend.Ok
+                      (str_cat.str-cat
+                        copies
+                        (let
+                          [taken : i64
+                            (compiler-backend-jump-resolve-target
+                              ctx.backend-state
+                              target
+                              fallthrough)]
+                          (if (compiler-backend-jump-target-is-fallthrough?
+                            taken
+                            fallthrough)
+                            ""
+                            (str_cat.str-cat
+                              "    jmp "
+                              (compiler-backend-asm-label ctx.function taken)
+                              "\n"
+                              ""))))))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err
                     (box
@@ -51862,12 +52229,14 @@
             [(ResultCompilerBackend.Ok false-copies)
               (ResultCompilerBackend.Ok
                 (compiler-backend-emit-branch-edges
+                  ctx.backend-state
                   ctx.function
                   ctx.current-label
                   true-label
                   false-label
                   true-copies
                   false-copies
+                  branch-fallthrough
                   (str_cat.str-cat
                     cmp-asm
                     (compiler-backend-emit-compare-branch-jumps
@@ -53472,13 +53841,17 @@
                         (if (string.eq plain-direct-return "")
                           (str_cat.str-cat
                             fused-copies
-                            (if (compiler-backend-jump-target-is-fallthrough?
-                              target-label
-                              fallthrough)
-                              ""
-                              (compiler-backend-jump-label
-                                ctx.function
-                                target-label)))
+                            (let
+                              [taken : i64
+                                (compiler-backend-jump-resolve-target
+                                  ctx.backend-state
+                                  target-label
+                                  fallthrough)]
+                              (if (compiler-backend-jump-target-is-fallthrough?
+                                taken
+                                fallthrough)
+                                ""
+                                (compiler-backend-jump-label ctx.function taken))))
                           plain-direct-return))
                       (compiler-backend-emit-instrs
                         ctx
@@ -66451,6 +66824,18 @@
             emit-params
             emit-blocks-list
             program-index)]
+        ;; #jump-forward: the shrink-wrap guard prefix rendered just below is a
+        ;; textual needle that has to match the emitted body byte for byte. The
+        ;; body's forwarding table cannot exist yet -- it reads the const-hoist
+        ;; injections built further down -- so clear the lane here: label ids are
+        ;; interned program-wide, and a previous function's table would otherwise
+        ;; forward this one's labels. The build below refuses the guard region,
+        ;; so needle and body still agree once the real table is installed.
+        [_jump-forward-clear : unit
+          (compiler-backend-function-state-set-i64-array!
+            function-state
+            compiler-backend-function-i64-array-jump-forward
+            (array.make-array i64 0))]
         [shrinkwrap-saving-label : i64
           (compiler_regalloc.compiler-reg-early-exit-saving-label-current)]
         [shrinkwrap-bare-label : String
@@ -66641,6 +67026,20 @@
                 (compiler-backend-state-function-state
                   program-index.backend-state)
                 (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
+            ;; #jump-forward: installed unconditionally (empty when the function
+            ;; has no jump-only block) so no previous function's table can leak
+            ;; into this one. Reads only the register plan and the const-hoist
+            ;; table, both fixed above, so the result is as deterministic as the
+            ;; assignment it derives from.
+            [_jump-forward : unit
+              (compiler-backend-function-state-set-i64-array!
+                (compiler-backend-state-function-state
+                  program-index.backend-state)
+                compiler-backend-function-i64-array-jump-forward
+                (compiler-backend-jump-forward-build
+                  program-index.backend-state
+                  assignments
+                  emit-blocks-list))]
             ;; Must precede the parameter spills: those store incoming registers
             ;; into frame slots, and their references have to count.
             [_frame-slot-flag : unit

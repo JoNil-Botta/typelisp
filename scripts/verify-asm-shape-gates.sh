@@ -212,6 +212,76 @@ assert_no_fallthrough_jmp() {
     fi
 }
 
+# Count branch lines whose target label names a block that emits nothing but a
+# single `jmp` -- the shape backend jump forwarding retires. A block's body is
+# read across any run of adjacent label definitions (an emptied merge shares its
+# successor's code), and a lone `jmp` back to the block's own label is a
+# self-loop, which forwarding must refuse and which therefore does not count.
+count_jump_into_jump_only_block() {
+    awk '
+        { line[NR] = $0 }
+        /^[^[:blank:]:]+:$/ { at[substr($0, 1, length($0) - 1)] = NR }
+        END {
+            for (l in at) {
+                i = at[l] + 1
+                while (i <= NR && line[i] ~ /^[^[:blank:]:]+:$/) i++
+                if (i > NR || line[i] !~ /^    jmp [^[:blank:]*%(,]+$/) continue
+                target = substr(line[i], 9)
+                if (target == l) continue
+                j = i + 1
+                if (j > NR || line[j] ~ /^[^[:blank:]:]+:$/ || line[j] ~ /^[[:space:]]*\./)
+                    solo[l] = 1
+            }
+            for (k = 1; k <= NR; k++)
+                if (line[k] ~ /^    j[a-z]+ [^[:blank:]*%(,]+$/) {
+                    t = line[k]
+                    sub(/^    j[a-z]+ /, "", t)
+                    if (t in solo) n++
+                }
+            print n + 0
+        }
+    ' "$1"
+}
+
+assert_no_jump_into_jump_only_block() {
+    _file=$1
+    _label=$2
+    _got=$(count_jump_into_jump_only_block "$_file")
+    if [ "$_got" -ne 0 ]; then
+        fail "$_label kept $_got branch(es) into a block that emits nothing but one jmp"
+    fi
+}
+
+# Count `jmp L` whose only preceding lines back to `L:` are label definitions --
+# an empty infinite loop, whose header and body labels collapse onto the same
+# address. Jump forwarding must refuse these: every block in the run hands its
+# jumps to another block in the same run, so there is no exit to name.
+count_self_loop_jmp() {
+    awk '
+        /^[^[:blank:]:]+:$/ {
+            run[++depth] = substr($0, 1, length($0) - 1)
+            next
+        }
+        /^    jmp [^[:blank:]*%(,]+$/ {
+            target = substr($0, 9)
+            for (i = 1; i <= depth; i++)
+                if (run[i] == target) { n++; break }
+        }
+        { depth = 0 }
+        END { print n + 0 }
+    ' "$1"
+}
+
+assert_self_loop_jmp_at_least() {
+    _file=$1
+    _want=$2
+    _label=$3
+    _got=$(count_self_loop_jmp "$_file")
+    if [ "$_got" -lt "$_want" ]; then
+        fail "$_label expected at least $_want self-loop jmp(s), got $_got"
+    fi
+}
+
 assert_backward_branch_at_least() {
     _file=$1
     _want=$2
@@ -1167,12 +1237,58 @@ check_gep_load_cmp_spilled_stage() {
     assert_matches "$_refused"         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$'         gep-load-cmp-spilled-stage-refused
 }
 
+# Backend jump-only block forwarding (#jump-forward). A run of if_merge blocks
+# whose phi copies coalesce emits one `jmp` each; a branch into the head of the
+# run used to walk the whole run. Forwarding names the run's exit directly. The
+# blocks are still emitted -- only jump operands move -- so the merge labels
+# must all still be there, and a jump-only SELF loop must keep its own jump.
+check_jump_only_forward() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "jump_only_forward_$_suffix" \
+            tests/integration/jump_only_forward.tl "$_target")
+
+        _forward=$(function_body "$_asm" _tl_jump_only_forward_forward_probe)
+        _diamond=$(function_body "$_asm" _tl_jump_only_forward_diamond_probe)
+        _main=$(function_body "$_asm" main)
+
+        # The core property over every compiled body: nothing branches into a
+        # block that does nothing but jump. Three such branches survive in the
+        # forward probe before the forwarding table exists.
+        for _body in "$_forward" "$_diamond" "$_main"; do
+            assert_no_jump_into_jump_only_block "$_body" \
+                "jump-only-forward-$_target"
+            assert_no_fallthrough_jmp "$_body" "jump-only-forward-$_target"
+        done
+
+        # Not vacuous: the merge run is still four real blocks, still reached by
+        # branches. Forwarding retargets jumps; it never deletes a block.
+        assert_regex_count_at_least "$_forward" \
+            '^\.L[^ ]*_if_merge\.[0-9.]+:$' 4 "jump-only-forward-$_target"
+        assert_regex_count_at_least "$_forward" \
+            '^[[:space:]]+j[a-z]+ \.L[^ ]*_if_merge\.[0-9.]+$' 4 \
+            "jump-only-forward-$_target"
+        assert_backward_branch_at_least "$_forward" 1 \
+            "jump-only-forward-$_target"
+
+        # REFUSED: the diamond's merges carry values that differ per edge, so
+        # they are not jump-only and the branches naming them stay put.
+        assert_regex_count_at_least "$_diamond" \
+            '^[[:space:]]+j[a-z]+ \.L[^ ]*_if_merge\.[0-9.]+$' 3 \
+            "jump-only-forward-diamond-$_target"
+
+        # REFUSED: the inlined empty infinite loop keeps its self-jump.
+        assert_self_loop_jmp_at_least "$_main" 1 "jump-only-forward-spin-$_target"
+    done
+}
+
 check_mem_dest_rmw_fold
 check_word_merge_unroll
 check_divmagic_hoist
 check_hoist_priority
 check_lftr_counter_retire
 check_fallthrough_jmp_chain
+check_jump_only_forward
 check_wide_const_hoist
 check_group_pair_home
 check_group_pair_phi_home

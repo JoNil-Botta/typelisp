@@ -9680,6 +9680,9 @@
       unit
       (io.panic
         "typecheck: intern id space layout exceeds the intern capacity budget"))
+    (if (ci.intern-syntax-id-tests-ok?)
+      unit
+      (io.panic "typecheck: typed syntax identity boundary tests failed"))
     (if (ci.intern-qualified-metadata-tests-ok?)
       unit
       (io.panic "typecheck: intern qualified metadata tests failed"))

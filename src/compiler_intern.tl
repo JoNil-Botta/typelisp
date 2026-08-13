@@ -493,6 +493,38 @@
 (defmacro (intern-id-value [id : Expr]) : i64
   `(cast (__tl-project-field-name ,id "value") : i64))
 
+(define (intern-id-eq? [left : InternId] [right : InternId]) : bool
+  (= (intern-id-value left) (intern-id-value right)))
+
+;; Name-bearing syntax crosses two identity domains: ordinary renderable pool
+;; names and session-owned structural names used by macro hygiene and compiler
+;; rewrites. Keep that mixed boundary nominal and one word. Consumers must
+;; either preserve identity with `intern-syntax-id-value` or explicitly reduce
+;; it to a renderable source spelling; a structural key cannot call
+;; `intern-id-str` directly.
+(defstruct InternSyntaxId
+  (value u64))
+
+(defmacro (intern-syntax-id-value [id : Expr]) : i64
+  `(cast (__tl-project-field-name ,id "value") : i64))
+
+(define (intern-syntax-id-from-renderable [id : InternId]) : InternSyntaxId
+  (InternSyntaxId (cast (intern-id-value id) : u64)))
+
+;; Compatibility constructor for the existing mixed AST/macro fields. Missing
+;; sentinels are not syntax identities; reject them at the construction edge.
+(define (intern-syntax-id-from-raw [id : i64]) : InternSyntaxId
+  (if (< id 0)
+    (tl_oob_abort)
+    (InternSyntaxId (cast id : u64))))
+
+(define (intern-syntax-id-renderable [id : InternSyntaxId]) : InternId
+  (intern-id-from-renderable
+    (intern-syntax-source-name-id-or (intern-syntax-id-value id) -1)))
+
+(define (intern-syntax-id-text [id : InternSyntaxId]) : String
+  (intern-id-str (intern-syntax-id-renderable id)))
+
 (define (intern-id-from-renderable [id : i64]) : InternId
   (if (intern-renderable-id? id)
     (InternId (cast id : u32))
@@ -3473,6 +3505,47 @@
     (= (intern-qualified? id) qualified)
     (intern-private-string-eq (intern-qualified-module id) module-name)
     (intern-private-string-eq (intern-qualified-base id) base-name)))
+
+(define (intern-syntax-id-tests-ok?) : bool
+  (begin
+    (intern-reset!)
+    (let
+      [source : InternId (intern-source-slice-id "pkg/name" 0 8)]
+      [source-raw : i64 (intern-id-value source)]
+      [source-syntax : InternSyntaxId (intern-syntax-id-from-renderable source)]
+      [generated : InternId
+        (intern-id-from-renderable
+          (intern-generated-canonical-name "generated-name"))]
+      [template : InternSyntaxId
+        (intern-syntax-id-from-raw (intern-template-source-id source-raw))]
+      [local : InternSyntaxId
+        (intern-syntax-id-from-raw (intern-structural-local-id 7 source-raw))]
+      [macro-global : InternSyntaxId
+        (intern-syntax-id-from-raw
+          (+ (intern-macro-global-structural-base) source-raw))]
+      [macro-local : InternSyntaxId
+        (intern-syntax-id-from-raw
+          (+ (intern-macro-local-structural-base) source-raw))]
+      [ok : bool
+        (and
+          (= (intern-syntax-id-value source-syntax) source-raw)
+          (intern-private-string-eq
+            (intern-syntax-id-text source-syntax)
+            "pkg/name")
+          (intern-private-string-eq
+            (intern-syntax-id-text (intern-syntax-id-from-renderable generated))
+            "generated-name")
+          (intern-private-string-eq (intern-syntax-id-text template) "pkg/name")
+          (intern-private-string-eq (intern-syntax-id-text local) "pkg/name")
+          (intern-private-string-eq
+            (intern-syntax-id-text macro-global)
+            "pkg/name")
+          (intern-private-string-eq
+            (intern-syntax-id-text macro-local)
+            "pkg/name"))]
+      (begin
+        (intern-reset!)
+        ok))))
 
 ;; The capacity is not just the pool length: every structural symbol range is
 ;; keyed off it, so moving it moves those ranges too. A range that overflows or

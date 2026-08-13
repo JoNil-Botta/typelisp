@@ -117,6 +117,8 @@ slice_split_at_tuple_forge_reject|check-fail|tests/safety/slice_split_at_tuple_f
 slice_split_at_shadow_check_ok|check-ok|tests/safety/slice_split_at_shadow_check_ok.tl|-|-
 
 compiler_intern_structural_to_name_reject|check-fail|tests/safety/compiler_intern_structural_to_name_reject.tl|-|expected compiler_intern/InternId, found i64
+compiler_intern_raw_to_syntax_reject|check-fail|tests/safety/compiler_intern_raw_to_syntax_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
+compiler_intern_syntax_to_name_reject|check-fail|tests/safety/compiler_intern_syntax_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
 stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
 stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type

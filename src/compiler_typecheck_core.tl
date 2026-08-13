@@ -89496,7 +89496,7 @@
             (+ index 1)))])))
 
 (define (macro-spanned-symbol-id [name-id : i64] [span : token.SourceSpan]) : reader.SpannedSexpr
-  (reader.SpannedSexpr.Sym name-id span))
+  (reader.SpannedSexpr.Sym (ci.intern-syntax-id-from-raw name-id) span))
 
 (define (macro-expr-list-with-head-symbol-id
   [name-id : i64]
@@ -89997,7 +89997,8 @@
           (cbi.compiler-builtin-ctfe-ref 209))
         span)]
     [(ast.AstLiteral.Char c) (reader.SpannedSexpr.Char c span)]
-    [(ast.AstLiteral.String string-id) (reader.SpannedSexpr.Str string-id span)]
+    [(ast.AstLiteral.String string-id)
+      (reader.SpannedSexpr.Str (ci.intern-id-from-renderable string-id) span)]
     [(ast.AstLiteral.Unit)
       (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span)]))
 
@@ -90343,7 +90344,10 @@
         [(ast.AstLiteral.Char c)
           (ResultMacroSexpr.Ok (reader.SpannedSexpr.Char c span))]
         [(ast.AstLiteral.String string-id)
-          (ResultMacroSexpr.Ok (reader.SpannedSexpr.Str string-id span))]
+          (ResultMacroSexpr.Ok
+            (reader.SpannedSexpr.Str
+              (ci.intern-id-from-renderable string-id)
+              span))]
         [(ast.AstLiteral.Unit)
           (ResultMacroSexpr.Ok
             (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span))])]
@@ -90871,7 +90875,8 @@
         (macro-form1-id
           (cbi.compiler-builtin-ctfe-ref 213)
           (reader.SpannedSexpr.Str
-            (ci.intern-generated-canonical-name bytes)
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name bytes))
             span)
           span))]
     [(ast.AstExpr.ProgramArgc)

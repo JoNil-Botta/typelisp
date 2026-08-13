@@ -56,14 +56,17 @@
 ;; strings.
 (defenum Sexpr
   (Int i64 String)
-  (Sym i64)
+  (Sym ci.InternSyntaxId)
   (List i64 i64)
-  (Str i64)
+  (Str ci.InternId)
   (Char char)
   (Float String))
 
 (defenum SexprView
   (Int i64 String)
+  ;; Compatibility traversal view. The stored `Sexpr` payload is nominal;
+  ;; parser migration can consume this raw value only as identity and must use
+  ;; an explicit `InternSyntaxId` conversion before rendering it.
   (Sym i64)
   (Nil)
   (Cons Sexpr Sexpr)
@@ -77,15 +80,17 @@
 
 (defenum SpannedSexpr
   (Int i64 String token.SourceSpan)
-  (Sym i64 token.SourceSpan)
+  (Sym ci.InternSyntaxId token.SourceSpan)
   (List i64 i64 token.SourceSpan)
-  (Str i64 token.SourceSpan)
+  (Str ci.InternId token.SourceSpan)
   (Char char token.SourceSpan)
   (Float String token.SourceSpan)
   (BracketList i64 i64 token.SourceSpan))
 
 (defenum SpannedSexprView
   (Int i64 String token.SourceSpan)
+  ;; See `SexprView.Sym`: storage is typed while this traversal surface remains
+  ;; the staged compatibility edge into the existing parser call graph.
   (Sym i64 token.SourceSpan)
   (Nil token.SourceSpan)
   (Cons SpannedSexpr SpannedSexpr token.SourceSpan)
@@ -164,8 +169,8 @@
 ;; Source symbols remain ids from lexer through reader and parser. Consumers
 ;; request display text explicitly only when diagnostics or data formats need it.
 ;: Preserve the lexer-assigned id across the reader/parser boundary.
-(define (symbol-id [name-id : i64]) : i64
-  name-id)
+(define (symbol-id [name-id : ci.InternSyntaxId]) : i64
+  (ci.intern-syntax-id-value name-id))
 
 ;: Parser metadata may deliberately promote a string literal to a symbol.
 ;: Assign that spelling its sole source id while the frontend is still writable.
@@ -176,8 +181,17 @@
 (define (stable-symbol-id [text : String]) : i64
   (ci.intern-source-slice text 0 (ci.intern-private-string-length text)))
 
+(define (stable-syntax-id [text : String]) : ci.InternSyntaxId
+  (ci.intern-syntax-id-from-renderable
+    (ci.intern-source-slice-id text 0 (ci.intern-private-string-length text))))
+
+(define (symbol-text-for-syntax-id [id : ci.InternSyntaxId]) : String
+  (ci.intern-syntax-id-text id))
+
+;; Staged parser/metadata compatibility view. Stored syntax nodes are nominal;
+;; raw traversal consumers re-enter through this checked mixed-domain edge.
 (define (symbol-text-for-id [id : i64]) : String
-  (ci.intern-str id))
+  (symbol-text-for-syntax-id (ci.intern-syntax-id-from-raw id)))
 
 (define (sp-node-pool-len) : i64
   sp-node-pool-count)
@@ -459,7 +473,10 @@
       (= sexpr-node-pool-base-arena 0))
       (let
         [builder : SexprBuilder (sexpr-builder-new)]
-        [_pushed : SexprBuilder (sexpr-builder-push builder (Sexpr.Sym 13))]
+        [_pushed : SexprBuilder
+          (sexpr-builder-push
+            builder
+            (Sexpr.Sym (ci.intern-syntax-id-from-raw 13)))]
         [list : Sexpr (sexpr-list-from-builder builder)]
         [regrown-ok : bool
           (match list
@@ -470,7 +487,7 @@
                 (> (array-length sexpr-node-pool-slots) 0)
                 (> (array-length sexpr-builder-slots) 0)
                 (match (sexpr-node-get start)
-                  [(Sexpr.Sym value) (= value 13)]
+                  [(Sexpr.Sym value) (= (ci.intern-syntax-id-value value) 13)]
                   [_ false]))]
             [_ false])]
         (begin
@@ -516,10 +533,14 @@
       (let
         [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
         [sp-list : SpannedSexpr
-          (spanned-sexpr-list1 (SpannedSexpr.Sym 7 span) span)]
+          (spanned-sexpr-list1
+            (SpannedSexpr.Sym (ci.intern-syntax-id-from-raw 7) span)
+            span)]
         [sexpr-list : Sexpr
           (sexpr-list-from-builder
-            (sexpr-builder-push (sexpr-builder-new) (Sexpr.Sym 9)))]
+            (sexpr-builder-push
+              (sexpr-builder-new)
+              (Sexpr.Sym (ci.intern-syntax-id-from-raw 9))))]
         (match sp-list
           [(SpannedSexpr.List sp-start sp-length sp-span)
             (match sexpr-list
@@ -534,7 +555,9 @@
                     [(SpannedSexpr.Sym sp-value _)
                       (match (sexpr-node-get sexpr-start)
                         [(Sexpr.Sym sexpr-value)
-                          (if (and (= sp-value 7) (= sexpr-value 9))
+                          (if (and
+                            (= (ci.intern-syntax-id-value sp-value) 7)
+                            (= (ci.intern-syntax-id-value sexpr-value) 9))
                             (if (sexpr-node-pool-release-regrow-ok?)
                               42
                               3)
@@ -709,21 +732,22 @@
 (define (sexpr-view [s : Sexpr]) : SexprView
   (match s
     [(Sexpr.Int n text) (SexprView.Int n text)]
-    [(Sexpr.Sym name) (SexprView.Sym name)]
+    [(Sexpr.Sym name) (SexprView.Sym (ci.intern-syntax-id-value name))]
     [(Sexpr.List start length)
       (if (<= length 0)
         SexprView.Nil
         (SexprView.Cons
           (sexpr-node-get start)
           (Sexpr.List (+ start 1) (- length 1))))]
-    [(Sexpr.Str text) (SexprView.Str text)]
+    [(Sexpr.Str text) (SexprView.Str (ci.intern-id-value text))]
     [(Sexpr.Char c) (SexprView.Char c)]
     [(Sexpr.Float text) (SexprView.Float text)]))
 
 (define (spanned-sexpr-view [s : SpannedSexpr]) : SpannedSexprView
   (match s
     [(SpannedSexpr.Int n text span) (SpannedSexprView.Int n text span)]
-    [(SpannedSexpr.Sym name span) (SpannedSexprView.Sym name span)]
+    [(SpannedSexpr.Sym name span)
+      (SpannedSexprView.Sym (ci.intern-syntax-id-value name) span)]
     [(SpannedSexpr.List start length span)
       (if (<= length 0)
         (SpannedSexprView.Nil span)
@@ -731,7 +755,8 @@
           (sp-node-get start)
           (SpannedSexpr.List (+ start 1) (- length 1) span)
           span))]
-    [(SpannedSexpr.Str text span) (SpannedSexprView.Str text span)]
+    [(SpannedSexpr.Str text span)
+      (SpannedSexprView.Str (ci.intern-id-value text) span)]
     [(SpannedSexpr.Char c span) (SpannedSexprView.Char c span)]
     [(SpannedSexpr.Float text span) (SpannedSexprView.Float text span)]
     [(SpannedSexpr.BracketList start length span)
@@ -822,22 +847,22 @@
     (= t (token.tag-comma))
     (= t (token.tag-comma-at))))
 
-(define (prefix-symbol [t : i64]) : i64
+(define (prefix-symbol [t : i64]) : ci.InternSyntaxId
   (cond
-    [(= t (token.tag-quote)) (stable-symbol-id "quote")]
-    [(= t (token.tag-backtick)) (stable-symbol-id "quasiquote")]
-    [(= t (token.tag-comma)) (stable-symbol-id "unquote")]
-    [(= t (token.tag-comma-at)) (stable-symbol-id "unquote-splicing")]
-    [else (stable-symbol-id "quote")]))
+    [(= t (token.tag-quote)) (stable-syntax-id "quote")]
+    [(= t (token.tag-backtick)) (stable-syntax-id "quasiquote")]
+    [(= t (token.tag-comma)) (stable-syntax-id "unquote")]
+    [(= t (token.tag-comma-at)) (stable-syntax-id "unquote-splicing")]
+    [else (stable-syntax-id "quote")]))
 
-(define (prefix-form [name : i64] [form : Sexpr]) : Sexpr
+(define (prefix-form [name : ci.InternSyntaxId] [form : Sexpr]) : Sexpr
   (sexpr-list-from-builder
     (sexpr-builder-push
       (sexpr-builder-push (sexpr-builder-new) (Sexpr.Sym name))
       form)))
 
 (define (prefix-spanned-form
-  [name : i64]
+  [name : ci.InternSyntaxId]
   [prefix-span : token.SourceSpan]
   [form : SpannedSexpr]) : SpannedSexpr
   (let
@@ -931,13 +956,16 @@
             (ResultSpannedSexpr.Ok (SpannedSexpr.Float s span))))]
       [(= t (token.tag-sym))
         (let
-          [name-id : i64 (token.sym-id tok)]
+          [name-id : ci.InternId (token.sym-id tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Sym name-id span))))]
+            (ResultSpannedSexpr.Ok
+              (SpannedSexpr.Sym
+                (ci.intern-syntax-id-from-renderable name-id)
+                span))))]
       [(= t (token.tag-str))
         (let
-          [string-id : i64 (token.str-id tok)]
+          [string-id : ci.InternId (token.str-id tok)]
           (begin
             (advance cur)
             (ResultSpannedSexpr.Ok (SpannedSexpr.Str string-id span))))]
@@ -963,7 +991,7 @@
             (bracket-list-spanned-result toks cur span)))]
       [(prefix-tag? t)
         (let
-          [name : i64 (prefix-symbol t)]
+          [name : ci.InternSyntaxId (prefix-symbol t)]
           (begin
             (advance cur)
             (match (form-spanned-result toks cur)
@@ -1032,11 +1060,13 @@
         (let
           [span : token.SourceSpan
             (token.merge-spans (spanned-sexpr-span base) suffix-span)]
-          [field : i64 (ci.intern-source-slice text start (- end start))]
+          [field : ci.InternSyntaxId
+            (ci.intern-syntax-id-from-renderable
+              (ci.intern-source-slice-id text start (- end start)))]
           [projected : SpannedSexpr
             (spanned-sexpr-list3
               (SpannedSexpr.Sym
-                (stable-symbol-id "__tl_struct-get")
+                (stable-syntax-id "__tl_struct-get")
                 suffix-span)
               base
               (SpannedSexpr.Sym field suffix-span)
@@ -1060,7 +1090,7 @@
       (= (token.tag tok) (token.tag-sym))
       (spanned-sexpr-adjacent? base span))
       (let
-        [text : String (ci.intern-str (token.sym-id tok))]
+        [text : String (ci.intern-id-str (token.sym-id tok))]
         (if (projection-suffix-symbol? text)
           (begin
             (advance cur)
@@ -1177,13 +1207,14 @@
             (ResultSexpr.Ok (Sexpr.Float s))))]
       [(= t (token.tag-sym))
         (let
-          [name-id : i64 (token.sym-id (peek-tok toks cur))]
+          [name-id : ci.InternId (token.sym-id (peek-tok toks cur))]
           (begin
             (advance cur)
-            (ResultSexpr.Ok (Sexpr.Sym name-id))))]
+            (ResultSexpr.Ok
+              (Sexpr.Sym (ci.intern-syntax-id-from-renderable name-id)))))]
       [(= t (token.tag-str))
         (let
-          [string-id : i64 (token.str-id (peek-tok toks cur))]
+          [string-id : ci.InternId (token.str-id (peek-tok toks cur))]
           (begin
             (advance cur)
             (ResultSexpr.Ok (Sexpr.Str string-id))))]
@@ -1203,7 +1234,7 @@
           (bracket-list-result toks cur))]
       [(prefix-tag? t)
         (let
-          [name : i64 (prefix-symbol t)]
+          [name : ci.InternSyntaxId (prefix-symbol t)]
           (begin
             (advance cur)
             (match (form-result toks cur)
@@ -1313,9 +1344,9 @@
   (match (lexer.spanned-result "(alpha alpha)")
     [(lexer.ResultSpannedTokens.Ok toks)
       (let
-        [first-id : i64
+        [first-id : ci.InternId
           (token.sym-id (token.spanned-token-token (array-ref toks 1)))]
-        [second-id : i64
+        [second-id : ci.InternId
           (token.sym-id (token.spanned-token-token (array-ref toks 2)))]
         [pool-len-before : i64 (ci.intern-pool-len)]
         (begin
@@ -1324,7 +1355,7 @@
             [(ResultSpannedSexpr.Ok form)
               (and
                 (= pool-len-before (ci.intern-pool-len))
-                (= first-id second-id)
+                (ci.intern-id-eq? first-id second-id)
                 (match (spanned-sexpr-view form)
                   [(SpannedSexprView.Cons first tail _)
                     (match first
@@ -1334,8 +1365,12 @@
                             (match second
                               [(SpannedSexpr.Sym second-text _)
                                 (and
-                                  (= (symbol-id first-text) first-id)
-                                  (= (symbol-id second-text) second-id))]
+                                  (=
+                                    (symbol-id first-text)
+                                    (ci.intern-id-value first-id))
+                                  (=
+                                    (symbol-id second-text)
+                                    (ci.intern-id-value second-id)))]
                               [_ false])]
                           [_ false])]
                       [_ false])]

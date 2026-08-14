@@ -1852,6 +1852,7 @@
 (define (compiler-typecheck-inline-layout-storage-arena-ok?) : bool
   (begin
     (tc_core.tc-agg-caches-reset!)
+    (tc_core.tc-agg-layout-cache-table-storage-ensure!)
     (tc_core.tc-agg-layout-cache-storage-reset!)
     (let
       [home : i64 (arena.raw-handle (arena.current))]
@@ -1870,11 +1871,23 @@
       [variants : tc_core.TcInlineVariantLayoutList
         (tc_core.tc-inline-variant-layout-list-with-count 2)]
       [after-variants : i64 (arena.raw-handle (arena.current))]
+      [_publish : unit
+        (tc_core.tc-agg-layout-cache-store!
+          0
+          4242
+          (tc_core.TcInlineAggregateLayout.Struct 8 8 fields))]
       [ok : bool
         (and
           (> storage 0)
           (= storage state-storage)
           (= storage (tc_core.tc-agg-layout-cache-storage-arena-handle-value))
+          (=
+            (array-length
+              (__tl-project-field
+                tc_core.tc-lazy-global-table-state
+                agg-layout-cache))
+            tc_core.tc-agg-layout-cache-capacity)
+          (not (tc_core.tc-agg-layout-cache-slot-empty? 0))
           (= home after-fields)
           (= home after-payloads)
           (= home after-variants)
@@ -1888,6 +1901,13 @@
           ok
           (= (arena.raw-handle (arena.current)) home)
           (= (tc_core.tc-agg-layout-cache-storage-arena-handle-value) 0)
+          (=
+            (array-length
+              (__tl-project-field
+                tc_core.tc-lazy-global-table-state
+                agg-layout-cache))
+            tc_core.tc-agg-layout-cache-capacity)
+          (tc_core.tc-agg-layout-cache-slot-empty? 0)
           (=
             (arena.raw-handle
               (__tl-project-field

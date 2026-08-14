@@ -2588,6 +2588,20 @@
         (unsafe
           (arena.destroy storage))))))
 
+(define (tc-agg-layout-cache-slot-empty? [index : i64]) : bool
+  (if (or
+    (< index 0)
+    (>=
+      index
+      (array-length
+        (__tl-project-field tc-lazy-global-table-state agg-layout-cache))))
+    false
+    (match (tc-global-array-element-shared-view
+      (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
+      index)
+      [(TcAggLayoutCacheSlot.Empty) true]
+      [(TcAggLayoutCacheSlot.Full _ _) false])))
+
 ;; Builders know the final cardinality from their AST vectors. Allocate one
 ;; right-sized backing array in the retained cache arena, fill it in source
 ;; order, and carry only the shallow array descriptor through cached layouts.

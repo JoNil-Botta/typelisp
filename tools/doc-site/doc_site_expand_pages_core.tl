@@ -195,12 +195,16 @@
     (doc-site-expand-nav-entry "new")
     (doc-site-expand-nav-entry "get")
     (doc-site-expand-nav-entry "last")
-    (doc-site-expand-nav-entry "set")
+    (doc-site-expand-nav-entry "set-ref!")
+    (doc-site-expand-nav-entry "set!")
     (doc-site-expand-nav-entry "copy-range!")
     (doc-site-expand-nav-entry "grow")
-    (doc-site-expand-nav-entry "push")
-    (doc-site-expand-nav-entry "pop")
+    (doc-site-expand-nav-entry "push-ref!")
+    (doc-site-expand-nav-entry "push!")
+    (doc-site-expand-nav-entry "pop-ref!")
+    (doc-site-expand-nav-entry "pop!")
     (doc-site-expand-nav-entry "reverse-range!")
+    (doc-site-expand-nav-entry "reverse-ref!")
     (doc-site-expand-nav-entry "reverse!")
     (doc-site-expand-nav-entry "fold-from")
     (doc-site-expand-nav-entry "fold")
@@ -295,12 +299,20 @@
       "")
     (doc-site-expand-item
       "define-function"
-      "set"
+      "set-ref!"
       (str_cat.str-cat
-        "(define (set [v : (&mut v Vec)] [index : i64] [value : "
+        "(define (set-ref! [v : (&mut v Vec)] [index : i64] [value : "
         type-name
         "]) : unit ...)")
-      "")
+      "Explicit mutable-reference helper for `set!`.")
+    (doc-site-expand-item
+      "defmacro"
+      "set!"
+      (str_cat.str-cat
+        "(defmacro (set! [place : comptime.Expr] [index : comptime.Expr] [value : "
+        type-name
+        "]) : unit ...)")
+      "Mutates a caller-owned storage place by expanding to `set-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
       "copy-range!"
@@ -318,17 +330,30 @@
       "")
     (doc-site-expand-item
       "define-function"
-      "push"
+      "push-ref!"
       (str_cat.str-cat
-        "(define (push [v : (&mut v Vec)] [value : "
+        "(define (push-ref! [v : (&mut v Vec)] [value : "
         type-name
         "]) : unit ...)")
-      "")
+      "Explicit mutable-reference helper for `push!`.")
+    (doc-site-expand-item
+      "defmacro"
+      "push!"
+      (str_cat.str-cat
+        "(defmacro (push! [place : comptime.Expr] [value : "
+        type-name
+        "]) : unit ...)")
+      "Mutates a caller-owned storage place by expanding to `push-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
-      "pop"
-      "(define (pop [v : (&mut v Vec)]) : Pop ...)"
-      "")
+      "pop-ref!"
+      "(define (pop-ref! [v : (&mut v Vec)]) : Pop ...)"
+      "Explicit mutable-reference helper for `pop!`.")
+    (doc-site-expand-item
+      "defmacro"
+      "pop!"
+      "(defmacro (pop! [place : comptime.Expr]) : Pop ...)"
+      "Mutates a caller-owned storage place by expanding to `pop-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
       "reverse-range!"
@@ -339,9 +364,14 @@
       "Generated implementation helper.")
     (doc-site-expand-item
       "define-function"
+      "reverse-ref!"
+      "(define (reverse-ref! [v : (&mut v Vec)]) : unit ...)"
+      "Explicit mutable-reference helper for `reverse!`.")
+    (doc-site-expand-item
+      "defmacro"
       "reverse!"
-      "(define (reverse! [v : (&mut v Vec)]) : unit ...)"
-      "")
+      "(defmacro (reverse! [place : comptime.Expr]) : unit ...)"
+      "Mutates a caller-owned storage place by expanding to `reverse-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
       "fold-from"

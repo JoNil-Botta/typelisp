@@ -91,7 +91,7 @@
         (set!
           embedded-stdlib-tlci-build-error
           (str_cat.str-cat "duplicate stdlib macro identity: " name))
-        (svec.push names name)))))
+        (svec.push-ref! names name)))))
 
 (define (embedded-stdlib-tlci-collect-decl!
   [decl : ast.AstDecl]

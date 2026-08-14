@@ -384,7 +384,7 @@
 (define (lsp-string-vec-push-copy!
   [items : (&mut items lsp_svec.Vec)]
   [value : String]) : unit
-  (lsp_svec.push items value))
+  (lsp_svec.push-ref! items value))
 
 ;; The LSP is serial, so the narrow frame boundary can select one active
 ;; memory transport without plumbing transport arguments through every request
@@ -794,7 +794,7 @@
                     (begin
                       (match (array-ref items.slots index)
                         [(json.JsonString name)
-                          (lsp_svec.push
+                          (lsp_svec.push-ref!
                             (&mut cfg-names)
                             (string.copy (& name)))]
                         [_
@@ -1257,7 +1257,7 @@
             old-check-cache
             lsp_vector_families.LspCheckCacheInvalid)]
         (begin
-          (lsp_document_vec.set
+          (lsp_document_vec.set-ref!
             (&mut docs)
             index
             (lsp_vector_families.LspDocument
@@ -1286,7 +1286,7 @@
         (begin
           ;; Open buffers are correctness state, not an eviction cache. The
           ;; enclosing lsp_vector_families.LspServerState snapshot bounds their retained storage.
-          (lsp_document_vec.push (&mut docs) doc)
+          (lsp_document_vec.push-ref! (&mut docs) doc)
           docs)))))
 
 (define (lsp-documents-set
@@ -1316,7 +1316,7 @@
         (let
           [doc : lsp_vector_families.LspDocument
             (lsp_document_vec.get (& docs) found (lsp-document-fallback))]
-          (lsp_document_vec.set
+          (lsp_document_vec.set-ref!
             (&mut docs)
             found
             (lsp_vector_families.LspDocument
@@ -1364,7 +1364,7 @@
         (begin
           (lsp-semantic-snapshot-release! (&mut doc.semantic))
           (set! doc.semantic snapshot)
-          (lsp_document_vec.set (&mut docs) index doc)
+          (lsp_document_vec.set-ref! (&mut docs) index doc)
           docs))
       (begin
         (compiler_semantic_index.compiler-semantic-source-index-release!
@@ -1380,7 +1380,7 @@
         (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
       (begin
         (lsp-semantic-snapshot-release! (&mut doc.semantic))
-        (lsp_document_vec.set (&mut docs) index doc)))
+        (lsp_document_vec.set-ref! (&mut docs) index doc)))
     unit))
 
 (define (lsp-documents-release-all! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
@@ -1402,7 +1402,7 @@
         [next : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) (+ i 1) (lsp-document-fallback))]
         (begin
-          (lsp_document_vec.set (&mut docs) i next)
+          (lsp_document_vec.set-ref! (&mut docs) i next)
           (set! i (+ i 1)))))))
 
 (define (lsp-documents-remove-index
@@ -6089,7 +6089,7 @@
           (if (= (string.string-ref s i) ' ')
             (begin
               (if (> i start)
-                (lsp_svec.push
+                (lsp_svec.push-ref!
                   (&mut acc)
                   (string.substring s start (- i start)))
                 unit)
@@ -6097,7 +6097,7 @@
             unit)
           (set! i (+ i 1))))
       (if (> n start)
-        (lsp_svec.push (&mut acc) (string.substring s start (- n start)))
+        (lsp_svec.push-ref! (&mut acc) (string.substring s start (- n start)))
         unit)
       acc)))
 
@@ -7273,7 +7273,7 @@
                             (&mut lc-cache)
                             text
                             form-end)]
-                        (lsp_decl_vec.push
+                        (lsp_decl_vec.push-ref!
                           (&mut result)
                           (lsp_vector_families.LspDeclEntry
                             kind
@@ -7371,7 +7371,7 @@
     (begin
       (while (< index count)
         (begin
-          (lsp_decl_vec.push
+          (lsp_decl_vec.push-ref!
             (&mut copy)
             (lsp-decl-entry-copy
               (lsp_decl_vec.get (& decls) index (lsp-decl-entry-fallback))))
@@ -7408,7 +7408,7 @@
     (begin
       (while (< index count)
         (begin
-          (lsp_document_vec.push
+          (lsp_document_vec.push-ref!
             (&mut copy)
             (lsp-document-copy
               (lsp_document_vec.get (& docs) index (lsp-document-fallback))))
@@ -8219,7 +8219,7 @@
             (lsp-workspace-sources-get (& workspace.sources) source-index)]
           (begin
             (if (string.eq source.root-uri root.uri)
-              (lsp_svec.push (&mut paths) (string.copy (& source.path)))
+              (lsp_svec.push-ref! (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
       (lsp-workspace-index-remove-root-uri! workspace root.uri)
@@ -8246,7 +8246,7 @@
               (package_source_core.package-source-path-location-eligible-for-root?
                 root.path
                 source.path))
-              (lsp_svec.push (&mut paths) (string.copy (& source.path)))
+              (lsp_svec.push-ref! (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
       (lsp-workspace-index-recover-live-paths! workspace docs paths))))
@@ -11362,7 +11362,7 @@
         (if (string.eq (io.arg i) "--stdlib-root")
           (if (< (+ i 1) count)
             (begin
-              (lsp_svec.push (&mut roots) (io.arg (+ i 1)))
+              (lsp_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
               (set! i (+ i 2)))
             (set! i count))
           (set! i (+ i 1))))
@@ -11663,10 +11663,10 @@
                             entry.input-path))]
                       [else
                         (begin
-                          (lsp_svec.push (&mut ids) case-id)
-                          (lsp_svec.push (&mut result-paths) stdout-path)
-                          (lsp_svec.push (&mut result-paths) stderr-path)
-                          (lsp_svec.push (&mut result-paths) status-path)
+                          (lsp_svec.push-ref! (&mut ids) case-id)
+                          (lsp_svec.push-ref! (&mut result-paths) stdout-path)
+                          (lsp_svec.push-ref! (&mut result-paths) stderr-path)
+                          (lsp_svec.push-ref! (&mut result-paths) status-path)
                           (set! entries (+ entries 1)))]))]))
             (set! cursor next)
             (set! line-number (+ line-number 1)))))
@@ -14170,19 +14170,19 @@
       (lsp-workspace-sources-new)]
     (begin
       ;; Deliberately insert in the reverse of the required result order.
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut z-decls)
         (lsp-workspace-symbol-test-decl "mytarget" 4))
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut z-decls)
         (lsp-workspace-symbol-test-decl "targetPrefix" 3))
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut z-decls)
         (lsp-workspace-symbol-test-decl "target" 2))
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut z-decls)
         (lsp-workspace-symbol-test-decl "Target" 1))
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut a-decls)
         (lsp-workspace-symbol-test-decl "target" 5))
       (lsp-workspace-sources-push!
@@ -14246,12 +14246,14 @@
     (begin
       (while (< index 300)
         (begin
-          (lsp_decl_vec.push
+          (lsp_decl_vec.push-ref!
             (&mut decls)
             (lsp-workspace-symbol-test-decl "same" (+ index 1)))
           (set! index (+ index 1))))
       ;; Exact duplicate source identities collapse to one result.
-      (lsp_decl_vec.push (&mut decls) (lsp-workspace-symbol-test-decl "same" 1))
+      (lsp_decl_vec.push-ref!
+        (&mut decls)
+        (lsp-workspace-symbol-test-decl "same" 1))
       (let
         [sources : lsp_vector_families.LspWorkspaceSources
           (lsp-workspace-sources-new)]

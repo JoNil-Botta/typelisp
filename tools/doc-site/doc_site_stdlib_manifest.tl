@@ -59,7 +59,7 @@
                 [file : String (fs.string-vector-get (& entries) i "")]
                 (begin
                   (if (doc-site-stdlib-module-file? file)
-                    (doc_site_manifest_names.push
+                    (doc_site_manifest_names.push-ref!
                       (&mut names)
                       (doc-site-stdlib-module-stem file))
                     unit)

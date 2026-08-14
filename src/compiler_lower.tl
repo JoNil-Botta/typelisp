@@ -3901,7 +3901,7 @@
             type-env
             (if (csym.compiler-symbol-root-module-id? module-id)
               ""
-              (ci.intern-str module-id))
+              (tc_core.tc-env-key-name-text module-id))
             module-id
             name
             source-id)))
@@ -3991,7 +3991,7 @@
               cbi.compiler-builtin-id-fix-empty)
             (tc_core.tc-context-with-module-id
               ctx
-              (ci.intern-str module-id)
+              (tc_core.tc-env-key-name-text module-id)
               module-id))]
         (if (>= (tc_core.tc-name-first-dot-id source-id) 0)
           (match (tc_core.tc-source-name-lookup-key-with-field-check-lookup
@@ -4976,17 +4976,17 @@
   (cond
     [(string.eq segment "") unit]
     [(string.eq segment ".") unit]
-    [(not (string.eq segment "..")) (svec.push segments segment)]
+    [(not (string.eq segment "..")) (svec.push-ref! segments segment)]
     [(<= (svec.len (& segments)) 0)
       (if rooted
         unit
-        (svec.push segments segment))]
+        (svec.push-ref! segments segment))]
     [else
       (let
         [top : String (svec.last (& segments) "")]
         (if (string.eq top "..")
-          (svec.push segments segment)
-          (match (svec.pop segments)
+          (svec.push-ref! segments segment)
+          (match (svec.pop-ref! segments)
             [(svec.Pop.Ok _) unit]
             [svec.Pop.Empty unit])))]))
 
@@ -5403,7 +5403,7 @@
               rest-paths
               entry-path
               scan
-              (ci.intern-str next-module)
+              (tc_core.tc-env-key-name-text next-module)
               next-module)]
           [_
             (lower-entry-main-scan-decls-in-module
@@ -6420,7 +6420,7 @@
   [path-aware : bool]) : LowerNameEnv
   (let
     [cur-names : LowerNameEnv names]
-    [target-module : String (ci.intern-str target-module-id)]
+    [target-module : String (tc_core.tc-env-key-name-text target-module-id)]
     [alias : String (ci.intern-str alias-id)]
     [_ensure : unit (lower-module-decl-index-ensure! lower-state decls)]
     [slot : i64 (lower-module-decl-index-slot lower-state target-module-id)]
@@ -6730,7 +6730,7 @@
       (let
         [j : i64 (array-ref starts slot)]
         [end : i64 (array-ref ends slot)]
-        [target-module : String (ci.intern-str target-module-id)]
+        [target-module : String (tc_core.tc-env-key-name-text target-module-id)]
         [alias : String (ci.intern-str alias-id)]
         (begin
           (while (< j end)
@@ -11099,7 +11099,7 @@
                 rest
                 rest-paths
                 entry-path
-                (ci.intern-str next-module)
+                (tc_core.tc-env-key-name-text next-module)
                 next-module
                 names
                 state)]
@@ -11252,7 +11252,8 @@
         (match (ast.ast-decl-unwrapped decl)
           [(ast.AstDecl.Module next-module)
             (let
-              [next-module-str : String (ci.intern-str next-module)]
+              [next-module-str : String
+                (tc_core.tc-env-key-name-text next-module)]
               (lower-function-body-index-from-decls-in-module
                 lower-state
                 pools
@@ -12722,7 +12723,7 @@
               rest
               rest-paths
               entry-path
-              (ci.intern-str next-module)
+              (tc_core.tc-env-key-name-text next-module)
               reachable-paths
               used
               covered)]
@@ -12776,7 +12777,7 @@
               rest
               rest-paths
               entry-path
-              (ci.intern-str next-module)
+              (tc_core.tc-env-key-name-text next-module)
               next-module
               all-functions
               reachable
@@ -12867,7 +12868,7 @@
         (begin
           (match (array-ref decl-slots (+ decl-offset index))
             [(ast.AstDecl.Module next-module)
-              (set! current-module (ci.intern-str next-module))]
+              (set! current-module (tc_core.tc-env-key-name-text next-module))]
             [_
               (if (and
                 (lower-type-decl? (array-ref decl-slots (+ decl-offset index)))
@@ -13443,7 +13444,7 @@
               rest
               rest-paths
               entry-path
-              (ci.intern-str next-module)
+              (tc_core.tc-env-key-name-text next-module)
               next-module
               all-functions
               state)]
@@ -24224,7 +24225,7 @@
   (match maybe-writeback
     [(LowerMaybeArgWriteback.No) unit]
     [(LowerMaybeArgWriteback.Some writeback)
-      (lower_arg_writeback_vec.push writebacks writeback)]))
+      (lower_arg_writeback_vec.push-ref! writebacks writeback)]))
 
 (define (lower-call-args-as
   [ctx : tc_core.TcContext]
@@ -25037,7 +25038,7 @@
         (if (>= module-id 0)
           (tc_core.tc-context-with-module-id
             ctx
-            (ci.intern-str module-id)
+            (tc_core.tc-env-key-name-text module-id)
             module-id)
           (tc_core.tc-context-with-module-id
             ctx
@@ -25048,7 +25049,7 @@
           [module-id : i64 (tc_core.tc-qualified-name-module-id nominal-id)]
           (tc_core.tc-context-with-module-id
             ctx
-            (ci.intern-str module-id)
+            (tc_core.tc-env-key-name-text module-id)
             module-id))
         ctx))))
 
@@ -66988,7 +66989,8 @@
                 [(ast.AstDecl.IncludeBin _ _) (set! cur-decls rest)]
                 [(ast.AstDecl.Module next-module)
                   (let
-                    [next-module-str : String (ci.intern-str next-module)]
+                    [next-module-str : String
+                      (tc_core.tc-env-key-name-text next-module)]
                     [skip-runtime : bool
                       (lower-comptime-runtime-skip-module? next-module-str)]
                     (match (lower-module-local-view-cached

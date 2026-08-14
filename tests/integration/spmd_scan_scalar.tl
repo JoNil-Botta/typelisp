@@ -278,9 +278,9 @@
       (while (< i 8)
         (begin
           (if (< i 4)
-            (i64v.set (&mut i64-in) i 1)
+            (i64v.set-ref! (&mut i64-in) i 1)
             unit)
-          (i32v.set (&mut i32-in) i (cast 1 : i32))
+          (i32v.set-ref! (&mut i32-in) i (cast 1 : i32))
           (set! i (+ i 1))))
       (let
         [src (i64v.slots (& i64-in))]
@@ -347,7 +347,7 @@
     [xs : i64v.Vec (i64z.make 1)]
     [out : i64v.Vec (i64z.make 1)]
     (begin
-      (i64v.set (&mut out) 0 7)
+      (i64v.set-ref! (&mut out) 0 7)
       (let
         [src (i64v.slots (& xs))]
         [dst (i64v.slots-mut (&mut out))]
@@ -363,7 +363,7 @@
     [xs : i64v.Vec (i64z.make 1)]
     [out : i64v.Vec (i64z.make 1)]
     (begin
-      (i64v.set (&mut out) 0 17)
+      (i64v.set-ref! (&mut out) 0 17)
       (let
         [src (i64v.slots (& xs))]
         [dst (i64v.slots-mut (&mut out))]
@@ -386,7 +386,7 @@
     [xs : i64v.Vec (i64z.make 3)]
     [out : i64v.Vec (i64z.make 3)]
     (begin
-      (i64v.set (&mut bounds) 0 3)
+      (i64v.set-ref! (&mut bounds) 0 3)
       (fill-i64 (&mut xs) 3)
       (let
         [src (i64v.slots (& xs))]
@@ -406,10 +406,10 @@
     [xs : i64v.Vec (i64z.make 12)]
     [out : i64v.Vec (i64z.make 12)]
     (begin
-      (i64v.set (&mut start-box) 0 2)
-      (i64v.set (&mut end-box) 0 11)
-      (i64v.set (&mut init-box) 0 5)
-      (i64v.set (&mut out) 1 99)
+      (i64v.set-ref! (&mut start-box) 0 2)
+      (i64v.set-ref! (&mut end-box) 0 11)
+      (i64v.set-ref! (&mut init-box) 0 5)
+      (i64v.set-ref! (&mut out) 1 99)
       (fill-i64 (&mut xs) 12)
       (let
         [src (i64v.slots (& xs))]

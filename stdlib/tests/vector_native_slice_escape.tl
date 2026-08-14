@@ -6,5 +6,5 @@
   (let
     [inner : vec.Vec (vec.new)]
     (begin
-      (vec.push (&mut inner) 10)
+      (vec.push-ref! (&mut inner) 10)
       (vec.view (& inner)))))

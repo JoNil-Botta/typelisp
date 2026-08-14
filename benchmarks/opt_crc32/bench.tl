@@ -88,7 +88,7 @@
       (crc-fill (&mut buf) len)
       (while (< round rounds)
         (begin
-          (u8vec.set
+          (u8vec.set-ref!
             (&mut buf)
             (% round len)
             (cast (bit-and (+ round 1) 255) : u8))

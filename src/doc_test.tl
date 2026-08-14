@@ -106,7 +106,7 @@
   [examples : doc_example_vec.Vec (:consume)]
   [example : DocTestExample]) : doc_example_vec.Vec
   (begin
-    (doc_example_vec.push (&mut examples) example)
+    (doc_example_vec.push-ref! (&mut examples) example)
     examples))
 
 (define (doc-test-error-list-empty) : doc_error_vec.Vec
@@ -122,7 +122,7 @@
   [errors : doc_error_vec.Vec (:consume)]
   [err : DocTestError]) : doc_error_vec.Vec
   (begin
-    (doc_error_vec.push (&mut errors) err)
+    (doc_error_vec.push-ref! (&mut errors) err)
     errors))
 
 (define (doc-test-error-list-append-all-from
@@ -596,7 +596,7 @@
         "```")
         (DocTestCodeCollect.Collect (+ index 1) code collected true)
         (begin
-          (doc_line_vec.push (&mut collected) line)
+          (doc_line_vec.push-ref! (&mut collected) line)
           (doc-test-collect-code-inner
             lines
             (+ index 1)
@@ -967,7 +967,7 @@
               [(DocTestMaybeString.Some body)
                 (begin
                   (set! pending-lines (doc_line_vec.new))
-                  (doc_line_vec.push
+                  (doc_line_vec.push-ref!
                     (&mut module-lines)
                     (DocTestLine.Line line-number body)))]
               [(DocTestMaybeString.No)
@@ -978,7 +978,7 @@
                     (set! module-lines (doc_line_vec.new))
                     (match (doc-test-item-doc-comment-body line)
                       [(DocTestMaybeString.Some body)
-                        (doc_line_vec.push
+                        (doc_line_vec.push-ref!
                           (&mut pending-lines)
                           (DocTestLine.Line line-number body))]
                       [(DocTestMaybeString.No)
@@ -1066,7 +1066,7 @@
   [failures : doc_run_failure_vec.Vec (:consume)]
   [failure : DocTestRunFailure]) : doc_run_failure_vec.Vec
   (begin
-    (doc_run_failure_vec.push (&mut failures) failure)
+    (doc_run_failure_vec.push-ref! (&mut failures) failure)
     failures))
 
 ;; Grow the generated error collection past its initial capacity while preserving
@@ -1078,7 +1078,7 @@
     (begin
       (while (<= index 5)
         (begin
-          (doc_error_vec.push
+          (doc_error_vec.push-ref!
             (&mut errors)
             (DocTestError.Error index (string.int->string index)))
           (set! index (+ index 1))))
@@ -1096,7 +1096,7 @@
     (begin
       (while (<= index 5)
         (begin
-          (doc_line_vec.push
+          (doc_line_vec.push-ref!
             (&mut lines)
             (DocTestLine.Line index (string.int->string index)))
           (set! index (+ index 1))))
@@ -1122,7 +1122,7 @@
     (begin
       (while (<= index 5)
         (begin
-          (doc_example_vec.push
+          (doc_example_vec.push-ref!
             (&mut examples)
             (DocTestExample.Example
               index
@@ -1145,7 +1145,7 @@
     (begin
       (while (<= index 5)
         (begin
-          (doc_run_failure_vec.push
+          (doc_run_failure_vec.push-ref!
             (&mut failures)
             (DocTestRunFailure.Failure
               (string.int->string index)
@@ -2541,7 +2541,7 @@
   (let
     [roots : doc_svec.Vec (doc_svec.new)]
     (begin
-      (doc_svec.push (&mut roots) "stdlib")
+      (doc_svec.push-ref! (&mut roots) "stdlib")
       roots)))
 
 (define (doc-test-run-runnable-wrong-exit-source) : String
@@ -2868,7 +2868,7 @@ typecheck: return type mismatch"))]
       (let
         [items : doc_svec.Vec (doc_svec.new)]
         (begin
-          (doc_svec.push (&mut items) "target/doc_test_session_cache")
+          (doc_svec.push-ref! (&mut items) "target/doc_test_session_cache")
           items))]
     (begin
       (compiler_load.compiler-load-test-mkdir "target")

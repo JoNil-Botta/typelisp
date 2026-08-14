@@ -20,7 +20,7 @@
     [values : i64vec.Vec (i64vec.new)]
     (begin
       (set! source-evaluations (+ source-evaluations 1))
-      (i64vec.push (&mut values) 9)
+      (i64vec.push! values 9)
       values)))
 
 (define (i64-item-or [step : i64vec.IntoNext] [fallback : i64]) : i64
@@ -45,13 +45,13 @@
     [numbers : i64vec.Vec (i64vec.new)]
     [balls : ballvec.Vec (ballvec.new)]
     (begin
-      (i64vec.push (&mut numbers) 10)
-      (i64vec.push (&mut numbers) 32)
-      (ballvec.push
-        (&mut balls)
+      (i64vec.push! numbers 10)
+      (i64vec.push! numbers 32)
+      (ballvec.push!
+        balls
         (ConsumingIteratorBall (ConsumingIteratorPoint 3 4) 5))
-      (ballvec.push
-        (&mut balls)
+      (ballvec.push!
+        balls
         (ConsumingIteratorBall (ConsumingIteratorPoint 1 2) 7))
       (let
         [empty-iter : i64vec.IntoIter (i64vec.into-iterator empty)]

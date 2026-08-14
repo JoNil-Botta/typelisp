@@ -7,11 +7,11 @@
   (let
     [items : i64-vec.Vec (i64-vec.with-capacity 5)]
     (begin
-      (i64-vec.push (&mut items) base)
-      (i64-vec.push (&mut items) (+ base 1))
-      (i64-vec.push (&mut items) (+ base 2))
-      (i64-vec.push (&mut items) (+ base 3))
-      (i64-vec.push (&mut items) (+ base 4))
+      (i64-vec.push-ref! (&mut items) base)
+      (i64-vec.push-ref! (&mut items) (+ base 1))
+      (i64-vec.push-ref! (&mut items) (+ base 2))
+      (i64-vec.push-ref! (&mut items) (+ base 3))
+      (i64-vec.push-ref! (&mut items) (+ base 4))
       items)))
 
 (define (thread-safe-i64-vec-sum [items : (& items i64-vec.Vec)]) : i64

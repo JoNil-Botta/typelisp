@@ -7,8 +7,8 @@
   (let
     [items : vec.Vec (vec.new)]
     (begin
-      (vec.push (&mut items) 10)
-      (vec.push (&mut items) 20)
+      (vec.push! items 10)
+      (vec.push! items 20)
       (let
         [view : (&mut items (Slice i64)) (vec.view-mut (&mut items))]
         [halves : (Tuple (&mut items (Slice i64)) (&mut items (Slice i64)))
@@ -16,5 +16,5 @@
         [left : (&mut items (Slice i64)) (tuple-ref halves 0)]
         [right : (&mut items (Slice i64)) (tuple-ref halves 1)]
         (begin
-          (vec.push (&mut items) 30)
+          (vec.push! items 30)
           (+ (array-ref left 0) (array-ref right 0)))))))

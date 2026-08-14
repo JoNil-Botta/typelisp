@@ -2346,7 +2346,7 @@
   (let
     [next-roots : svec.Vec roots]
     (begin
-      (svec.push (&mut next-roots) root)
+      (svec.push-ref! (&mut next-roots) root)
       next-roots)))
 
 (define (compiler-load-string-vec-one [root : String]) : svec.Vec
@@ -4469,7 +4469,9 @@
                         "compiler-load: import expected module "
                         (ci.intern-str expected-id)
                         " but loaded "
-                        (ci.intern-str module-id)))))))]
+                        (ci.intern-syntax-name-text-or
+                          module-id
+                          "<structural-module>")))))))]
           [(ast.AstMaybeModuleName.No) unit])
         (if (match expected-module
           [(ast.AstMaybeModuleName.Some expected-id) (= module-id expected-id)]
@@ -8114,7 +8116,10 @@
         (match decl
           [(ast.AstDecl.ModuleBody target-module-id body-box)
             (let
-              [target-module : String (ci.intern-str target-module-id)]
+              [target-module : String
+                (ci.intern-syntax-name-text-or
+                  target-module-id
+                  "<structural-module>")]
               [body : ast.AstDeclList (__tl-box-place body-box)]
               (if (or
                 (compiler-load-decl-list-has-module-id? body target-module-id)
@@ -13512,8 +13517,8 @@
         second-order
         "(module root_order)
 (define answer : i64 2)")
-      (svec.push (&mut roots) first-root)
-      (svec.push (&mut roots) second-root)
+      (svec.push-ref! (&mut roots) first-root)
+      (svec.push-ref! (&mut roots) second-root)
       (let
         [order-ok : bool
           (match (compiler-load-resolve-package-import-spec

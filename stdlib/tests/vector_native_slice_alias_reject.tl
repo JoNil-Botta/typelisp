@@ -6,7 +6,7 @@
   (let
     [items : vec.Vec (vec.new)]
     (begin
-      (vec.push (&mut items) 10)
+      (vec.push-ref! (&mut items) 10)
       (let
         [exclusive : (&mut items (Slice i64)) (vec.view-mut (&mut items))]
         [shared : (& items (Slice i64)) (vec.view (& items))]

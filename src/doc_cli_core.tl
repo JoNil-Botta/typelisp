@@ -80,7 +80,7 @@
     (begin
       (while (< i end)
         (begin
-          (doc_module_vec.push
+          (doc_module_vec.push-ref!
             (&mut modules)
             (doc_render.DocModule.Module
               (io.arg i)
@@ -97,7 +97,7 @@
     (let
       [path : String (doc_svec.get (& paths) index "")]
       (begin
-        (doc_module_vec.push
+        (doc_module_vec.push-ref!
           modules
           (doc_render.DocModule.Module path (doc_extract.doc-extract-file path)))
         (doc-modules-from-package-sources-from paths (+ index 1) modules)))))
@@ -124,7 +124,7 @@
         [rest : ast.AstDeclPathList rest]
         (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (begin
-            (doc_module_vec.push
+            (doc_module_vec.push-ref!
               modules
               (doc_render.DocModule.Module
                 path
@@ -327,7 +327,7 @@
         (if (string.eq (io.arg i) "--stdlib-root")
           (if (< (+ i 1) n)
             (begin
-              (doc_svec.push (&mut roots) (io.arg (+ i 1)))
+              (doc_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
               (set! i (+ i 2)))
             (set! i n))
           (set! i (+ i 1))))
@@ -346,7 +346,7 @@
         (let
           [path : String (doc_svec.get (& paths) i "")]
           (begin
-            (doc_module_vec.push
+            (doc_module_vec.push-ref!
               (&mut modules)
               (doc_render.DocModule.Module
                 path
@@ -411,7 +411,7 @@
           [line : String (string.substring text i (- line-end i))]
           (begin
             (if (> (string.string-length line) 0)
-              (doc_svec.push (&mut paths) line)
+              (doc_svec.push-ref! (&mut paths) line)
               unit)
             (set! i (doc-test-batch-next-line-start text line-end n)))))
       paths)))
@@ -499,7 +499,7 @@
             (let
               [next-roots : doc_svec.Vec stdlib-roots]
               (begin
-                (doc_svec.push (&mut next-roots) value)
+                (doc_svec.push-ref! (&mut next-roots) value)
                 next-roots))
             batch-list)]
         [(cli_option.CliCommonOption.NotCommon)
@@ -554,7 +554,7 @@
                 (let
                   [next-paths : doc_svec.Vec input-paths]
                   (begin
-                    (doc_svec.push (&mut next-paths) current)
+                    (doc_svec.push-ref! (&mut next-paths) current)
                     next-paths))
                 manifest-path
                 has-manifest
@@ -703,7 +703,7 @@
             (let
               [next-roots : doc_svec.Vec stdlib-roots]
               (begin
-                (doc_svec.push (&mut next-roots) value)
+                (doc_svec.push-ref! (&mut next-roots) value)
                 next-roots)))]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
@@ -745,7 +745,7 @@
                 (let
                   [next-paths : doc_svec.Vec input-paths]
                   (begin
-                    (doc_svec.push (&mut next-paths) current)
+                    (doc_svec.push-ref! (&mut next-paths) current)
                     next-paths))
                 output-path
                 manifest-path

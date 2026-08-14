@@ -6,4 +6,4 @@
   (let
     [values : vec.Vec (vec.new)]
     [iter : (vec.IterMut values) (vec.iterator-mut (&mut values))]
-    (vec.push (&mut values) 7)))
+    (vec.push! values 7)))

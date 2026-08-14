@@ -141,8 +141,8 @@
   (let
     [argv : svec.Vec (svec.with-capacity 2)]
     (begin
-      (svec.push (&mut argv) "/C")
-      (svec.push (&mut argv) "echo argv-vec=ok")
+      (svec.push-ref! (&mut argv) "/C")
+      (svec.push-ref! (&mut argv) "echo argv-vec=ok")
       (process.command-from-argv-vec "C:\\Windows\\System32\\cmd.exe" (& argv)))))
 
 (define (windows-inherit-command) : process.ProcessCommand
@@ -206,9 +206,9 @@
   (let
     [argv : svec.Vec (svec.with-capacity 3)]
     (begin
-      (svec.push (&mut argv) "%s:%s")
-      (svec.push (&mut argv) "argv")
-      (svec.push (&mut argv) "vec")
+      (svec.push-ref! (&mut argv) "%s:%s")
+      (svec.push-ref! (&mut argv) "argv")
+      (svec.push-ref! (&mut argv) "vec")
       (process.command-from-argv-vec "/usr/bin/printf" (& argv)))))
 
 (define (linux-inherit-command) : process.ProcessCommand

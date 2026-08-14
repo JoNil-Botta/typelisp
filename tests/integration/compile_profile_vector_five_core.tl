@@ -13,35 +13,35 @@
   (let
     [values : vec_i64.Vec (vec_i64.new)]
     (begin
-      (vec_i64.push (&mut values) 42)
+      (vec_i64.push! values 42)
       (= (vec_i64.get (& values) 0 0) 42))))
 
 (define (profile-vector-u64-ok?) : bool
   (let
     [values : vec_u64.Vec (vec_u64.new)]
     (begin
-      (vec_u64.push (&mut values) 42)
+      (vec_u64.push! values 42)
       (= (vec_u64.get (& values) 0 0) 42))))
 
 (define (profile-vector-i32-ok?) : bool
   (let
     [values : vec_i32.Vec (vec_i32.new)]
     (begin
-      (vec_i32.push (&mut values) 42)
+      (vec_i32.push! values 42)
       (= (vec_i32.get (& values) 0 0) 42))))
 
 (define (profile-vector-u32-ok?) : bool
   (let
     [values : vec_u32.Vec (vec_u32.new)]
     (begin
-      (vec_u32.push (&mut values) 42)
+      (vec_u32.push! values 42)
       (= (vec_u32.get (& values) 0 0) 42))))
 
 (define (profile-vector-bool-ok?) : bool
   (let
     [values : vec_bool.Vec (vec_bool.new)]
     (begin
-      (vec_bool.push (&mut values) true)
+      (vec_bool.push! values true)
       (vec_bool.get (& values) 0 false))))
 
 (define (main) : i64

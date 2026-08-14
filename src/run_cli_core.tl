@@ -135,7 +135,7 @@
                 (let
                   [next-roots : cli_svec.Vec stdlib-roots]
                   (begin
-                    (cli_svec.push (&mut next-roots) value)
+                    (cli_svec.push-ref! (&mut next-roots) value)
                     next-roots))
                 cfgs
                 runtime-args

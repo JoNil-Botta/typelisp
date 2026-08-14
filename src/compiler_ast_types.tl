@@ -71,6 +71,9 @@
 ;; Nominal AST nodes carry either a parser intern id or a structural module/name
 ;; id. Rendering must decode the latter instead of indexing the intern pool with
 ;; the composite value.
+(define (ast-nominal-name-id-part-display [name-id : i64]) : String
+  (ci.intern-syntax-name-text-or name-id "<structural-nominal>"))
+
 (define (ast-nominal-name-id-display [name-id : i64]) : String
   (if (or
     (ci.intern-composite-pair-id? name-id)
@@ -83,17 +86,29 @@
           name-id
           (if (ci.intern-composite-triple-id? name-id)
             (str_cat.str-cat
-              (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
+              (ast-nominal-name-id-part-display
+                (ci.intern-composite-left-id-unchecked name-id))
               "/"
-              (ci.intern-str (ci.intern-composite-middle-id-unchecked name-id))
+              (ast-nominal-name-id-part-display
+                (ci.intern-composite-middle-id-unchecked name-id))
               "."
-              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id)))
+              (ast-nominal-name-id-part-display
+                (ci.intern-composite-right-id-unchecked name-id)))
             (str_cat.str-cat
-              (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
+              (ast-nominal-name-id-part-display
+                (ci.intern-composite-left-id-unchecked name-id))
               "/"
-              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id)))))))
-    (if (ci.intern-renderable-id? name-id)
-      (ci.intern-str name-id)
+              (ast-nominal-name-id-part-display
+                (ci.intern-composite-right-id-unchecked name-id)))))))
+    (ast-nominal-name-id-part-display name-id)))
+
+(define (ast-nominal-name-id-part-display-with-intern-state
+  [state : ci.InternCompatState]
+  [name-id : i64]) : String
+  (let
+    [source-name-id : i64 (ci.intern-syntax-source-name-id-or name-id -1)]
+    (if (>= source-name-id 0)
+      (ci.intern-compat-state-str state source-name-id)
       "<structural-nominal>")))
 
 ;; Explicit display boundary for specialization/normalization.  Unlike the
@@ -116,38 +131,36 @@
           name-id
           (if (ci.intern-compat-state-composite-triple-id? state name-id)
             (str_cat.str-cat
-              (ci.intern-compat-state-str
+              (ast-nominal-name-id-part-display-with-intern-state
                 state
                 (ci.intern-compat-state-composite-left-id-unchecked
                   state
                   name-id))
               "/"
-              (ci.intern-compat-state-str
+              (ast-nominal-name-id-part-display-with-intern-state
                 state
                 (ci.intern-compat-state-composite-middle-id-unchecked
                   state
                   name-id))
               "."
-              (ci.intern-compat-state-str
+              (ast-nominal-name-id-part-display-with-intern-state
                 state
                 (ci.intern-compat-state-composite-right-id-unchecked
                   state
                   name-id)))
             (str_cat.str-cat
-              (ci.intern-compat-state-str
+              (ast-nominal-name-id-part-display-with-intern-state
                 state
                 (ci.intern-compat-state-composite-left-id-unchecked
                   state
                   name-id))
               "/"
-              (ci.intern-compat-state-str
+              (ast-nominal-name-id-part-display-with-intern-state
                 state
                 (ci.intern-compat-state-composite-right-id-unchecked
                   state
                   name-id)))))))
-    (if (ci.intern-renderable-id? name-id)
-      (ci.intern-compat-state-str state name-id)
-      "<structural-nominal>")))
+    (ast-nominal-name-id-part-display-with-intern-state state name-id)))
 
 (defstruct AstSourceSpan
   (start-line i32)

@@ -12,9 +12,9 @@
     [xs : i64v.Vec (i64z.make n)]
     [out : i64v.Vec (i64z.make n)]
     (begin
-      (i64v.set (&mut xs) 0 11)
-      (i64v.set (&mut xs) 1 22)
-      (i64v.set (&mut xs) 2 33)
+      (i64v.set-ref! (&mut xs) 0 11)
+      (i64v.set-ref! (&mut xs) 1 22)
+      (i64v.set-ref! (&mut xs) 2 33)
       (let
         [xs-slots (i64v.slots (& xs))]
         [out-slots (i64v.slots-mut (&mut out))]

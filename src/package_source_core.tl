@@ -98,7 +98,7 @@
     (begin
       (while (< idx end)
         (begin
-          (svec.push (&mut cur) (svec.get (& items) idx ""))
+          (svec.push-ref! (&mut cur) (svec.get (& items) idx ""))
           (set! idx (+ idx 1))))
       cur)))
 
@@ -110,7 +110,7 @@
     [out : svec.Vec (svec.with-capacity (+ (svec.len (& items)) 1))]
     (begin
       (set! out (package-source-vec-copy-range items out 0 slot))
-      (svec.push (&mut out) value)
+      (svec.push-ref! (&mut out) value)
       (set!
         out
         (package-source-vec-copy-range items out slot (svec.len (& items))))
@@ -246,11 +246,11 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) "src/a.tl")
-      (svec.push (&mut items) "src/b.tl")
-      (svec.push (&mut items) "src/c.tl")
-      (svec.push (&mut items) "src/d.tl")
-      (svec.push (&mut items) "src/e.tl")
+      (svec.push-ref! (&mut items) "src/a.tl")
+      (svec.push-ref! (&mut items) "src/b.tl")
+      (svec.push-ref! (&mut items) "src/c.tl")
+      (svec.push-ref! (&mut items) "src/d.tl")
+      (svec.push-ref! (&mut items) "src/e.tl")
       (and
         (= (svec.len (& items)) 5)
         (string.eq (svec.get (& items) 0 "") "src/a.tl")
@@ -343,7 +343,7 @@
         (package-source-root-join source-set.manifest-dir manifest.entry))]
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) entry)
+      (svec.push-ref! (&mut items) entry)
       items)))
 
 (define (package-source-scan-dir
@@ -942,10 +942,10 @@
     (let
       [sources : svec.Vec (svec.new)]
       (begin
-        (svec.push (&mut sources) (package-source-root-join root "a.tl"))
-        (svec.push (&mut sources) (package-source-root-join root "b.tl"))
+        (svec.push-ref! (&mut sources) (package-source-root-join root "a.tl"))
+        (svec.push-ref! (&mut sources) (package-source-root-join root "b.tl"))
         (if extra
-          (svec.push (&mut sources) (package-source-root-join root "c.tl"))
+          (svec.push-ref! (&mut sources) (package-source-root-join root "c.tl"))
           unit)
         (package-source-binding-test-source-set-from-sources root sources)))))
 
@@ -1144,16 +1144,16 @@
           [collision-right : svec.Vec (svec.new)]
           [renamed-sources : svec.Vec (svec.new)]
           (begin
-            (svec.push (&mut reversed) b)
-            (svec.push (&mut reversed) a)
+            (svec.push-ref! (&mut reversed) b)
+            (svec.push-ref! (&mut reversed) a)
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 root
                 reversed))
               [(ResultPackageSourceDigest.Err _) unit]
               [_ (io.panic "package-source: reversed source list was accepted")])
-            (svec.push (&mut duplicate) a)
-            (svec.push (&mut duplicate) a)
+            (svec.push-ref! (&mut duplicate) a)
+            (svec.push-ref! (&mut duplicate) a)
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 root
@@ -1161,8 +1161,8 @@
               [(ResultPackageSourceDigest.Err _) unit]
               [_
                 (io.panic "package-source: duplicate source list was accepted")])
-            (svec.push (&mut collision-left) collision-a)
-            (svec.push (&mut collision-right) collision-b)
+            (svec.push-ref! (&mut collision-left) collision-a)
+            (svec.push-ref! (&mut collision-right) collision-b)
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 collision-root
@@ -1184,8 +1184,8 @@
               [(io.OkIoUnit) unit]
               [(io.ErrIoUnit _)
                 (io.panic "package-source: rename fixture failed")])
-            (svec.push (&mut renamed-sources) a)
-            (svec.push (&mut renamed-sources) renamed)
+            (svec.push-ref! (&mut renamed-sources) a)
+            (svec.push-ref! (&mut renamed-sources) renamed)
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 root
@@ -1262,9 +1262,9 @@
           [outside-sources : svec.Vec (svec.new)]
           [outside : String (package-source-root-join root "../outside.tl")]
           (begin
-            (svec.push (&mut target-sources) target-source)
-            (svec.push (&mut nested-sources) nested-source)
-            (svec.push (&mut outside-sources) outside)
+            (svec.push-ref! (&mut target-sources) target-source)
+            (svec.push-ref! (&mut nested-sources) nested-source)
+            (svec.push-ref! (&mut outside-sources) outside)
             (match (package-source-set-digest
               (package-source-binding-test-source-set-from-sources
                 root

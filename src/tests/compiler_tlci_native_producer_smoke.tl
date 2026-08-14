@@ -102,7 +102,7 @@
             module
             name)]
         (begin
-          (producer_test_svec.push names identity)
+          (producer_test_svec.push-ref! names identity)
           (compiler_tlci_native_producer.tlci-native-macro-captures-push!
             captures
             (compiler_tlci_native_producer.TlciNativeMacroCapture
@@ -3369,6 +3369,64 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+;; A generated String carries an identity from the compile job that created it.
+;; The native host must use that same job's source-name boundary when turning
+;; the String back into syntax: equal text in the compatibility-global session
+;; is not the same identity domain. Refs #5262.
+(define (producer-test-string-var-preserves-source-session?) : bool
+  (let
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [source-id : i64 (ci.intern-compat-state-intern state "clone.module")]
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-handle-from-state state)]
+    [generated-id : i64
+      (ci.intern-compat-state-generated-name state "clone.module")]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-macro-state!
+        pools
+        operands
+        0
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty)
+        source-names
+        (compiler_ctfe.compiler-ctfe-serial-macro-state))
+      (let
+        [push-status : i64
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-push!
+            (compiler_ctfe.CompilerCtfeValue.String "clone.module" generated-id))]
+        [var-status : i64
+          (if (= push-status tlci.tlci-host-callback-status-ok)
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-var-from-value
+              producer-test-cookie
+              0
+              0
+              0)
+            push-status)]
+        [commit-status : i64
+          (if (= var-status tlci.tlci-host-callback-status-ok)
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-commit-result
+              producer-test-cookie
+              0
+              0
+              0)
+            var-status)]
+        [ok : bool
+          (and
+            (= commit-status tlci.tlci-host-callback-status-ok)
+            (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+              [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+                (match (producer-test-expr-get pools node)
+                  [(ast.AstExpr.Var name-id) (= name-id source-id)]
+                  [_ false])]
+              [_ false]))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 (test
   clone-host-callbacks-tlci-native-producer
   (unless
@@ -3379,7 +3437,8 @@
       (producer-test-type-list-callbacks-ok? 3)
       (producer-test-type-list-callbacks-ok? 4)
       (producer-test-expr-string-value-callback-ok? true)
-      (producer-test-expr-string-value-callback-ok? false))
+      (producer-test-expr-string-value-callback-ok? false)
+      (producer-test-string-var-preserves-source-session?))
     (io.panic "clone host callbacks tlci native producer test failed")))
 
 (define (producer-test-clone-route-result-ok? [pools : ast.AstNodePoolContext]) : bool

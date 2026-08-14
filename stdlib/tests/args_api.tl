@@ -41,16 +41,16 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
+      (svec.push-ref! (&mut items) a)
       items)))
 
 (define (args-api-vec3 [a : String] [b : String] [c : String]) : svec.Vec
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
+      (svec.push-ref! (&mut items) a)
+      (svec.push-ref! (&mut items) b)
+      (svec.push-ref! (&mut items) c)
       items)))
 
 (define (args-api-vec5
@@ -62,11 +62,11 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
-      (svec.push (&mut items) d)
-      (svec.push (&mut items) e)
+      (svec.push-ref! (&mut items) a)
+      (svec.push-ref! (&mut items) b)
+      (svec.push-ref! (&mut items) c)
+      (svec.push-ref! (&mut items) d)
+      (svec.push-ref! (&mut items) e)
       items)))
 
 (define (args-api-vec6
@@ -79,12 +79,12 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
-      (svec.push (&mut items) d)
-      (svec.push (&mut items) e)
-      (svec.push (&mut items) f)
+      (svec.push-ref! (&mut items) a)
+      (svec.push-ref! (&mut items) b)
+      (svec.push-ref! (&mut items) c)
+      (svec.push-ref! (&mut items) d)
+      (svec.push-ref! (&mut items) e)
+      (svec.push-ref! (&mut items) f)
       items)))
 
 (define (args-api-parse-vec

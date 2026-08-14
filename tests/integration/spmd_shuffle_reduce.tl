@@ -12,7 +12,7 @@
     (begin
       (while (< i n)
         (begin
-          (i64v.set (&mut xs) i (+ (* i 3) 1))
+          (i64v.set-ref! (&mut xs) i (+ (* i 3) 1))
           (set! i (+ i 1))))
       (if (=
         (let

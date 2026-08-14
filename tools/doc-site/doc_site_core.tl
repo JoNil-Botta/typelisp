@@ -132,31 +132,31 @@
     [guides : doc_site_guides.Vec (doc_site_guides.with-capacity 1)]
     [sections : doc_site_sections.Vec (doc_site_sections.with-capacity 1)]
     (begin
-      (doc_site_modules.push
+      (doc_site_modules.push-ref!
         (&mut modules)
         (DocSiteModule.Module "first.tl" "first.html"))
-      (doc_site_modules.push
+      (doc_site_modules.push-ref!
         (&mut modules)
         (DocSiteModule.Module "second.tl" "second.html"))
-      (doc_site_modules.push
+      (doc_site_modules.push-ref!
         (&mut modules)
         (DocSiteModule.Module "third.tl" "third.html"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage "First" "first.md" "first.html" "One"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage "Second" "second.md" "second.html" "Two"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage "Third" "third.md" "third.html" "Three"))
-      (doc_site_sections.push
+      (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.Guide "First" (doc-site-guide-page-list-empty)))
-      (doc_site_sections.push
+      (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.Guide "Second" (doc-site-guide-page-list-empty)))
-      (doc_site_sections.push
+      (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.Guide "Third" (doc-site-guide-page-list-empty)))
       (and
@@ -198,7 +198,7 @@
           [name : String
             (stdlib_manifest.doc-site-stdlib-module-name (& names) i)]
           (begin
-            (doc_site_modules.push
+            (doc_site_modules.push-ref!
               (&mut modules)
               (DocSiteModule.Module
                 (stdlib_manifest.doc-site-stdlib-module-source (& name))
@@ -210,56 +210,56 @@
   (let
     [guides : doc_site_guides.Vec (doc_site_guides.with-capacity 8)]
     (begin
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "TypeLisp Overview"
           "README.md"
           "readme.html"
           "Overview"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "TypeLisp Language Reference"
           "SPEC.md"
           "spec.html"
           "Specification"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "Language Guide"
           "docs/language-guide.md"
           "language-guide.html"
           "Language guide"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "Memory and Ownership"
           "docs/memory-model.md"
           "memory-model.html"
           "Memory and ownership"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "Concurrency and SIMD"
           "docs/concurrency-and-simd.md"
           "concurrency-and-simd.html"
           "Concurrency and SIMD"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "Packages"
           "docs/packages.md"
           "packages.html"
           "Packages"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "Testing, Documentation, and Bootstrap"
           "docs/testing-and-bootstrap.md"
           "testing-and-bootstrap.html"
           "Testing, documentation, and bootstrap"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "Compiler Architecture and CLI"
@@ -278,7 +278,7 @@
   (let
     [modules : doc_site_modules.Vec (doc_site_modules.with-capacity 1)]
     (begin
-      (doc_site_modules.push
+      (doc_site_modules.push-ref!
         (&mut modules)
         (DocSiteModule.Module "docs/getting_started.tl" "getting-started.html"))
       modules)))
@@ -290,13 +290,13 @@
   (let
     [sections : doc_site_sections.Vec (doc_site_sections.with-capacity 3)]
     (begin
-      (doc_site_sections.push
+      (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.Guide "Language" (doc-site-language-guides)))
-      (doc_site_sections.push
+      (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.ApiTree (doc-site-guide-api-tree)))
-      (doc_site_sections.push
+      (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.ApiTree (doc-site-stdlib-api-tree)))
       sections)))
@@ -1260,10 +1260,10 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
   (let
     [modules : doc_site_modules.Vec (doc_site_modules.with-capacity 2)]
     (begin
-      (doc_site_modules.push
+      (doc_site_modules.push-ref!
         (&mut modules)
         (DocSiteModule.Module "stdlib/smoke<&>.tl" "stdlib-smoke.html"))
-      (doc_site_modules.push
+      (doc_site_modules.push-ref!
         (&mut modules)
         (DocSiteModule.Module "stdlib/second.tl" "stdlib-second.html"))
       modules)))
@@ -1272,14 +1272,14 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
   (let
     [guides : doc_site_guides.Vec (doc_site_guides.with-capacity 2)]
     (begin
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "TypeLisp Overview"
           "README.md"
           "readme.html"
           "Overview"))
-      (doc_site_guides.push
+      (doc_site_guides.push-ref!
         (&mut guides)
         (DocSiteGuidePage.GuidePage
           "TypeLisp Language Reference"
@@ -1295,10 +1295,10 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
   (let
     [sections : doc_site_sections.Vec (doc_site_sections.with-capacity 2)]
     (begin
-      (doc_site_sections.push
+      (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.Guide "Language" (doc-site-smoke-guides)))
-      (doc_site_sections.push
+      (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.ApiTree (doc-site-smoke-api-tree)))
       sections)))
@@ -1467,10 +1467,10 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
           (let
             [modules : doc_site_modules.Vec (doc_site_modules.with-capacity 2)]
             (begin
-              (doc_site_modules.push
+              (doc_site_modules.push-ref!
                 (&mut modules)
                 (DocSiteModule.Module "a.tl" "same.html"))
-              (doc_site_modules.push
+              (doc_site_modules.push-ref!
                 (&mut modules)
                 (DocSiteModule.Module "b.tl" "same.html"))
               modules)))

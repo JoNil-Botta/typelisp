@@ -26,8 +26,8 @@
   (let
     [items : vec_item_vec.Vec (vec_item_vec.with-capacity 2)]
     (begin
-      (vec_item_vec.push (&mut items) (VecItem 7 (string.copy "first")))
-      (vec_item_vec.push (&mut items) (VecItem 9 (string.copy "second")))
+      (vec_item_vec.push! items (VecItem 7 (string.copy "first")))
+      (vec_item_vec.push! items (VecItem 9 (string.copy "second")))
       (VecItemBag items))))
 
 (define (bag-sum [bag : (& bag VecItemBag)]) : i64

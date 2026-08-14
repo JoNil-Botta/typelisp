@@ -12,7 +12,7 @@
         (let
           [out : i64-vec.Vec (i64-vec.new)]
           (begin
-            (i64-vec.push (&mut out) 42)
+            (i64-vec.push-ref! (&mut out) 42)
             out)))]
     [spawned : ThreadI64VecSpawnResult
       (thread.spawn-i64-vec

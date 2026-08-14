@@ -1167,23 +1167,31 @@
   (let
     [paths : lint_svec.Vec (lint_svec.new)]
     (begin
-      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/required_a.tl")
-      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/required_b.tl")
+      (lint_svec.push-ref!
+        (&mut paths)
+        "target/lint_unsafe_surface/required_a.tl")
+      (lint_svec.push-ref!
+        (&mut paths)
+        "target/lint_unsafe_surface/required_b.tl")
       paths)))
 
 (define (lint-driver-smoke-unsafe-surface-error-paths) : lint_svec.Vec
   (let
     [paths : lint_svec.Vec (lint_svec.new)]
     (begin
-      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/type_error.tl")
-      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/required_a.tl")
+      (lint_svec.push-ref!
+        (&mut paths)
+        "target/lint_unsafe_surface/type_error.tl")
+      (lint_svec.push-ref!
+        (&mut paths)
+        "target/lint_unsafe_surface/required_a.tl")
       paths)))
 
 (define (lint-driver-smoke-unsafe-surface-macro-paths) : lint_svec.Vec
   (let
     [paths : lint_svec.Vec (lint_svec.new)]
     (begin
-      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/macro.tl")
+      (lint_svec.push-ref! (&mut paths) "target/lint_unsafe_surface/macro.tl")
       paths)))
 
 (define (lint-driver-smoke-unsafe-surface-request-count

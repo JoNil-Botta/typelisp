@@ -312,7 +312,7 @@
           (let
             [next-paths : cli_svec.Vec paths]
             (begin
-              (cli_svec.push
+              (cli_svec.push-ref!
                 (&mut next-paths)
                 (string.substring text start (- line-end start)))
               next-paths)))))))
@@ -445,7 +445,7 @@
         (let
           [next-roots : cli_svec.Vec roots]
           (begin
-            (cli_svec.push (&mut next-roots) value)
+            (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
         has-opt-level
         opt-level
@@ -775,7 +775,7 @@
     private-id
     (ci.intern-generated-canonical-qualified-name
       (tc_core.tc-hygiene-global-context-name
-        (ci.intern-str module-id)
+        (ci.intern-syntax-name-text-or module-id "<structural-module>")
         (ci.intern-str private-id))
       module-id
       private-id)))
@@ -3478,14 +3478,14 @@
         (let
           [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) first)
+          (vec.push-ref! (&mut items) first)
           (let
             [has-one : bool
               (let
                 [view : (& items (Slice ,T)) (vec.view (& items))]
                 (= (array-length view) 1))]
             (if has-one
-              (match (vec.pop (&mut items))
+              (match (vec.pop-ref! (&mut items))
                 [(vec.Pop.Ok _) 42]
                 [(vec.Pop.Empty) 0])
               0))))))))
@@ -3737,8 +3737,8 @@
   (let
     [roots : cli_svec.Vec (cli_svec.new)]
     (begin
-      (cli_svec.push (&mut roots) "stdlib")
-      (cli_svec.push (&mut roots) "src")
+      (cli_svec.push-ref! (&mut roots) "stdlib")
+      (cli_svec.push-ref! (&mut roots) "src")
       roots)))
 
 (define (tltest-package-cfg-inline-load-self-test?) : bool

@@ -74,7 +74,12 @@
   -1)
 
 (define (clone-module-id-root? [module-id : i64]) : bool
-  (or (< module-id 0) (= (string.string-length (ci.intern-str module-id)) 0)))
+  (or
+    (< module-id 0)
+    (=
+      (string.string-length
+        (ci.intern-syntax-name-text-or module-id "<structural-module>"))
+      0)))
 
 ;; Pair keys live above the intern-id range, so a root name id and a
 ;; module-qualified `(module-id, base-id)` cannot collide.

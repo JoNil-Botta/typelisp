@@ -3203,7 +3203,7 @@
           [type-module : String
             (if (csym.compiler-symbol-root-module-id? type-module-id)
               ""
-              (ci.intern-str type-module-id))]
+              (tc-env-key-name-text type-module-id))]
           (TcContext
             program
             symbols
@@ -14428,7 +14428,7 @@
         (begin
           (match (array-ref decl-slots (+ decl-offset index))
             [(ast.AstDecl.Module module-id)
-              (set! current-module (ci.intern-str module-id))]
+              (set! current-module (tc-env-key-name-text module-id))]
             [_
               (match (tc-stdlib-check-comptime-declaration-surface-decl
                 current-module
@@ -16721,9 +16721,9 @@
                 "typecheck: ambiguous unqualified import for value "
                 name
                 " between modules "
-                (ci.intern-str first-module)
+                (tc-env-key-name-text first-module)
                 " and "
-                (ci.intern-str second-module)
+                (tc-env-key-name-text second-module)
                 "; use an explicit alias or qualified access"))))))))
 
 (define (tc-unqualified-import-ambiguity-message
@@ -16746,7 +16746,7 @@
           [module : String
             (if (csym.compiler-symbol-root-module-id? module-id)
               ""
-              (ci.intern-str module-id))]
+              (tc-env-key-name-text module-id))]
           (tc-unqualified-import-ambiguity-message-for-key
             ctx
             env
@@ -21129,7 +21129,7 @@
         unit))))
 
 (define (tc-module-identity-id-eq? [a : i64] [b : i64]) : bool
-  (or (= a b) (string.eq (ci.intern-str a) (ci.intern-str b))))
+  (or (= a b) (string.eq (tc-env-key-name-text a) (tc-env-key-name-text b))))
 
 (define (tc-imported-module-identity-ids?
   [decls : ast.AstDeclList]
@@ -21206,6 +21206,7 @@
     [session : ci.InternSourceNameSession
       (ci.intern-source-name-session-handle-session
         (tc-context-source-names ctx))]
+    [source-name : i64 (ci.intern-syntax-source-name-id-or name name)]
     ;; Qualified source names already carry their parsed module ID. Returning
     ;; it directly avoids hashing the same module spelling for every nominal
     ;; type occurrence. Preserve the session ownership/generation checks that
@@ -21213,13 +21214,13 @@
     (if (and
       (= (array-ref session.table-id-cell 0) session.table-id)
       (= (array-ref session.reset-generation-cell 0) session.reset-generation)
-      (>= name 0)
-      (< name session.source-count))
-      name
+      (>= source-name 0)
+      (< source-name session.source-count))
+      source-name
       (match (ci.intern-source-name-session-resolve
         session
-        (ci.intern-source-name-session-identity session name)
-        (ci.intern-str name))
+        (ci.intern-source-name-session-identity session source-name)
+        (ci.intern-syntax-name-text-or name ""))
         [(ci.InternSourceNameResolution.ParsedIdentity source-id) source-id]
         [(ci.InternSourceNameResolution.GeneratedIdentity _ lookup)
           (match lookup
@@ -22729,7 +22730,7 @@
                       (let
                         [lookup-name : String
                           (csym.compiler-symbol-module-key
-                            (ci.intern-str target-module-id)
+                            (tc-env-key-name-text target-module-id)
                             (ci.intern-str base-id))]
                         [lookup-id : i64
                           (tc-qualified-name-key-id target-module-id base-id)]
@@ -22859,7 +22860,7 @@
                   (+ (tc-dotted-prefix-depth module-id) 1))]
               [lookup-name : String
                 (csym.compiler-symbol-module-key
-                  (ci.intern-str module-id)
+                  (tc-env-key-name-text module-id)
                   (ci.intern-str base-id))]
               [lookup-id : i64 (tc-qualified-name-key-id module-id base-id)]
               (begin
@@ -23448,7 +23449,10 @@
         [source-ctx : TcContext
           (if (csym.compiler-symbol-root-module-id? module-id)
             (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
-            (tc-context-with-module-id ctx (ci.intern-str module-id) module-id))]
+            (tc-context-with-module-id
+              ctx
+              (tc-env-key-name-text module-id)
+              module-id))]
         (tc-source-name-lookup-key-with-field-check-source-lookup
           source-ctx
           env
@@ -23844,7 +23848,7 @@
               rest
               target
               index
-              (ci.intern-str next-module))]
+              (tc-env-key-name-text next-module))]
           [(ast.AstDecl.ModuleBody name body-box)
             (let
               [body : ast.AstDeclList (__tl-box-place body-box)]
@@ -23930,7 +23934,7 @@
   (if (tc-name-qualified-id? owner-id)
     (let
       [module-id : i64 (tc-qualified-name-module-id owner-id)]
-      (tc-context-with-module-id ctx (ci.intern-str module-id) module-id))
+      (tc-context-with-module-id ctx (tc-env-key-name-text module-id) module-id))
     (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)))
 
 (define (tc-context-with-nominal-owner-index-module
@@ -23944,7 +23948,7 @@
         (csym.compiler-symbol-root-module-id))]
     (if (csym.compiler-symbol-root-module-id? module-id)
       (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
-      (tc-context-with-module-id ctx (ci.intern-str module-id) module-id))))
+      (tc-context-with-module-id ctx (tc-env-key-name-text module-id) module-id))))
 
 ;; Macro-generated modules already have an identity, but their dotted display
 ;; names are intentionally absent from the source interner. Resolve
@@ -24213,7 +24217,7 @@
               cbi.compiler-builtin-id-fix-empty)
             (tc-context-with-module-id
               resolution-ctx
-              (ci.intern-str module-id)
+              (tc-env-key-name-text module-id)
               module-id))]
         (tc-resolve-source-type-name
           source-ctx
@@ -24621,7 +24625,7 @@
               cbi.compiler-builtin-id-fix-empty)
             (tc-context-with-module-id
               resolution-ctx
-              (ci.intern-str module-id)
+              (tc-env-key-name-text module-id)
               module-id))]
         (tc-resolve-source-type-name-with-args
           source-ctx
@@ -32280,7 +32284,7 @@
                     index
                     cbi.compiler-builtin-id-fix-empty)]
                 (begin
-                  (set! current-module (ci.intern-str next-module))
+                  (set! current-module (tc-env-key-name-text next-module))
                   (set! current-module-id next-module)))]
             [_
               (match (tc-build-top-env-bind-decl-in-module
@@ -32492,7 +32496,10 @@
           [(ast.AstDecl.Extern decl-meta name kind _ _)
             (let
               [extern-ctx : TcContext
-                (tc-context-with-module-id ctx (ci.intern-str module) module)]
+                (tc-context-with-module-id
+                  ctx
+                  (tc-env-key-name-text module)
+                  module)]
               (match (tc-import-alias-source-value-type env module name)
                 [(ResultTcType.Ok ty)
                   (ResultTcEnv.Ok
@@ -32562,7 +32569,7 @@
     [(ast.AstDecl.Extern decl-meta name kind _ _)
       (let
         [extern-ctx : TcContext
-          (tc-context-with-module-id ctx (ci.intern-str module) module)]
+          (tc-context-with-module-id ctx (tc-env-key-name-text module) module)]
         (match (tc-import-alias-source-value-type env module name)
           [(ResultTcType.Ok ty)
             (ResultTcEnv.Ok
@@ -32594,7 +32601,10 @@
           (tc-bind-enum-cleanup-import-alias
             ctx
             (tc-bind-enum-variant-aliases
-              (tc-context-with-module-id ctx (ci.intern-str module) module)
+              (tc-context-with-module-id
+                ctx
+                (tc-env-key-name-text module)
+                module)
               env
               alias
               importer-module
@@ -32617,7 +32627,10 @@
           (tc-bind-enum-cleanup-import-alias
             ctx
             (tc-bind-enum-variant-aliases
-              (tc-context-with-module-id ctx (ci.intern-str module) module)
+              (tc-context-with-module-id
+                ctx
+                (tc-env-key-name-text module)
+                module)
               env
               alias
               importer-module
@@ -42881,7 +42894,7 @@
 (define (tc-spmd-inline-helper-module [module-id : i64]) : String
   (if (csym.compiler-symbol-root-module-id? module-id)
     ""
-    (ci.intern-str module-id)))
+    (tc-env-key-name-text module-id)))
 
 (define (tc-spmd-inline-helper-env
   [ctx : TcContext]
@@ -50918,7 +50931,10 @@
     (let
       [module-id : i64 (tc-qualified-name-module-id name-id)]
       (if (>= module-id 0)
-        (tc-context-with-module-id ctx (ci.intern-str module-id) module-id)
+        (tc-context-with-module-id
+          ctx
+          (tc-env-key-name-text module-id)
+          module-id)
         ctx))
     ctx))
 
@@ -52442,7 +52458,7 @@
           (match (array-ref decl-slots (+ decl-offset index))
             [(ast.AstDecl.Module next-module)
               (begin
-                (set! current-module (ci.intern-str next-module))
+                (set! current-module (tc-env-key-name-text next-module))
                 (set! current-module-id next-module))]
             [(ast.AstDecl.DefStruct decl-meta name _ _ _)
               (set!
@@ -52844,7 +52860,7 @@
               rest
               target
               index
-              (ci.intern-str next-module))]
+              (tc-env-key-name-text next-module))]
           [(ast.AstDecl.Test _ _ _)
             (tc-variant-owner-name-list rest target index module)]
           [_
@@ -54116,7 +54132,7 @@
         (tc-qualified-access-target-module-id ctx qualifier-id)]
       (ResultTcString.Ok
         (csym.compiler-symbol-module-key
-          (ci.intern-str target-module-id)
+          (tc-env-key-name-text target-module-id)
           (ci.intern-str base-id))))
     (match (tc-source-type-name-lookup-from-id ctx pattern-name pattern-name-id)
       [(TcNameLookup.Ok lookup-name lookup-id)
@@ -57713,7 +57729,10 @@
         (ci.intern-qualified? nominal-id))
         (let
           [module-id : i64 (ci.intern-qualified-module-id nominal-id)]
-          (tc-context-with-module-id ctx (ci.intern-str module-id) module-id))
+          (tc-context-with-module-id
+            ctx
+            (tc-env-key-name-text module-id)
+            module-id))
         ctx))))
 
 (define (tc-context-with-nominal-owner-handle-module
@@ -57726,7 +57745,7 @@
         (csym.compiler-symbol-handle-index handle)
         cbi.compiler-builtin-id-fix-empty)]
     (if (>= module-id 0)
-      (tc-context-with-module-id ctx (ci.intern-str module-id) module-id)
+      (tc-context-with-module-id ctx (tc-env-key-name-text module-id) module-id)
       (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty))))
 
 (define (tc-init-nominal-field-context-id
@@ -60449,7 +60468,7 @@
         [target-id : i64
           (tc-qualified-access-target-module-id ctx qualifier-id)]
         [qualifier : String (ci.intern-str qualifier-id)]
-        [target : String (ci.intern-str target-id)]
+        [target : String (tc-env-key-name-text target-id)]
         (or
           (tc-comptime-purity-banned-module? qualifier)
           (tc-comptime-purity-banned-module? target)))
@@ -64549,7 +64568,7 @@
                               [right : String (ci.intern-str right-id)]
                               [prefix : String
                                 (str_cat.str-cat
-                                  (ci.intern-str
+                                  (tc-env-key-name-text
                                     (if (>=
                                       (tc-macro-proof-field
                                         (tc-context-macro-state ctx)
@@ -64564,7 +64583,7 @@
                                   ".")]
                               [next : String
                                 (str_cat.str-cat
-                                  (ci.intern-str
+                                  (tc-env-key-name-text
                                     (if (>=
                                       (tc-macro-proof-field
                                         (tc-context-macro-state ctx)
@@ -89842,7 +89861,7 @@
           (match (ast.ast-decl-list-ref-borrowed (& decls) index)
             [(ast.AstDecl.Module _)
               (if (string.eq
-                (ci.intern-str
+                (tc-env-key-name-text
                   (ast.ast-decl-list-module-id-at
                     (& decls)
                     index
@@ -89876,7 +89895,7 @@
             [(ast.AstDecl.Module _)
               (set!
                 module
-                (ci.intern-str
+                (tc-env-key-name-text
                   (ast.ast-decl-list-module-id-at
                     (& decls)
                     index
@@ -89913,7 +89932,7 @@
                   (begin
                     (set!
                       module
-                      (ci.intern-str
+                      (tc-env-key-name-text
                         (ast.ast-decl-list-module-id-at
                           (& item.decls)
                           item.index
@@ -98631,12 +98650,12 @@
 (define (macro-decl-module-display [module-id : i64]) : String
   (if (csym.compiler-symbol-root-module-id? module-id)
     ""
-    (ci.intern-str module-id)))
+    (tc-env-key-name-text module-id)))
 
 (define (macro-decl-name-display [name-id : i64] [module-id : i64]) : String
   (csym.compiler-symbol-module-key
     (macro-decl-module-display module-id)
-    (ci.intern-str name-id)))
+    (tc-env-key-name-text name-id)))
 
 (define (macro-qualified-call-decl-in-module
   [ctx : TcContext]
@@ -99784,7 +99803,7 @@
                     name-id)
                     [(TcMaybeNameId.Some target-id)
                       (ResultMacroModuleArg.Ok
-                        (ci.intern-str target-id)
+                        (tc-env-key-name-text target-id)
                         target-id)]
                     [(TcMaybeNameId.No)
                       (if (or
@@ -101590,6 +101609,7 @@
                 (ctfe_support.ctfe-fuel-limit)
                 (macro-stdlib-tlci-native-cookie)
                 (ctfe_support.ctfe-env-reflections env)
+                (ctfe_support.ctfe-env-source-names env)
                 (ctfe_support.ctfe-env-macro-state env))
               (cfg
                 compile-profile
@@ -104838,7 +104858,8 @@
                 context)
                 [(TcMaybeNameId.Some target-module-id)
                   (let
-                    [target-module : String (ci.intern-str target-module-id)]
+                    [target-module : String
+                      (tc-env-key-name-text target-module-id)]
                     [expanded : ast.AstDeclList
                       (macro-module-import-marker-decls
                         target-module
@@ -104949,7 +104970,7 @@
         (let
           [macro-name : String
             (parser.parse-ast-dotted-import-default-alias
-              (ci.intern-str target-module-id))]
+              (tc-env-key-name-text target-module-id))]
           (str_cat.str-cat
             "typecheck: imported macro `"
             macro-name
@@ -105286,7 +105307,8 @@
                 (match (ast.ast-decl-list-step body-rest-box)
                   [(ast.AstDeclListStep.Nil)
                     (let
-                      [target-module : String (ci.intern-str target-module-id)]
+                      [target-module : String
+                        (tc-env-key-name-text target-module-id)]
                       [body-rest : ast.AstDeclList
                         (macro-flatten-module-body-decls-in-module
                           (__tl-box-place body-box)
@@ -105341,7 +105363,8 @@
                           "typecheck: Module macro output must include exactly one module declaration")))])]
               [(ast.AstDecl.Module target-module-id)
                 (let
-                  [target-module : String (ci.intern-str target-module-id)]
+                  [target-module : String
+                    (tc-env-key-name-text target-module-id)]
                   [body-rest : ast.AstDeclList
                     (macro-flatten-module-body-decls-in-module
                       body-rest-box
@@ -105700,7 +105723,7 @@
                                           (compiler-tc-macro-profile-note-generated-module-catalog-hit))
                                         (let
                                           [target-module : String
-                                            (ci.intern-str target-id)]
+                                            (tc-env-key-name-text target-id)]
                                           [marker : ast.AstDeclList
                                             (macro-module-import-marker-decls
                                               target-module
@@ -107918,7 +107941,10 @@
     (let
       [module-id : i64 (tc-qualified-name-module-id name-id)]
       (if (>= module-id 0)
-        (tc-context-with-module-id ctx (ci.intern-str module-id) module-id)
+        (tc-context-with-module-id
+          ctx
+          (tc-env-key-name-text module-id)
+          module-id)
         ctx))
     (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)))
 
@@ -108299,7 +108325,7 @@
                         walk-state
                         out-rev
                         out-paths-rev)
-                      (set! cur-module (ci.intern-str next-module))
+                      (set! cur-module (tc-env-key-name-text next-module))
                       (set! cur-module-id next-module))]
                   [_
                     (cond
@@ -109137,7 +109163,7 @@
               (match decl
                 [(ast.AstDecl.Module next-module)
                   (begin
-                    (set! module (ci.intern-str next-module))
+                    (set! module (tc-env-key-name-text next-module))
                     (set! module-id next-module))]
                 [_ unit])
               (set! cur rest))]))
@@ -111849,7 +111875,8 @@
             (let
               [next-module : String
                 (match decl
-                  [(ast.AstDecl.Module next-module) (ci.intern-str next-module)]
+                  [(ast.AstDecl.Module next-module)
+                    (tc-env-key-name-text next-module)]
                   [_ module])]
               [next-module-id : i64
                 (match decl
@@ -111878,7 +111905,8 @@
             (let
               [next-module : String
                 (match decl
-                  [(ast.AstDecl.Module next-module) (ci.intern-str next-module)]
+                  [(ast.AstDecl.Module next-module)
+                    (tc-env-key-name-text next-module)]
                   [_ module])]
               [next-module-id : i64
                 (match decl
@@ -112428,14 +112456,14 @@
                     (match (tc-module-local-env-cached-id
                       ctx
                       top-env
-                      (ci.intern-str next-module)
+                      (tc-env-key-name-text next-module)
                       next-module
                       cur-cache)
                       [(ResultTcModuleLocalEnv.Ok next-local-env next-cache)
                         (match (tc-module-local-env-cached-id
                           ctx
                           top-env
-                          (ci.intern-str next-module)
+                          (tc-env-key-name-text next-module)
                           next-module
                           cur-cache)
                           [(ResultTcModuleLocalEnv.Ok next-local-env-copy _)
@@ -112445,7 +112473,9 @@
                                 (compiler-tc-decl-profile-add-local-env))
                               (set! cur-decls rest)
                               (set! cur-paths rest-paths)
-                              (set! cur-module (ci.intern-str next-module))
+                              (set!
+                                cur-module
+                                (tc-env-key-name-text next-module))
                               (set! cur-module-id next-module)
                               (set! cur-cache next-cache)
                               (set!

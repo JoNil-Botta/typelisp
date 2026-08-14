@@ -27,22 +27,6 @@
   (Ok SurfaceTypecheckFacts)
   (Err String))
 
-(defstruct SurfaceTypecheckFactsBuilder
-  (fragment-count i64)
-  (macro-prefix-decl-count i64)
-  (prefix-decl-count i64)
-  (summary-values i64)
-  (summary-functions i64)
-  (summary-externs i64)
-  (clone-decl-keys (__tl_dyn-array i64))
-  (clone-root-keys (__tl_dyn-array i64))
-  (clone-call-indices (__tl_dyn-array i64))
-  (next-clone-call-index i64))
-
-(defenum ResultSurfaceTypecheckFactsBuilder
-  (Ok SurfaceTypecheckFactsBuilder)
-  (Err String))
-
 (defstruct SurfaceTypecheckFactReader
   (bytes (__tl_dyn-array u8))
   (offset (__tl_dyn-array i64))
@@ -322,12 +306,6 @@
 (define (surface-typecheck-facts-positive-count-valid? [count : i64]) : bool
   (and (> count 0) (<= count surface-typecheck-facts-max-count)))
 
-(define (surface-typecheck-facts-count-sum-valid? [left : i64] [right : i64]) : bool
-  (and
-    (surface-typecheck-facts-count-valid? left)
-    (surface-typecheck-facts-count-valid? right)
-    (<= left (- surface-typecheck-facts-max-count right))))
-
 (define (surface-typecheck-facts-observations-valid?
   [decl-keys : (__tl_dyn-array i64)]
   [root-keys : (__tl_dyn-array i64)]
@@ -385,210 +363,6 @@
       true)
     false))
 
-(define (surface-typecheck-facts-builder-empty) : SurfaceTypecheckFactsBuilder
-  (SurfaceTypecheckFactsBuilder
-    0
-    0
-    0
-    0
-    0
-    0
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    0))
-
-(define (surface-typecheck-facts-builder-valid?
-  [builder : SurfaceTypecheckFactsBuilder]) : bool
-  (let
-    [fragment-count : i64 builder.fragment-count]
-    [call-indices : (__tl_dyn-array i64) builder.clone-call-indices]
-    [observation-count : i64 (array-length call-indices)]
-    [next-call-index : i64 builder.next-clone-call-index]
-    (if (= fragment-count 0)
-      (and
-        (= builder.macro-prefix-decl-count 0)
-        (= builder.prefix-decl-count 0)
-        (= builder.summary-values 0)
-        (= builder.summary-functions 0)
-        (= builder.summary-externs 0)
-        (= (array-length builder.clone-decl-keys) 0)
-        (= (array-length builder.clone-root-keys) 0)
-        (= observation-count 0)
-        (= next-call-index 0))
-      (and
-        (surface-typecheck-facts-positive-count-valid? fragment-count)
-        (surface-typecheck-facts-valid?
-          (SurfaceTypecheckFacts
-            builder.macro-prefix-decl-count
-            builder.prefix-decl-count
-            builder.summary-values
-            builder.summary-functions
-            builder.summary-externs
-            builder.clone-decl-keys
-            builder.clone-root-keys
-            call-indices))
-        (if (= observation-count 0)
-          (= next-call-index 0)
-          (and
-            (> next-call-index 0)
-            (<= next-call-index surface-typecheck-facts-max-count)
-            (=
-              next-call-index
-              (+ (array-ref call-indices (- observation-count 1)) 1))))))))
-
-(define (surface-typecheck-facts-copy-i64-range!
-  [dst : (&mut dst (__tl_dyn-array i64))]
-  [dst-offset : i64]
-  [src : (& src (__tl_dyn-array i64))]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (array-length src))
-      (begin
-        (set! (array-ref dst (+ dst-offset index)) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (surface-typecheck-facts-builder-append
-  [builder : SurfaceTypecheckFactsBuilder]
-  [fragment : SurfaceTypecheckFacts]) : ResultSurfaceTypecheckFactsBuilder
-  (cond
-    [(not (surface-typecheck-facts-builder-valid? builder))
-      (ResultSurfaceTypecheckFactsBuilder.Err
-        "surface facts: invalid composition builder")]
-    [(not (surface-typecheck-facts-valid? fragment))
-      (ResultSurfaceTypecheckFactsBuilder.Err
-        "surface facts: invalid composition fragment")]
-    [else
-      (let
-        [builder-count : i64 (array-length builder.clone-decl-keys)]
-        [fragment-count : i64 (array-length fragment.clone-decl-keys)]
-        [base-call-index : i64 builder.next-clone-call-index]
-        [last-local-call-index : i64
-          (if (= fragment-count 0)
-            -1
-            (array-ref fragment.clone-call-indices (- fragment-count 1)))]
-        [call-range-size : i64 (+ last-local-call-index 1)]
-        (if (or
-          (not
-            (surface-typecheck-facts-count-sum-valid? builder.fragment-count 1))
-          (not
-            (surface-typecheck-facts-count-sum-valid?
-              builder.macro-prefix-decl-count
-              fragment.macro-prefix-decl-count))
-          (not
-            (surface-typecheck-facts-count-sum-valid?
-              builder.prefix-decl-count
-              fragment.prefix-decl-count))
-          (not
-            (surface-typecheck-facts-count-sum-valid?
-              builder.summary-values
-              fragment.summary-values))
-          (not
-            (surface-typecheck-facts-count-sum-valid?
-              builder.summary-functions
-              fragment.summary-functions))
-          (not
-            (surface-typecheck-facts-count-sum-valid?
-              builder.summary-externs
-              fragment.summary-externs))
-          (>
-            builder-count
-            (- surface-typecheck-facts-max-clone-observations fragment-count))
-          (>
-            base-call-index
-            (- surface-typecheck-facts-max-count call-range-size)))
-          (ResultSurfaceTypecheckFactsBuilder.Err
-            "surface facts: composition count limit exceeded")
-          (let
-            [combined-count : i64 (+ builder-count fragment-count)]
-            [decl-keys : (__tl_dyn-array i64)
-              (__tl_make-array i64 combined-count)]
-            [root-keys : (__tl_dyn-array i64)
-              (__tl_make-array i64 combined-count)]
-            [call-indices : (__tl_dyn-array i64)
-              (__tl_make-array i64 combined-count)]
-            [index : i64 0]
-            (begin
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut decl-keys)
-                0
-                (& builder.clone-decl-keys))
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut root-keys)
-                0
-                (& builder.clone-root-keys))
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut call-indices)
-                0
-                (& builder.clone-call-indices))
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut decl-keys)
-                builder-count
-                (& fragment.clone-decl-keys))
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut root-keys)
-                builder-count
-                (& fragment.clone-root-keys))
-              (while (< index fragment-count)
-                (begin
-                  (set!
-                    (array-ref call-indices (+ builder-count index))
-                    (+
-                      base-call-index
-                      (array-ref fragment.clone-call-indices index)))
-                  (set! index (+ index 1))))
-              (ResultSurfaceTypecheckFactsBuilder.Ok
-                (SurfaceTypecheckFactsBuilder
-                  (+ builder.fragment-count 1)
-                  (+
-                    builder.macro-prefix-decl-count
-                    fragment.macro-prefix-decl-count)
-                  (+ builder.prefix-decl-count fragment.prefix-decl-count)
-                  (+ builder.summary-values fragment.summary-values)
-                  (+ builder.summary-functions fragment.summary-functions)
-                  (+ builder.summary-externs fragment.summary-externs)
-                  decl-keys
-                  root-keys
-                  call-indices
-                  (+ base-call-index call-range-size)))))))]))
-
-(define (surface-typecheck-facts-builder-finish
-  [builder : SurfaceTypecheckFactsBuilder]) : ResultSurfaceTypecheckFacts
-  (if (or
-    (= builder.fragment-count 0)
-    (not (surface-typecheck-facts-builder-valid? builder)))
-    (ResultSurfaceTypecheckFacts.Err
-      "surface facts: empty or invalid composition")
-    (ResultSurfaceTypecheckFacts.Ok
-      (SurfaceTypecheckFacts
-        builder.macro-prefix-decl-count
-        builder.prefix-decl-count
-        builder.summary-values
-        builder.summary-functions
-        builder.summary-externs
-        builder.clone-decl-keys
-        builder.clone-root-keys
-        builder.clone-call-indices))))
-
-(define (surface-typecheck-facts-compose
-  [fragments : (__tl_dyn-array SurfaceTypecheckFacts)]) : ResultSurfaceTypecheckFacts
-  (let
-    [builder : SurfaceTypecheckFactsBuilder
-      (surface-typecheck-facts-builder-empty)]
-    [index : i64 0]
-    (begin
-      (while (< index (array-length fragments))
-        (match (surface-typecheck-facts-builder-append
-          builder
-          (array-ref fragments index))
-          [(ResultSurfaceTypecheckFactsBuilder.Err message)
-            (return (ResultSurfaceTypecheckFacts.Err message))]
-          [(ResultSurfaceTypecheckFactsBuilder.Ok next)
-            (begin
-              (set! builder next)
-              (set! index (+ index 1)))]))
-      (surface-typecheck-facts-builder-finish builder))))
-
 (cfg
   compiler-surface-selftest
   (define (surface-typecheck-facts-i64-array-eq?
@@ -640,47 +414,10 @@
 
 (cfg
   compiler-surface-selftest
-  (define (surface-typecheck-facts-test-fragment-two) : SurfaceTypecheckFacts
-    (SurfaceTypecheckFacts
-      4
-      5
-      13
-      17
-      19
-      (__tl_make-array 30 31)
-      (__tl_make-array 40 41)
-      (__tl_make-array 0 1))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-typecheck-facts-test-composite-ok?
-    [facts : SurfaceTypecheckFacts]) : bool
-    (and
-      (= facts.macro-prefix-decl-count 6)
-      (= facts.prefix-decl-count 8)
-      (= facts.summary-values 18)
-      (= facts.summary-functions 24)
-      (= facts.summary-externs 30)
-      (surface-typecheck-facts-i64-array-eq?
-        facts.clone-decl-keys
-        (__tl_make-array 10 10 11 30 31))
-      (surface-typecheck-facts-i64-array-eq?
-        facts.clone-root-keys
-        (__tl_make-array 20 21 22 40 41))
-      ;; The second fragment also starts at call zero. Rebasing it after the
-      ;; first fragment's local range makes the boundary strictly disjoint.
-      (surface-typecheck-facts-i64-array-eq?
-        facts.clone-call-indices
-        (__tl_make-array 0 0 2 3 4)))))
-
-(cfg
-  compiler-surface-selftest
   (define (surface-typecheck-facts-tests-ok?) : bool
     (let
       [first : SurfaceTypecheckFacts
         (surface-typecheck-facts-test-fragment-one)]
-      [second : SurfaceTypecheckFacts
-        (surface-typecheck-facts-test-fragment-two)]
       [bad-order : SurfaceTypecheckFacts
         (SurfaceTypecheckFacts
           1
@@ -701,79 +438,14 @@
           (__tl_make-array 50 51)
           (__tl_make-array 60 61)
           (__tl_make-array 0 0))]
-      [limit-fragment : SurfaceTypecheckFacts
-        (SurfaceTypecheckFacts
-          surface-typecheck-facts-max-count
-          surface-typecheck-facts-max-count
-          surface-typecheck-facts-max-count
-          surface-typecheck-facts-max-count
-          surface-typecheck-facts-max-count
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0))]
-      [builder : SurfaceTypecheckFactsBuilder
-        (surface-typecheck-facts-builder-empty)]
-      [limit-builder : SurfaceTypecheckFactsBuilder
-        (surface-typecheck-facts-builder-empty)]
-      [fragments : (__tl_dyn-array SurfaceTypecheckFacts)
-        (__tl_make-array SurfaceTypecheckFacts 2)]
-      [composite : SurfaceTypecheckFacts (surface-typecheck-facts-empty)]
       [ok : bool true]
       (begin
-        (set! (array-ref fragments 0) first)
-        (set! (array-ref fragments 1) second)
-        (match (surface-typecheck-facts-builder-finish builder)
-          [(ResultSurfaceTypecheckFacts.Err _) unit]
-          [(ResultSurfaceTypecheckFacts.Ok _) (set! ok false)])
-        (match (surface-typecheck-facts-builder-append builder first)
-          [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
-          [(ResultSurfaceTypecheckFactsBuilder.Ok next) (set! builder next)])
-        ;; A rejected later fragment leaves the completed first-fragment
-        ;; builder reusable and unchanged.
-        (match (surface-typecheck-facts-builder-append builder bad-order)
-          [(ResultSurfaceTypecheckFactsBuilder.Err _) unit]
-          [(ResultSurfaceTypecheckFactsBuilder.Ok _) (set! ok false)])
-        (match (surface-typecheck-facts-builder-finish builder)
-          [(ResultSurfaceTypecheckFacts.Err _) (set! ok false)]
-          [(ResultSurfaceTypecheckFacts.Ok unchanged)
-            (if (surface-typecheck-facts-eq? unchanged first)
-              unit
-              (set! ok false))])
-        (match (surface-typecheck-facts-builder-append builder second)
-          [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
-          [(ResultSurfaceTypecheckFactsBuilder.Ok next) (set! builder next)])
-        (match (surface-typecheck-facts-builder-finish builder)
-          [(ResultSurfaceTypecheckFacts.Err _) (set! ok false)]
-          [(ResultSurfaceTypecheckFacts.Ok facts)
-            (begin
-              (if (surface-typecheck-facts-test-composite-ok? facts)
-                unit
-                (set! ok false))
-              (set! composite facts))])
         (if (or
+          (not (surface-typecheck-facts-valid? first))
           (surface-typecheck-facts-valid? bad-order)
           (surface-typecheck-facts-valid? bad-group))
           (set! ok false)
           unit)
-        (match (surface-typecheck-facts-builder-append
-          limit-builder
-          limit-fragment)
-          [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
-          [(ResultSurfaceTypecheckFactsBuilder.Ok next)
-            (set! limit-builder next)])
-        (match (surface-typecheck-facts-builder-append limit-builder second)
-          [(ResultSurfaceTypecheckFactsBuilder.Err _) unit]
-          [(ResultSurfaceTypecheckFactsBuilder.Ok _) (set! ok false)])
-        (match (surface-typecheck-facts-compose fragments)
-          [(ResultSurfaceTypecheckFacts.Err _) (set! ok false)]
-          [(ResultSurfaceTypecheckFacts.Ok facts)
-            (if (surface-typecheck-facts-test-composite-ok? facts)
-              unit
-              (set! ok false))])
-        (match (surface-typecheck-facts-compose
-          (__tl_make-array SurfaceTypecheckFacts 0))
-          [(ResultSurfaceTypecheckFacts.Err _) unit]
-          [(ResultSurfaceTypecheckFacts.Ok _) (set! ok false)])
         (surface-typecheck-facts-clear!)
         (if (surface-typecheck-facts-publish! first)
           unit
@@ -791,14 +463,13 @@
         (if (surface-typecheck-facts-active?)
           (set! ok false)
           unit)
-        (if (surface-typecheck-facts-publish! composite)
+        ;; A cleared publication can be reused without retaining stale facts.
+        (if (surface-typecheck-facts-publish! first)
           unit
           (set! ok false))
         (if (and
           (surface-typecheck-facts-active?)
-          (surface-typecheck-facts-eq?
-            (surface-typecheck-facts-current)
-            composite))
+          (surface-typecheck-facts-eq? (surface-typecheck-facts-current) first))
           unit
           (set! ok false))
         (surface-typecheck-facts-clear!)

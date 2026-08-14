@@ -586,6 +586,46 @@
   31)
 (define comptime-error-cache : i64
   32)
+(define checked-pools : i64
+  33)
+
+;; Checked-pool compaction crosses the typecheck/lower result boundary: source
+;; storage can already be retired before lowering reports an error, while a
+;; committed destination must remain available for the driver to adopt. Keep
+;; the complete transition in one job-owned record. `NoContext` makes the
+;; inactive state unable to expose a pool whose arena has already been retired.
+(defenum CompilerLowerCheckedPoolsContext
+  (NoContext)
+  (Context ast.AstNodePoolContext))
+
+(defstruct CompilerLowerCheckedPoolsState
+  (active bool)
+  (committed bool)
+  (context CompilerLowerCheckedPoolsContext)
+  (source-release-arena i64)
+  (source-release-expr-storage-arena i64)
+  (source-release-type-storage-arena i64)
+  (frontend-release-arena i64)
+  (frontend-released bool)
+  (rolled-over bool)
+  (deferred bool)
+  (deferred-expr-capacity i64)
+  (deferred-type-capacity i64))
+
+(define (compiler-lower-checked-pools-state-empty) : CompilerLowerCheckedPoolsState
+  (CompilerLowerCheckedPoolsState
+    false
+    false
+    (CompilerLowerCheckedPoolsContext.NoContext)
+    0
+    0
+    0
+    0
+    false
+    false
+    false
+    0
+    0))
 
 (defstruct CompilerLowerState
   (address i64))
@@ -644,7 +684,7 @@
 (define (compiler-lower-state-new-with-intern-state
   [intern-state : ci.InternCompatState]) : CompilerLowerState
   (let
-    [cells : (__tl_dyn-array i64) (array.make-array i64 33)]
+    [cells : (__tl_dyn-array i64) (array.make-array i64 34)]
     [address : i64
       (cast
         (unsafe
@@ -773,6 +813,11 @@
         (compiler-lower-state-cell
           (__tl_dyn-array i64)
           (lower-comptime-error-id-cache-empty)))
+      (set!
+        (array-ref cells checked-pools)
+        (compiler-lower-state-cell
+          CompilerLowerCheckedPoolsState
+          (compiler-lower-checked-pools-state-empty)))
       state)))
 
 ;; Serial/test compatibility adapter. Driver-owned jobs construct the lower
@@ -786,6 +831,18 @@
 
 (define (compiler-lower-state-interns [state : CompilerLowerState]) : ci.InternCompatState
   (compiler-lower-state-read state ci.InternCompatState intern-owner))
+
+(define (compiler-lower-state-checked-pools [state : CompilerLowerState]) : CompilerLowerCheckedPoolsState
+  (compiler-lower-state-read state CompilerLowerCheckedPoolsState checked-pools))
+
+(define (compiler-lower-state-checked-pools-set!
+  [state : CompilerLowerState]
+  [handoff : CompilerLowerCheckedPoolsState]) : unit
+  (compiler-lower-state-write!
+    state
+    CompilerLowerCheckedPoolsState
+    checked-pools
+    handoff))
 
 (define (compiler-lower-state-use-intern-state!
   [state : CompilerLowerState]
@@ -832,7 +889,8 @@
   (module-decl-index-positions i64)
   (module-decl-index-arena i64)
   (intern-owner i64)
-  (comptime-error-cache i64))
+  (comptime-error-cache i64)
+  (checked-pools i64))
 
 (define (compiler-lower-state-size) : i64
   (comptime (size-of (type CompilerLowerState))))
@@ -882,6 +940,54 @@
           (set! out (hash.combine out (hash.i64 (array-ref cache index))))
           (set! index (+ index 1))))
       out)))
+
+(define (compiler-lower-checked-pools-state-fingerprint
+  [state : CompilerLowerState]) : i64
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools state)]
+    [context-fingerprint : i64
+      (match handoff.context
+        [(CompilerLowerCheckedPoolsContext.NoContext) 0]
+        [(CompilerLowerCheckedPoolsContext.Context pools)
+          (hash.combine
+            (ast.ast-node-pool-context-base-arena pools)
+            (hash.combine
+              (ast.ast-node-pool-context-expr-capacity pools)
+              (ast.ast-node-pool-context-type-capacity pools)))])]
+    (hash.combine
+      (if handoff.active
+        1
+        0)
+      (hash.combine
+        (if handoff.committed
+          1
+          0)
+        (hash.combine
+          context-fingerprint
+          (hash.combine
+            handoff.source-release-arena
+            (hash.combine
+              handoff.source-release-expr-storage-arena
+              (hash.combine
+                handoff.source-release-type-storage-arena
+                (hash.combine
+                  handoff.frontend-release-arena
+                  (hash.combine
+                    (if handoff.frontend-released
+                      1
+                      0)
+                    (hash.combine
+                      (if handoff.rolled-over
+                        1
+                        0)
+                      (hash.combine
+                        (if handoff.deferred
+                          1
+                          0)
+                        (hash.combine
+                          handoff.deferred-expr-capacity
+                          handoff.deferred-type-capacity)))))))))))))
 
 (define (compiler-lower-state-observe [state : CompilerLowerState]) : CompilerLowerStateObservation
   (CompilerLowerStateObservation
@@ -970,7 +1076,8 @@
       state
       ci.InternCompatState
       intern-owner)
-    (lower-comptime-error-id-cache-fingerprint state)))
+    (lower-comptime-error-id-cache-fingerprint state)
+    (compiler-lower-checked-pools-state-fingerprint state)))
 
 (define (compiler-lower-state-observation-eq?
   [left : CompilerLowerStateObservation]
@@ -1007,7 +1114,8 @@
     (= left.module-decl-index-positions right.module-decl-index-positions)
     (= left.module-decl-index-arena right.module-decl-index-arena)
     (= left.intern-owner right.intern-owner)
-    (= left.comptime-error-cache right.comptime-error-cache)))
+    (= left.comptime-error-cache right.comptime-error-cache)
+    (= left.checked-pools right.checked-pools)))
 
 (define (lower-active-global-name-cache-current [state : CompilerLowerState]) : LowerNameCache
   (compiler-lower-state-read state LowerNameCache active-global-name-cache))
@@ -1544,187 +1652,255 @@
   (Ok ir.CompilerIrProgram ir.CompilerSourceSpans)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(define lower-checked-dest-pools-active : bool
-  false)
-(define lower-checked-dest-pools-committed : bool
-  false)
-(define lower-checked-dest-pools-context : ast.AstNodePoolContext
-  (ast.ast-node-pool-context-capture-active))
-(define lower-checked-source-release-arena : i64
-  0)
-(define lower-checked-source-release-expr-storage-arena : i64
-  0)
-(define lower-checked-source-release-type-storage-arena : i64
-  0)
-(define lower-checked-frontend-release-arena : i64
-  0)
-(define lower-checked-frontend-released : bool
-  false)
-(define lower-checked-dest-pools-rolled-over : bool
-  false)
-(define lower-checked-dest-pools-deferred : bool
-  false)
-(define lower-checked-dest-pools-deferred-expr-capacity : i64
-  1)
-(define lower-checked-dest-pools-deferred-type-capacity : i64
-  1)
-
 (define (compiler-lower-checked-dest-pools-use!
+  [lower-state : CompilerLowerState]
   [dest-pools : ast.AstNodePoolContext]
   [source-release-arena : i64]
   [source-release-expr-storage-arena : i64]
   [source-release-type-storage-arena : i64]
   [frontend-release-arena : i64]) : unit
-  (begin
-    (set! lower-checked-dest-pools-context dest-pools)
-    (set! lower-checked-source-release-arena source-release-arena)
-    (set!
-      lower-checked-source-release-expr-storage-arena
-      source-release-expr-storage-arena)
-    (set!
-      lower-checked-source-release-type-storage-arena
-      source-release-type-storage-arena)
-    (set! lower-checked-frontend-release-arena frontend-release-arena)
-    (set! lower-checked-frontend-released false)
-    (set! lower-checked-dest-pools-rolled-over false)
-    (set! lower-checked-dest-pools-deferred false)
-    (set! lower-checked-dest-pools-committed false)
-    (set! lower-checked-dest-pools-active true)))
+  (compiler-lower-state-checked-pools-set!
+    lower-state
+    (CompilerLowerCheckedPoolsState
+      true
+      false
+      (CompilerLowerCheckedPoolsContext.Context dest-pools)
+      source-release-arena
+      source-release-expr-storage-arena
+      source-release-type-storage-arena
+      frontend-release-arena
+      false
+      false
+      false
+      0
+      0)))
 
-(define (compiler-lower-checked-dest-pools-clear!) : unit
-  (begin
-    (set! lower-checked-dest-pools-active false)
-    (set! lower-checked-dest-pools-committed false)
-    (set! lower-checked-source-release-arena 0)
-    (set! lower-checked-source-release-expr-storage-arena 0)
-    (set! lower-checked-source-release-type-storage-arena 0)
-    (set! lower-checked-frontend-release-arena 0)
-    (set! lower-checked-frontend-released false)
-    (set! lower-checked-dest-pools-rolled-over false)
-    (set! lower-checked-dest-pools-deferred false)))
+(define (compiler-lower-checked-dest-pools-clear!
+  [lower-state : CompilerLowerState]) : unit
+  (compiler-lower-state-checked-pools-set!
+    lower-state
+    (compiler-lower-checked-pools-state-empty)))
 
-(define (compiler-lower-checked-dest-pools-committed?) : bool
-  lower-checked-dest-pools-committed)
+(define (compiler-lower-checked-dest-pools-active?
+  [lower-state : CompilerLowerState]) : bool
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    handoff.active))
 
-(define (lower-checked-dest-pools-materialize-deferred!) : unit
-  (if lower-checked-dest-pools-deferred
-    (let
-      [dest-arena : i64 (arena.tl_arena_make)]
-      [dest-pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-new-with-capacities-in-arena
-          lower-checked-dest-pools-deferred-expr-capacity
-          lower-checked-dest-pools-deferred-type-capacity
-          dest-arena)]
-      (begin
-        (set! lower-checked-dest-pools-context dest-pools)
-        (set! lower-checked-dest-pools-deferred false)))
-    unit))
+(define (compiler-lower-checked-dest-pools-committed?
+  [lower-state : CompilerLowerState]) : bool
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    handoff.committed))
 
-(define (compiler-lower-checked-dest-pools-current) : ast.AstNodePoolContext
+(define (compiler-lower-checked-frontend-released?
+  [lower-state : CompilerLowerState]) : bool
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    handoff.frontend-released))
+
+(define (compiler-lower-checked-pools-context
+  [handoff : CompilerLowerCheckedPoolsState]) : ast.AstNodePoolContext
+  (match handoff.context
+    [(CompilerLowerCheckedPoolsContext.Context pools) pools]
+    [(CompilerLowerCheckedPoolsContext.NoContext)
+      (io.panic "lower: checked-pool handoff has no active context")]))
+
+(define (compiler-lower-checked-pools-state-inert?
+  [lower-state : CompilerLowerState]) : bool
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    (and
+      (not handoff.active)
+      (not handoff.committed)
+      (match handoff.context
+        [(CompilerLowerCheckedPoolsContext.NoContext) true]
+        [(CompilerLowerCheckedPoolsContext.Context _) false])
+      (= handoff.source-release-arena 0)
+      (= handoff.source-release-expr-storage-arena 0)
+      (= handoff.source-release-type-storage-arena 0)
+      (= handoff.frontend-release-arena 0)
+      (not handoff.frontend-released)
+      (not handoff.rolled-over)
+      (not handoff.deferred)
+      (= handoff.deferred-expr-capacity 0)
+      (= handoff.deferred-type-capacity 0))))
+
+(define (lower-checked-dest-pools-materialize-deferred!
+  [lower-state : CompilerLowerState]) : unit
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    (if handoff.deferred
+      (let
+        [dest-arena : i64 (arena.tl_arena_make)]
+        [dest-pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities-in-arena
+            handoff.deferred-expr-capacity
+            handoff.deferred-type-capacity
+            dest-arena)]
+        (begin
+          (set!
+            handoff.context
+            (CompilerLowerCheckedPoolsContext.Context dest-pools))
+          (set! handoff.deferred false)
+          (compiler-lower-state-checked-pools-set! lower-state handoff)))
+      unit)))
+
+(define (compiler-lower-checked-dest-pools-current
+  [lower-state : CompilerLowerState]) : ast.AstNodePoolContext
   (begin
     ;; The post-macro destination is intentionally absent during the macro
     ;; walk. Materialize it only when the caller is ready to compact, after
     ;; macro-owned scratch generations have already been released.
-    (lower-checked-dest-pools-materialize-deferred!)
-    (lower-global-shared-view lower-checked-dest-pools-context)))
-
-(define (compiler-lower-checked-frontend-released?) : bool
-  lower-checked-frontend-released)
-
-(define (compiler-lower-checked-dest-pools-abort-uncommitted!) : unit
-  (if lower-checked-dest-pools-rolled-over
-    (begin
-      ;; The driver's original destination is the compact macro source after a
-      ;; rollover. Release a materialized second destination here; if expansion
-      ;; failed before demand, it never existed. The driver then releases the
-      ;; original source through its stable owner.
-      (if lower-checked-dest-pools-deferred
-        unit
-        (begin
-          (ast.ast-node-pool-context-destroy-storage!
-            (lower-global-shared-view lower-checked-dest-pools-context))
-          (unsafe
-            (arena.tl_arena_destroy
-              (ast.ast-node-pool-context-base-arena
-                (lower-global-shared-view lower-checked-dest-pools-context))))))
-      (set! lower-checked-dest-pools-rolled-over false)
-      (set! lower-checked-dest-pools-deferred false)
-      (set! lower-checked-dest-pools-active false))
-    unit))
-
-(define (lower-checked-dest-pools-deactivate-after-commit!) : unit
-  (if lower-checked-dest-pools-committed
-    (set! lower-checked-dest-pools-active false)
-    unit))
-
-(define (lower-checked-dest-pools-rollover-for-macro!) : unit
-  (if lower-checked-dest-pools-committed
+    (lower-checked-dest-pools-materialize-deferred! lower-state)
     (let
-      [source-pools : ast.AstNodePoolContext
-        (lower-global-shared-view lower-checked-dest-pools-context)]
-      [source-arena : i64 (ast.ast-node-pool-context-base-arena source-pools)]
-      [expr-capacity : i64
-        (ast.ast-node-pool-context-expr-capacity source-pools)]
-      [type-capacity : i64
-        (ast.ast-node-pool-context-type-capacity source-pools)]
-      [macro-frontend-arena : i64 (arena.tl_arena_make)]
+      [handoff : CompilerLowerCheckedPoolsState
+        (compiler-lower-state-checked-pools lower-state)]
+      [pools : ast.AstNodePoolContext
+        (compiler-lower-checked-pools-context handoff)]
+      (lower-global-shared-view pools))))
+
+(define (compiler-lower-checked-dest-pools-abort-uncommitted!
+  [lower-state : CompilerLowerState]) : unit
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    [macro-frontend-arena : i64
+      (if handoff.rolled-over
+        handoff.frontend-release-arena
+        0)]
+    (begin
+      (if handoff.rolled-over
+        (begin
+          ;; The driver's original destination is the compact macro source after a
+          ;; rollover. Release a materialized second destination here; if expansion
+          ;; failed before demand, it never existed. The driver then releases the
+          ;; original source through its stable owner.
+          (if handoff.deferred
+            unit
+            (let
+              [owned-dest-pools : ast.AstNodePoolContext
+                (compiler-lower-checked-pools-context handoff)]
+              [dest-pools : ast.AstNodePoolContext
+                (lower-global-shared-view owned-dest-pools)]
+              (begin
+                (ast.ast-node-pool-context-destroy-storage! dest-pools)
+                (unsafe
+                  (arena.tl_arena_destroy
+                    (ast.ast-node-pool-context-base-arena dest-pools))))))
+          ;; Rollover cut a fresh arena for macro-owned list spines after the
+          ;; original frontend was retired. Neither the driver nor its stable
+          ;; first destination owns that arena, so abort must release it here.
+          (if (= macro-frontend-arena 0)
+            unit
+            (unsafe
+              (arena.tl_arena_destroy macro-frontend-arena))))
+        unit)
+      ;; Abort is a terminal transition. Remove every borrowed arena/context and
+      ;; capacity even when no rollover occurred; the driver retains ownership
+      ;; of its original destination and releases it separately.
+      (compiler-lower-checked-dest-pools-clear! lower-state))))
+
+(define (lower-checked-dest-pools-deactivate-after-commit!
+  [lower-state : CompilerLowerState]) : unit
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    (if handoff.committed
       (begin
-        ;; The first compact generation is now the macro walk's read/write
-        ;; source. Keep macro-owned lists in a fresh frontend arena. Defer the
-        ;; second compact generation until expansion returns so its empty
-        ;; backing arrays do not overlap the whole macro walk.
-        (set! lower-checked-dest-pools-deferred-expr-capacity expr-capacity)
-        (set! lower-checked-dest-pools-deferred-type-capacity type-capacity)
-        (set! lower-checked-dest-pools-deferred true)
-        (set! lower-checked-source-release-arena source-arena)
-        (set!
-          lower-checked-source-release-expr-storage-arena
-          (ast.ast-node-pool-context-expr-storage-arena source-pools))
-        (set!
-          lower-checked-source-release-type-storage-arena
-          (ast.ast-node-pool-context-type-storage-arena source-pools))
-        (set! lower-checked-frontend-release-arena macro-frontend-arena)
-        ;; The driver's original frontend has already been retired. Preserve
-        ;; that fact so an error between the two compactions restores allocation
-        ;; to the caller arena rather than to the unmapped original frontend.
-        (set! lower-checked-frontend-released true)
-        (set! lower-checked-dest-pools-committed false)
-        (set! lower-checked-dest-pools-rolled-over true)
-        (set! lower-checked-dest-pools-active true)
-        (unsafe
-          (arena.tl_arena_set macro-frontend-arena))))
-    unit))
+        (set! handoff.active false)
+        (compiler-lower-state-checked-pools-set! lower-state handoff))
+      unit)))
+
+(define (lower-checked-dest-pools-rollover-for-macro!
+  [lower-state : CompilerLowerState]) : unit
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    (if handoff.committed
+      (let
+        [owned-source-pools : ast.AstNodePoolContext
+          (compiler-lower-checked-pools-context handoff)]
+        [source-pools : ast.AstNodePoolContext
+          (lower-global-shared-view owned-source-pools)]
+        [source-arena : i64 (ast.ast-node-pool-context-base-arena source-pools)]
+        [expr-capacity : i64
+          (ast.ast-node-pool-context-expr-capacity source-pools)]
+        [type-capacity : i64
+          (ast.ast-node-pool-context-type-capacity source-pools)]
+        [macro-frontend-arena : i64 (arena.tl_arena_make)]
+        (begin
+          ;; The first compact generation is now the macro walk's read/write
+          ;; source. Keep macro-owned lists in a fresh frontend arena. Defer the
+          ;; second compact generation until expansion returns so its empty
+          ;; backing arrays do not overlap the whole macro walk.
+          (set! handoff.deferred-expr-capacity expr-capacity)
+          (set! handoff.deferred-type-capacity type-capacity)
+          (set! handoff.deferred true)
+          (set! handoff.source-release-arena source-arena)
+          (set!
+            handoff.source-release-expr-storage-arena
+            (ast.ast-node-pool-context-expr-storage-arena source-pools))
+          (set!
+            handoff.source-release-type-storage-arena
+            (ast.ast-node-pool-context-type-storage-arena source-pools))
+          (set! handoff.frontend-release-arena macro-frontend-arena)
+          ;; The driver's original frontend has already been retired. Preserve
+          ;; that fact so an error between the two compactions restores allocation
+          ;; to the caller arena rather than to the unmapped original frontend.
+          (set! handoff.frontend-released true)
+          (set! handoff.committed false)
+          (set! handoff.rolled-over true)
+          (set! handoff.active true)
+          (compiler-lower-state-checked-pools-set! lower-state handoff)
+          (unsafe
+            (arena.tl_arena_set macro-frontend-arena))))
+      unit)))
 
 ;; Macro expansion rebuilt only temporary list spines and proved that every
 ;; retained declaration/path/node is still the first compact generation.  Drop
 ;; the macro frontend, cancel the deferred second destination, and make that
 ;; generation the driver's committed result.
 (define (lower-checked-dest-pools-retain-macro-source!
+  [lower-state : CompilerLowerState]
   [source-pools : ast.AstNodePoolContext]) : unit
-  (if (and lower-checked-dest-pools-active lower-checked-dest-pools-rolled-over)
-    (let
-      [macro-frontend-arena : i64 lower-checked-frontend-release-arena]
-      [source-arena : i64 (ast.ast-node-pool-context-base-arena source-pools)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set source-arena))
-        (set! lower-checked-dest-pools-context source-pools)
-        (ast.ast-node-pool-context-install!
-          (lower-global-shared-view lower-checked-dest-pools-context))
-        (if (= macro-frontend-arena 0)
-          unit
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    (if (and handoff.active handoff.rolled-over)
+      (let
+        [macro-frontend-arena : i64 handoff.frontend-release-arena]
+        [source-arena : i64 (ast.ast-node-pool-context-base-arena source-pools)]
+        (begin
           (unsafe
-            (arena.tl_arena_destroy macro-frontend-arena)))
-        (set! lower-checked-source-release-arena 0)
-        (set! lower-checked-source-release-expr-storage-arena 0)
-        (set! lower-checked-source-release-type-storage-arena 0)
-        (set! lower-checked-frontend-release-arena 0)
-        (set! lower-checked-dest-pools-deferred false)
-        (set! lower-checked-dest-pools-rolled-over false)
-        (set! lower-checked-dest-pools-committed true)
-        (set! lower-checked-dest-pools-active false)
-        (set! lower-checked-frontend-released true)))
-    unit))
+            (arena.tl_arena_set source-arena))
+          (set!
+            handoff.context
+            (CompilerLowerCheckedPoolsContext.Context source-pools))
+          (ast.ast-node-pool-context-install!
+            (lower-global-shared-view source-pools))
+          (if (= macro-frontend-arena 0)
+            unit
+            (unsafe
+              (arena.tl_arena_destroy macro-frontend-arena)))
+          (set! handoff.source-release-arena 0)
+          (set! handoff.source-release-expr-storage-arena 0)
+          (set! handoff.source-release-type-storage-arena 0)
+          (set! handoff.frontend-release-arena 0)
+          (set! handoff.deferred false)
+          (set! handoff.deferred-expr-capacity 0)
+          (set! handoff.deferred-type-capacity 0)
+          (set! handoff.rolled-over false)
+          (set! handoff.committed true)
+          (set! handoff.active false)
+          (set! handoff.frontend-released true)
+          (compiler-lower-state-checked-pools-set! lower-state handoff)))
+      unit)))
 
 (define (lower-copy-string-into-pools
   [text : String]
@@ -1816,62 +1992,278 @@
             (arena.tl_arena_current))
           out)))))
 
-(define (lower-checked-dest-pools-commit! [pools : ast.AstNodePoolContext]) : unit
-  (if lower-checked-dest-pools-active
-    (let
-      [old-arena : i64 lower-checked-source-release-arena]
-      [old-expr-storage-arena : i64
-        lower-checked-source-release-expr-storage-arena]
-      [old-type-storage-arena : i64
-        lower-checked-source-release-type-storage-arena]
-      [old-frontend-arena : i64 lower-checked-frontend-release-arena]
-      [dest-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-      [final-expr-state : ast.AstExprNodePoolState
-        (array-ref pools.expr-pool 0)]
-      [final-type-state : ast.AstTypeNodePoolState
-        (array-ref pools.type-pool 0)]
-      (begin
-        (set! lower-checked-dest-pools-committed true)
-        (set! lower-checked-dest-pools-rolled-over false)
-        (set! lower-checked-source-release-arena 0)
-        (set! lower-checked-source-release-expr-storage-arena 0)
-        (set! lower-checked-source-release-type-storage-arena 0)
-        (set! lower-checked-frontend-release-arena 0)
-        (unsafe
-          (arena.tl_arena_set dest-arena))
-        ;; `ast-program-compact-with-pools` and the original destination both
-        ;; carry one-element state arrays allocated in the caller arena. Rebuild
-        ;; the complete context here so its wrapper cells and aggregate shell,
-        ;; not just its large backing pools, survive frontend retirement.
-        (set!
-          lower-checked-dest-pools-context
-          (ast.ast-node-pool-context-new
-            final-expr-state
-            final-type-state
-            dest-arena))
-        (ast.ast-node-pool-context-install!
-          (lower-global-shared-view lower-checked-dest-pools-context))
-        (ast.ast-node-pool-storage-arenas-destroy!
-          old-expr-storage-arena
-          old-type-storage-arena
-          old-arena)
-        (if (= old-arena 0)
-          unit
+(define (lower-checked-dest-pools-commit!
+  [lower-state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]) : unit
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    (if handoff.active
+      (let
+        [old-arena : i64 handoff.source-release-arena]
+        [old-expr-storage-arena : i64 handoff.source-release-expr-storage-arena]
+        [old-type-storage-arena : i64 handoff.source-release-type-storage-arena]
+        [old-frontend-arena : i64 handoff.frontend-release-arena]
+        [dest-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
+        [final-expr-state : ast.AstExprNodePoolState
+          (array-ref pools.expr-pool 0)]
+        [final-type-state : ast.AstTypeNodePoolState
+          (array-ref pools.type-pool 0)]
+        (begin
+          (set! handoff.committed true)
+          (set! handoff.rolled-over false)
+          (set! handoff.source-release-arena 0)
+          (set! handoff.source-release-expr-storage-arena 0)
+          (set! handoff.source-release-type-storage-arena 0)
+          (set! handoff.frontend-release-arena 0)
+          (set! handoff.deferred false)
+          (set! handoff.deferred-expr-capacity 0)
+          (set! handoff.deferred-type-capacity 0)
           (unsafe
-            (arena.tl_arena_destroy old-arena)))
-        ;; Macro expansion has compacted every surviving AST node, path, and
-        ;; string into `pools`, and the cache reset above removed the remaining
-        ;; source-derived globals. Uncached emit jobs can therefore retire the
-        ;; distinct load/macro arena here, before typecheck and lowering grow
-        ;; the checked pools. Cached sessions pass zero and preserve their
-        ;; program-lifetime storage unchanged.
-        (if (= old-frontend-arena 0)
-          unit
-          (begin
+            (arena.tl_arena_set dest-arena))
+          ;; `ast-program-compact-with-pools` and the original destination both
+          ;; carry one-element state arrays allocated in the caller arena. Rebuild
+          ;; the complete context here so its wrapper cells and aggregate shell,
+          ;; not just its large backing pools, survive frontend retirement.
+          (set!
+            handoff.context
+            (CompilerLowerCheckedPoolsContext.Context
+              (ast.ast-node-pool-context-new
+                final-expr-state
+                final-type-state
+                dest-arena)))
+          (let
+            [committed-pools : ast.AstNodePoolContext
+              (compiler-lower-checked-pools-context handoff)]
+            (ast.ast-node-pool-context-install!
+              (lower-global-shared-view committed-pools)))
+          (ast.ast-node-pool-storage-arenas-destroy!
+            old-expr-storage-arena
+            old-type-storage-arena
+            old-arena)
+          (if (= old-arena 0)
+            unit
             (unsafe
-              (arena.tl_arena_destroy old-frontend-arena))
-            (set! lower-checked-frontend-released true)))))
-    unit))
+              (arena.tl_arena_destroy old-arena)))
+          ;; Macro expansion has compacted every surviving AST node, path, and
+          ;; string into `pools`, and the cache reset above removed the remaining
+          ;; source-derived globals. Uncached emit jobs can therefore retire the
+          ;; distinct load/macro arena here, before typecheck and lowering grow
+          ;; the checked pools. Cached sessions pass zero and preserve their
+          ;; program-lifetime storage unchanged.
+          (if (= old-frontend-arena 0)
+            unit
+            (begin
+              (unsafe
+                (arena.tl_arena_destroy old-frontend-arena))
+              (set! handoff.frontend-released true)))
+          (compiler-lower-state-checked-pools-set! lower-state handoff)))
+      unit)))
+
+;; Exercise the complete transition record without owning/destroying the active
+;; test pool. A receives every handoff field, B must remain byte-for-byte stable,
+;; and clear must remove the context and deferred-capacity payload rather than
+;; leaving an inactive pointer into another job's pool generation.
+(define (compiler-lower-checked-pools-state-isolation-ok?) : bool
+  (let
+    [state-a : CompilerLowerState (compiler-lower-state-new)]
+    [state-b : CompilerLowerState (compiler-lower-state-new)]
+    [initial-a : CompilerLowerStateObservation
+      (compiler-lower-state-observe state-a)]
+    [initial-b : CompilerLowerStateObservation
+      (compiler-lower-state-observe state-b)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    (begin
+      (compiler-lower-checked-dest-pools-use! state-a pools 101 102 103 104)
+      (let
+        [armed : CompilerLowerCheckedPoolsState
+          (compiler-lower-state-checked-pools state-a)]
+        [_defer-second-destination : unit
+          (begin
+            (set! armed.frontend-released true)
+            (set! armed.rolled-over true)
+            (set! armed.deferred true)
+            (set! armed.deferred-expr-capacity 105)
+            (set! armed.deferred-type-capacity 106)
+            (compiler-lower-state-checked-pools-set! state-a armed))]
+        [armed-a : CompilerLowerStateObservation
+          (compiler-lower-state-observe state-a)]
+        [untouched-b : CompilerLowerStateObservation
+          (compiler-lower-state-observe state-b)]
+        [armed-ok? : bool
+          (and
+            armed.active
+            (not armed.committed)
+            (match armed.context
+              [(CompilerLowerCheckedPoolsContext.Context observed)
+                (=
+                  (ast.ast-node-pool-context-base-arena observed)
+                  (ast.ast-node-pool-context-base-arena pools))]
+              [(CompilerLowerCheckedPoolsContext.NoContext) false])
+            (= armed.source-release-arena 101)
+            (= armed.source-release-expr-storage-arena 102)
+            (= armed.source-release-type-storage-arena 103)
+            (= armed.frontend-release-arena 104)
+            armed.frontend-released
+            armed.rolled-over
+            armed.deferred
+            (= armed.deferred-expr-capacity 105)
+            (= armed.deferred-type-capacity 106))]
+        (begin
+          (compiler-lower-checked-dest-pools-clear! state-a)
+          (and
+            armed-ok?
+            (not (compiler-lower-state-observation-eq? initial-a armed-a))
+            (compiler-lower-state-observation-eq? initial-b untouched-b)
+            (compiler-lower-state-observation-eq?
+              initial-a
+              (compiler-lower-state-observe state-a))
+            (compiler-lower-checked-pools-state-inert? state-a)
+            (compiler-lower-checked-pools-state-inert? state-b)))))))
+
+(define (compiler-lower-checked-pools-test-arm-committed!
+  [state : CompilerLowerState]
+  [pools : ast.AstNodePoolContext]) : unit
+  (begin
+    (compiler-lower-checked-dest-pools-use! state pools 0 0 0 0)
+    (let
+      [handoff : CompilerLowerCheckedPoolsState
+        (compiler-lower-state-checked-pools state)]
+      (begin
+        (set! handoff.committed true)
+        (compiler-lower-state-checked-pools-set! state handoff)))))
+
+(define (compiler-lower-checked-pools-test-context-destroy!
+  [pools : ast.AstNodePoolContext]
+  [return-arena : i64]) : unit
+  (let
+    [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set return-arena))
+      (ast.ast-node-pool-context-destroy-storage! pools)
+      (unsafe
+        (arena.tl_arena_set return-arena)
+        (arena.tl_arena_destroy base-arena)
+        (arena.tl_arena_set return-arena)))))
+
+;; Abort both sides of deferred materialization with real owned arenas. The
+;; driver-owned first destination is deliberately released by the test after
+;; abort, while abort itself owns the macro frontend and (when present) second
+;; destination. Completing both routes without stale state or double-destroy
+;; validates that ownership split, including the no-materialization failure edge.
+(define (compiler-lower-checked-pools-abort-lifecycle-ok?) : bool
+  (let
+    [return-arena : i64 (arena.tl_arena_current)]
+    [active-pools-before : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [deferred-state : CompilerLowerState (compiler-lower-state-new)]
+    [deferred-base : i64 (arena.tl_arena_make)]
+    [deferred-source : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena 8 2 deferred-base)]
+    [materialized-state : CompilerLowerState (compiler-lower-state-new)]
+    [materialized-base : i64 (arena.tl_arena_make)]
+    [materialized-source : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
+        8
+        2
+        materialized-base)]
+    [retained-state : CompilerLowerState (compiler-lower-state-new)]
+    [retained-base : i64 (arena.tl_arena_make)]
+    [retained-source : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena 8 2 retained-base)]
+    [ok : bool true]
+    (begin
+      (compiler-lower-checked-pools-test-arm-committed!
+        deferred-state
+        deferred-source)
+      (lower-checked-dest-pools-rollover-for-macro! deferred-state)
+      (let
+        [deferred : CompilerLowerCheckedPoolsState
+          (compiler-lower-state-checked-pools deferred-state)]
+        (unless
+          (and
+            deferred.active
+            (not deferred.committed)
+            deferred.rolled-over
+            deferred.deferred
+            (> deferred.frontend-release-arena 0)
+            (=
+              deferred.deferred-expr-capacity
+              (ast.ast-node-pool-context-expr-capacity deferred-source))
+            (=
+              deferred.deferred-type-capacity
+              (ast.ast-node-pool-context-type-capacity deferred-source)))
+          (set! ok false)))
+      (compiler-lower-checked-dest-pools-abort-uncommitted! deferred-state)
+      (unless
+        (compiler-lower-checked-pools-state-inert? deferred-state)
+        (set! ok false))
+      (compiler-lower-checked-pools-test-context-destroy!
+        deferred-source
+        return-arena)
+      (compiler-lower-checked-pools-test-arm-committed!
+        materialized-state
+        materialized-source)
+      (lower-checked-dest-pools-rollover-for-macro! materialized-state)
+      (let
+        [second-destination : ast.AstNodePoolContext
+          (compiler-lower-checked-dest-pools-current materialized-state)]
+        [materialized : CompilerLowerCheckedPoolsState
+          (compiler-lower-state-checked-pools materialized-state)]
+        (unless
+          (and
+            materialized.active
+            (not materialized.committed)
+            materialized.rolled-over
+            (not materialized.deferred)
+            (> materialized.frontend-release-arena 0)
+            (not
+              (=
+                (ast.ast-node-pool-context-base-arena second-destination)
+                materialized-base)))
+          (set! ok false)))
+      (compiler-lower-checked-dest-pools-abort-uncommitted! materialized-state)
+      (unless
+        (compiler-lower-checked-pools-state-inert? materialized-state)
+        (set! ok false))
+      (compiler-lower-checked-pools-test-context-destroy!
+        materialized-source
+        return-arena)
+      (compiler-lower-checked-pools-test-arm-committed!
+        retained-state
+        retained-source)
+      (lower-checked-dest-pools-rollover-for-macro! retained-state)
+      (lower-checked-dest-pools-retain-macro-source!
+        retained-state
+        retained-source)
+      (let
+        [retained : CompilerLowerCheckedPoolsState
+          (compiler-lower-state-checked-pools retained-state)]
+        (unless
+          (and
+            (not retained.active)
+            retained.committed
+            retained.frontend-released
+            (not retained.rolled-over)
+            (not retained.deferred)
+            (= retained.frontend-release-arena 0)
+            (= retained.deferred-expr-capacity 0)
+            (= retained.deferred-type-capacity 0)
+            (=
+              (ast.ast-node-pool-context-base-arena
+                (compiler-lower-checked-pools-context retained))
+              retained-base))
+          (set! ok false)))
+      (compiler-lower-checked-dest-pools-clear! retained-state)
+      (unless
+        (compiler-lower-checked-pools-state-inert? retained-state)
+        (set! ok false))
+      (ast.ast-node-pool-context-install! active-pools-before)
+      (compiler-lower-checked-pools-test-context-destroy!
+        retained-source
+        return-arena)
+      ok)))
 
 (defenum LowerFieldInfo
   (Info i64 ast.AstType))
@@ -7665,7 +8057,8 @@
     (lower-alias-symbol-memo-release! lower-state)
     (lower-reach-scratch-state-reset! lower-state)
     (lower-module-decl-index-reset! lower-state)
-    (lower-comptime-error-ids-reset! lower-state)))
+    (lower-comptime-error-ids-reset! lower-state)
+    (compiler-lower-checked-dest-pools-clear! lower-state)))
 
 (define (compiler-lower-state-reset? [lower-state : CompilerLowerState]) : bool
   (let
@@ -7786,7 +8179,8 @@
       (= (array-length index-ends) 0)
       (= (array-length index-positions) 0)
       (= (compiler-lower-state-read lower-state i64 module-decl-index-arena) 0)
-      (lower-comptime-error-ids-reset? lower-state))))
+      (lower-comptime-error-ids-reset? lower-state)
+      (compiler-lower-checked-pools-state-inert? lower-state))))
 
 (define (lower-reset-file-state!) : unit
   (begin
@@ -67880,13 +68274,15 @@
                       ;; pool compaction releases the reach-program AST.
                       (tc_core.tc-clone-root-collection-use! reach-program)
                       (let
-                        [detach-source? : bool lower-checked-dest-pools-active]
+                        [detach-source? : bool
+                          (compiler-lower-checked-dest-pools-active?
+                            lower-state)]
                         [source-compaction : ast.AstProgramCompaction
                           (if detach-source?
                             (ast.ast-program-compact-with-pools
                               pools
-                              (lower-global-shared-view
-                                lower-checked-dest-pools-context)
+                              (compiler-lower-checked-dest-pools-current
+                                lower-state)
                               specialized)
                             (ast.AstProgramCompaction specialized pools))]
                         [source-program : ast.AstProgram
@@ -67930,7 +68326,9 @@
                               source-pools)
                             unit)]
                         [_commit-dest : unit
-                          (lower-checked-dest-pools-commit! source-pools)]
+                          (lower-checked-dest-pools-commit!
+                            lower-state
+                            source-pools)]
                         [_capture-before-typecheck : unit
                           (ci.intern-compat-state-capture-from-globals!
                             intern-state)]
@@ -68095,12 +68493,13 @@
         (match generated-result
           [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
             (let
-              [detach-before-macro? : bool lower-checked-dest-pools-active]
+              [detach-before-macro? : bool
+                (compiler-lower-checked-dest-pools-active? lower-state)]
               [generated-compaction : ast.AstProgramCompaction
                 (if detach-before-macro?
                   (ast.ast-program-compact-with-pools
                     pools
-                    (compiler-lower-checked-dest-pools-current)
+                    (compiler-lower-checked-dest-pools-current lower-state)
                     generated)
                   (ast.AstProgramCompaction generated pools))]
               [macro-program : ast.AstProgram
@@ -68136,15 +68535,15 @@
                   unit)]
               [_commit-generated-pools : unit
                 (if detach-before-macro?
-                  (lower-checked-dest-pools-commit! macro-pools)
+                  (lower-checked-dest-pools-commit! lower-state macro-pools)
                   unit)]
               [committed-macro-pools : ast.AstNodePoolContext
                 (if detach-before-macro?
-                  (compiler-lower-checked-dest-pools-current)
+                  (compiler-lower-checked-dest-pools-current lower-state)
                   macro-pools)]
               [_arm-post-macro-detach : unit
                 (if detach-before-macro?
-                  (lower-checked-dest-pools-rollover-for-macro!)
+                  (lower-checked-dest-pools-rollover-for-macro! lower-state)
                   unit)]
               [_macro-handoff-profile-finish : unit
                 (cfg
@@ -68179,7 +68578,8 @@
                               committed-macro-pools))
                           (let
                             [checked-detach? : bool
-                              lower-checked-dest-pools-active]
+                              (compiler-lower-checked-dest-pools-active?
+                                lower-state)]
                             [macro-changed? : bool
                               (tc_core.macro-expand-program-structurally-changed?
                                 (tc_core.tc-job-state-macro-state job-state))]
@@ -68214,7 +68614,8 @@
                               (if detach-load-pools?
                                 (ast.ast-program-compact-with-pools
                                   committed-macro-pools
-                                  (compiler-lower-checked-dest-pools-current)
+                                  (compiler-lower-checked-dest-pools-current
+                                    lower-state)
                                   expanded)
                                 (ast.AstProgramCompaction
                                   (if retain-macro-source?
@@ -68258,18 +68659,22 @@
                               (cond
                                 [detach-load-pools?
                                   (lower-checked-dest-pools-commit!
+                                    lower-state
                                     detached-pools)]
                                 [retain-macro-source?
                                   (lower-checked-dest-pools-retain-macro-source!
+                                    lower-state
                                     detached-pools)]
                                 [else unit])]
                             [committed-pools : ast.AstNodePoolContext
                               (if checked-detach?
-                                (compiler-lower-checked-dest-pools-current)
+                                (compiler-lower-checked-dest-pools-current
+                                  lower-state)
                                 detached-pools)]
                             [_disable-late-detach : unit
                               (if checked-detach?
-                                (lower-checked-dest-pools-deactivate-after-commit!)
+                                (lower-checked-dest-pools-deactivate-after-commit!
+                                  lower-state)
                                 unit)]
                             [_finalize-profile-finish : unit
                               (if checked-detach?

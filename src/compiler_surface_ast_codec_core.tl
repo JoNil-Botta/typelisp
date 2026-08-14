@@ -15,6 +15,7 @@
   (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (defstruct SurfaceAstWriteContext
     (valid (__tl_dyn-array bool))
+    (invalid-name (__tl_dyn-array i64))
     (source-identity-count i64)
     (identity-count i64)))
 
@@ -35,14 +36,25 @@
     [identity-count : i64]) : SurfaceAstWriteContext
     (let
       [valid : (__tl_dyn-array bool) (make-array bool 1)]
+      [invalid-name : (__tl_dyn-array i64) (make-array i64 1)]
       (begin
         (set! (array-ref valid 0) true)
-        (SurfaceAstWriteContext valid source-identity-count identity-count)))))
+        (set! (array-ref invalid-name 0) -1)
+        (SurfaceAstWriteContext
+          valid
+          invalid-name
+          source-identity-count
+          identity-count)))))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-valid? [context : SurfaceAstWriteContext]) : bool
     (array-ref context.valid 0)))
+
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
+  (define (surface-ast-write-invalid-name [context : SurfaceAstWriteContext]) : i64
+    (array-ref context.invalid-name 0)))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
@@ -90,7 +102,11 @@
           context.identity-count)]
       (begin
         (if (< portable 0)
-          (surface-ast-write-fail! context)
+          (begin
+            (when
+              (surface-ast-write-valid? context)
+              (set! (array-ref context.invalid-name 0) name))
+            (surface-ast-write-fail! context))
           unit)
         (surface-ast-write-i64! out portable)))))
 

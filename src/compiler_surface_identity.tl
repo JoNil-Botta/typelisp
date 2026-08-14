@@ -177,11 +177,50 @@
         (+ source-count (- (- (ci.intern-capacity) 1) id))]
       [else -2])))
 
-;; Nominal ids can be one intern id or a session-owned structural pair/triple.
-;; Repack table-backed composites, plus the legacy capacity-packed form, with
-;; the image identity count as their portable stride. Hydration reconstructs
-;; the current canonical composite-table identity while preserving one-word AST
-;; name fields in the frontend section.
+(define (surface-identity-portable-triple-end [identity-count : i64]) : i64
+  (let
+    [identity-count2 : i64 (* identity-count identity-count)]
+    (+ identity-count (+ identity-count2 (* identity-count2 identity-count)))))
+
+(define (surface-identity-portable-template-offset [identity-count : i64]) : i64
+  (surface-identity-portable-triple-end identity-count))
+
+(define (surface-identity-portable-macro-global-offset [identity-count : i64]) : i64
+  (+ (surface-identity-portable-template-offset identity-count) identity-count))
+
+(define (surface-identity-portable-macro-local-offset [identity-count : i64]) : i64
+  (+
+    (surface-identity-portable-macro-global-offset identity-count)
+    (* 2 (* (+ identity-count 1) identity-count))))
+
+(define (surface-identity-portable-structural-local-offset
+  [identity-count : i64]) : i64
+  (+
+    (surface-identity-portable-macro-local-offset identity-count)
+    (* (* (+ identity-count 1) identity-count) (* 1024 identity-count))))
+
+(define (surface-identity-structural-local-ordinal-count) : i64
+  (/
+    (- (ci.intern-template-source-base) (ci.intern-structural-local-base))
+    (ci.intern-capacity)))
+
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
+  (define (surface-identity-portable-module-ref
+    [stored-module-id : i64]
+    [source-count : i64]
+    [identity-count : i64]) : i64
+    (if (= stored-module-id 0)
+      identity-count
+      (surface-identity-local-ref (- stored-module-id 1) source-count))))
+
+;; Nominal ids can be one intern id, a session-owned structural pair/triple, or
+;; one of the compiler's syntax-identity families. Repack every component with
+;; the image identity count as its portable stride. The appended ranges preserve
+;; template provenance, macro ownership/depth, and structural-local ordinals;
+;; hydration reconstructs them with the current session stride while retaining
+;; one-word AST name fields in the frontend section. At the maximum 2^17 intern
+;; count the complete portable layout ends below 3.5e18, within signed i64.
 (cfg
   (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-identity-portable-id
@@ -262,6 +301,86 @@
             (if (or (< module-ref 0) (< name-ref 0))
               -2
               (+ identity-count (+ (* module-ref identity-count) name-ref))))]
+        [(ci.intern-template-source-id? id)
+          (let
+            [source-ref : i64
+              (surface-identity-local-ref
+                (ci.intern-template-source-name-id id)
+                source-count)]
+            (if (< source-ref 0)
+              -2
+              (+
+                (surface-identity-portable-template-offset identity-count)
+                source-ref)))]
+        [(ci.intern-macro-global-structural-id? id)
+          (let
+            [raw : i64 (- id (ci.intern-macro-global-structural-base))]
+            [lane : i64 (/ raw session-stride2)]
+            [lane-raw : i64 (% raw session-stride2)]
+            [stored-module-id : i64 (/ lane-raw session-stride)]
+            [module-ref : i64
+              (surface-identity-portable-module-ref
+                stored-module-id
+                source-count
+                identity-count)]
+            [source-ref : i64
+              (surface-identity-local-ref
+                (% lane-raw session-stride)
+                source-count)]
+            (if (or (< module-ref 0) (< source-ref 0))
+              -2
+              (+
+                (surface-identity-portable-macro-global-offset identity-count)
+                (+
+                  (*
+                    (+ (* lane (+ identity-count 1)) module-ref)
+                    identity-count)
+                  source-ref))))]
+        [(ci.intern-macro-local-structural-id? id)
+          (let
+            [raw : i64 (- id (ci.intern-macro-local-structural-base))]
+            [macro-id : i64 (/ raw (* 1024 session-stride))]
+            [macro-raw : i64 (- macro-id (+ session-stride 1))]
+            [stored-module-id : i64 (/ macro-raw session-stride)]
+            [module-ref : i64
+              (surface-identity-portable-module-ref
+                stored-module-id
+                source-count
+                identity-count)]
+            [macro-ref : i64
+              (surface-identity-local-ref
+                (% macro-raw session-stride)
+                source-count)]
+            [depth : i64 (% (/ raw session-stride) 1024)]
+            [source-ref : i64
+              (surface-identity-local-ref (% raw session-stride) source-count)]
+            (if (or
+              (< macro-raw 0)
+              (< module-ref 0)
+              (< macro-ref 0)
+              (< source-ref 0))
+              -2
+              (+
+                (surface-identity-portable-macro-local-offset identity-count)
+                (+
+                  (*
+                    (+
+                      (* (+ (* module-ref identity-count) macro-ref) 1024)
+                      depth)
+                    identity-count)
+                  source-ref))))]
+        [(ci.intern-structural-local-id? id)
+          (let
+            [raw : i64 (- id (ci.intern-structural-local-base))]
+            [ordinal : i64 (/ raw session-stride)]
+            [source-ref : i64
+              (surface-identity-local-ref (% raw session-stride) source-count)]
+            (if (< source-ref 0)
+              -2
+              (+
+                (surface-identity-portable-structural-local-offset
+                  identity-count)
+                (+ (* ordinal identity-count) source-ref))))]
         [else (surface-identity-local-ref id source-count)]))))
 
 (define (surface-identity-resolve-portable-id
@@ -271,10 +390,21 @@
     [image-stride : i64 (array-length remap)]
     [image-stride2 : i64 (* image-stride image-stride)]
     [image-triple-offset : i64 (+ image-stride image-stride2)]
+    [image-triple-end : i64 (surface-identity-portable-triple-end image-stride)]
+    [template-offset : i64
+      (surface-identity-portable-template-offset image-stride)]
+    [macro-global-offset : i64
+      (surface-identity-portable-macro-global-offset image-stride)]
+    [macro-local-offset : i64
+      (surface-identity-portable-macro-local-offset image-stride)]
+    [structural-local-offset : i64
+      (surface-identity-portable-structural-local-offset image-stride)]
+    [structural-local-end : i64
+      (+
+        structural-local-offset
+        (* (surface-identity-structural-local-ordinal-count) image-stride))]
     (cond
-      [(and
-          (>= id image-triple-offset)
-          (< id (+ image-triple-offset (* image-stride2 image-stride))))
+      [(and (>= id image-triple-offset) (< id image-triple-end))
         (let
           [raw : i64 (- id image-triple-offset)]
           [module-ref : i64 (/ raw image-stride2)]
@@ -291,6 +421,73 @@
             (array-ref remap (/ raw image-stride))
             (array-ref remap (% raw image-stride))))]
       [(and (>= id 0) (< id image-stride)) (array-ref remap id)]
+      [(and (>= id template-offset) (< id macro-global-offset))
+        (ci.intern-template-source-id (array-ref remap (- id template-offset)))]
+      [(and (>= id macro-global-offset) (< id macro-local-offset))
+        (let
+          [raw : i64 (- id macro-global-offset)]
+          [source-ref : i64 (% raw image-stride)]
+          [owner : i64 (/ raw image-stride)]
+          [module-ref : i64 (% owner (+ image-stride 1))]
+          [lane : i64 (/ owner (+ image-stride 1))]
+          [mapped-module-id : i64
+            (if (= module-ref image-stride)
+              -1
+              (array-ref remap module-ref))]
+          [stored-module-id : i64
+            (if (= module-ref image-stride)
+              0
+              (if (< mapped-module-id (- (ci.intern-capacity) 1))
+                (+ mapped-module-id 1)
+                -1))]
+          (if (< stored-module-id 0)
+            -1
+            (+
+              (ci.intern-macro-global-structural-base)
+              (+
+                (* lane (* (ci.intern-capacity) (ci.intern-capacity)))
+                (+
+                  (* stored-module-id (ci.intern-capacity))
+                  (array-ref remap source-ref))))))]
+      [(and (>= id macro-local-offset) (< id structural-local-offset))
+        (let
+          [raw : i64 (- id macro-local-offset)]
+          [source-ref : i64 (% raw image-stride)]
+          [depth-and-owner : i64 (/ raw image-stride)]
+          [depth : i64 (% depth-and-owner 1024)]
+          [owner : i64 (/ depth-and-owner 1024)]
+          [macro-ref : i64 (% owner image-stride)]
+          [module-ref : i64 (/ owner image-stride)]
+          [session-stride : i64 (ci.intern-capacity)]
+          [mapped-module-id : i64
+            (if (= module-ref image-stride)
+              -1
+              (array-ref remap module-ref))]
+          [stored-module-id : i64
+            (if (= module-ref image-stride)
+              0
+              (if (< mapped-module-id (- session-stride 1))
+                (+ mapped-module-id 1)
+                -1))]
+          [macro-id : i64
+            (+
+              (+ session-stride 1)
+              (+
+                (* stored-module-id session-stride)
+                (array-ref remap macro-ref)))]
+          (if (< stored-module-id 0)
+            -1
+            (+
+              (ci.intern-macro-local-structural-base)
+              (+
+                (* macro-id (* 1024 session-stride))
+                (+ (* depth session-stride) (array-ref remap source-ref))))))]
+      [(and (>= id structural-local-offset) (< id structural-local-end))
+        (let
+          [raw : i64 (- id structural-local-offset)]
+          (ci.intern-structural-local-id
+            (/ raw image-stride)
+            (array-ref remap (% raw image-stride))))]
       [else -1])))
 
 (define (surface-identity-generated-record-valid?
@@ -719,6 +916,45 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-identity-test-macro-global-id
+    [module-id : i64]
+    [source-name-id : i64]
+    [legacy : bool]) : i64
+    (let
+      [stride : i64 (ci.intern-capacity)]
+      [stored-module-id : i64
+        (if (< module-id 0)
+          0
+          (+ module-id 1))]
+      (+
+        (ci.intern-macro-global-structural-base)
+        (+
+          (if legacy
+            0
+            (* stride stride))
+          (+ (* stored-module-id stride) source-name-id))))))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-identity-test-macro-local-id
+    [module-id : i64]
+    [macro-name-id : i64]
+    [depth : i64]
+    [source-name-id : i64]) : i64
+    (let
+      [stride : i64 (ci.intern-capacity)]
+      [stored-module-id : i64
+        (if (< module-id 0)
+          0
+          (+ module-id 1))]
+      [macro-id : i64
+        (+ (+ stride 1) (+ (* stored-module-id stride) macro-name-id))]
+      (+
+        (ci.intern-macro-local-structural-base)
+        (+ (* macro-id (* 1024 stride)) (+ (* depth stride) source-name-id))))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-identity-test-key) : SurfaceIdentityKey
     (let
       [modules : (__tl_dyn-array String) (make-array String 2)]
@@ -774,10 +1010,40 @@
       [identity-count : i64 (+ source-count (array-length payload.generated))]
       [pair-id : i64 (ci.intern-composite-pair-id module-id base-id)]
       [triple-id : i64 (ci.intern-composite-triple-id module-id base-id alpha)]
+      [template-id : i64 (ci.intern-template-source-id alpha)]
+      [structural-local-id : i64 (ci.intern-structural-local-id 7 alpha)]
+      [macro-global-id : i64
+        (surface-identity-test-macro-global-id module-id alpha false)]
+      [macro-global-root-id : i64
+        (surface-identity-test-macro-global-id -1 base-id true)]
+      [macro-local-id : i64
+        (surface-identity-test-macro-local-id module-id base-id 11 alpha)]
       [portable-pair : i64
         (surface-identity-portable-id pair-id source-count identity-count)]
       [portable-triple : i64
         (surface-identity-portable-id triple-id source-count identity-count)]
+      [portable-template : i64
+        (surface-identity-portable-id template-id source-count identity-count)]
+      [portable-structural-local : i64
+        (surface-identity-portable-id
+          structural-local-id
+          source-count
+          identity-count)]
+      [portable-macro-global : i64
+        (surface-identity-portable-id
+          macro-global-id
+          source-count
+          identity-count)]
+      [portable-macro-global-root : i64
+        (surface-identity-portable-id
+          macro-global-root-id
+          source-count
+          identity-count)]
+      [portable-macro-local : i64
+        (surface-identity-portable-id
+          macro-local-id
+          source-count
+          identity-count)]
       (if (not (= alpha 0))
         false
         (match (surface-identity-encode payload)
@@ -818,6 +1084,41 @@
                             (ci.intern-composite-triple-id
                               mapped-module
                               mapped-base
+                              mapped-alpha))
+                          (=
+                            (surface-identity-resolve-portable-id
+                              portable-template
+                              remap)
+                            (ci.intern-template-source-id mapped-alpha))
+                          (=
+                            (surface-identity-resolve-portable-id
+                              portable-structural-local
+                              remap)
+                            (ci.intern-structural-local-id 7 mapped-alpha))
+                          (=
+                            (surface-identity-resolve-portable-id
+                              portable-macro-global
+                              remap)
+                            (surface-identity-test-macro-global-id
+                              mapped-module
+                              mapped-alpha
+                              false))
+                          (=
+                            (surface-identity-resolve-portable-id
+                              portable-macro-global-root
+                              remap)
+                            (surface-identity-test-macro-global-id
+                              -1
+                              mapped-base
+                              true))
+                          (=
+                            (surface-identity-resolve-portable-id
+                              portable-macro-local
+                              remap)
+                            (surface-identity-test-macro-local-id
+                              mapped-module
+                              mapped-base
+                              11
                               mapped-alpha))
                           (match (surface-identity-decode copy)
                             [(ResultSurfaceIdentityPayload.Err _) false]

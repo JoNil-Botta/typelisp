@@ -33,6 +33,28 @@
   (Ok SurfaceAstHydration)
   (Err String))
 
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
+  (define (surface-ast-invalid-identity-message [name : i64]) : String
+    (cond
+      [(ci.intern-composite-pair-id? name)
+        "surface ast: composite pair contains an identity outside the package table"]
+      [(ci.intern-composite-triple-id? name)
+        "surface ast: composite triple contains an identity outside the package table"]
+      [(ci.intern-template-source-id? name)
+        "surface ast: template-source identity is not portable"]
+      [(ci.intern-structural-local-id? name)
+        "surface ast: structural-local identity is not portable"]
+      [(ci.intern-macro-global-structural-id? name)
+        "surface ast: macro-global structural identity is not portable"]
+      [(ci.intern-macro-local-structural-id? name)
+        "surface ast: macro-local structural identity is not portable"]
+      [(ci.intern-generated-id-active? name)
+        "surface ast: generated identity is outside the captured package table"]
+      [(ci.intern-renderable-id? name)
+        "surface ast: source identity is outside the captured package table"]
+      [else "surface ast: encountered an unknown non-portable identity"])))
+
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
@@ -1440,7 +1462,8 @@
             (if (codec.surface-ast-write-valid? context)
               (ResultSurfaceAstBytes.Ok bytes)
               (ResultSurfaceAstBytes.Err
-                "surface ast: encountered an identity outside the package table"))))))))
+                (surface-ast-invalid-identity-message
+                  (codec.surface-ast-write-invalid-name context))))))))))
 
 (define (surface-ast-decode-pools!
   [reader : codec.SurfaceAstReader]

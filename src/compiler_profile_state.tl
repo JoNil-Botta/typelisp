@@ -69,28 +69,40 @@
     (any compile-profile compile-profile-summary test)
     (let
       [storage : (__tl_dyn-array CompilerProfileStateStorage)
-        (make-array CompilerProfileStateStorage 1)]
+        (__tl_make-array CompilerProfileStateStorage 1)]
       (begin
         (set!
           (array-ref storage 0)
           (CompilerProfileStateStorage
-            (make-array i64 compiler-profile-state-metric-capacity)
-            (make-array i64 compiler-profile-state-summary-row-capacity)
-            (make-array String compiler-profile-state-summary-row-capacity)
-            (make-array i64 compiler-profile-state-summary-row-capacity)
-            (make-array i64 compiler-profile-state-summary-row-capacity)
-            (make-array i64 compiler-profile-state-summary-scope-capacity)
-            (make-array i64 compiler-profile-state-summary-scope-capacity)
-            (make-array i64 compiler-profile-state-summary-scope-capacity)
-            (make-array i64 compiler-profile-state-summary-exact-table-capacity)
-            (make-array i64 compiler-profile-state-summary-exact-scope-capacity)
-            (make-array
+            (__tl_make-array i64 compiler-profile-state-metric-capacity)
+            (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
+            (__tl_make-array String compiler-profile-state-summary-row-capacity)
+            (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
+            (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
+            (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
+            (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
+            (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
+            (__tl_make-array
+              i64
+              compiler-profile-state-summary-exact-table-capacity)
+            (__tl_make-array
+              i64
+              compiler-profile-state-summary-exact-scope-capacity)
+            (__tl_make-array
               String
               compiler-profile-state-summary-exact-row-capacity)
-            (make-array i64 compiler-profile-state-summary-exact-row-capacity)
-            (make-array i64 compiler-profile-state-summary-exact-row-capacity)
-            (make-array i64 compiler-profile-state-summary-exact-row-capacity)
-            (make-array i64 compiler-profile-state-summary-exact-top-capacity)))
+            (__tl_make-array
+              i64
+              compiler-profile-state-summary-exact-row-capacity)
+            (__tl_make-array
+              i64
+              compiler-profile-state-summary-exact-row-capacity)
+            (__tl_make-array
+              i64
+              compiler-profile-state-summary-exact-row-capacity)
+            (__tl_make-array
+              i64
+              compiler-profile-state-summary-exact-top-capacity)))
         (CompilerProfileState storage)))
     (CompilerProfileState 0)))
 

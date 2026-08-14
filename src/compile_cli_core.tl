@@ -87,7 +87,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (CompileCliCfgNames (make-array String cap) 0)))
+    (CompileCliCfgNames (__tl_make-array String cap) 0)))
 
 (define (compile-cli-cfg-names-empty) : CompileCliCfgNames
   (compile-cli-cfg-names-with-capacity 4))
@@ -112,7 +112,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array String) (make-array String new-cap)]
+    [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
     (begin
       (compile-cli-cfg-names-copy-range! (&mut bigger) (& names.slots) 0 count)
       (set! names.slots bigger))))

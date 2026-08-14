@@ -27,7 +27,7 @@
   (len i64))
 
 (define (fmt-render-buf-new) : FmtRenderBuf
-  (FmtRenderBuf (make-array u8 1024) 0))
+  (FmtRenderBuf (__tl_make-array u8 1024) 0))
 
 (define (fmt-render-buf-reserve [buf : (&mut buf FmtRenderBuf)] [needed : i64]) : unit
   (let
@@ -41,7 +41,7 @@
           (while (< newcap needed)
             (set! newcap (* newcap 2)))
           (let
-            [bigger : (__tl_dyn-array u8) (make-array u8 newcap)]
+            [bigger : (__tl_dyn-array u8) (__tl_make-array u8 newcap)]
             [n : i64 buf.len]
             (begin
               (if (> n 0)

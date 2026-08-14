@@ -1184,7 +1184,7 @@
     [else (ResultTlciHostAbi.Ok)]))
 
 (define (tlci-empty-bytes) : (__tl_dyn-array u8)
-  (make-array u8 0))
+  (__tl_make-array u8 0))
 
 (define (tlci-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
@@ -1277,7 +1277,7 @@
     [count-word : i64 (tlci-align-offset (+ code-len names-len) 8)]
     [table-offset : i64 (+ count-word 8)]
     [total : i64 (+ table-offset (* count tlci-macro-entry-record-size))]
-    [out : (__tl_dyn-array u8) (make-array u8 total)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
     [index : i64 0]
     [name-cursor : i64 code-len]
     (begin
@@ -1308,7 +1308,8 @@
 (define (tlci-native-package-entries [input : TlciNativePackageInput]) : (__tl_dyn-array
     u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 tlci-section-entry-record-size)]
+    [out : (__tl_dyn-array u8)
+      (__tl_make-array u8 tlci-section-entry-record-size)]
     (begin
       (tlci-set-u64! out 0 0)
       (tlci-set-u64!
@@ -1320,14 +1321,15 @@
 
 (define (tlci-native-package-symbols) : (__tl_dyn-array u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 tlci-section-symbol-record-size)]
+    [out : (__tl_dyn-array u8)
+      (__tl_make-array u8 tlci-section-symbol-record-size)]
     (begin
       (tlci-put-string! out 0 (string.copy (& tlci-macro-table-symbol)))
       out)))
 
 (define (tlci-native-package-fixups [input : TlciNativePackageInput]) : (__tl_dyn-array
     u8)
-  (make-array
+  (__tl_make-array
     u8
     (*
       (+ input.layout-fixup-count (* input.macro-count 2))
@@ -1534,7 +1536,7 @@
   [offset : i64]
   [len : i64]) : String
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 len)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 len)]
     [i : i64 0]
     (begin
       (while (< i len)
@@ -1549,7 +1551,7 @@
   [offset : i64]
   [len : i64]) : (__tl_dyn-array u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 len)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 len)]
     [i : i64 0]
     (begin
       (while (< i len)
@@ -1813,7 +1815,7 @@
 
 (define (tlci-package-source-binding-section [digest : i64]) : TlciAuxSection
   (let
-    [payload : (__tl_dyn-array u8) (make-array u8 8)]
+    [payload : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     (begin
       (tlci-set-u64! payload 0 digest)
       (TlciAuxSection
@@ -3475,7 +3477,7 @@
     [name-len : i64 (tlci-string-length name)]
     [name-offset : i64
       (+ tlci-section-import-header-size tlci-section-import-record-size)]
-    [out : (__tl_dyn-array u8) (make-array u8 (+ name-offset name-len))]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ name-offset name-len))]
     (begin
       (tlci-set-u64! out 0 1)
       (tlci-set-u64! out tlci-section-import-header-size 8)
@@ -3724,8 +3726,8 @@
           0
           0
           1
-          (make-array "fuel-check")
-          (make-array 0)
+          (__tl_make-array "fuel-check")
+          (__tl_make-array 0)
           1))
       "tlci host ABI: host callback registry address must be nonzero")
     (tlci-test-host-abi-rejects?
@@ -3739,8 +3741,8 @@
           0
           0
           1
-          (make-array "fuel-check" "fuel-check")
-          (make-array 1 2)
+          (__tl_make-array "fuel-check" "fuel-check")
+          (__tl_make-array 1 2)
           2))
       "tlci host ABI: duplicate host callback registry name")
     (tlci-test-host-abi-rejects?
@@ -4500,10 +4502,10 @@
     [sections : (__tl_dyn-array TlciAuxSection)
       (array.make-array TlciAuxSection 1)]
     [unsupported : (__tl_dyn-array u8) (tlci-string->bytes "future")]
-    [short : (__tl_dyn-array u8) (make-array u8 7)]
-    [zero : (__tl_dyn-array u8) (make-array u8 8)]
-    [negative : (__tl_dyn-array u8) (make-array u8 8)]
-    [limit : (__tl_dyn-array u8) (make-array u8 8)]
+    [short : (__tl_dyn-array u8) (__tl_make-array u8 7)]
+    [zero : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+    [negative : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+    [limit : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     (begin
       (set! (array-ref sections 0) (tlci-package-source-binding-section 12345))
       (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)

@@ -722,11 +722,11 @@
       (array.make-array String compiler-tlci-native-import-cap)]
     [import-offsets : (__tl_dyn-array i64)
       (array.make-array i64 compiler-tlci-native-import-cap)]
-    [import-count : (__tl_dyn-array i64) (make-array 0)]
-    [error : (__tl_dyn-array String) (make-array "")]
+    [import-count : (__tl_dyn-array i64) (__tl_make-array 0)]
+    [error : (__tl_dyn-array String) (__tl_make-array "")]
     [fixup-offsets : (__tl_dyn-array i64)
       (array.make-array i64 compiler-tlci-native-fixup-cap)]
-    [fixup-count : (__tl_dyn-array i64) (make-array 0)]
+    [fixup-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [builder : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity bss-base)]
     (begin

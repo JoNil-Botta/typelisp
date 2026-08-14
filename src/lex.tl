@@ -1096,8 +1096,8 @@
 (define (result [src : String]) : ResultTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
-    [toks : (__tl_dyn-array token.Token) (make-array token.Token cap)]
-    [starts : (__tl_dyn-array i64) (make-array i64 cap)]
+    [toks : (__tl_dyn-array token.Token) (__tl_make-array token.Token cap)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     (match (into-spanned-result src toks starts)
       [(ResultLexIntoSpanned.Ok _) (ResultTokens.Ok toks)]
       [(ResultLexIntoSpanned.Err err)
@@ -1173,7 +1173,7 @@
 ;; may retire that arena outright with `spanned-token-buffer-release!`; the next
 ;; scan simply grows a fresh one from zero.
 (define lex-spanned-token-buffer : (__tl_dyn-array token.SpannedToken)
-  (make-array token.SpannedToken 0))
+  (__tl_make-array token.SpannedToken 0))
 (define lex-spanned-token-buffer-arena : i64
   0)
 
@@ -1183,7 +1183,7 @@
 ;; live storage after the dedicated growth arena has been unmapped, and the
 ;; next `spanned-token-buffer-ensure!` grows from zero into a fresh arena.
 (define lex-spanned-token-buffer-released : (__tl_dyn-array token.SpannedToken)
-  (make-array token.SpannedToken 0))
+  (__tl_make-array token.SpannedToken 0))
 
 (define (spanned-token-buffer-arena-handle-value) : i64
   lex-spanned-token-buffer-arena)
@@ -1215,7 +1215,7 @@
       (unsafe
         (arena.tl_arena_set storage-root))]
     [new-buffer : (__tl_dyn-array token.SpannedToken)
-      (make-array
+      (__tl_make-array
         token.SpannedToken
         (spanned-token-buffer-next-capacity required))]
     [new-storage-arena : i64 (arena.tl_arena_current)]

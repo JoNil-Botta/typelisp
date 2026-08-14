@@ -74,7 +74,7 @@
   (len i64))
 
 (define (compiler-diagnostic-list-with-capacity [capacity : i64]) : CompilerDiagnosticList
-  (CompilerDiagnosticList (make-array CompilerDiagnostic capacity) 0))
+  (CompilerDiagnosticList (__tl_make-array CompilerDiagnostic capacity) 0))
 
 (define (compiler-diagnostic-list-empty) : CompilerDiagnosticList
   (compiler-diagnostic-list-with-capacity 0))
@@ -126,7 +126,7 @@
         4
         (* old-capacity 2))]
     [new-slots : (__tl_dyn-array CompilerDiagnostic)
-      (make-array CompilerDiagnostic new-capacity)]
+      (__tl_make-array CompilerDiagnostic new-capacity)]
     (begin
       (compiler-diagnostic-list-copy-range!
         (&mut new-slots)
@@ -349,7 +349,7 @@
     help
     secondary
     notes
-    (CompilerDiagnosticFixSeq (make-array CompilerDiagnosticFix 0) 0)))
+    (CompilerDiagnosticFixSeq (__tl_make-array CompilerDiagnosticFix 0) 0)))
 
 (define (compiler-diagnostic-copy-maybe-string
   [value : CompilerDiagnosticMaybeString]) : CompilerDiagnosticMaybeString
@@ -367,7 +367,7 @@
     span.end-col))
 
 (define (compiler-diagnostic-label-list-empty) : CompilerDiagnosticLabelList
-  (CompilerDiagnosticLabelList (make-array CompilerDiagnosticLabel 0) 0))
+  (CompilerDiagnosticLabelList (__tl_make-array CompilerDiagnosticLabel 0) 0))
 
 (define (compiler-diagnostic-label-list-count
   [labels : CompilerDiagnosticLabelList]) : i64
@@ -387,7 +387,7 @@
     [count : i64 labels.len]
     [src : (__tl_dyn-array CompilerDiagnosticLabel) labels.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticLabel)
-      (make-array CompilerDiagnosticLabel (+ count 1))]
+      (__tl_make-array CompilerDiagnosticLabel (+ count 1))]
     [index : i64 0]
     (begin
       (set! (array-ref dst 0) label)
@@ -403,7 +403,7 @@
     [count : i64 labels.len]
     [src : (__tl_dyn-array CompilerDiagnosticLabel) labels.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticLabel)
-      (make-array CompilerDiagnosticLabel count)]
+      (__tl_make-array CompilerDiagnosticLabel count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -419,7 +419,7 @@
       (CompilerDiagnosticLabelList dst count))))
 
 (define (compiler-diagnostic-note-list-empty) : CompilerDiagnosticNoteList
-  (CompilerDiagnosticNoteList (make-array String 0) 0))
+  (CompilerDiagnosticNoteList (__tl_make-array String 0) 0))
 
 (define (compiler-diagnostic-note-list-count
   [notes : CompilerDiagnosticNoteList]) : i64
@@ -437,7 +437,7 @@
   (let
     [count : i64 notes.len]
     [src : (__tl_dyn-array String) notes.slots]
-    [dst : (__tl_dyn-array String) (make-array String (+ count 1))]
+    [dst : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
     [index : i64 0]
     (begin
       (set! (array-ref dst 0) note)
@@ -452,7 +452,7 @@
   (let
     [count : i64 notes.len]
     [src : (__tl_dyn-array String) notes.slots]
-    [dst : (__tl_dyn-array String) (make-array String count)]
+    [dst : (__tl_dyn-array String) (__tl_make-array String count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -472,7 +472,7 @@
     [count : i64 edits.len]
     [src : (__tl_dyn-array CompilerDiagnosticTextEdit) edits.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticTextEdit)
-      (make-array CompilerDiagnosticTextEdit count)]
+      (__tl_make-array CompilerDiagnosticTextEdit count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -494,7 +494,7 @@
     [count : i64 fixes.len]
     [src : (__tl_dyn-array CompilerDiagnosticFix) fixes.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
-      (make-array CompilerDiagnosticFix count)]
+      (__tl_make-array CompilerDiagnosticFix count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -678,7 +678,7 @@
     [count : i64 edits.len]
     [src : (__tl_dyn-array CompilerDiagnosticTextEdit) edits.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticTextEdit)
-      (make-array CompilerDiagnosticTextEdit count)]
+      (__tl_make-array CompilerDiagnosticTextEdit count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -696,7 +696,7 @@
     [count : i64 fixes.len]
     [src : (__tl_dyn-array CompilerDiagnosticFix) fixes.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
-      (make-array CompilerDiagnosticFix count)]
+      (__tl_make-array CompilerDiagnosticFix count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -990,7 +990,7 @@
   [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
   (let
     [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)
-      (make-array CompilerDiagnosticTextEdit 1)]
+      (__tl_make-array CompilerDiagnosticTextEdit 1)]
     (begin
       (set! (array-ref slots 0) edit)
       (CompilerDiagnosticTextEditSeq slots 1))))
@@ -1010,7 +1010,7 @@
     [count : i64 fixes.len]
     [src : (__tl_dyn-array CompilerDiagnosticFix) fixes.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
-      (make-array CompilerDiagnosticFix (+ count 1))]
+      (__tl_make-array CompilerDiagnosticFix (+ count 1))]
     [index : i64 0]
     (begin
       (set! (array-ref dst 0) fix)

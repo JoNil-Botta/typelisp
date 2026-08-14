@@ -836,7 +836,7 @@
 
 (define (selfhost-lint-unsafe-surface-names-empty) : SelfhostLintUnsafeSurfaceNames
   (SelfhostLintUnsafeSurfaceNames
-    (make-array SelfhostLintUnsafeSurfaceName 8)
+    (__tl_make-array SelfhostLintUnsafeSurfaceName 8)
     0))
 
 (define (selfhost-lint-unsafe-surface-names-add
@@ -851,7 +851,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array SelfhostLintUnsafeSurfaceName)
-            (make-array SelfhostLintUnsafeSurfaceName (* n 2))]
+            (__tl_make-array SelfhostLintUnsafeSurfaceName (* n 2))]
           (begin
             (while (< index n)
               (begin
@@ -876,7 +876,7 @@
 
 (define (selfhost-lint-unsafe-surface-cache-empty) : SelfhostLintUnsafeSurfaceCache
   (SelfhostLintUnsafeSurfaceCache
-    (make-array SelfhostLintUnsafeSurfaceCacheEntry 8)
+    (__tl_make-array SelfhostLintUnsafeSurfaceCacheEntry 8)
     0))
 
 (define selfhost-lint-unsafe-surface-cache : SelfhostLintUnsafeSurfaceCache
@@ -1031,7 +1031,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array SelfhostLintUnsafeSurfaceCacheEntry)
-            (make-array SelfhostLintUnsafeSurfaceCacheEntry (* n 2))]
+            (__tl_make-array SelfhostLintUnsafeSurfaceCacheEntry (* n 2))]
           (begin
             (while (< index n)
               (begin
@@ -1621,7 +1621,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (SelfhostLintDeadDecls (make-array SelfhostLintDeadDecl cap) 0)))
+    (SelfhostLintDeadDecls (__tl_make-array SelfhostLintDeadDecl cap) 0)))
 
 (define (selfhost-lint-dead-decls-empty) : SelfhostLintDeadDecls
   (selfhost-lint-dead-decls-with-capacity 8))
@@ -1641,7 +1641,7 @@
   (let
     [n : i64 (selfhost-lint-dead-decls-count items)]
     [bigger : (__tl_dyn-array SelfhostLintDeadDecl)
-      (make-array
+      (__tl_make-array
         SelfhostLintDeadDecl
         (* (selfhost-lint-dead-decls-capacity items) 2))]
     (begin

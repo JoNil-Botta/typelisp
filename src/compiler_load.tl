@@ -542,9 +542,9 @@
 
 (define (compiler-load-dependency-catalog-registry-new) : CompilerLoadDependencyCatalogRegistry
   (CompilerLoadDependencyCatalogRegistry
-    (make-array 0)
-    (make-array (compiler-load-dependency-catalog-empty-list))
-    (make-array 0)))
+    (__tl_make-array 0)
+    (__tl_make-array (compiler-load-dependency-catalog-empty-list))
+    (__tl_make-array 0)))
 
 ;; Loader cache and traversal data is owned by an explicit session state. The
 ;; no-argument compatibility helpers below are serial/test-only adapters over
@@ -593,7 +593,7 @@
 
 (define (compiler-load-session-state-bool-cell [value : bool]) : (__tl_dyn-array
     bool)
-  (make-array value))
+  (__tl_make-array value))
 
 (define (compiler-load-session-state-flags-new) : (__tl_dyn-array bool)
   ;; Slot 0 is cache-enabled; slot 1 records embedded-stdlib source use; slot 2
@@ -608,7 +608,7 @@
 
 (define (compiler-load-session-state-i64-cell [value : i64]) : (__tl_dyn-array
     i64)
-  (make-array value))
+  (__tl_make-array value))
 
 (define (compiler-load-lazy-qualified-observer-stack-empty) : CompilerLoadLazyQualifiedObserverStack
   (CompilerLoadLazyQualifiedObserverStack
@@ -653,7 +653,7 @@
     [member-sets : (__tl_dyn-array sym_i64_env.SymI64Env)
       (array.make-array sym_i64_env.SymI64Env 2)]
     [stack : (__tl_dyn-array CompilerLoadLazyQualifiedObserverStack)
-      (make-array (compiler-load-lazy-qualified-observer-stack-empty))]
+      (__tl_make-array (compiler-load-lazy-qualified-observer-stack-empty))]
     (begin
       (set! (array-ref member-sets 0) (sym_i64_env.sym-i64-empty))
       (set! (array-ref member-sets 1) (sym_i64_env.sym-i64-empty))
@@ -672,7 +672,7 @@
   [standalone-reset-safe : bool]) : CompilerLoadSessionState
   (let
     [surface-summaries : (__tl_dyn-array CompilerLoadSurfaceSummaryList)
-      (make-array (compiler-load-surface-summary-list-empty))]
+      (__tl_make-array (compiler-load-surface-summary-list-empty))]
     [surface-summary-load-depth : (__tl_dyn-array i64)
       (compiler-load-session-state-i64-cell 0)]
     [lazy-import-skip-record-count : (__tl_dyn-array i64)
@@ -685,18 +685,18 @@
       (compiler-load-session-state-i64-cell 0)
       (compiler-load-session-state-i64-cell 0)
       (compiler-load-session-state-i64-cell 0)
-      (make-array CompilerLoadProgramCacheSlot 256)
-      (make-array CompilerLoadProgramAdmissionSlot 256)
+      (__tl_make-array CompilerLoadProgramCacheSlot 256)
+      (__tl_make-array CompilerLoadProgramAdmissionSlot 256)
       (compiler-load-session-state-bool-cell false)
       (compiler-load-session-state-bool-cell false)
       (compiler-load-session-state-i64-cell 0)
       (compiler-load-session-state-i64-cell 0)
       (compiler-load-session-state-i64-cell 0)
-      (make-array CompilerLoadPreludeCacheSlot 16)
+      (__tl_make-array CompilerLoadPreludeCacheSlot 16)
       (compiler-load-session-state-bool-cell false)
-      (make-array bool compiler-load-dotted-path-cache-capacity)
-      (make-array i64 compiler-load-dotted-path-cache-capacity)
-      (make-array String compiler-load-dotted-path-cache-capacity)
+      (__tl_make-array bool compiler-load-dotted-path-cache-capacity)
+      (__tl_make-array i64 compiler-load-dotted-path-cache-capacity)
+      (__tl_make-array String compiler-load-dotted-path-cache-capacity)
       (compiler-load-session-state-i64-cell 0)
       surface-summaries
       surface-summary-load-depth
@@ -1039,7 +1039,7 @@
 
 (define compiler-load-default-session-state : (__tl_dyn-array
     CompilerLoadSessionState)
-  (make-array (compiler-load-standalone-session-state-new)))
+  (__tl_make-array (compiler-load-standalone-session-state-new)))
 
 ;; Serial/test compatibility selector. Production call sites are migrated to
 ;; explicit state APIs incrementally; do not add new compile-job dependencies.
@@ -12119,7 +12119,7 @@
 
 (define (compiler-load-binary-fixture) : String
   (let
-    [bytes : (__tl_dyn-array u8) (make-array u8 6)]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 6)]
     (begin
       (set! (array-ref bytes 0) (cast 0 : u8))
       (set! (array-ref bytes 1) (cast 65 : u8))
@@ -17154,7 +17154,7 @@
     [state : CompilerLoadSessionState (compiler-load-session-state-new)]
     [other-state : CompilerLoadSessionState (compiler-load-session-state-new)]
     [owner : i64 (compiler-load-dependency-catalog-owner-arena-ensure! state)]
-    [checks : (__tl_dyn-array bool) (make-array false)]
+    [checks : (__tl_dyn-array bool) (__tl_make-array false)]
     (begin
       (in-arena
         (arena.Arena owner)

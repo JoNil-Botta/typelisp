@@ -35,8 +35,8 @@
     [source-identity-count : i64]
     [identity-count : i64]) : SurfaceAstWriteContext
     (let
-      [valid : (__tl_dyn-array bool) (make-array bool 1)]
-      [invalid-name : (__tl_dyn-array i64) (make-array i64 1)]
+      [valid : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+      [invalid-name : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       (begin
         (set! (array-ref valid 0) true)
         (set! (array-ref invalid-name 0) -1)
@@ -125,9 +125,9 @@
   [bytes : (__tl_dyn-array u8)]
   [identity-remap : (__tl_dyn-array i64)]) : SurfaceAstReader
   (let
-    [offset : (__tl_dyn-array i64) (make-array i64 1)]
-    [valid : (__tl_dyn-array bool) (make-array bool 1)]
-    [message : (__tl_dyn-array String) (make-array String 1)]
+    [offset : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [valid : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+    [message : (__tl_dyn-array String) (__tl_make-array String 1)]
     (begin
       (set! (array-ref offset 0) 0)
       (set! (array-ref valid 0) true)
@@ -257,7 +257,7 @@
 (define (surface-ast-read-lifetime-list! [reader : SurfaceAstReader]) : ast.AstLifetimeList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -284,7 +284,7 @@
 (define (surface-ast-read-type-list! [reader : SurfaceAstReader]) : ast.AstTypeList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)

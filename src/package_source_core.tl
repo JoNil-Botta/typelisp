@@ -956,7 +956,7 @@
     [payload : (__tl_dyn-array u8)]) : (__tl_dyn-array u8)
     (let
       [sections : (__tl_dyn-array tlci.TlciAuxSection)
-        (make-array tlci.TlciAuxSection 1)]
+        (__tl_make-array tlci.TlciAuxSection 1)]
       (begin
         (set!
           (array-ref sections 0)
@@ -975,7 +975,7 @@
     (package-source-binding-test-pack
       tlci.tlci-package-source-binding-schema-version
       (let
-        [payload : (__tl_dyn-array u8) (make-array u8 8)]
+        [payload : (__tl_dyn-array u8) (__tl_make-array u8 8)]
         (begin
           (tlci.tlci-set-u64! payload 0 digest)
           payload)))))
@@ -1086,7 +1086,7 @@
               source-set
               (package-source-binding-test-pack
                 tlci.tlci-package-source-binding-schema-version
-                (make-array u8 7)))
+                (__tl_make-array u8 7)))
               [(PackageSourceBindingVerification.Malformed _) unit]
               [_
                 (io.panic "package-source: malformed binding admission failed")])

@@ -71,7 +71,7 @@
           (set! index (+ index 1))))
       (let
         [modules : (__tl_dyn-array String)
-          (make-array
+          (__tl_make-array
             String
             (if (= count 0)
               1
@@ -119,7 +119,7 @@
       (let
         [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [count : i64 (ast.ast-decl-list-len (& decls))]
-        [slots : (__tl_dyn-array i64) (make-array i64 count)]
+        [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [module-id : i64 cbi.compiler-builtin-id-fix-empty]
         [index : i64 0]
         (begin
@@ -292,7 +292,7 @@
   [source-digest : i64]) : tlci.ResultTlciAuxBytes
   (let
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
-      (make-array tlci.TlciAuxSection 4)]
+      (__tl_make-array tlci.TlciAuxSection 4)]
     (begin
       (set!
         (array-ref sections 0)

@@ -72,7 +72,7 @@
 (cfg
   (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
-    (make-array u8 0)))
+    (__tl_make-array u8 0)))
 
 (define (surface-identity-string-eq? [left : String] [right : String]) : bool
   (let
@@ -529,9 +529,9 @@
 
 (define (surface-identity-reader-new [bytes : (__tl_dyn-array u8)]) : SurfaceIdentityReader
   (let
-    [offset : (__tl_dyn-array i64) (make-array i64 1)]
-    [ok : (__tl_dyn-array bool) (make-array bool 1)]
-    [message : (__tl_dyn-array String) (make-array String 1)]
+    [offset : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ok : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+    [message : (__tl_dyn-array String) (__tl_make-array String 1)]
     (begin
       (set! (array-ref offset 0) 0)
       (set! (array-ref ok 0) true)
@@ -603,11 +603,12 @@
         [source-hash : String (surface-identity-reader-string! reader)]
         [compiler-build : String (surface-identity-reader-string! reader)]
         [configuration : String (surface-identity-reader-string! reader)]
-        [modules : (__tl_dyn-array String) (make-array String module-count)]
+        [modules : (__tl_dyn-array String)
+          (__tl_make-array String module-count)]
         [source-names : (__tl_dyn-array String)
-          (make-array String source-count)]
+          (__tl_make-array String source-count)]
         [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
-          (make-array SurfaceGeneratedIdentity generated-count)]
+          (__tl_make-array SurfaceGeneratedIdentity generated-count)]
         [index : i64 0]
         (begin
           (while (and (array-ref reader.ok 0) (< index module-count))
@@ -723,7 +724,7 @@
           payload.generated]
         [source-count : i64 (array-length source-names)]
         [remap : (__tl_dyn-array i64)
-          (make-array i64 (+ source-count (array-length generated)))]
+          (__tl_make-array i64 (+ source-count (array-length generated)))]
         [index : i64 0]
         (begin
           (while (< index source-count)
@@ -825,9 +826,10 @@
     (let
       [source-count : i64 (ci.intern-pool-len)]
       [generated-count : i64 (ci.intern-generated-count)]
-      [source-names : (__tl_dyn-array String) (make-array String source-count)]
+      [source-names : (__tl_dyn-array String)
+        (__tl_make-array String source-count)]
       [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
-        (make-array SurfaceGeneratedIdentity generated-count)]
+        (__tl_make-array SurfaceGeneratedIdentity generated-count)]
       [index : i64 0]
       (begin
         (while (< index source-count)
@@ -957,7 +959,7 @@
   compiler-surface-selftest
   (define (surface-identity-test-key) : SurfaceIdentityKey
     (let
-      [modules : (__tl_dyn-array String) (make-array String 2)]
+      [modules : (__tl_dyn-array String) (__tl_make-array String 2)]
       (begin
         (set! (array-ref modules 0) "pkg/a.tl")
         (set! (array-ref modules 1) "pkg/b.tl")

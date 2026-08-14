@@ -476,7 +476,7 @@
     [module-has : bool false]
     [pending-doc : String ""]
     [pending-has : bool false]
-    [items : (__tl_dyn-array DocItem) (make-array DocItem 0)]
+    [items : (__tl_dyn-array DocItem) (__tl_make-array DocItem 0)]
     (begin
       (while (< i n)
         (let
@@ -536,7 +536,7 @@
                       (if pending-has
                         (match (doc-decl-info signature)
                           [(DocDeclInfo kind name)
-                            (array-push!
+                            (__tl_array-push!
                               items
                               (DocItem.Item kind name pending-doc signature))]
                           [(DocMaybeDeclInfo.No) unit])

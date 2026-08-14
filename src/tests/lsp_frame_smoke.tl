@@ -1458,7 +1458,7 @@
   [third : cdiag.CompilerDiagnosticTextEdit]) : cdiag.CompilerDiagnosticTextEditSeq
   (let
     [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit)
-      (make-array cdiag.CompilerDiagnosticTextEdit 3)]
+      (__tl_make-array cdiag.CompilerDiagnosticTextEdit 3)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)
@@ -1564,7 +1564,7 @@
         0
         span)]
     [slots : (__tl_dyn-array lint_core.LintFinding)
-      (make-array lint_core.LintFinding 2)]
+      (__tl_make-array lint_core.LintFinding 2)]
     [request-range : json.Json
       (lsp_frame_core.lsp-json-object2
         "start"

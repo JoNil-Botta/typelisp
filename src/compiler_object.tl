@@ -141,7 +141,7 @@
 
 (define (compiler-object-data-record-builder-with-capacity [capacity : i64]) : CompilerObjectDataRecordBuilder
   (CompilerObjectDataRecordBuilder
-    (make-array
+    (__tl_make-array
       CompilerObjectDataRecord
       (compiler-object-builder-capacity capacity))
     0))
@@ -151,7 +151,7 @@
 
 (define (compiler-object-instr-builder-with-capacity [capacity : i64]) : CompilerObjectX64InstrBuilder
   (CompilerObjectX64InstrBuilder
-    (make-array
+    (__tl_make-array
       CompilerObjectX64Instr
       (compiler-object-builder-capacity capacity))
     0))
@@ -161,7 +161,7 @@
 
 (define (compiler-object-symbol-builder-with-capacity [capacity : i64]) : CompilerObjectSymbolBuilder
   (CompilerObjectSymbolBuilder
-    (make-array
+    (__tl_make-array
       CompilerObjectSymbol
       (compiler-object-builder-capacity capacity))
     0))
@@ -171,7 +171,7 @@
 
 (define (compiler-object-relocation-builder-with-capacity [capacity : i64]) : CompilerObjectRelocationBuilder
   (CompilerObjectRelocationBuilder
-    (make-array
+    (__tl_make-array
       CompilerObjectRelocation
       (compiler-object-builder-capacity capacity))
     0))
@@ -181,7 +181,7 @@
 
 (define (compiler-object-section-builder-with-capacity [capacity : i64]) : CompilerObjectSectionBuilder
   (CompilerObjectSectionBuilder
-    (make-array
+    (__tl_make-array
       CompilerObjectSection
       (compiler-object-builder-capacity capacity))
     0))
@@ -247,7 +247,7 @@
     [count : i64 builder.count]
     [slots : (__tl_dyn-array CompilerObjectDataRecord) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectDataRecord)
-      (make-array CompilerObjectDataRecord (* (array-length slots) 2))]
+      (__tl_make-array CompilerObjectDataRecord (* (array-length slots) 2))]
     (begin
       (compiler-object-data-record-builder-copy-range! bigger slots count)
       (CompilerObjectDataRecordBuilder bigger count))))
@@ -258,7 +258,7 @@
     [count : i64 builder.count]
     [slots : (__tl_dyn-array CompilerObjectX64Instr) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectX64Instr)
-      (make-array CompilerObjectX64Instr (* (array-length slots) 2))]
+      (__tl_make-array CompilerObjectX64Instr (* (array-length slots) 2))]
     (begin
       (compiler-object-instr-builder-copy-range! bigger slots count)
       (CompilerObjectX64InstrBuilder bigger count))))
@@ -269,7 +269,7 @@
     [count : i64 builder.count]
     [slots : (__tl_dyn-array CompilerObjectSymbol) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectSymbol)
-      (make-array CompilerObjectSymbol (* (array-length slots) 2))]
+      (__tl_make-array CompilerObjectSymbol (* (array-length slots) 2))]
     (begin
       (compiler-object-symbol-builder-copy-range! bigger slots count)
       (CompilerObjectSymbolBuilder bigger count))))
@@ -280,7 +280,7 @@
     [count : i64 builder.count]
     [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectRelocation)
-      (make-array CompilerObjectRelocation (* (array-length slots) 2))]
+      (__tl_make-array CompilerObjectRelocation (* (array-length slots) 2))]
     (begin
       (compiler-object-relocation-builder-copy-range! bigger slots count)
       (CompilerObjectRelocationBuilder bigger count))))
@@ -291,7 +291,7 @@
     [count : i64 builder.count]
     [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectSection)
-      (make-array CompilerObjectSection (* (array-length slots) 2))]
+      (__tl_make-array CompilerObjectSection (* (array-length slots) 2))]
     (begin
       (compiler-object-section-builder-copy-range! bigger slots count)
       (CompilerObjectSectionBuilder bigger count))))
@@ -584,8 +584,12 @@
     [result : CompilerObjectSection
       (CompilerObjectSection.Section
         kind
-        (CompilerObjectDataRecordList (make-array CompilerObjectDataRecord 0) 0)
-        (CompilerObjectX64InstrList (make-array CompilerObjectX64Instr 0) 0))]
+        (CompilerObjectDataRecordList
+          (__tl_make-array CompilerObjectDataRecord 0)
+          0)
+        (CompilerObjectX64InstrList
+          (__tl_make-array CompilerObjectX64Instr 0)
+          0))]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))

@@ -336,7 +336,7 @@ Summary:
     tlci-inspect-source-binding-shapes
     (let
       [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
-        (make-array tlci_core.TlciAuxSection 1)]
+        (__tl_make-array tlci_core.TlciAuxSection 1)]
       [bound : String ""]
       [unsupported : String ""]
       [malformed : String ""]
@@ -374,7 +374,7 @@ Summary:
           (tlci_core.TlciAuxSection
             tlci_core.tlci-aux-kind-package-source-binding
             tlci_core.tlci-package-source-binding-schema-version
-            (make-array u8 7)))
+            (__tl_make-array u8 7)))
         (match (tlci_core.tlci-aux-pack-rodata
           (tlci_core.tlci-empty-bytes)
           sections)
@@ -400,7 +400,7 @@ Summary:
     tlci-inspect-surface-shapes
     (let
       [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
-        (make-array tlci_core.TlciAuxSection 3)]
+        (__tl_make-array tlci_core.TlciAuxSection 3)]
       (begin
         (set!
           (array-ref sections 0)

@@ -55,7 +55,7 @@
   (Err tokens.FormatSourceError))
 
 (define (format-cst-vec-new) : FormatCstVec
-  (FormatCstVec (make-array FormatCst 4) 0))
+  (FormatCstVec (__tl_make-array FormatCst 4) 0))
 
 (define (format-cst-vec-copy-range!
   [dst : (&mut dst (__tl_dyn-array FormatCst))]
@@ -76,7 +76,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array FormatCst) (make-array FormatCst new-cap)]
+    [bigger : (__tl_dyn-array FormatCst) (__tl_make-array FormatCst new-cap)]
     (begin
       (format-cst-vec-copy-range! (&mut bigger) (& v.slots) 0 count)
       (set! v.slots bigger))))
@@ -93,7 +93,7 @@
         (set! v.len (+ index 1))))))
 
 (define (fmt-cst-list-nil) : FormatCstList
-  (FormatCstList (make-array FormatCst 0) 0 0))
+  (FormatCstList (__tl_make-array FormatCst 0) 0 0))
 
 (define (fmt-cst-list-from-vec [items : FormatCstVec]) : FormatCstList
   (FormatCstList items.slots 0 items.len))

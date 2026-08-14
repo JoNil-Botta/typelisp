@@ -143,7 +143,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstMacroParam)
-      (make-array ast.AstMacroParam count)]
+      (__tl_make-array ast.AstMacroParam count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -210,7 +210,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstFieldDef)
-      (make-array ast.AstFieldDef count)]
+      (__tl_make-array ast.AstFieldDef count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -331,7 +331,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstExternLinkInput)
-      (make-array ast.AstExternLinkInput count)]
+      (__tl_make-array ast.AstExternLinkInput count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -392,7 +392,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstSpmdParamClass)
-      (make-array ast.AstSpmdParamClass count)]
+      (__tl_make-array ast.AstSpmdParamClass count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -457,7 +457,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstSpmdSpecialization)
-      (make-array ast.AstSpmdSpecialization count)]
+      (__tl_make-array ast.AstSpmdSpecialization count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -539,7 +539,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstImportedSpmdSpecialization)
-      (make-array ast.AstImportedSpmdSpecialization count)]
+      (__tl_make-array ast.AstImportedSpmdSpecialization count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -585,7 +585,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstImportedSpmdCallable)
-      (make-array ast.AstImportedSpmdCallable count)]
+      (__tl_make-array ast.AstImportedSpmdCallable count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -718,7 +718,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstVariantDef)
-      (make-array ast.AstVariantDef count)]
+      (__tl_make-array ast.AstVariantDef count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -727,7 +727,7 @@
           [fields : ast.AstTypeList (codec.surface-ast-read-type-list! reader)]
           [cleanup-count : i64 (codec.surface-ast-read-count! reader)]
           [cleanup-slots : (__tl_dyn-array ast.AstVariantPayloadCleanup)
-            (make-array ast.AstVariantPayloadCleanup cleanup-count)]
+            (__tl_make-array ast.AstVariantPayloadCleanup cleanup-count)]
           [cleanup-index : i64 0]
           (begin
             (while (< cleanup-index cleanup-count)
@@ -908,7 +908,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstDispatchVariant)
-      (make-array ast.AstDispatchVariant count)]
+      (__tl_make-array ast.AstDispatchVariant count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1234,7 +1234,7 @@
 (define (surface-ast-read-decl-list! [reader : codec.SurfaceAstReader]) : ast.AstDeclList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array ast.AstDecl) (make-array ast.AstDecl count)]
+    [slots : (__tl_dyn-array ast.AstDecl) (__tl_make-array ast.AstDecl count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1288,8 +1288,8 @@
 (define (surface-ast-read-paths! [reader : codec.SurfaceAstReader]) : ast.AstDeclPathList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array String) (make-array String count)]
-    [owners : (__tl_dyn-array i64) (make-array i64 (* count 2))]
+    [slots : (__tl_dyn-array String) (__tl_make-array String count)]
+    [owners : (__tl_dyn-array i64) (__tl_make-array i64 (* count 2))]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1324,7 +1324,7 @@
 (define (surface-ast-read-modules! [reader : codec.SurfaceAstReader]) : ast.AstDeclModuleList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1673,7 +1673,7 @@
             left
             (ast.ast-tuple-set-field-id-from-index 3)
             right))]
-      [body-items : (__tl_dyn-array i64) (make-array i64 2)]
+      [body-items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       [combined-body : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
@@ -1681,14 +1681,15 @@
       [macro-type-kinds : ast.AstMacroTypeKindList
         (ast.ast-macro-type-kind-list-with-length 3)]
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
-        (make-array ast.AstMacroParam 1)]
+        (__tl_make-array ast.AstMacroParam 1)]
       [view-param-slots : (__tl_dyn-array ast.AstParam)
-        (make-array ast.AstParam 1)]
-      [decl-slots : (__tl_dyn-array ast.AstDecl) (make-array ast.AstDecl 2)]
-      [path-slots : (__tl_dyn-array String) (make-array String 2)]
-      [owner-slots : (__tl_dyn-array i64) (make-array i64 4)]
-      [module-slots : (__tl_dyn-array i64) (make-array i64 2)]
-      [key-modules : (__tl_dyn-array String) (make-array String 1)]
+        (__tl_make-array ast.AstParam 1)]
+      [decl-slots : (__tl_dyn-array ast.AstDecl)
+        (__tl_make-array ast.AstDecl 2)]
+      [path-slots : (__tl_dyn-array String) (__tl_make-array String 2)]
+      [owner-slots : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [module-slots : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+      [key-modules : (__tl_dyn-array String) (__tl_make-array String 1)]
       (begin
         (set! (array-ref body-items 0) body)
         (set! (array-ref body-items 1) tuple-set)

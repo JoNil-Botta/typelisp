@@ -835,7 +835,7 @@
                         [private-name : String (tltest-private-name test-count)]
                         [private-id : i64
                           (ci.intern-generated-name private-name)]
-                        (array-push!
+                        (__tl_array-push!
                           test-items
                           (InlineTest.Case
                             (ci.intern-str name)
@@ -889,7 +889,7 @@
     paths
     (ast.ast-decl-list-new)
     (ast.ast-decl-path-list-new)
-    (make-array InlineTest 0)))
+    (__tl_make-array InlineTest 0)))
 
 (define (tltest-list-line [test : InlineTest]) : String
   (match test
@@ -2494,8 +2494,8 @@
 (define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
   (let
     [count : i64 (tltest-cfg-env-count cfgs)]
-    [slots : (__tl_dyn-array String) (make-array String count)]
-    [values : (__tl_dyn-array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String count)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (begin
       (tltest-cfg-names-fill! cfgs slots values 0)
       (TltestCfgNames slots values count))))

@@ -65,7 +65,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (SourceToolCfgNames (make-array String cap) 0)))
+    (SourceToolCfgNames (__tl_make-array String cap) 0)))
 
 (define (source-tool-cfg-names-empty) : SourceToolCfgNames
   (source-tool-cfg-names-with-capacity 4))
@@ -90,7 +90,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array String) (make-array String new-cap)]
+    [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
     (begin
       (source-tool-cfg-names-copy-range! (&mut bigger) (& names.slots) 0 count)
       (set! names.slots bigger))))

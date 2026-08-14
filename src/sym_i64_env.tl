@@ -29,7 +29,7 @@
 
 (define (sym-i64-store-new) : SymI64Store
   (let
-    [slots : (__tl_dyn-array SymI64Binding) (make-array SymI64Binding 8)]
+    [slots : (__tl_dyn-array SymI64Binding) (__tl_make-array SymI64Binding 8)]
     [owner : i64 (arena.tl_arena_current)]
     (SymI64Store slots 0 owner)))
 
@@ -53,7 +53,7 @@
       (arena.Arena owner)
       (let
         [bigger : (__tl_dyn-array SymI64Binding)
-          (make-array
+          (__tl_make-array
             SymI64Binding
             (if (< capacity 1)
               8

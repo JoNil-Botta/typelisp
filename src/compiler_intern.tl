@@ -614,23 +614,23 @@
     [else (cast (intern-macro-prefix-class-none) : u8)]))
 
 (define intern-pool-slots : (__tl_dyn-array String)
-  (make-array String (intern-capacity)))
+  (__tl_make-array String (intern-capacity)))
 (define intern-pool-qualified-slots : (__tl_dyn-array bool)
-  (make-array bool (intern-capacity)))
+  (__tl_make-array bool (intern-capacity)))
 (define intern-pool-last-slash-slots : (__tl_dyn-array i32)
-  (make-array i32 (intern-capacity)))
+  (__tl_make-array i32 (intern-capacity)))
 (define intern-pool-first-dot-slots : (__tl_dyn-array i32)
-  (make-array i32 (intern-capacity)))
+  (__tl_make-array i32 (intern-capacity)))
 (define intern-pool-leading-dot-id-slots : (__tl_dyn-array InternSlotId)
-  (make-array InternSlotId (intern-capacity)))
+  (__tl_make-array InternSlotId (intern-capacity)))
 (define intern-pool-dotted-prefix-id-slots : (__tl_dyn-array InternSlotId)
-  (make-array InternSlotId (intern-capacity)))
+  (__tl_make-array InternSlotId (intern-capacity)))
 (define intern-pool-module-id-slots : (__tl_dyn-array InternSlotId)
-  (make-array InternSlotId (intern-capacity)))
+  (__tl_make-array InternSlotId (intern-capacity)))
 (define intern-pool-base-id-slots : (__tl_dyn-array InternSlotId)
-  (make-array InternSlotId (intern-capacity)))
+  (__tl_make-array InternSlotId (intern-capacity)))
 (define intern-pool-macro-prefix-class-slots : (__tl_dyn-array u8)
-  (make-array u8 (intern-capacity)))
+  (__tl_make-array u8 (intern-capacity)))
 (define intern-pool-count : i64
   0)
 (define intern-generated-next-id : i64
@@ -723,14 +723,14 @@
 (define (intern-structural-table-new) : InternStructuralTable
   (InternStructuralTable
     (intern-structural-owner-allocate!)
-    (make-array u8 256)
-    (make-array i64 256)
-    (make-array i64 256)
-    (make-array i64 256)
-    (make-array String 256)
-    (make-array InternSlotId 256)
-    (make-array i64 512)
-    (make-array i64 (intern-structural-cache-capacity))
+    (__tl_make-array u8 256)
+    (__tl_make-array i64 256)
+    (__tl_make-array i64 256)
+    (__tl_make-array i64 256)
+    (__tl_make-array String 256)
+    (__tl_make-array InternSlotId 256)
+    (__tl_make-array i64 512)
+    (__tl_make-array i64 (intern-structural-cache-capacity))
     0))
 
 (define (intern-structural-table-cell-new-in-arena [arena : i64]) : (__tl_dyn-array
@@ -745,7 +745,7 @@
         (begin
           (unsafe
             (tl_arena_set previous-arena))
-          (make-array table))))))
+          (__tl_make-array table))))))
 
 (define intern-persistent-arena : i64
   (tl_arena_make))
@@ -897,14 +897,14 @@
       (unsafe
         (tl_arena_set arena))
       (let
-        [next-kinds : (__tl_dyn-array u8) (make-array u8 new-capacity)]
-        [next-lefts : (__tl_dyn-array i64) (make-array i64 new-capacity)]
-        [next-middles : (__tl_dyn-array i64) (make-array i64 new-capacity)]
-        [next-rights : (__tl_dyn-array i64) (make-array i64 new-capacity)]
+        [next-kinds : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
+        [next-lefts : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
+        [next-middles : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
+        [next-rights : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
         [next-rendered-names : (__tl_dyn-array String)
-          (make-array String new-capacity)]
+          (__tl_make-array String new-capacity)]
         [next-generated-symbol-handles : (__tl_dyn-array InternSlotId)
-          (make-array InternSlotId new-capacity)]
+          (__tl_make-array InternSlotId new-capacity)]
         (begin
           (unsafe
             (tl_arena_set previous-arena))
@@ -955,7 +955,7 @@
       (unsafe
         (tl_arena_set arena))
       (let
-        [next-slots : (__tl_dyn-array i64) (make-array i64 new-capacity)]
+        [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
         (begin
           (unsafe
             (tl_arena_set previous-arena))
@@ -1081,9 +1081,9 @@
 ;; each spelling, so the hash table needs only identity and hash lanes rather
 ;; than a second String-bearing enum table.
 (define intern-map-id-slots : (__tl_dyn-array InternSlotId)
-  (make-array InternSlotId (intern-capacity)))
+  (__tl_make-array InternSlotId (intern-capacity)))
 (define intern-map-hash-slots : (__tl_dyn-array i64)
-  (make-array i64 (intern-capacity)))
+  (__tl_make-array i64 (intern-capacity)))
 
 ;; Sized with the pool: every generated id is a pool id, so a compile that fills
 ;; the generated lane must still find a free bucket here rather than exhaust the
@@ -1091,9 +1091,9 @@
 (define intern-generated-map-capacity : i64
   131072)
 (define intern-generated-map-id-slots : (__tl_dyn-array InternSlotId)
-  (make-array InternSlotId intern-generated-map-capacity))
+  (__tl_make-array InternSlotId intern-generated-map-capacity))
 (define intern-generated-map-hash-slots : (__tl_dyn-array i64)
-  (make-array i64 intern-generated-map-capacity))
+  (__tl_make-array i64 intern-generated-map-capacity))
 (define intern-map-ready : bool
   false)
 (define intern-reset-generation : i64
@@ -1169,14 +1169,14 @@
 
 (define (intern-compat-state-new) : InternCompatState
   (let
-    [table-id : (__tl_dyn-array i64) (make-array i64 1)]
-    [pool-count : (__tl_dyn-array i64) (make-array i64 1)]
-    [generated-next-id : (__tl_dyn-array i64) (make-array i64 1)]
-    [map-ready : (__tl_dyn-array bool) (make-array bool 1)]
-    [reset-generation : (__tl_dyn-array i64) (make-array i64 1)]
+    [table-id : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [pool-count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [generated-next-id : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [map-ready : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+    [reset-generation : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [persistent-arena-handle : i64 (tl_arena_make)]
-    [persistent-arena : (__tl_dyn-array i64) (make-array i64 1)]
-    [persistent-arena-floor-mark : (__tl_dyn-array i64) (make-array i64 1)]
+    [persistent-arena : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [persistent-arena-floor-mark : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [structural-table-cell : (__tl_dyn-array InternStructuralTable)
       (intern-structural-table-cell-new-in-arena persistent-arena-handle)]
     (begin
@@ -1189,21 +1189,21 @@
       (set! (array-ref persistent-arena-floor-mark 0) 0)
       (InternCompatState
         table-id
-        (make-array String (intern-capacity))
-        (make-array bool (intern-capacity))
-        (make-array i32 (intern-capacity))
-        (make-array i32 (intern-capacity))
-        (make-array InternSlotId (intern-capacity))
-        (make-array InternSlotId (intern-capacity))
-        (make-array InternSlotId (intern-capacity))
-        (make-array InternSlotId (intern-capacity))
-        (make-array u8 (intern-capacity))
+        (__tl_make-array String (intern-capacity))
+        (__tl_make-array bool (intern-capacity))
+        (__tl_make-array i32 (intern-capacity))
+        (__tl_make-array i32 (intern-capacity))
+        (__tl_make-array InternSlotId (intern-capacity))
+        (__tl_make-array InternSlotId (intern-capacity))
+        (__tl_make-array InternSlotId (intern-capacity))
+        (__tl_make-array InternSlotId (intern-capacity))
+        (__tl_make-array u8 (intern-capacity))
         pool-count
         generated-next-id
-        (make-array InternSlotId (intern-capacity))
-        (make-array i64 (intern-capacity))
-        (make-array InternSlotId intern-generated-map-capacity)
-        (make-array i64 intern-generated-map-capacity)
+        (__tl_make-array InternSlotId (intern-capacity))
+        (__tl_make-array i64 (intern-capacity))
+        (__tl_make-array InternSlotId intern-generated-map-capacity)
+        (__tl_make-array i64 intern-generated-map-capacity)
         map-ready
         reset-generation
         persistent-arena
@@ -1218,13 +1218,13 @@
 ;; scalar cells and `intern-compat-state-install!` then republishes those cells.
 (define (intern-compat-state-capture-active) : InternCompatState
   (let
-    [table-id : (__tl_dyn-array i64) (make-array i64 1)]
-    [pool-count : (__tl_dyn-array i64) (make-array i64 1)]
-    [generated-next-id : (__tl_dyn-array i64) (make-array i64 1)]
-    [map-ready : (__tl_dyn-array bool) (make-array bool 1)]
-    [reset-generation : (__tl_dyn-array i64) (make-array i64 1)]
-    [persistent-arena : (__tl_dyn-array i64) (make-array i64 1)]
-    [persistent-arena-floor-mark : (__tl_dyn-array i64) (make-array i64 1)]
+    [table-id : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [pool-count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [generated-next-id : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [map-ready : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+    [reset-generation : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [persistent-arena : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [persistent-arena-floor-mark : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref table-id 0) intern-active-table-id-value)
       (set! (array-ref pool-count 0) intern-pool-count)
@@ -1835,15 +1835,15 @@
 (cfg
   compile-profile
   (define intern-profile-generated-role-create-counts : (__tl_dyn-array i64)
-    (make-array i64 9)))
+    (__tl_make-array i64 9)))
 (cfg
   compile-profile
   (define intern-profile-generated-role-reuse-counts : (__tl_dyn-array i64)
-    (make-array i64 9)))
+    (__tl_make-array i64 9)))
 (cfg
   compile-profile
   (define intern-profile-generated-role-render-counts : (__tl_dyn-array i64)
-    (make-array i64 9)))
+    (__tl_make-array i64 9)))
 
 (cfg
   compile-profile
@@ -2100,7 +2100,7 @@
 
 (define (intern-substring [text : String] [start : i64] [len : i64]) : String
   (let
-    [buf : (__tl_dyn-array u8) (make-array u8 len)]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 len)]
     [src : (Ptr u8)
       (unsafe
         (string-data (& text)))]
@@ -3775,7 +3775,7 @@
         (tl_arena_set intern-persistent-arena))
       (let
         [cell : (__tl_dyn-array InternSourceNameSession)
-          (make-array InternSourceNameSession 1)]
+          (__tl_make-array InternSourceNameSession 1)]
         (begin
           (set! (array-ref cell 0) session)
           (unsafe
@@ -3794,7 +3794,7 @@
   ;; a persistent-arena allocation for every explicit compile job.
   (let
     [cell : (__tl_dyn-array InternSourceNameSession)
-      (make-array InternSourceNameSession 1)]
+      (__tl_make-array InternSourceNameSession 1)]
     (begin
       (set! (array-ref cell 0) (intern-source-name-session-from-state state))
       (InternSourceNameSessionHandle
@@ -4536,7 +4536,7 @@
   [max-iterations : i64]) : String
   (let
     [source-length : i64 (+ chunk-size max-iterations)]
-    [buf : (__tl_dyn-array u8) (make-array u8 source-length)]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 source-length)]
     [i : i64 0]
     (begin
       (while (< i source-length)

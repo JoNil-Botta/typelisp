@@ -282,7 +282,7 @@
 ;; class table once per process and test membership with an inline array lookup.
 ;; Bit 0 = whitespace, bit 1 = digit, bit 2 = symbol char, bit 3 = hex digit.
 (define fmt-char-class-table : (__tl_dyn-array i64)
-  (make-array i64 256))
+  (__tl_make-array i64 256))
 (define fmt-char-class-ready : bool
   false)
 
@@ -644,7 +644,7 @@
   [count : i64]
   [newcap : i64]) : (__tl_dyn-array FormatToken)
   (let
-    [bigger : (__tl_dyn-array FormatToken) (make-array FormatToken newcap)]
+    [bigger : (__tl_dyn-array FormatToken) (__tl_make-array FormatToken newcap)]
     [j : i64 0]
     (begin
       (while (< j count)
@@ -658,7 +658,7 @@
   [count : i64]
   [newcap : i64]) : (__tl_dyn-array i64)
   (let
-    [bigger : (__tl_dyn-array i64) (make-array i64 newcap)]
+    [bigger : (__tl_dyn-array i64) (__tl_make-array i64 newcap)]
     [j : i64 0]
     (begin
       (while (< j count)
@@ -679,8 +679,8 @@
       (unsafe
         (string-data (& src)))]
     [cap : i64 (fmt-token-capacity-estimate n)]
-    [tokens : (__tl_dyn-array FormatToken) (make-array FormatToken cap)]
-    [starts : (__tl_dyn-array i64) (make-array i64 cap)]
+    [tokens : (__tl_dyn-array FormatToken) (__tl_make-array FormatToken cap)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     [i : i64 0]
     [count : i64 0]
     (begin

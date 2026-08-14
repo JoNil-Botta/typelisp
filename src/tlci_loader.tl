@@ -128,7 +128,7 @@
 ;: happened to be current when it was mapped, even one nothing dereferences.
 ;: Registration replaces the slots it actually uses with owner-arena storage.
 (define tlci-loader-no-retained-storage : (__tl_dyn-array i64)
-  (make-array i64 0))
+  (__tl_make-array i64 0))
 
 (define (tlci-loader-section-contains-slot?
   [slot-offset : i64]
@@ -429,7 +429,7 @@
 ;; cannot inherit an owner by omission; the arity is the enforcement.
 (define (tlci-loader-alloc-i64-array-in-arena [owner-arena : i64] [count : i64]) : (__tl_dyn-array
     i64)
-  (in-arena (arena.Arena owner-arena) (make-array i64 count)))
+  (in-arena (arena.Arena owner-arena) (__tl_make-array i64 count)))
 
 (define (tlci-loader-host-table-storage
   [owner-arena : i64]
@@ -657,11 +657,11 @@
     entry-count
     symbol-count
     0
-    (make-array i64 0)
-    (make-array i64 0)
-    (make-array i64 0)
-    (make-array i64 0)
-    (make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
     0))
 
 (define (tlci-loader-loaded-image-with-registration
@@ -693,11 +693,11 @@
     loaded.entry-count
     loaded.symbol-count
     0
-    (make-array i64 0)
-    (make-array i64 0)
-    (make-array i64 0)
-    (make-array i64 0)
-    (make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
     0))
 
 (define (tlci-loader-registration-status-error [status : i64]) : String
@@ -749,11 +749,11 @@
         loaded.entry-count
         loaded.symbol-count
         0
-        (make-array i64 0)
-        (make-array i64 0)
-        (make-array i64 0)
-        (make-array i64 0)
-        (make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
         0)]
     (match (tlci-loader-index-macro-entries installed)
       [(ResultTlciLoadedImage.Err message)
@@ -1289,11 +1289,11 @@
   (let
     [count : i64 loaded.macro-entry-count]
     [slots : (__tl_dyn-array i64)
-      (make-array i64 (tlci-loader-macro-index-capacity count))]
-    [name-addrs : (__tl_dyn-array i64) (make-array i64 count)]
-    [name-lens : (__tl_dyn-array i64) (make-array i64 count)]
-    [function-addrs : (__tl_dyn-array i64) (make-array i64 count)]
-    [entry-states : (__tl_dyn-array i64) (make-array i64 count)]
+      (__tl_make-array i64 (tlci-loader-macro-index-capacity count))]
+    [name-addrs : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [name-lens : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [function-addrs : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [entry-states : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [failed : bool false]
     [message : String ""]
@@ -1344,11 +1344,11 @@
           (tlci-loader-loaded-image-with-macro-index
             loaded
             (tlci-loader-macro-index-generation-next!)
-            (make-array i64 0)
-            (make-array i64 0)
-            (make-array i64 0)
-            (make-array i64 0)
-            (make-array i64 0)
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0)
             0))]
       [(not (= (% table 8) 0))
         (ResultTlciLoadedImage.Err
@@ -1514,7 +1514,7 @@
   [operands : (__tl_dyn-array i64)]
   [initial-result : i64]) : ResultTlciMacroDispatch
   (let
-    [result-storage : (__tl_dyn-array i64) (make-array initial-result)]
+    [result-storage : (__tl_dyn-array i64) (__tl_make-array initial-result)]
     [operand-count : i64 (array-length operands)]
     [operands-addr : i64
       (if (= operand-count 0)
@@ -1618,8 +1618,8 @@
       true
       true
       (+ base 96)
-      (make-array i64 0)
-      (make-array i64 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
       0
       0
       0
@@ -1633,11 +1633,11 @@
       0
       0
       0
-      (make-array i64 0)
-      (make-array i64 0)
-      (make-array i64 0)
-      (make-array i64 0)
-      (make-array i64 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
       0)))
 
 (define (tlci-loader-test-write-macro-entry!
@@ -1673,7 +1673,7 @@
 
 (define (tlci-loader-test-macro-entry-validation-ok?) : bool
   (let
-    [storage : (__tl_dyn-array u8) (make-array u8 128)]
+    [storage : (__tl_dyn-array u8) (__tl_make-array u8 128)]
     [base : i64 (tlci-loader-u8-array-addr storage)]
     (begin
       (tlci-loader-test-put-string! storage 64 "dup")
@@ -1764,7 +1764,7 @@
 
 (define (tlci-loader-test-macro-entry-index-state-ok?) : bool
   (let
-    [storage : (__tl_dyn-array u8) (make-array u8 128)]
+    [storage : (__tl_dyn-array u8) (__tl_make-array u8 128)]
     [base : i64 (tlci-loader-u8-array-addr storage)]
     (begin
       (tlci-loader-test-put-string! storage 64 "one")
@@ -1853,7 +1853,7 @@
 (define (tlci-loader-test-u64-record [value : i64]) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8)
-      (make-array u8 tlci.tlci-section-fixup-record-size)]
+      (__tl_make-array u8 tlci.tlci-section-fixup-record-size)]
     (begin
       (tlci.tlci-set-u64! out 0 value)
       out)))
@@ -1864,7 +1864,7 @@
   [code-offset : i64]) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8)
-      (make-array u8 tlci.tlci-section-entry-record-size)]
+      (__tl_make-array u8 tlci.tlci-section-entry-record-size)]
     (begin
       (tlci.tlci-set-u64! out tlci-loader-entry-name-offset name-offset)
       (tlci.tlci-set-u64! out tlci-loader-entry-name-len-offset name-len)
@@ -1874,7 +1874,7 @@
 (define (tlci-loader-test-symbol-bytes) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8)
-      (make-array u8 tlci.tlci-section-symbol-record-size)]
+      (__tl_make-array u8 tlci.tlci-section-symbol-record-size)]
     (begin
       (tlci-loader-test-put-string!
         out
@@ -1893,7 +1893,7 @@
   [reg-disp-modrm : i64]
   [context-modrm : i64]) : (__tl_dyn-array u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 36)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 36)]
     (begin
       (tlci-loader-test-set-byte! out 0 0x48)
       (tlci-loader-test-set-byte! out 1 0xb8)
@@ -1935,7 +1935,7 @@
 (define (tlci-loader-test-status-code-bytes [status : i64]) : (__tl_dyn-array
     u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 6)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 6)]
     (begin
       (tlci-loader-test-set-byte! out 0 0xb8)
       (tlci-loader-test-set-byte! out 1 status)
@@ -1947,7 +1947,7 @@
 
 (define (tlci-loader-test-bad-registration-code-bytes) : (__tl_dyn-array u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 3)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 3)]
     (begin
       (tlci-loader-test-set-byte! out 0 0x31)
       (tlci-loader-test-set-byte! out 1 0xc0)
@@ -1956,7 +1956,7 @@
 
 (define (tlci-loader-test-rodata-bytes) : (__tl_dyn-array u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 8)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     (begin
       (tlci.tlci-set-u64! out 0 0)
       out)))
@@ -2030,7 +2030,7 @@
       (+
         tlci.tlci-section-import-header-size
         tlci.tlci-section-import-record-size)]
-    [out : (__tl_dyn-array u8) (make-array u8 (+ name-offset name-len))]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ name-offset name-len))]
     (begin
       (tlci.tlci-set-u64! out 0 1)
       (tlci.tlci-set-u64! out tlci.tlci-section-import-header-size 0)
@@ -2055,8 +2055,8 @@
     0
     0
     1
-    (make-array name)
-    (make-array address)
+    (__tl_make-array name)
+    (__tl_make-array address)
     1))
 
 (define (tlci-loader-test-emit-with-import [name : String]) : tlci.ResultTlciBytes

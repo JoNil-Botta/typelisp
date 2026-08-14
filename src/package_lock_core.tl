@@ -7,6 +7,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
+(import compiler_intern as ci)
 (import lex as lexer)
 (import read as reader)
 (import package_cache_core)
@@ -35,8 +36,8 @@
   (kind package_cache_core.PackageCachePinKind)
   (value String))
 
-(define (package-lock-symbol-text [name-id : i64]) : String
-  (reader.symbol-text-for-id name-id))
+(define (package-lock-symbol-text [name-id : ci.InternSyntaxId]) : String
+  (reader.symbol-text-for-syntax-id name-id))
 
 (defenum PackageLockMaybeEntry
   (No)
@@ -213,7 +214,7 @@
         [(reader.SexprView.Str val-id)
           (match (reader.sexpr-view vrest)
             [(reader.SexprView.Nil)
-              (ResultPackageLockString.Ok (reader.symbol-text-for-id val-id))]
+              (ResultPackageLockString.Ok (ci.intern-id-str val-id))]
             [_
               (ResultPackageLockString.Err
                 (str_cat.str-cat
@@ -262,8 +263,7 @@
                   (match (reader.sexpr-view value-node)
                     [(reader.SexprView.Str pin-value-id)
                       (let
-                        [pin-value : String
-                          (reader.symbol-text-for-id pin-value-id)]
+                        [pin-value : String (ci.intern-id-str pin-value-id)]
                         (if (string.eq pin-value "")
                           (ResultPackageLockPin.Err
                             "package-lock: pin value must not be empty")

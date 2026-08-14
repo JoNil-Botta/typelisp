@@ -9,6 +9,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
+(import compiler_intern as ci)
 (import lex as lexer)
 (import read as reader)
 
@@ -19,8 +20,8 @@
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
 
-(define (tlci-symbol-text [name-id : i64]) : String
-  (reader.symbol-text-for-id name-id))
+(define (tlci-symbol-text [name-id : ci.InternSyntaxId]) : String
+  (reader.symbol-text-for-syntax-id name-id))
 
 (define (tlci-string-length [text : String]) : i64
   (__tl_string_length text))
@@ -1871,7 +1872,7 @@
         [(reader.SexprView.Str val-id)
           (match (reader.sexpr-view vrest)
             [(reader.SexprView.Nil)
-              (ResultTlciString.Ok (tlci-symbol-text val-id))]
+              (ResultTlciString.Ok (ci.intern-id-str val-id))]
             [_
               (ResultTlciString.Err
                 (str_cat.str-cat

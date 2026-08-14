@@ -88024,7 +88024,10 @@
     [(reader.SpannedSexprView.Sym name _)
       (str_cat.str-cat
         "sym:"
-        (spec.spec-string-key (macro-output-symbol-text-id name "identity-key")))]
+        (spec.spec-string-key
+          (macro-output-symbol-text-id
+            (ci.intern-syntax-id-value name)
+            "identity-key")))]
     [(reader.SpannedSexprView.Nil _) "nil"]
     [(reader.SpannedSexprView.Cons head tail _)
       (str_cat.str-cat
@@ -88033,7 +88036,9 @@
         ":"
         (spec.spec-string-key (macro-identity-key-sexpr tail)))]
     [(reader.SpannedSexprView.Str string-id _)
-      (str_cat.str-cat "str:" (spec.spec-string-key (ci.intern-str string-id)))]
+      (str_cat.str-cat
+        "str:"
+        (spec.spec-string-key (ci.intern-id-str string-id)))]
     [(reader.SpannedSexprView.Char c _)
       (str_cat.str-cat "char:" (string.int->string (cast c : i64)))]
     [(reader.SpannedSexprView.Float text _)
@@ -90108,6 +90113,32 @@
 
 (define (macro-internal-resolved-enum-type-marker) : String
   "__typelisp internal resolved enum type")
+
+(define (macro-identity-key-internal-symbol-smoke?) : bool
+  (let
+    [span : token.SourceSpan (token.source-span-new 1 1 1 2)]
+    [marker-id : i64
+      (ctfe_support.ctfe-internal-resolved-struct-type-marker-id)]
+    [owner-id : i64 (ci.intern "identity-owner")]
+    [name-id : i64 (ci.intern "identity-name")]
+    [composite-id : i64 (csym.compiler-composite-pair-key-id owner-id name-id)]
+    (and
+      (string.eq
+        (macro-identity-key-sexpr (macro-spanned-symbol-id marker-id span))
+        (str_cat.str-cat
+          "sym:"
+          (spec.spec-string-key (macro-internal-resolved-struct-type-marker))))
+      (string.eq
+        (macro-identity-key-sexpr (macro-spanned-symbol-id composite-id span))
+        (str_cat.str-cat
+          "sym:"
+          (spec.spec-string-key (ast.ast-nominal-name-id-display composite-id)))))))
+
+(test
+  macro-identity-key-preserves-internal-symbols
+  (if (macro-identity-key-internal-symbol-smoke?)
+    unit
+    (io.panic "typecheck: internal macro identity key self-test failed")))
 
 (define (macro-resolved-nominal-type-sexpr
   [marker-id : i64]

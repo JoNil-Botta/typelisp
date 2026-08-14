@@ -14375,15 +14375,20 @@
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
   (compiler-load-safe-relative? path))
 
-(define (compiler-load-symbol-text [name-id : i64]) : String
-  (reader.symbol-text-for-id name-id))
+(define (compiler-load-symbol-text [name-id : ci.InternSyntaxId]) : String
+  (reader.symbol-text-for-syntax-id name-id))
 
 ;; Manifest values outlive the reader's persistent intern arena because package
 ;; builds reset compiler state between inline-test phases. Materialize stored
 ;; values in the caller's arena without creating another intern entry.
-(define (compiler-load-manifest-owned-intern-text [text-id : i64]) : String
+(define (compiler-load-manifest-owned-intern-text [text-id : ci.InternId]) : String
   (let
-    [text : String (ci.intern-str text-id)]
+    [text : String (ci.intern-id-str text-id)]
+    (string.copy (& text))))
+
+(define (compiler-load-manifest-owned-syntax-text [text-id : ci.InternSyntaxId]) : String
+  (let
+    [text : String (ci.intern-syntax-id-text text-id)]
     (string.copy (& text))))
 
 ;: Extract a single `"value"` from a field tail `("value")`.
@@ -14431,7 +14436,7 @@
                     (match (reader.sexpr-view pin-value-node)
                       [(reader.SexprView.Str pin-value-id)
                         (let
-                          [pin-value : String (ci.intern-str pin-value-id)]
+                          [pin-value : String (ci.intern-id-str pin-value-id)]
                           (if (string.eq pin-value "")
                             (ResultPkgString.Err
                               (str_cat.str-cat
@@ -14487,7 +14492,7 @@
       (match (reader.sexpr-view address-node)
         [(reader.SexprView.Str address-id)
           (let
-            [address : String (ci.intern-str address-id)]
+            [address : String (ci.intern-id-str address-id)]
             (match (reader.sexpr-view after-address)
               [(reader.SexprView.Cons pin-form end)
                 (match (reader.sexpr-view end)
@@ -14581,7 +14586,7 @@
         [(reader.SexprView.Nil)
           (match (reader.sexpr-view vhead)
             [(reader.SexprView.Str val-id)
-              (compiler-load-manifest-kind-token (ci.intern-str val-id))]
+              (compiler-load-manifest-kind-token (ci.intern-id-str val-id))]
             [(reader.SexprView.Sym val)
               (compiler-load-manifest-kind-token
                 (compiler-load-symbol-text val))]
@@ -14633,7 +14638,7 @@
             [(reader.SexprView.Sym alias)
               (let
                 [alias-text : String
-                  (compiler-load-manifest-owned-intern-text alias)]
+                  (compiler-load-manifest-owned-syntax-text alias)]
                 (match (compiler-load-manifest-dependency-value
                   etail
                   alias-text)
@@ -14771,7 +14776,7 @@
       (match (reader.sexpr-view vhead)
         [(reader.SexprView.Str val-id)
           (let
-            [val : String (ci.intern-str val-id)]
+            [val : String (ci.intern-id-str val-id)]
             (if (string.eq val "")
               (ResultPkgStrVec.Err
                 (str_cat.str-cat

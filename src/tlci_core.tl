@@ -580,6 +580,8 @@
   "enum-variant-payload-type")
 (define tlci-host-callback-name-array-element-type : String
   "array-element-type")
+(define tlci-host-callback-name-box-element-type : String
+  "box-element-type")
 (define tlci-host-callback-name-array-length : String
   "array-length")
 (define tlci-host-callback-name-array-dynamic? : String
@@ -596,6 +598,8 @@
   "expr-list-length")
 (define tlci-host-callback-name-expr-list-nth : String
   "expr-list-nth")
+(define tlci-host-callback-name-expr-list-type-nth : String
+  "expr-list-type-nth")
 (define tlci-host-callback-name-expr-binding-clause-name : String
   "expr-binding-clause-name")
 (define tlci-host-callback-name-expr-binding-clause-has-type? : String
@@ -903,15 +907,17 @@
 (define tlci-host-callback-name-expr-ptr-cast : String
   "expr-ptr-cast")
 
-;; The literal text of a string-literal `Expr` operand, pushed as the comptime
-;; String value the interpreted `comptime.expr-string-value` yields -- the same
+;; The literal text of a string-literal `Expr`, pushed as the comptime String
+;; value the interpreted `comptime.expr-string-value` yields -- the same
 ;; `(CompilerCtfeValue.String (intern-str id) id)` identity, so a downstream
-;; `expr-var`/`string-append` sees exactly what interpretation gave it. A
-;; non-literal operand is a bad request, matching the interpreted error rather
-;; than silently yielding empty text. This is the single most common first
-;; blocker in the embedded census (5 shells across #5626, #5701 and #5606).
+;; `expr-var`/`string-append` sees exactly what interpretation gave it. The
+;; operand form reads a macro operand directly; the generic form pops a computed
+;; Expr from the session stack. A non-literal produces the interpreted
+;; diagnostic rather than silently yielding empty text.
 (define tlci-host-callback-name-operand-expr-string-value : String
   "operand-expr-string-value")
+(define tlci-host-callback-name-expr-string-value : String
+  "expr-string-value")
 
 ;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a plain
 ;; identifier expression", and an accessor pushing that identifier's spelling as

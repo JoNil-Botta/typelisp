@@ -19721,45 +19721,31 @@
         enum-ty))))
 
 (define (opt-inline-dense-input-shape-ok?
-  [instrs : compiler_ir_types.CompilerIrInstrList]) : bool
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
   (and
-    (= (compiler_ir_types.compiler-ir-instr-list-count instrs) 3)
-    (match instrs
-      [(compiler_ir_types.CompilerIrInstrList.Cons
-          (compiler_ir_types.CompilerIrInstr.Mov
-            first-dst
-            (compiler_ir_types.CompilerIrValue.I64 first-value)
-            _)
-          rest)
-        (match (__tl-box-place rest)
-          [(compiler_ir_types.CompilerIrInstrList.Cons
-              (compiler_ir_types.CompilerIrInstr.BinOp
-                second-dst
-                (compiler_ir_types.CompilerIrBinOp.Add)
-                (compiler_ir_types.CompilerIrValue.Var second-left)
-                (compiler_ir_types.CompilerIrValue.I64 second-right)
-                _)
-              rest2)
-            (match (__tl-box-place rest2)
-              [(compiler_ir_types.CompilerIrInstrList.Cons
-                  (compiler_ir_types.CompilerIrInstr.Mov
-                    final-dst
-                    (compiler_ir_types.CompilerIrValue.Var final-source)
-                    _)
-                  rest3)
-                (and
-                  (= first-dst 10)
-                  (= first-value 7)
-                  (= second-dst 11)
-                  (= second-left 10)
-                  (= second-right 5)
-                  (= final-dst 99)
-                  (= final-source 11)
-                  (match (__tl-box-place rest3)
-                    [(compiler_ir_types.CompilerIrInstrList.Nil) true]
-                    [_ false]))]
-              [_ false])]
-          [_ false])]
+    (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 3)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+      [(compiler_ir_types.CompilerIrInstr.Mov
+          first-dst
+          (compiler_ir_types.CompilerIrValue.I64 first-value)
+          _)
+        (and (= first-dst 10) (= first-value 7))]
+      [_ false])
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1)
+      [(compiler_ir_types.CompilerIrInstr.BinOp
+          second-dst
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var second-left)
+          (compiler_ir_types.CompilerIrValue.I64 second-right)
+          _)
+        (and (= second-dst 11) (= second-left 10) (= second-right 5))]
+      [_ false])
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+      [(compiler_ir_types.CompilerIrInstr.Mov
+          final-dst
+          (compiler_ir_types.CompilerIrValue.Var final-source)
+          _)
+        (and (= final-dst 99) (= final-source 11))]
       [_ false])))
 
 (define (compiler-optimize-inline-dense-input-ok?) : bool
@@ -19796,7 +19782,7 @@
       (compiler_optimize.opt-inline-single-block-instrs cons-blocks)]
     [array-seq : compiler_ir_types.CompilerIrInstrSeq
       (compiler_optimize.opt-inline-single-block-instrs array-blocks)]
-    [expanded-cons : compiler_ir_types.CompilerIrInstrList
+    [expanded-cons : compiler_ir_types.CompilerIrInstrSeq
       (compiler_optimize.opt-inline-expand-instrs
         cons-seq
         99
@@ -19805,7 +19791,7 @@
         0
         10
         "dense")]
-    [expanded-array : compiler_ir_types.CompilerIrInstrList
+    [expanded-array : compiler_ir_types.CompilerIrInstrSeq
       (compiler_optimize.opt-inline-expand-instrs
         array-seq
         99
@@ -45964,7 +45950,8 @@
       [positive : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-positive-instrs))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-positive-instrs)))]
       [loop-positive : bool
         (opt-scratch-loop-list-has-candidate?
           (compiler_optimize.opt-cfg-natural-loops
@@ -45972,27 +45959,30 @@
       [call-blocked : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-test-one-block
-            (compiler_ir_types.CompilerIrInstr.Call
-              9
-              (opt-test-symbol "touch")
-              (compiler_ir_types.CompilerIrCallArgs.Nil)
-              (compiler_ast_types.AstType.Unit))))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-test-one-block
+              (compiler_ir_types.CompilerIrInstr.Call
+                9
+                (opt-test-symbol "touch")
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.Unit)))))]
       [extern-blocked : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-test-one-block
-            (compiler_ir_types.CompilerIrInstr.CallIndirectC
-              9
-              (compiler_ir_types.CompilerIrValue.Function
-                (opt-test-symbol "ffi_touch"))
-              (compiler_ir_types.CompilerIrCallArgs.Nil)
-              (compiler_ast_types.AstType.I64))))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-test-one-block
+              (compiler_ir_types.CompilerIrInstr.CallIndirectC
+                9
+                (compiler_ir_types.CompilerIrValue.Function
+                  (opt-test-symbol "ffi_touch"))
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.I64)))))]
       [raw-blocked : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-test-one-block
-            (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-test-one-block
+              (compiler_ir_types.CompilerIrInstr.AddrOf 2 1))))]
       ;; The scratch analysis records its roots with `opt-alias-mark-unique`, so
       ;; the fixture builds the fact the same way instead of hand-encoding it.
       [store-blocked : compiler_optimize.OptScratchScopeReport
@@ -46018,12 +46008,13 @@
       [arena-blocked : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-test-one-block
-            (compiler_ir_types.CompilerIrInstr.Call
-              9
-              cbi.compiler-builtin-id-tl-region-mark
-              (compiler_ir_types.CompilerIrCallArgs.Nil)
-              (compiler_ast_types.AstType.I64))))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-test-one-block
+              (compiler_ir_types.CompilerIrInstr.Call
+                9
+                cbi.compiler-builtin-id-tl-region-mark
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.I64)))))]
       [return-blocked : compiler_optimize.OptScratchScopeReport
         (let
           [roots : compiler_optimize.OptScratchRootList
@@ -46267,27 +46258,33 @@
     [unique : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-unique-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-unique-instrs)))]
     [transitive : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-transitive-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-transitive-instrs)))]
     [loaded : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-load-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-load-instrs)))]
     [stored : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-store-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-store-instrs)))]
     [called : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-call-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-call-instrs)))]
     [copied : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-copy-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-copy-instrs)))]
     [joined : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-intersect
         (opt-alias-join-facts-a)
@@ -46411,97 +46408,101 @@
       [else 42])))
 
 (define (opt-load-cse-run [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-empty)
-    (compiler_optimize.opt-load-cse-empty-state-for-size
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_ir_types.compiler-ir-instr-list-count instrs))
-    instrs))
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-load-header-set-empty)
+      (compiler_optimize.opt-load-cse-empty-state-for-size
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_ir_types.compiler-ir-instr-list-count instrs))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 ;; Run with header-typed handle params (vars 0 and 1 are (Array i64)
 ;; descriptors) so the descriptor/element granularity rules can be exercised.
 (define (opt-load-cse-run-with-array-param
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-from-function
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_ir_types.compiler-ir-param-cons
-        (compiler_ir_types.CompilerIrParam.Param
-          "xs"
-          (compiler_ast_types.AstType.DynArray 0)
-          0)
+      (compiler_optimize.opt-load-header-set-from-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_ir_types.compiler-ir-param-cons
           (compiler_ir_types.CompilerIrParam.Param
-            "ys"
+            "xs"
             (compiler_ast_types.AstType.DynArray 0)
-            1)
-          (compiler_ir_types.CompilerIrParamList.Nil)))
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          instrs)
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (compiler_optimize.opt-load-cse-empty-state-for-size
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_ir_types.compiler-ir-instr-list-count instrs))
-    instrs))
+            0)
+          (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.CompilerIrParam.Param
+              "ys"
+              (compiler_ast_types.AstType.DynArray 0)
+              1)
+            (compiler_ir_types.CompilerIrParamList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            instrs)
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (compiler_optimize.opt-load-cse-empty-state-for-size
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_ir_types.compiler-ir-instr-list-count instrs))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 (define (opt-load-cse-run-with-params
   [params : compiler_ir_types.CompilerIrParamList]
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-from-function
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      params
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          instrs)
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (compiler_optimize.opt-load-cse-state-with-caps-and-facts
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_optimize.opt-load-cse-table-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count instrs))
-      (compiler_optimize.opt-load-cse-kinds-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count instrs))
-      (compiler_optimize.opt-alias-seed-params
+      (compiler_optimize.opt-load-header-set-from-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        params))
-    instrs))
+        params
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            instrs)
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_optimize.opt-load-cse-table-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+        (compiler_optimize.opt-load-cse-kinds-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+        (compiler_optimize.opt-alias-seed-params
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          params))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 (define (opt-load-cse-run-with-params-and-call-memory
   [params : compiler_ir_types.CompilerIrParamList]
   [call-memory : opt_i64_i64_map.Map]
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs-from
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-from-function
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs-from
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      params
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          instrs)
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (opt_i64_i64_map.with-capacity 1)
-    call-memory
-    (compiler_optimize.opt-load-cse-state-with-caps-and-facts
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_optimize.opt-load-cse-table-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count instrs))
-      (compiler_optimize.opt-load-cse-kinds-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count instrs))
-      (compiler_optimize.opt-alias-seed-params
+      (compiler_optimize.opt-load-header-set-from-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        params))
-    instrs))
+        params
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            instrs)
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (opt_i64_i64_map.with-capacity 1)
+      call-memory
+      (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_optimize.opt-load-cse-table-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+        (compiler_optimize.opt-load-cse-kinds-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+        (compiler_optimize.opt-alias-seed-params
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          params))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 (define (opt-load-cse-mixed-ref-params) : compiler_ir_types.CompilerIrParamList
   (compiler_ir_types.compiler-ir-param-cons

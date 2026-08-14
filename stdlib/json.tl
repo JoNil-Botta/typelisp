@@ -56,13 +56,13 @@
 
 ;: Return the empty JSON array element sequence.
 (define (list-empty) : JsonSeq
-  (JsonSeq (make-array Json 0) 0))
+  (JsonSeq (__tl_make-array Json 0) 0))
 
 ;: Return `items` with `head` prepended, copied into a right-sized array.
 (define (list-cons [head : Json] [items : JsonSeq]) : JsonSeq
   (let
     [n : i64 items.len]
-    [slots : (__tl_dyn-array Json) (make-array Json (+ n 1))]
+    [slots : (__tl_dyn-array Json) (__tl_make-array Json (+ n 1))]
     [i : i64 0]
     (begin
       (set! (array-ref slots 0) head)
@@ -74,13 +74,13 @@
 
 ;: Return the empty JSON object member sequence.
 (define (member-list-empty) : JsonMemberSeq
-  (JsonMemberSeq (make-array JsonMember 0) 0))
+  (JsonMemberSeq (__tl_make-array JsonMember 0) 0))
 
 ;: Return `items` with `key`/`value` prepended into a right-sized array.
 (define (member-cons [key : String] [value : Json] [items : JsonMemberSeq]) : JsonMemberSeq
   (let
     [n : i64 items.len]
-    [slots : (__tl_dyn-array JsonMember) (make-array JsonMember (+ n 1))]
+    [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember (+ n 1))]
     [i : i64 0]
     (begin
       (set! (array-ref slots 0) (JsonMember key value))
@@ -94,7 +94,7 @@
 (define (vec-to-list [items : jvec.Vec]) : JsonSeq
   (let
     [n : i64 (jvec.len (& items))]
-    [slots : (__tl_dyn-array Json) (make-array Json n)]
+    [slots : (__tl_dyn-array Json) (__tl_make-array Json n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -107,7 +107,7 @@
 (define (member-vec-to-list [items : jmvec.Vec]) : JsonMemberSeq
   (let
     [n : i64 (jmvec.len (& items))]
-    [slots : (__tl_dyn-array JsonMember) (make-array JsonMember n)]
+    [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -290,7 +290,7 @@
 (define (list-reverse [items : JsonSeq]) : JsonSeq
   (let
     [n : i64 items.len]
-    [slots : (__tl_dyn-array Json) (make-array Json n)]
+    [slots : (__tl_dyn-array Json) (__tl_make-array Json n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -303,7 +303,7 @@
 (define (member-list-reverse [items : JsonMemberSeq]) : JsonMemberSeq
   (let
     [n : i64 items.len]
-    [slots : (__tl_dyn-array JsonMember) (make-array JsonMember n)]
+    [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -330,7 +330,7 @@
       (if (< n 1)
         0
         (- n 1))]
-    [slots : (__tl_dyn-array Json) (make-array Json count)]
+    [slots : (__tl_dyn-array Json) (__tl_make-array Json count)]
     [i : i64 0]
     (begin
       (while (< i count)
@@ -344,7 +344,7 @@
   (let
     [ln : i64 left.len]
     [rn : i64 right.len]
-    [slots : (__tl_dyn-array Json) (make-array Json (+ ln rn))]
+    [slots : (__tl_dyn-array Json) (__tl_make-array Json (+ ln rn))]
     [i : i64 0]
     (begin
       (while (< i ln)

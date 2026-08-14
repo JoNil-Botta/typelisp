@@ -31,7 +31,7 @@
 
 (define (success) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 10)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 10)]
     (begin
       (set! (array-ref items 0) 10)
       (set! (array-ref items 1) 20)
@@ -44,12 +44,12 @@
 
 (define (overflow-trap) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 8)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [start : i64 3074457345618258603]
     (scaled-sum items start (+ start 1))))
 
 (define (underflow-trap) : i64
-  (offset-sum (make-array i64 8) 0 1))
+  (offset-sum (__tl_make-array i64 8) 0 1))
 
 (define (main) : i64
   (match (string.>int (io.arg 1))

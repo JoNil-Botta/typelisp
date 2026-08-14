@@ -78,7 +78,7 @@
   (len i64))
 
 (define (cand-builder-new) : CandBuilder
-  (CandBuilder (make-array Candidate 4) 0))
+  (CandBuilder (__tl_make-array Candidate 4) 0))
 
 (define (cand-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array Candidate))]
@@ -98,7 +98,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array Candidate) (make-array Candidate new-cap)]
+    [bigger : (__tl_dyn-array Candidate) (__tl_make-array Candidate new-cap)]
     (begin
       (cand-builder-copy-range! (&mut bigger) (& builder.slots) builder.len)
       (set! builder.slots bigger))))

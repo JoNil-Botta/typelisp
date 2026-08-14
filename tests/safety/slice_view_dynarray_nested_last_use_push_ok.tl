@@ -11,7 +11,7 @@
         [child : (& items (Slice i64)) (slice-view parent 0 1)]
         (begin
           (array-ref child 0)
-          (array-push! items 35)
+          (__tl_array-push! items 35)
           (if (= (array-length items) 2)
             42
             1))))))

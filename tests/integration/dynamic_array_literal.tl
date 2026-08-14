@@ -11,7 +11,7 @@
 (define (dynamic-array-literal-score) : i64
   (let
     [items : (__tl_dyn-array i64)
-      (make-array
+      (__tl_make-array
         (dynamic-array-literal-mark 1)
         (dynamic-array-literal-mark 2)
         (dynamic-array-literal-mark 3))]
@@ -23,12 +23,12 @@
 
 (define (dynamic-array-literal-init-score) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array (init) 5)]
+    [items : (__tl_dyn-array i64) (__tl_make-array (init) 5)]
     (+ (array-length items) (+ (array-ref items 0) (array-ref items 1)))))
 
 (define (dynamic-array-literal-empty-score) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array)]
+    [items : (__tl_dyn-array i64) (__tl_make-array)]
     (array-length items)))
 
 (define (main) : i64

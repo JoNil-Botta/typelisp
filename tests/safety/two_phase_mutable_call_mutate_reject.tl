@@ -13,5 +13,5 @@
     (take-mut-and-value
       (&mut items)
       (begin
-        (array-push! items 1)
+        (__tl_array-push! items 1)
         0))))

@@ -11,7 +11,7 @@
   (begin
     (while run
       (begin
-        (array-push! refs (&mut (array-ref items 0)))
+        (__tl_array-push! refs (&mut (array-ref items 0)))
         (if leave
           (return 0)
           (continue))))

@@ -15,8 +15,8 @@
     [items : (__tl_dyn-array Triple) (array.make-array Triple 1)]
     (begin
       (set! (array-ref items 0) (Triple 1 2 3))
-      (array-push! items (Triple 5 7 11))
-      (array-push! items (Triple 2 4 7))
+      (__tl_array-push! items (Triple 5 7 11))
+      (__tl_array-push! items (Triple 2 4 7))
       (+
         (triple-score (array-ref items 0))
         (+

@@ -46,7 +46,7 @@
     [ac : i64 (io.arg-count)]
     [n : i64 (+ ac 4)]
     [seed : i64 ac]
-    [items : (__tl_dyn-array i64) (make-array i64 n)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     (begin
       ;; items[k] = k*10

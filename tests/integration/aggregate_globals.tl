@@ -23,7 +23,7 @@
 ; Compatibility exception for #3772: aggregate global initializers still require
 ; the bare dynamic-array allocation alias in stage0's hidden initializer path.
 (define cells
-  (make-array i64 3))
+  (__tl_make-array i64 3))
 (define nested : Nested
   (Nested "ok" (option_i64.Some 3)))
 

@@ -40,7 +40,7 @@
       (and (= (array-ref items 0) 1) (= (array-ref copy 0) 999)))))
 
 (define (make-pairs) : (__tl_dyn-array Pair)
-  (make-array (Pair 1 2) (Pair 3 4)))
+  (__tl_make-array (Pair 1 2) (Pair 3 4)))
 
 (define (pair-score [p : Pair]) : i64
   (+ p.left p.right))

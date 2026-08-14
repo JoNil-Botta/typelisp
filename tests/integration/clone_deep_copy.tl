@@ -46,7 +46,7 @@
     items))
 
 (define (make-sequence) : (__tl_dyn-array String)
-  (make-array (string.append "a" "a") (string.append "b" "bb")))
+  (__tl_make-array (string.append "a" "a") (string.append "b" "bb")))
 
 (define (copy-from-scratch [home : arena.Arena] [scratch : arena.Arena]) : i64
   (begin

@@ -9,5 +9,5 @@
       (let
         [view : (& items (Slice i64)) (slice-view items 0 1)]
         (begin
-          (array-push! items 20)
+          (__tl_array-push! items 20)
           (array-ref view 0))))))

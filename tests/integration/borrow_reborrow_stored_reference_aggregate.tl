@@ -26,7 +26,7 @@
 (define (main) : i64
   (let
     [items : (__tl_dyn-array AggregateReborrowItem)
-      (make-array AggregateReborrowItem 1)]
+      (__tl_make-array AggregateReborrowItem 1)]
     [iter : (AggregateReborrowIter items)
       (AggregateReborrowIter (&mut items) 0)]
     (match (next (&mut iter))

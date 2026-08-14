@@ -11,7 +11,7 @@
   `"")
 
 (defmacro (object-empty) : FieldList
-  `(serialize_bad_object_finish_hook_format.FieldList (make-array Value 0)))
+  `(serialize_bad_object_finish_hook_format.FieldList (__tl_make-array Value 0)))
 
 (defmacro (object-field [_name : Expr] [_value : Expr] [rest : Expr]) : FieldList
   rest)

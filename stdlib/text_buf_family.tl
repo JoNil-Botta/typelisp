@@ -108,7 +108,7 @@
     (define (text-buf-store-new) : (Box TextBufStringStore)
       (let
         [store : (Box TextBufStringStore)
-          (box (TextBufStringStore (make-array String 32) 0 0 0))]
+          (box (TextBufStringStore (__tl_make-array String 32) 0 0 0))]
         [current-head : i64 (tls-current-arena)]
         [current-owner-root : i64
           (stdlib.text_buf_family.text-buf-family-arena-owner-root current-head)]
@@ -161,7 +161,7 @@
         [new-store : (Box TextBufStringStore)
           (box
             (TextBufStringStore
-              (make-array String new-capacity)
+              (__tl_make-array String new-capacity)
               (+ visible-count 1)
               current-owner-root
               current-head))]
@@ -281,7 +281,7 @@
       [back : TextBufChunkList]) : TextBufChunkList
       (let
         [front-count : i64 (stdlib.text_buf.chunk-count front 0)]
-        [items : (__tl_dyn-array String) (make-array String front-count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String front-count)]
         [result : TextBufChunkList back]
         [index : i64 0]
         (begin
@@ -384,7 +384,7 @@
             (if (= total 0)
               ""
               (let
-                [out : (__tl_dyn-array u8) (make-array u8 total)]
+                [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
                 [dst : (MutPtr u8)
                   (unsafe
                     (array-data out))]
@@ -469,7 +469,7 @@
       (if (= total 0)
         ""
         (let
-          [out : (__tl_dyn-array u8) (make-array u8 total)]
+          [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
           [dst : (MutPtr u8)
             (unsafe
               (array-data out))]
@@ -484,7 +484,7 @@
       [write-chunks-list : TextBufChunkList]) : i64
       (let
         [count : i64 (stdlib.text_buf.chunk-count write-chunks-list 0)]
-        [items : (__tl_dyn-array String) (make-array String count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [index : i64 0]
         [status : i64 io.io-status-ok]
         (begin
@@ -544,7 +544,7 @@
       [write-chunks-list : TextBufChunkList]) : i64
       (let
         [count : i64 (stdlib.text_buf.chunk-count write-chunks-list 0)]
-        [items : (__tl_dyn-array String) (make-array String count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String count)]
         (begin
           (stdlib.text_buf.chunks-fill-array-rev
             write-chunks-list
@@ -892,7 +892,7 @@
       [tail-borrowed? : bool]) : (TextBufBorrowedChunkList text)
       (let
         [count : i64 (text_buf.chunk-count prefix 0)]
-        [items : (__tl_dyn-array String) (make-array String count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [result : (TextBufBorrowedChunkList text) left]
         [index : i64 0]
         (begin
@@ -993,7 +993,7 @@
     (define (text-buf-borrowed-copy-prefix [prefix : text_buf.TextBufChunkList]) : text_buf.TextBufChunkList
       (let
         [count : i64 (text_buf.chunk-count prefix 0)]
-        [items : (__tl_dyn-array String) (make-array String count)]
+        [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [owned : text_buf.TextBufChunkList
           (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks)]
         [index : i64 0]

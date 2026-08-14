@@ -363,7 +363,7 @@
                   1)
                 (let
                   [name-count : i64 (svec.len (& names))]
-                  [name-array (make-array String name-count)]
+                  [name-array (__tl_make-array String name-count)]
                   [name-index : i64 0]
                   (begin
                     (while (< name-index name-count)

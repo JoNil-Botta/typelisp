@@ -183,7 +183,7 @@
                   (if (< capacity 1)
                     1
                     capacity))]
-              (Set (make-array Slot cap) 0 0)))
+              (Set (__tl_make-array Slot cap) 0 0)))
           (define (new) : Set
             (with-capacity 8))
           (define (len [set : (& set Set)]) : i64
@@ -201,7 +201,8 @@
                 (if (< old-capacity 1)
                   1
                   (* old-capacity 2))]
-              [fresh : (__tl_dyn-array Slot) (make-array Slot new-capacity)]
+              [fresh : (__tl_dyn-array Slot)
+                (__tl_make-array Slot new-capacity)]
               [scan : i64 0]
               (begin
                 (while (< scan old-capacity)
@@ -428,7 +429,7 @@
                   (if (< capacity 1)
                     1
                     capacity))]
-              (Set (make-array Slot cap) 0 0)))
+              (Set (__tl_make-array Slot cap) 0 0)))
           (define (new) : Set
             (with-capacity 8))
           (define (len [set : (& set Set)]) : i64
@@ -446,7 +447,8 @@
                 (if (< old-capacity 1)
                   1
                   (* old-capacity 2))]
-              [fresh : (__tl_dyn-array Slot) (make-array Slot new-capacity)]
+              [fresh : (__tl_dyn-array Slot)
+                (__tl_make-array Slot new-capacity)]
               [scan : i64 0]
               (begin
                 (while (< scan old-capacity)

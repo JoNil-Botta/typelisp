@@ -32,7 +32,7 @@
     [first : (&mut bags Bag) (&mut (array-ref bags 0))]
     [first-ok : bool
       (begin
-        (array-push! first.items 7)
+        (__tl_array-push! first.items 7)
         (and (= (array-length first.items) 1) (= (array-ref first.items 0) 7)))]
     [second : (& bags Bag) (& (array-ref bags 1))]
     (score-bool (and first-ok (= (array-length second.items) 0)))))

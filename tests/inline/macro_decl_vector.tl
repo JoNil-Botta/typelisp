@@ -22,7 +22,7 @@
           (if (< cap 1)
             1
             cap)]
-        (IntVec (make-array i64 c) 0 c)))
+        (IntVec (__tl_make-array i64 c) 0 c)))
     (define (int-vec-new) : IntVec
       (int-vec-with-capacity 4))
     (define (int-vec-len [v : IntVec]) : i64
@@ -39,7 +39,7 @@
       (let
         [old-cap : i64 v.cap]
         [new-cap : i64 (* old-cap 2)]
-        [bigger : (__tl_dyn-array i64) (make-array i64 new-cap)]
+        [bigger : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
         [n : i64 v.len]
         [i : i64 0]
         (begin

@@ -202,21 +202,26 @@ if [ "$BLOCKED_SHELLS" -ne "$SHELL_ENTRIES" ]; then
         "coverage reports $SHELL_ENTRIES" >&2
     exit 1
 fi
-# Pin the family landed by #6552, not just the aggregate ratchet. The identity
-# must exist in the catalog and, because every shell is accounted for by the
-# blocked relation above, it must not be one of those blocked identities.
-CLONE_NATIVE_IDENTITY=stdlib.clone/synthesize-helpers
-if ! grep -aFq "$CLONE_NATIVE_IDENTITY" "$IMAGE_A"; then
-    echo "embedded stdlib tlci image is missing $CLONE_NATIVE_IDENTITY" >&2
-    exit 1
-fi
-if awk -F '\t' -v identity="$CLONE_NATIVE_IDENTITY" '
-    $1 == identity && $2 == "blocked" { found = 1 }
-    END { exit !found }
-' "$FULL_BLOCKER_STDERR"; then
-    echo "$CLONE_NATIVE_IDENTITY regressed to a fallback shell" >&2
-    exit 1
-fi
+# Pin the landed families, not just the aggregate ratchet. Each identity must
+# exist in the catalog and, because every shell is accounted for by the blocked
+# relation above, must not be one of those blocked identities. Refs #6552,
+# #6554, #6555.
+for NATIVE_IDENTITY in \
+    stdlib.clone/synthesize-helpers \
+    stdlib.serialize/serialize \
+    stdlib.sort/vec; do
+    if ! grep -aFq "$NATIVE_IDENTITY" "$IMAGE_A"; then
+        echo "embedded stdlib tlci image is missing $NATIVE_IDENTITY" >&2
+        exit 1
+    fi
+    if awk -F '\t' -v identity="$NATIVE_IDENTITY" '
+        $1 == identity && $2 == "blocked" { found = 1 }
+        END { exit !found }
+    ' "$FULL_BLOCKER_STDERR"; then
+        echo "$NATIVE_IDENTITY regressed to a fallback shell" >&2
+        exit 1
+    fi
+done
 if [ "$SHELL_ENTRIES" -gt 0 ] &&
     ! grep -q "$(printf '\twalked\t')" "$FULL_BLOCKER_STDERR"; then
     echo "full-blocker diagnostics did not report any walked capability" >&2

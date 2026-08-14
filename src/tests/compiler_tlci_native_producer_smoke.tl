@@ -3476,6 +3476,86 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+(define (producer-test-literal-match-result-ok?
+  [pools : ast.AstNodePoolContext]
+  [expected-callee : String]
+  [expected-value : i64]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+      (match (producer-test-expr-get pools node)
+        [(ast.AstExpr.Call callee args)
+          (and
+            (match (producer-test-expr-get pools callee)
+              [(ast.AstExpr.Var name-id)
+                (= name-id (producer-test-name-id expected-callee))]
+              [_ false])
+            (= (ast.ast-expr-list-len (& args)) 1)
+            (match (producer-test-expr-get
+              pools
+              (ast.ast-expr-list-get (& args) 0 -1))
+              [(ast.AstExpr.Literal (ast.AstLiteral.Int value _))
+                (= value expected-value)]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+;; A miniature sort/serialize classifier: ordered String-literal arms produce
+;; both bool and i64 data locals, and the bool selects one of two computed Expr
+;; initializers. Modes 0/1/2 exercise the first, later, and wildcard arms;
+;; mode 3 proves a malformed non-type operand fails closed. Refs #6554, #6555.
+(define (producer-test-dispatch-literal-match-route?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]
+  [mode : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (if (= mode 3)
+          (compiler_ctfe.CompilerCtfeValue.Bool false)
+          (compiler_ctfe.CompilerCtfeValue.Type
+            (cond
+              [(= mode 0) (ast.AstType.I64)]
+              [(= mode 1) (ast.AstType.F64)]
+              [else (ast.AstType.String)]))))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        128
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (if (= mode 3)
+                (and
+                  (= dispatch.status tlci.tlci-host-callback-status-bad-request)
+                  (not
+                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))
+                (and
+                  (= dispatch.status tlci.tlci-host-callback-status-ok)
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                  (producer-test-literal-match-result-ok?
+                    pools
+                    (if (= mode 2)
+                      "custom"
+                      "scalar")
+                    (cond [(= mode 0) 7] [(= mode 1) 9] [else 11]))))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; In-package coverage: every supported shape dispatches natively and the
 ;; let-rooted body stays a counted shell. The report count must equal the
 ;; number of supported entries, and the arm-level counters must count every
@@ -3525,6 +3605,7 @@
     [source : String
       (str_cat.str-cat
         source-base
+        "(defmacro (literalmatch [T : type]) : Expr (let [kind : String (type-kind T)] [scalar? : bool (match kind [\"i64\" true] [\"f64\" true] [_ false])] [rank : i64 (match kind [\"i64\" 7] [\"f64\" 9] [_ 11])] [selected : Expr (if scalar? `(scalar ,(comptime.expr-int rank)) `(custom ,(comptime.expr-int rank)))] selected))\n"
         "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n(defmacro (structset [target : Expr] [field : String] [value : Expr]) : Expr (comptime.expr-struct-set target field value))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
@@ -3582,13 +3663,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 38)
-                              (= captures.len 38)
+                              (= (array-length name-array) 39)
+                              (= captures.len 39)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                   0)
-                                37)
+                                38)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -3725,6 +3806,22 @@
                               (producer-test-dispatch-clone-route?
                                 (& loaded)
                                 "package.macros/clonepath")
+                              (producer-test-dispatch-literal-match-route?
+                                (& loaded)
+                                "package.macros/literalmatch"
+                                0)
+                              (producer-test-dispatch-literal-match-route?
+                                (& loaded)
+                                "package.macros/literalmatch"
+                                1)
+                              (producer-test-dispatch-literal-match-route?
+                                (& loaded)
+                                "package.macros/literalmatch"
+                                2)
+                              (producer-test-dispatch-literal-match-route?
+                                (& loaded)
+                                "package.macros/literalmatch"
+                                3)
                               (producer-test-dispatch-diagnostic?
                                 (& loaded)
                                 "package.macros/scan"

@@ -3990,7 +3990,7 @@
         [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
           (embedded-native-data-if-value params cond-node then-node else-node)]
         [(compiler_ast_types.AstExpr.Match match-box)
-          (embedded-native-data-var-match-value params match-box)]
+          (embedded-native-data-match-value params match-box)]
         [(compiler_ast_types.AstExpr.Binary op left-node right-node)
           (let
             [ordinal : i64 (embedded-native-binop-ordinal op)]
@@ -4143,84 +4143,193 @@
       (embedded-native-data-value params then-node)]
     [else-value : EmbeddedNativeDataValue
       (embedded-native-data-value params else-node)]
-    (if (or
-      (string.eq cond-value.text "")
-      (string.eq then-value.text "")
-      (string.eq else-value.text ""))
+    (embedded-native-data-if-values cond-value then-value else-value)))
+
+;; Combine three already-lowered scalar values without eagerly evaluating the
+;; selected branch. Match lowering reuses this to preserve arm order while
+;; sharing the same status propagation as an ordinary scalar `if`.
+(define (embedded-native-data-if-values
+  [cond-value : EmbeddedNativeDataValue]
+  [then-value : EmbeddedNativeDataValue]
+  [else-value : EmbeddedNativeDataValue]) : EmbeddedNativeDataValue
+  (if (or
+    (string.eq cond-value.text "")
+    (string.eq then-value.text "")
+    (string.eq else-value.text ""))
+    (embedded-native-data-value-none)
+    (let
+      [result : String (embedded-native-temp-name!)]
+      [status : String (embedded-native-temp-name!)]
+      (EmbeddedNativeDataValue
+        (str_cat.str-cat
+          cond-value.open
+          "  (let ["
+          result
+          " : i64 0]\n"
+          "  (let ["
+          status
+          " : i64\n"
+          "  (if (= "
+          cond-value.text
+          " 1)\n"
+          (embedded-native-data-store-status-code then-value result)
+          (embedded-native-data-store-status-code else-value result)
+          ")]\n"
+          "  (if (not (= "
+          status
+          " 0)) "
+          status
+          "\n"
+          "  (begin\n")
+        result
+        (+ cond-value.opens 2)))))
+
+;; Compare one computed String value with a literal match pattern. The
+;; scrutinee is a macro operand or an already-bound session local, so reading it
+;; for each ordered arm does not repeat user computation. `string-eq` is a data
+;; callback: keep it outside the ordinary status chain because true is `1`.
+(define (embedded-native-data-string-literal-eq-value
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [sid : i64]) : EmbeddedNativeDataValue
+  (let
+    [ops : (__tl_dyn-array String)
+      (array.make-array String embedded-native-ops-cap)]
+    [ops-count : (__tl_dyn-array i64) (make-array 0)]
+    [scrutinee-opened : i64
+      (embedded-native-computed-expr-ops params scrutinee ops ops-count)]
+    (if (< scrutinee-opened 0)
       (embedded-native-data-value-none)
       (let
-        [result : String (embedded-native-temp-name!)]
-        [status : String (embedded-native-temp-name!)]
-        (EmbeddedNativeDataValue
-          (str_cat.str-cat
-            cond-value.open
-            "  (let ["
-            result
-            " : i64 0]\n"
-            "  (let ["
-            status
-            " : i64\n"
-            "  (if (= "
-            cond-value.text
-            " 1)\n"
-            (embedded-native-data-store-status-code then-value result)
-            (embedded-native-data-store-status-code else-value result)
-            ")]\n"
-            "  (if (not (= "
-            status
-            " 0)) "
-            status
-            "\n"
-            "  (begin\n")
-          result
-          (+ cond-value.opens 2))))))
+        [literal : String (ci.intern-str sid)]
+        (begin
+          (embedded-native-template-push!
+            ops
+            ops-count
+            (tlci_core.tlci-host-callback-name-shared-view
+              tlci_core.tlci-host-callback-name-string-value)
+            (embedded-native-name-arg (embedded-native-escape-string literal))
+            (string.int->string (string.string-length literal))
+            "0")
+          (if (>= (array-ref ops-count 0) embedded-native-ops-cap)
+            (embedded-native-data-value-none)
+            (let
+              [result : String (embedded-native-temp-name!)]
+              (EmbeddedNativeDataValue
+                (str_cat.str-cat
+                  (embedded-native-ops-open-text ops (array-ref ops-count 0))
+                  (embedded-native-data-probe-open
+                    result
+                    (tlci_core.tlci-host-callback-name-shared-view
+                      tlci_core.tlci-host-callback-name-string-eq)
+                    "0"
+                    "0"))
+                result
+                (+ scrutinee-opened 2)))))))))
+
+;; Lower an ordered String-literal/wildcard match whose bodies are scalar data
+;; values. This is the compile-time shape used by stdlib.sort/vec and
+;; stdlib.serialize/serialize to classify reflected type keys. Unsupported
+;; patterns or bodies still fail closed to the registered fallback shell.
+(define (embedded-native-data-string-match-arms-value
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
+  [index : i64]) : EmbeddedNativeDataValue
+  (if (>= index arms.len)
+    (embedded-native-data-value-none)
+    (match (array-ref arms.slots index)
+      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+        (match pattern
+          [(compiler_ast_types.AstPattern.Literal
+              (compiler_ast_types.AstLiteral.String sid))
+            (embedded-native-data-if-values
+              (embedded-native-data-string-literal-eq-value
+                params
+                scrutinee
+                sid)
+              (embedded-native-data-value params body-node)
+              (embedded-native-data-string-match-arms-value
+                params
+                scrutinee
+                arms
+                (+ index 1)))]
+          [(compiler_ast_types.AstPattern.Wildcard)
+            (embedded-native-data-value params body-node)]
+          [_ (embedded-native-data-value-none)])])))
+
+(define (embedded-native-data-string-match-value
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]) : EmbeddedNativeDataValue
+  ;; Restrict the scrutinee to an operand or session local. This preserves the
+  ;; interpreted single-evaluation rule while still covering reflected
+  ;; type-key/type-kind values bound by the surrounding let.
+  (if (or
+    (>= (embedded-native-var-param-index params scrutinee) 0)
+    (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
+      [(compiler_ast_types.AstExpr.Var name)
+        (>= (embedded-native-local-index (ci.intern-str name)) 0)]
+      [_ false]))
+    (embedded-native-data-string-match-arms-value params scrutinee arms 0)
+    (embedded-native-data-value-none)))
 
 ;; The boolean Expr.Var match used by the scoped string concatenator is a pure
 ;; shape test. Lower it directly to the corresponding operand/local data probe
 ;; when it has exactly `[Var _ => true] [_ => false]`. Refs #5656.
 (define (embedded-native-data-var-match-value
   [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]) : EmbeddedNativeDataValue
+  (if (not (= arms.len 2))
+    (embedded-native-data-value-none)
+    (match (array-ref arms.slots 0)
+      [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
+        (match (array-ref arms.slots 1)
+          [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
+            (match first-pattern
+              [(compiler_ast_types.AstPattern.Variant name-id args-box)
+                (let
+                  [args : compiler_ast_types.AstPatternList
+                    (__tl-box-place args-box)]
+                  (if (and
+                    (string.eq
+                      (embedded-native-expr-variant-name name-id)
+                      "Var")
+                    (= args.len 1)
+                    (match (compiler_ast_types.ast-pattern-list-get
+                      (& args)
+                      0
+                      (compiler_ast_types.ast-pattern-fallback))
+                      [(compiler_ast_types.AstPattern.Wildcard) true]
+                      [_ false])
+                    (match second-pattern
+                      [(compiler_ast_types.AstPattern.Wildcard) true]
+                      [_ false])
+                    (= (embedded-native-bool-literal-flag first-body) 1)
+                    (= (embedded-native-bool-literal-flag second-body) 0))
+                    (embedded-native-data-expr-probe-value
+                      params
+                      scrutinee
+                      (tlci_core.tlci-host-callback-name-shared-view
+                        tlci_core.tlci-host-callback-name-operand-expr-var?)
+                      (tlci_core.tlci-host-callback-name-shared-view
+                        tlci_core.tlci-host-callback-name-local-expr-var?))
+                    (embedded-native-data-value-none)))]
+              [_ (embedded-native-data-value-none)])])]
+      [_ (embedded-native-data-value-none)])))
+
+(define (embedded-native-data-match-value
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [match-box : (Box compiler_ast_types.AstMatch)]) : EmbeddedNativeDataValue
   (match (__tl-box-place match-box)
     [(compiler_ast_types.AstMatch.Match scrutinee arms)
-      (if (not (= arms.len 2))
-        (embedded-native-data-value-none)
-        (match (array-ref arms.slots 0)
-          [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
-            (match (array-ref arms.slots 1)
-              [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
-                (match first-pattern
-                  [(compiler_ast_types.AstPattern.Variant name-id args-box)
-                    (let
-                      [args : compiler_ast_types.AstPatternList
-                        (__tl-box-place args-box)]
-                      (if (and
-                        (string.eq
-                          (embedded-native-expr-variant-name name-id)
-                          "Var")
-                        (= args.len 1)
-                        (match (compiler_ast_types.ast-pattern-list-get
-                          (& args)
-                          0
-                          (compiler_ast_types.ast-pattern-fallback))
-                          [(compiler_ast_types.AstPattern.Wildcard) true]
-                          [_ false])
-                        (match second-pattern
-                          [(compiler_ast_types.AstPattern.Wildcard) true]
-                          [_ false])
-                        (= (embedded-native-bool-literal-flag first-body) 1)
-                        (= (embedded-native-bool-literal-flag second-body) 0))
-                        (embedded-native-data-expr-probe-value
-                          params
-                          scrutinee
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-operand-expr-var?)
-                          (tlci_core.tlci-host-callback-name-shared-view
-                            tlci_core.tlci-host-callback-name-local-expr-var?))
-                        (embedded-native-data-value-none)))]
-                  [_ (embedded-native-data-value-none)])])]
-          [_ (embedded-native-data-value-none)]))]
-    [_ (embedded-native-data-value-none)]))
+      (let
+        [var-match : EmbeddedNativeDataValue
+          (embedded-native-data-var-match-value params scrutinee (& arms))]
+        (if (string.eq var-match.text "")
+          (embedded-native-data-string-match-value params scrutinee (& arms))
+          var-match))]))
 
 ;; One reflection count over a type operand/session local, or no value.
 (define (embedded-native-reflection-count-value

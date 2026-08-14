@@ -508,6 +508,9 @@
 (defmacro (intern-syntax-id-value [id : Expr]) : i64
   `(cast (__tl-project-field-name ,id "value") : i64))
 
+(define (intern-syntax-id-eq? [left : InternSyntaxId] [right : InternSyntaxId]) : bool
+  (= (intern-syntax-id-value left) (intern-syntax-id-value right)))
+
 (define (intern-syntax-id-from-renderable [id : InternId]) : InternSyntaxId
   (InternSyntaxId (cast (intern-id-value id) : u64)))
 

@@ -953,7 +953,7 @@
 (define (sexpr-colon? [s : reader.Sexpr]) : bool
   (match (reader.sexpr-view s)
     [(reader.SexprView.Sym name-id)
-      (= name-id cbi.compiler-builtin-id-fix-colon)]
+      (= (ci.intern-syntax-id-value name-id) cbi.compiler-builtin-id-fix-colon)]
     [_ false]))
 
 ;; ID-to-text is intentionally a boundary, not a classifier. Production
@@ -1003,7 +1003,8 @@
   [dispatch : sym_i64_env.SymI64Env]
   [predicate : reader.SpannedSexpr]) : bool
   (match (reader.spanned-sexpr-view predicate)
-    [(reader.SpannedSexprView.Sym name _) (compiler-cfg-union? dispatch name)]
+    [(reader.SpannedSexprView.Sym name _)
+      (compiler-cfg-union? dispatch (ci.intern-syntax-id-value name))]
     [_ false]))
 
 (define (compiler-cfg-eval-list-all
@@ -1054,16 +1055,23 @@
   [predicate : reader.SpannedSexpr]) : ResultCompilerCfg
   (match (reader.spanned-sexpr-view predicate)
     [(reader.SpannedSexprView.Sym name _)
-      (ResultCompilerCfg.Ok (compiler-cfg-enabled? dispatch name))]
+      (ResultCompilerCfg.Ok
+        (compiler-cfg-enabled? dispatch (ci.intern-syntax-id-value name)))]
     [(reader.SpannedSexprView.Cons head predicates _)
       (match (reader.spanned-sexpr-view head)
         [(reader.SpannedSexprView.Sym op _)
           (cond
-            [(= op (cbi.compiler-builtin-ctfe-ref 219))
+            [(=
+                (ci.intern-syntax-id-value op)
+                (cbi.compiler-builtin-ctfe-ref 219))
               (compiler-cfg-eval-list-all dispatch predicates)]
-            [(= op (cbi.compiler-builtin-ctfe-ref 220))
+            [(=
+                (ci.intern-syntax-id-value op)
+                (cbi.compiler-builtin-ctfe-ref 220))
               (compiler-cfg-eval-list-any dispatch predicates)]
-            [(= op (cbi.compiler-builtin-ctfe-ref 155))
+            [(=
+                (ci.intern-syntax-id-value op)
+                (cbi.compiler-builtin-ctfe-ref 155))
               (compiler-cfg-eval-not dispatch predicates)]
             [else
               (ResultCompilerCfg.Err
@@ -2857,9 +2865,10 @@
 
 (define (parse-ast-lifetime-name?
   [dispatch : sym_i64_env.SymI64Env]
-  [name : i64]) : bool
+  [name : ci.InternSyntaxId]) : bool
   (let
-    [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
+    [tag : i64
+      (compiler-parse-dispatch-tag dispatch (ci.intern-syntax-id-value name))]
     (not
       (or
         (and
@@ -2882,7 +2891,7 @@
         [(reader.SexprView.Sym name)
           (if (parse-ast-lifetime-name? dispatch name)
             (begin
-              (ast.ast-lifetime-list-push out name)
+              (ast.ast-lifetime-list-push out (ci.intern-syntax-id-value name))
               (parse-ast-lifetime-list dispatch pools tail message out))
             (ResultAstLifetimeListBuild.Err message))]
         [_ (ResultAstLifetimeListBuild.Err message)])]
@@ -2925,7 +2934,9 @@
     [(reader.SexprView.Cons key-node tail)
       (match (reader.sexpr-view key-node)
         [(reader.SexprView.Sym key)
-          (if (= key (cbi.compiler-builtin-ctfe-ref 179))
+          (if (=
+            (ci.intern-syntax-id-value key)
+            (cbi.compiler-builtin-ctfe-ref 179))
             (match (reader.sexpr-view tail)
               [(reader.SexprView.Cons ty-node end)
                 (match (reader.sexpr-view end)
@@ -2987,7 +2998,7 @@
               (ResultAstExpr.Ok
                 (ast.ast-node-pool-context-expr-push
                   pools
-                  (ast.AstExpr.BinaryData (ci.intern-str bytes))))]
+                  (ast.AstExpr.BinaryData (ci.intern-id-str bytes))))]
             [_ (ResultAstExpr.Err "parse: malformed internal binary data")])]
         [_ (ResultAstExpr.Err "parse: malformed internal binary data")])]
     [_ (ResultAstExpr.Err "parse: malformed internal binary data")]))
@@ -3001,21 +3012,23 @@
     [(reader.SexprView.Cons name-node lifetimes-box)
       (match (reader.sexpr-view name-node)
         [(reader.SexprView.Sym name-id)
-          (match (parse-ast-lifetime-list-result
-            dispatch
-            pools
-            lifetimes-box
-            "parse: malformed internal resolved type lifetime list")
-            [(ResultAstLifetimeList.Ok lifetimes)
-              (ResultAstType.Ok
-                (if is-struct
-                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                    (ast.AstType.Struct name-id)
-                    (ast.ast-ty-struct-args name-id lifetimes))
-                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                    (ast.AstType.Enum name-id)
-                    (ast.ast-ty-enum-args name-id lifetimes))))]
-            [(ResultAstLifetimeList.Err message) (ResultAstType.Err message)])]
+          (let
+            [raw-name-id : i64 (ci.intern-syntax-id-value name-id)]
+            (match (parse-ast-lifetime-list-result
+              dispatch
+              pools
+              lifetimes-box
+              "parse: malformed internal resolved type lifetime list")
+              [(ResultAstLifetimeList.Ok lifetimes)
+                (ResultAstType.Ok
+                  (if is-struct
+                    (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                      (ast.AstType.Struct raw-name-id)
+                      (ast.ast-ty-struct-args raw-name-id lifetimes))
+                    (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                      (ast.AstType.Enum raw-name-id)
+                      (ast.ast-ty-enum-args raw-name-id lifetimes))))]
+              [(ResultAstLifetimeList.Err message) (ResultAstType.Err message)]))]
         [(reader.SexprView.Str _)
           (ResultAstType.Err
             "parse: malformed internal resolved type name was string")]
@@ -3071,9 +3084,15 @@
                     [(ResultAstType.Ok inner-ty)
                       (if mutable
                         (ResultAstType.Ok
-                          (ast.ast-ty-mut-ref-with-pools pools region inner-ty))
+                          (ast.ast-ty-mut-ref-with-pools
+                            pools
+                            (ci.intern-syntax-id-value region)
+                            inner-ty))
                         (ResultAstType.Ok
-                          (ast.ast-ty-ref-with-pools pools region inner-ty)))]
+                          (ast.ast-ty-ref-with-pools
+                            pools
+                            (ci.intern-syntax-id-value region)
+                            inner-ty)))]
                     [(ResultAstType.Err message) (ResultAstType.Err message)])]
                 [_
                   (ResultAstType.Err
@@ -3101,7 +3120,7 @@
   (match (reader.sexpr-view s)
     [(reader.SexprView.Sym name)
       (let
-        [name-id : i64 name]
+        [name-id : i64 (ci.intern-syntax-id-value name)]
         [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
         (cond
           [(= tag (compiler-parse-tag-ty-i64))
@@ -3146,14 +3165,14 @@
         [(reader.SexprView.Sym head)
           (let
             [rest : reader.Sexpr rest-box]
-            [head-id : i64 head]
+            [head-id : i64 (ci.intern-syntax-id-value head)]
             [tag : i64 (compiler-parse-dispatch-tag-id dispatch head-id)]
             (cond
               ;; Macro output uses these non-lexer-spellable builtin IDs to
               ;; carry already-resolved aggregate types through quasiquotes.
-              [(= head (cbi.compiler-builtin-ctfe-ref 106))
+              [(= head-id (cbi.compiler-builtin-ctfe-ref 106))
                 (parse-ast-resolved-nominal-type dispatch pools rest true)]
-              [(= head (cbi.compiler-builtin-ctfe-ref 107))
+              [(= head-id (cbi.compiler-builtin-ctfe-ref 107))
                 (parse-ast-resolved-nominal-type dispatch pools rest false)]
               [(= tag (compiler-parse-tag-ty-func))
                 (match (parse-ast-func-type-parts dispatch pools rest)
@@ -3295,7 +3314,7 @@
                                     (ResultAstType.Ok
                                       (ast.ast-ty-region-with-pools
                                         pools
-                                        region
+                                        (ci.intern-syntax-id-value region)
                                         inner-ty))]
                                   [(ResultAstType.Err message)
                                     (ResultAstType.Err message)])]
@@ -3311,7 +3330,7 @@
                   pools
                   rest
                   (compiler-parse-generic-type-policy-message
-                    (ci.intern-str head)))
+                    (ci.intern-syntax-id-text head)))
                   [(ResultAstLifetimeList.Ok lifetimes)
                     (ResultAstType.Ok (ast.ast-ty-var-args head-id lifetimes))]
                   [(ResultAstLifetimeList.Err message)
@@ -3334,12 +3353,13 @@
       [_ result])))
 
 (define (parse-ast-runtime-param-result
-  [name : i64]
+  [name : ci.InternSyntaxId]
   [ty : ast.AstType]
   [end : reader.Sexpr]) : ResultAstParam
   (match (reader.sexpr-view end)
     [(reader.SexprView.Nil)
-      (ResultAstParam.Ok (ast.ast-param-id name ty false))]
+      (ResultAstParam.Ok
+        (ast.ast-param-id (ci.intern-syntax-id-value name) ty false))]
     [(reader.SexprView.Cons metadata-node after-metadata)
       (match (reader.sexpr-view after-metadata)
         [(reader.SexprView.Nil)
@@ -3347,19 +3367,25 @@
             [(reader.SexprView.Cons key-node metadata-tail)
               (match (reader.sexpr-view key-node)
                 [(reader.SexprView.Sym key)
-                  (if (= key (cbi.compiler-builtin-ctfe-ref 179))
+                  (if (=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 179))
                     (match (reader.sexpr-view metadata-tail)
                       [(reader.SexprView.Nil)
                         (if (parse-ast-consuming-param-type-allowed? ty)
                           (ResultAstParam.Ok
-                            (ast.ast-param-id-with-consume name ty false true))
+                            (ast.ast-param-id-with-consume
+                              (ci.intern-syntax-id-value name)
+                              ty
+                              false
+                              true))
                           (ResultAstParam.Err
                             "parse: :consume requires a non-reference parameter type"))]
                       [_
                         (ResultAstParam.Err
                           "parse: (:consume) parameter metadata takes no arguments")])
                     (let
-                      [key-text : String (ci.intern-str key)]
+                      [key-text : String (ci.intern-syntax-id-text key)]
                       (if (and
                         (> (string.string-length key-text) 0)
                         (= (string.string-ref key-text 0) ':'))
@@ -3384,7 +3410,9 @@
               (match (reader.sexpr-view key-node)
                 [(reader.SexprView.Sym key)
                   (and
-                    (= key (cbi.compiler-builtin-ctfe-ref 179))
+                    (=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 179))
                     (match (reader.sexpr-view metadata-tail)
                       [(reader.SexprView.Nil) true]
                       [_ false]))]
@@ -3401,7 +3429,9 @@
     [(reader.SexprView.Cons first rest)
       (match (reader.sexpr-view first)
         [(reader.SexprView.Sym first-name)
-          (if (= first-name cbi.compiler-builtin-id-fix-comptime)
+          (if (=
+            (ci.intern-syntax-id-value first-name)
+            cbi.compiler-builtin-id-fix-comptime)
             (match (reader.sexpr-view rest)
               [(reader.SexprView.Cons name-node after-name)
                 (match (reader.sexpr-view name-node)
@@ -3416,7 +3446,10 @@
                                   (match (parse-ast-type dispatch pools ty)
                                     [(ResultAstType.Ok parsed-ty)
                                       (ResultAstParam.Ok
-                                        (ast.ast-param-id name parsed-ty true))]
+                                        (ast.ast-param-id
+                                          (ci.intern-syntax-id-value name)
+                                          parsed-ty
+                                          true))]
                                     [(ResultAstType.Err message)
                                       (ResultAstParam.Err message)])
                                   (ResultAstParam.Err
@@ -3481,38 +3514,40 @@
               cbi.compiler-builtin-id-fix-ExprBindingClause)]
           [_ false]))]))
 
-(define (parse-ast-macro-type-kind-known? [name : i64]) : bool
-  (or
-    (= name (cbi.compiler-builtin-ctfe-ref 159))
-    (= name (cbi.compiler-builtin-ctfe-ref 160))
-    (= name (cbi.compiler-builtin-ctfe-ref 161))
-    (= name (cbi.compiler-builtin-ctfe-ref 162))
-    (= name (cbi.compiler-builtin-ctfe-ref 163))
-    (= name (cbi.compiler-builtin-ctfe-ref 164))
-    (= name (cbi.compiler-builtin-ctfe-ref 165))
-    (= name (cbi.compiler-builtin-ctfe-ref 166))
-    (= name (cbi.compiler-builtin-ctfe-ref 167))
-    (= name (cbi.compiler-builtin-ctfe-ref 168))
-    (= name (cbi.compiler-builtin-ctfe-ref 169))
-    (= name (cbi.compiler-builtin-ctfe-ref 170))
-    (= name (cbi.compiler-builtin-ctfe-ref 223))
-    (= name (cbi.compiler-builtin-ctfe-ref 173))
-    (= name (cbi.compiler-builtin-ctfe-ref 174))
-    (= name (cbi.compiler-builtin-ctfe-ref 125))
-    (= name (cbi.compiler-builtin-ctfe-ref 224))
-    (= name (cbi.compiler-builtin-ctfe-ref 225))
-    (= name (cbi.compiler-builtin-ctfe-ref 124))
-    (= name (cbi.compiler-builtin-ctfe-ref 226))
-    (= name (cbi.compiler-builtin-ctfe-ref 227))
-    (= name (cbi.compiler-builtin-ctfe-ref 171))
-    (= name (cbi.compiler-builtin-ctfe-ref 228))
-    (= name (cbi.compiler-builtin-ctfe-ref 229))
-    (= name (cbi.compiler-builtin-ctfe-ref 230))
-    (= name (cbi.compiler-builtin-ctfe-ref 231))
-    (= name (cbi.compiler-builtin-ctfe-ref 232))
-    (= name (cbi.compiler-builtin-ctfe-ref 233))
-    (= name (cbi.compiler-builtin-ctfe-ref 132))
-    (= name (cbi.compiler-builtin-ctfe-ref 281))))
+(define (parse-ast-macro-type-kind-known? [name : ci.InternSyntaxId]) : bool
+  (let
+    [name-id : i64 (ci.intern-syntax-id-value name)]
+    (or
+      (= name-id (cbi.compiler-builtin-ctfe-ref 159))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 160))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 161))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 162))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 163))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 164))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 165))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 166))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 167))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 168))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 169))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 170))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 223))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 173))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 174))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 125))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 224))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 225))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 124))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 226))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 227))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 171))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 228))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 229))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 230))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 231))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 232))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 233))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 132))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 281)))))
 
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]
@@ -3525,14 +3560,14 @@
 
 (define (parse-ast-macro-type-kind-sexpr-contains-id?
   [s : reader.Sexpr]
-  [kind : i64]) : bool
+  [kind : ci.InternSyntaxId]) : bool
   (match (reader.sexpr-view s)
     [(reader.SexprView.Nil) false]
     [(reader.SexprView.Cons head tail)
       (match (reader.sexpr-view head)
         [(reader.SexprView.Sym found)
           (or
-            (= found kind)
+            (ci.intern-syntax-id-eq? found kind)
             (parse-ast-macro-type-kind-sexpr-contains-id? tail kind))]
         [_ false])]
     [_ false]))
@@ -3556,14 +3591,16 @@
                       operand-name
                       (str_cat.str-cat
                         "has duplicate kind "
-                        (ci.intern-str kind-name))))
+                        (ci.intern-syntax-id-text kind-name))))
                   (ResultAstMacroTypeKindCount.Ok (+ count 1)))]
               [(ResultAstMacroTypeKindCount.Err message)
                 (ResultAstMacroTypeKindCount.Err message)])
             (ResultAstMacroTypeKindCount.Err
               (parse-ast-macro-type-kind-error
                 operand-name
-                (str_cat.str-cat "has unknown kind " (ci.intern-str kind-name)))))]
+                (str_cat.str-cat
+                  "has unknown kind "
+                  (ci.intern-syntax-id-text kind-name)))))]
         [_
           (ResultAstMacroTypeKindCount.Err
             (parse-ast-macro-type-kind-error
@@ -3583,7 +3620,10 @@
       (match (reader.sexpr-view head)
         [(reader.SexprView.Sym kind-name)
           (begin
-            (ast.ast-macro-type-kind-list-set! out index kind-name)
+            (ast.ast-macro-type-kind-list-set!
+              out
+              index
+              (ci.intern-syntax-id-value kind-name))
             (parse-ast-macro-type-kind-list-fill! out tail (+ index 1)))]
         [_ unit])]
     [_ unit]))
@@ -3609,7 +3649,9 @@
     [(reader.SexprView.Cons head tail)
       (match (reader.sexpr-view head)
         [(reader.SexprView.Sym tag)
-          (if (= tag (cbi.compiler-builtin-ctfe-ref 221))
+          (if (=
+            (ci.intern-syntax-id-value tag)
+            (cbi.compiler-builtin-ctfe-ref 221))
             (match (reader.sexpr-view tail)
               [(reader.SexprView.Nil)
                 (ResultAstMacroTypeKindList.Err
@@ -3626,7 +3668,7 @@
                 "parse: macro type operand "
                 operand-name
                 " has unknown constraint form "
-                (ci.intern-str tag))))]
+                (ci.intern-syntax-id-text tag))))]
         [_
           (ResultAstMacroTypeKindList.Err
             (parse-ast-macro-type-kind-error operand-name "is malformed"))])]
@@ -3640,22 +3682,25 @@
     [_ false]))
 
 (define (parse-ast-macro-param-after-type
-  [name : i64]
+  [name : ci.InternSyntaxId]
   [parsed-ty : ast.AstType]
   [rest : reader.Sexpr]) : ResultAstMacroParam
   (let
-    [name-text : String (ci.intern-str name)]
+    [name-id : i64 (ci.intern-syntax-id-value name)]
+    [name-text : String (ci.intern-syntax-id-text name)]
     (match (reader.sexpr-view rest)
       [(reader.SexprView.Nil)
-        (ResultAstMacroParam.Ok (ast.ast-macro-param name parsed-ty false))]
+        (ResultAstMacroParam.Ok (ast.ast-macro-param name-id parsed-ty false))]
       [(reader.SexprView.Cons suffix suffix-rest)
         (match (reader.sexpr-view suffix)
           [(reader.SexprView.Sym suffix-name)
-            (if (= suffix-name (cbi.compiler-builtin-ctfe-ref 222))
+            (if (=
+              (ci.intern-syntax-id-value suffix-name)
+              (cbi.compiler-builtin-ctfe-ref 222))
               (match (reader.sexpr-view suffix-rest)
                 [(reader.SexprView.Nil)
                   (ResultAstMacroParam.Ok
-                    (ast.ast-macro-param name parsed-ty true))]
+                    (ast.ast-macro-param name-id parsed-ty true))]
                 [_ (ResultAstMacroParam.Err "parse: malformed macro operand")])
               (ResultAstMacroParam.Err "parse: malformed macro operand"))]
           [(reader.SexprView.Cons _ _)
@@ -3666,7 +3711,7 @@
                     [(ResultAstMacroTypeKindList.Ok type-kinds)
                       (ResultAstMacroParam.Ok
                         (ast.ast-macro-param-with-type-kinds
-                          name
+                          name-id
                           parsed-ty
                           false
                           type-kinds))]
@@ -3676,7 +3721,9 @@
                   (match (reader.sexpr-view maybe-dots)
                     [(reader.SexprView.Sym dots-name)
                       (if (and
-                        (= dots-name (cbi.compiler-builtin-ctfe-ref 222))
+                        (=
+                          (ci.intern-syntax-id-value dots-name)
+                          (cbi.compiler-builtin-ctfe-ref 222))
                         (match (reader.sexpr-view after-dots)
                           [(reader.SexprView.Nil) true]
                           [_ false]))
@@ -3714,7 +3761,9 @@
     [(reader.SexprView.Cons name-node rest)
       (match (reader.sexpr-view name-node)
         [(reader.SexprView.Sym name)
-          (if (= name cbi.compiler-builtin-id-fix-comptime)
+          (if (=
+            (ci.intern-syntax-id-value name)
+            cbi.compiler-builtin-id-fix-comptime)
             (ResultAstMacroParam.Err
               "parse: defmacro operands are already compile-time")
             (match (reader.sexpr-view rest)
@@ -3810,7 +3859,9 @@
       (match (reader.sexpr-view key-node)
         [(reader.SexprView.Sym key)
           (cond
-            [(= key (cbi.compiler-builtin-ctfe-ref 234))
+            [(=
+                (ci.intern-syntax-id-value key)
+                (cbi.compiler-builtin-ctfe-ref 234))
               (match (reader.sexpr-view tail)
                 [(reader.SexprView.Cons cleanup-node end)
                   (match (reader.sexpr-view end)
@@ -3818,7 +3869,8 @@
                       (match (reader.sexpr-view cleanup-node)
                         [(reader.SexprView.Sym cleanup-fn)
                           (ResultAstFieldCleanup.Ok
-                            (ast.ast-field-cleanup-fn-id cleanup-fn))]
+                            (ast.ast-field-cleanup-fn-id
+                              (ci.intern-syntax-id-value cleanup-fn)))]
                         [_
                           (ResultAstFieldCleanup.Err
                             "parse: malformed field :cleanup metadata")])]
@@ -3828,7 +3880,9 @@
                 [_
                   (ResultAstFieldCleanup.Err
                     "parse: malformed field :cleanup metadata")])]
-            [(= key (cbi.compiler-builtin-ctfe-ref 235))
+            [(=
+                (ci.intern-syntax-id-value key)
+                (cbi.compiler-builtin-ctfe-ref 235))
               (match (reader.sexpr-view tail)
                 [(reader.SexprView.Nil)
                   (ResultAstFieldCleanup.Ok (ast.AstFieldCleanup.Owned))]
@@ -3839,7 +3893,7 @@
               (ResultAstFieldCleanup.Err
                 (str_cat.str-cat
                   "parse: unknown field metadata "
-                  (compiler-parse-name-text key)))]
+                  (ci.intern-syntax-id-text key)))]
             [else
               (ResultAstFieldCleanup.Err
                 "parse: malformed field cleanup metadata")])]
@@ -3853,7 +3907,9 @@
       (match (reader.sexpr-view key-node)
         [(reader.SexprView.Sym key)
           (cond
-            [(= key (cbi.compiler-builtin-ctfe-ref 234))
+            [(=
+                (ci.intern-syntax-id-value key)
+                (cbi.compiler-builtin-ctfe-ref 234))
               (match (reader.sexpr-view tail)
                 [(reader.SexprView.Cons cleanup-node end)
                   (match (reader.sexpr-view end)
@@ -3861,7 +3917,8 @@
                       (match (reader.sexpr-view cleanup-node)
                         [(reader.SexprView.Sym cleanup-fn)
                           (ResultAstVariantPayloadCleanup.Ok
-                            (ast.ast-variant-payload-cleanup-fn-id cleanup-fn))]
+                            (ast.ast-variant-payload-cleanup-fn-id
+                              (ci.intern-syntax-id-value cleanup-fn)))]
                         [_
                           (ResultAstVariantPayloadCleanup.Err
                             "parse: malformed enum payload :cleanup metadata")])]
@@ -3871,7 +3928,9 @@
                 [_
                   (ResultAstVariantPayloadCleanup.Err
                     "parse: malformed enum payload :cleanup metadata")])]
-            [(= key (cbi.compiler-builtin-ctfe-ref 235))
+            [(=
+                (ci.intern-syntax-id-value key)
+                (cbi.compiler-builtin-ctfe-ref 235))
               (match (reader.sexpr-view tail)
                 [(reader.SexprView.Nil)
                   (ResultAstVariantPayloadCleanup.Ok
@@ -3883,7 +3942,7 @@
               (ResultAstVariantPayloadCleanup.Err
                 (str_cat.str-cat
                   "parse: unknown enum payload metadata "
-                  (compiler-parse-name-text key)))]
+                  (ci.intern-syntax-id-text key)))]
             [else
               (ResultAstVariantPayloadCleanup.Err
                 "parse: malformed enum payload cleanup metadata")])]
@@ -3911,7 +3970,7 @@
                     [(ResultAstType.Ok parsed-ty)
                       (ResultAstFieldDef.Ok
                         (ast.ast-field-def-id
-                          name
+                          (ci.intern-syntax-id-value name)
                           parsed-ty
                           (ast.AstFieldCleanup.No)))]
                     [(ResultAstType.Err message)
@@ -3926,7 +3985,7 @@
                               [(ResultAstFieldCleanup.Ok parsed-cleanup)
                                 (ResultAstFieldDef.Ok
                                   (ast.ast-field-def-id
-                                    name
+                                    (ci.intern-syntax-id-value name)
                                     parsed-ty
                                     parsed-cleanup))]
                               [(ResultAstFieldCleanup.Err message)
@@ -3943,11 +4002,11 @@
         [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
     [_ (ResultAstFieldDef.Err "parse: malformed field definition")]))
 
-(define (compiler-parse-metadata-key? [name-id : i64]) : bool
+(define (compiler-parse-metadata-key? [name-id : ci.InternSyntaxId]) : bool
   ;; Unknown metadata is a genuinely prefix-bearing diagnostic boundary. All
   ;; recognized fixed keys are classified by ID before reaching this helper.
   (let
-    [name : String (compiler-parse-name-text name-id)]
+    [name : String (ci.intern-syntax-id-text name-id)]
     (and (> (string.string-length name) 0) (= (string.string-ref name 0) ':'))))
 
 (define (parse-ast-aggregate-lifetimes-tail
@@ -3967,14 +4026,18 @@
         [(reader.SexprView.Nil)
           (match (reader.sexpr-view name-node)
             [(reader.SexprView.Sym name)
-              (if (= name cbi.compiler-builtin-id-fix-c)
+              (if (=
+                (ci.intern-syntax-id-value name)
+                cbi.compiler-builtin-id-fix-c)
                 (ResultAstStructRepr.Ok (ast.AstStructRepr.C))
-                (if (= name (cbi.compiler-builtin-ctfe-ref 239))
+                (if (=
+                  (ci.intern-syntax-id-value name)
+                  (cbi.compiler-builtin-ctfe-ref 239))
                   (ResultAstStructRepr.Err "parse: packed repr is reserved")
                   (ResultAstStructRepr.Err
                     (str_cat.str-cat
                       "parse: unknown struct repr "
-                      (compiler-parse-name-text name)))))]
+                      (ci.intern-syntax-id-text name)))))]
             [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")])]
         [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")])]
     [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")]))
@@ -3987,7 +4050,8 @@
           (match (reader.sexpr-view cleanup-node)
             [(reader.SexprView.Sym cleanup-fn)
               (ResultAstStructCleanup.Ok
-                (ast.ast-struct-cleanup-fn-id cleanup-fn))]
+                (ast.ast-struct-cleanup-fn-id
+                  (ci.intern-syntax-id-value cleanup-fn)))]
             [_
               (ResultAstStructCleanup.Err
                 "parse: malformed defstruct :cleanup metadata")])]
@@ -4005,7 +4069,9 @@
         [(reader.SexprView.Nil)
           (match (reader.sexpr-view cleanup-node)
             [(reader.SexprView.Sym cleanup-fn)
-              (ResultAstEnumCleanup.Ok (ast.ast-enum-cleanup-fn-id cleanup-fn))]
+              (ResultAstEnumCleanup.Ok
+                (ast.ast-enum-cleanup-fn-id
+                  (ci.intern-syntax-id-value cleanup-fn)))]
             [_
               (ResultAstEnumCleanup.Err
                 "parse: malformed defenum :cleanup metadata")])]
@@ -4073,7 +4139,9 @@
           (match (reader.sexpr-view key-node)
             [(reader.SexprView.Sym key)
               (cond
-                [(= key (cbi.compiler-builtin-ctfe-ref 236))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 236))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -4099,7 +4167,9 @@
                             false)]
                         [(ResultAstLifetimeList.Err message)
                           (ResultAstStructDefParts.Err message)])))]
-                [(= key (cbi.compiler-builtin-ctfe-ref 237))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 237))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -4127,7 +4197,9 @@
                               false))]
                         [(ResultAstStructRepr.Err message)
                           (ResultAstStructDefParts.Err message)])))]
-                [(= key (cbi.compiler-builtin-ctfe-ref 234))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 234))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -4157,13 +4229,15 @@
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
-                    (if (= key (cbi.compiler-builtin-ctfe-ref 238))
+                    (if (=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 238))
                       (ResultAstStructDefParts.Err
                         "parse: packed repr is reserved")
                       (ResultAstStructDefParts.Err
                         (str_cat.str-cat
                           "parse: unknown defstruct metadata "
-                          (compiler-parse-name-text key)))))]
+                          (ci.intern-syntax-id-text key)))))]
                 [else
                   (parse-ast-defstruct-field-item
                     dispatch
@@ -4306,13 +4380,15 @@
       (match (reader.sexpr-view name-node)
         [(reader.SexprView.Sym name)
           (if (compiler-parse-metadata-key? name)
-            (if (= name (cbi.compiler-builtin-ctfe-ref 234))
+            (if (=
+              (ci.intern-syntax-id-value name)
+              (cbi.compiler-builtin-ctfe-ref 234))
               (ResultAstVariantDef.Err
                 "parse: defenum metadata must appear before variants")
               (ResultAstVariantDef.Err
                 (str_cat.str-cat
                   "parse: unknown defenum metadata "
-                  (compiler-parse-name-text name))))
+                  (ci.intern-syntax-id-text name))))
             (match (parse-ast-variant-payload-parts
               dispatch
               pools
@@ -4320,25 +4396,30 @@
               allow-cleanup)
               [(ResultAstVariantPayloadParts.Ok parsed-fields parsed-cleanups)
                 (ResultAstVariantDef.Ok
-                  (ast.ast-variant-def-id name parsed-fields parsed-cleanups))]
+                  (ast.ast-variant-def-id
+                    (ci.intern-syntax-id-value name)
+                    parsed-fields
+                    parsed-cleanups))]
               [(ResultAstVariantPayloadParts.Err message)
                 (ResultAstVariantDef.Err message)]))]
         [_ (ResultAstVariantDef.Err "parse: malformed variant definition")])]
     [_ (ResultAstVariantDef.Err "parse: malformed variant definition")]))
 
-(define (parse-ast-dispatch-isa [name : i64]) : ResultAstDispatchIsa
-  (cond
-    [(= name (cbi.compiler-builtin-ctfe-ref 240))
-      (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Scalar))]
-    [(= name (cbi.compiler-builtin-ctfe-ref 241))
-      (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Avx2))]
-    [(= name (cbi.compiler-builtin-ctfe-ref 242))
-      (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Avx512))]
-    [else
-      (ResultAstDispatchIsa.Err
-        (str_cat.str-cat
-          "parse: unknown defdispatch ISA "
-          (compiler-parse-name-text name)))]))
+(define (parse-ast-dispatch-isa [name : ci.InternSyntaxId]) : ResultAstDispatchIsa
+  (let
+    [name-id : i64 (ci.intern-syntax-id-value name)]
+    (cond
+      [(= name-id (cbi.compiler-builtin-ctfe-ref 240))
+        (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Scalar))]
+      [(= name-id (cbi.compiler-builtin-ctfe-ref 241))
+        (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Avx2))]
+      [(= name-id (cbi.compiler-builtin-ctfe-ref 242))
+        (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Avx512))]
+      [else
+        (ResultAstDispatchIsa.Err
+          (str_cat.str-cat
+            "parse: unknown defdispatch ISA "
+            (ci.intern-syntax-id-text name)))])))
 
 (define (parse-ast-dispatch-variant [s : reader.SpannedSexpr]) : ResultAstDispatchVariant
   (match (reader.spanned-sexpr-view s)
@@ -4354,7 +4435,9 @@
                       (match (parse-ast-dispatch-isa isa-name)
                         [(ResultAstDispatchIsa.Ok isa)
                           (ResultAstDispatchVariant.Ok
-                            (ast.AstDispatchVariant.Variant isa fn-name))]
+                            (ast.AstDispatchVariant.Variant
+                              isa
+                              (ci.intern-syntax-id-value fn-name)))]
                         [(ResultAstDispatchIsa.Err message)
                           (ResultAstDispatchVariant.Err message)])]
                     [_
@@ -4469,7 +4552,9 @@
                 [seen-variant
                   (ResultAstEnumDefParts.Err
                     "parse: defenum metadata must appear before variants")]
-                [(= key (cbi.compiler-builtin-ctfe-ref 236))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 236))
                   (if seen-lifetimes
                     (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :lifetimes metadata")
@@ -4489,7 +4574,9 @@
                           false)]
                       [(ResultAstLifetimeList.Err message)
                         (ResultAstEnumDefParts.Err message)]))]
-                [(= key (cbi.compiler-builtin-ctfe-ref 234))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 234))
                   (if seen-cleanup
                     (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :cleanup metadata")
@@ -4510,7 +4597,7 @@
                   (ResultAstEnumDefParts.Err
                     (str_cat.str-cat
                       "parse: unknown defenum metadata "
-                      (compiler-parse-name-text key)))])]
+                      (ci.intern-syntax-id-text key)))])]
             [_
               (parse-ast-defenum-variant-item
                 dispatch
@@ -4571,12 +4658,13 @@
       (ResultAstPattern.Ok (ast.AstPattern.Literal (ast.AstLiteral.Float text)))]
     [(reader.SexprView.Str string-id)
       (ResultAstPattern.Ok
-        (ast.AstPattern.Literal (ast.AstLiteral.String string-id)))]
+        (ast.AstPattern.Literal
+          (ast.AstLiteral.String (ci.intern-id-value string-id))))]
     [(reader.SexprView.Char c)
       (ResultAstPattern.Ok (ast.AstPattern.Literal (ast.AstLiteral.Char c)))]
     [(reader.SexprView.Sym name)
       (let
-        [name-id : i64 name]
+        [name-id : i64 (ci.intern-syntax-id-value name)]
         [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
         (cond
           [(= tag (compiler-parse-tag-pattern-wildcard))
@@ -4594,7 +4682,8 @@
           (match (parse-ast-pattern-list dispatch pools args)
             [(ResultAstPatternList.Ok parsed-args)
               (let
-                [tag : i64 (compiler-parse-dispatch-tag-id dispatch name)]
+                [name-id : i64 (ci.intern-syntax-id-value name)]
+                [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
                 (cond
                   [(= tag (compiler-parse-tag-expr-tuple))
                     (ResultAstPattern.Ok (ast.ast-pat-tuple parsed-args))]
@@ -4602,7 +4691,7 @@
                     (ResultAstPattern.Ok (ast.ast-pat-array parsed-args))]
                   [else
                     (ResultAstPattern.Ok
-                      (ast.ast-pat-variant-id name parsed-args))]))]
+                      (ast.ast-pat-variant-id name-id parsed-args))]))]
             [(ResultAstPatternList.Err message) (ResultAstPattern.Err message)])]
         [_ (ResultAstPattern.Err "parse: expected pattern")])]
     [_ (ResultAstPattern.Err "parse: expected pattern")]))
@@ -4704,7 +4793,9 @@
     [(reader.SpannedSexprView.Cons op-node cfg-rest _)
       (match (reader.spanned-sexpr-view op-node)
         [(reader.SpannedSexprView.Sym op _)
-          (if (= op (cbi.compiler-builtin-ctfe-ref 243))
+          (if (=
+            (ci.intern-syntax-id-value op)
+            (cbi.compiler-builtin-ctfe-ref 243))
             (parse-ast-cfg-expr-maybe dispatch pools cfg-rest)
             (match (parse-ast-expr-with-pools dispatch pools head)
               [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
@@ -4794,7 +4885,9 @@
     [(reader.SpannedSexprView.Cons op-node cfg-rest _)
       (match (reader.spanned-sexpr-view op-node)
         [(reader.SpannedSexprView.Sym op _)
-          (if (= op (cbi.compiler-builtin-ctfe-ref 243))
+          (if (=
+            (ci.intern-syntax-id-value op)
+            (cbi.compiler-builtin-ctfe-ref 243))
             (parse-ast-cfg-expr-maybe dispatch pools cfg-rest)
             (match (parse-ast-expr-with-pools dispatch pools head)
               [(ResultAstExpr.Ok parsed) (ResultAstMaybeExpr.SomeExpr parsed)]
@@ -5029,7 +5122,7 @@
                           pools
                           (ast.ast-expr-set-id-with-pools
                             pools
-                            name
+                            (ci.intern-syntax-id-value name)
                             parsed-value)
                           (ast-source-span-from-source-span
                             (reader.spanned-sexpr-span target-node))))]
@@ -5202,7 +5295,7 @@
                         [(ResultAstExpr.Ok parsed-value)
                           (ResultAstLetBinding.Ok
                             (ast.ast-let-binding-id
-                              name
+                              (ci.intern-syntax-id-value name)
                               ast.AstMaybeType.No
                               parsed-value))]
                         [(ResultAstExpr.Err message)
@@ -5226,7 +5319,7 @@
                                       [(ResultAstExpr.Ok parsed-value)
                                         (ResultAstLetBinding.Ok
                                           (ast.ast-let-binding-id
-                                            name
+                                            (ci.intern-syntax-id-value name)
                                             (ast.AstMaybeType.Some parsed-ty)
                                             parsed-value))]
                                       [(ResultAstExpr.Err message)
@@ -5693,7 +5786,8 @@
                         (ast.ast-expr-borrow-with-pools
                           pools
                           mutable
-                          (ast.AstBorrowLifetime.Named name)
+                          (ast.AstBorrowLifetime.Named
+                            (ci.intern-syntax-id-value name))
                           parsed-place))]
                     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
                 [_
@@ -5726,7 +5820,7 @@
                         (ast.ast-expr-struct-get-id-with-pools
                           pools
                           parsed-expr
-                          field))]
+                          (ci.intern-syntax-id-value field)))]
                     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
                 [_ (ResultAstExpr.Err "parse: malformed struct-get")])]
             [_ (ResultAstExpr.Err "parse: malformed struct-get")])]
@@ -5863,7 +5957,8 @@
                                                       (ast.ast-expr-spmd-reduce-id-with-pools
                                                         pools
                                                         op
-                                                        index
+                                                        (ci.intern-syntax-id-value
+                                                          index)
                                                         parsed-index-ty
                                                         parsed-start
                                                         parsed-end
@@ -5910,7 +6005,8 @@
                             [(reader.SpannedSexprView.Cons value end _)
                               (match (reader.spanned-sexpr-view end)
                                 [(reader.SpannedSexprView.Nil _)
-                                  (match (parse-ast-reduce-op op-name)
+                                  (match (parse-ast-reduce-op
+                                    (ci.intern-syntax-id-value op-name))
                                     [(ResultAstReduceOp.Ok op)
                                       (parse-ast-spmd-reduce-binding
                                         dispatch
@@ -5957,7 +6053,8 @@
                                 [(reader.SpannedSexprView.Cons body end _)
                                   (match (reader.spanned-sexpr-view end)
                                     [(reader.SpannedSexprView.Nil _)
-                                      (match (parse-ast-scan-op op-name)
+                                      (match (parse-ast-scan-op
+                                        (ci.intern-syntax-id-value op-name))
                                         [(ResultAstReduceOp.Ok op)
                                           (parse-ast-spmd-scan-bindings
                                             dispatch
@@ -6027,7 +6124,7 @@
                                       dispatch
                                       pools
                                       op
-                                      index
+                                      (ci.intern-syntax-id-value index)
                                       parsed-index-ty
                                       start
                                       end
@@ -6128,7 +6225,8 @@
                                                         index-ty
                                                         parsed-start
                                                         parsed-end
-                                                        prefix
+                                                        (ci.intern-syntax-id-value
+                                                          prefix)
                                                         parsed-prefix-ty
                                                         parsed-init
                                                         parsed-value
@@ -6683,7 +6781,7 @@
                   (ResultAstExpr.Err
                     (str_cat.str-cat
                       "parse: with-arena '"
-                      (compiler-parse-name-text region)
+                      (ci.intern-syntax-id-text region)
                       "' requires a non-empty body"))]
                 [_
                   (match (parse-ast-expr-list dispatch pools body)
@@ -6691,7 +6789,9 @@
                       (ResultAstExpr.Ok
                         (ast.ast-node-pool-context-expr-push
                           pools
-                          (ast.AstExpr.WithRegion region exprs)))]
+                          (ast.AstExpr.WithRegion
+                            (ci.intern-syntax-id-value region)
+                            exprs)))]
                     [(ResultAstExprList.Err message)
                       (ResultAstExpr.Err message)])])]
             [_
@@ -6793,7 +6893,7 @@
                                 [(ResultAstExpr.Ok parsed-cleanup)
                                   (ResultAstResourceBinding.Ok
                                     (ast.ast-resource-binding-id
-                                      name
+                                      (ci.intern-syntax-id-value name)
                                       parsed-init
                                       parsed-cleanup))]
                                 [(ResultAstExpr.Err message)
@@ -7022,7 +7122,8 @@
                                                 (ResultAstExpr.Ok
                                                   (ast.ast-expr-foreach-id-with-pools
                                                     pools
-                                                    index
+                                                    (ci.intern-syntax-id-value
+                                                      index)
                                                     parsed-index-ty
                                                     parsed-start
                                                     parsed-end
@@ -7356,10 +7457,12 @@
   (match (reader.spanned-sexpr-view head)
     [(reader.SpannedSexprView.Sym op _)
       (cond
-        [(= op (cbi.compiler-builtin-ctfe-ref 213))
+        [(= (ci.intern-syntax-id-value op) (cbi.compiler-builtin-ctfe-ref 213))
           (parse-ast-internal-binary-data pools rest)]
         [(=
-            (compiler-parse-dispatch-tag dispatch op)
+            (compiler-parse-dispatch-tag
+              dispatch
+              (ci.intern-syntax-id-value op))
             (compiler-parse-tag-expr-init))
           (match (reader.spanned-sexpr-view rest)
             [(reader.SpannedSexprView.Cons first _ _)
@@ -7371,7 +7474,10 @@
             [_ (parse-ast-call dispatch pools head rest)])]
         [else
           (let
-            [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
+            [tag : i64
+              (compiler-parse-dispatch-tag
+                dispatch
+                (ci.intern-syntax-id-value op))]
             (cond
               [(= tag (compiler-parse-tag-expr-ptr-addr-of))
                 (parse-ast-ptr-addr-of dispatch pools rest)]
@@ -7406,7 +7512,8 @@
               [(= tag (compiler-parse-tag-ty-mut-ref))
                 (parse-ast-borrow dispatch pools true rest)]
               [else
-                (if (parse-ast-removed-declaration-name? op)
+                (if (parse-ast-removed-declaration-name?
+                  (ci.intern-syntax-id-value op))
                   (ResultAstExpr.Err (parse-ast-removed-declaration-message))
                   (parse-ast-list-expr-tag dispatch pools tag head rest))]))])]
     [_ (parse-ast-call dispatch pools head rest)]))
@@ -7440,7 +7547,8 @@
               pools
               (ast.ast-node-pool-context-expr-push
                 pools
-                (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))
+                (ast.AstExpr.Literal
+                  (ast.AstLiteral.String (ci.intern-id-value string-id))))
               s))]
         [(reader.SpannedSexprView.Char c _)
           (ResultAstExpr.Ok
@@ -7452,7 +7560,7 @@
               s))]
         [(reader.SpannedSexprView.Sym name _)
           (let
-            [name-id : i64 name]
+            [name-id : i64 (ci.intern-syntax-id-value name)]
             [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
             (cond
               [(= tag (compiler-parse-tag-lit-true))
@@ -7490,7 +7598,9 @@
         [(reader.SpannedSexprView.Cons head rest _)
           (match (reader.spanned-sexpr-view head)
             [(reader.SpannedSexprView.Sym op _)
-              (if (= op (cbi.compiler-builtin-ctfe-ref 243))
+              (if (=
+                (ci.intern-syntax-id-value op)
+                (cbi.compiler-builtin-ctfe-ref 243))
                 (match (parse-ast-cfg-expr dispatch pools rest)
                   [(ResultAstExpr.Ok parsed)
                     (ResultAstExpr.Ok (ast-expr-wrap-span pools parsed s))]
@@ -7565,13 +7675,17 @@
         [(reader.SexprView.Sym name)
           (let
             [next : ast.AstSpmdParamClassList out]
-            (if (= name (cbi.compiler-builtin-ctfe-ref 244))
+            (if (=
+              (ci.intern-syntax-id-value name)
+              (cbi.compiler-builtin-ctfe-ref 244))
               (begin
                 (ast.ast-spmd-param-class-list-push
                   (&mut next)
                   ast.AstSpmdParamClass.Uniform)
                 (parse-ast-spmd-param-classes rest next))
-              (if (= name (cbi.compiler-builtin-ctfe-ref 245))
+              (if (=
+                (ci.intern-syntax-id-value name)
+                (cbi.compiler-builtin-ctfe-ref 245))
                 (begin
                   (ast.ast-spmd-param-class-list-push
                     (&mut next)
@@ -7594,11 +7708,17 @@
           (match (reader.sexpr-view head)
             [(reader.SexprView.Sym name)
               (cond
-                [(= name (cbi.compiler-builtin-ctfe-ref 173))
+                [(=
+                    (ci.intern-syntax-id-value name)
+                    (cbi.compiler-builtin-ctfe-ref 173))
                   (ResultAstSpmdResultClass.Ok ast.AstSpmdResultClass.Unit)]
-                [(= name (cbi.compiler-builtin-ctfe-ref 244))
+                [(=
+                    (ci.intern-syntax-id-value name)
+                    (cbi.compiler-builtin-ctfe-ref 244))
                   (ResultAstSpmdResultClass.Ok ast.AstSpmdResultClass.Uniform)]
-                [(= name (cbi.compiler-builtin-ctfe-ref 245))
+                [(=
+                    (ci.intern-syntax-id-value name)
+                    (cbi.compiler-builtin-ctfe-ref 245))
                   (ResultAstSpmdResultClass.Ok ast.AstSpmdResultClass.Varying)]
                 [else
                   (ResultAstSpmdResultClass.Err
@@ -7620,7 +7740,9 @@
         [(reader.SexprView.Nil)
           (match (reader.sexpr-view head)
             [(reader.SexprView.Sym name)
-              (if (= name (cbi.compiler-builtin-ctfe-ref 246))
+              (if (=
+                (ci.intern-syntax-id-value name)
+                (cbi.compiler-builtin-ctfe-ref 246))
                 (ResultAstSpmdIndexParam.Ok -1)
                 (ResultAstSpmdIndexParam.Err
                   "parse: :spmd-callable index-param expects none or a non-negative integer"))]
@@ -7650,7 +7772,9 @@
           (match (reader.sexpr-view key-node)
             [(reader.SexprView.Sym key)
               (cond
-                [(= key (cbi.compiler-builtin-ctfe-ref 247))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 247))
                   (if state.seen-lanes
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable lanes field")
@@ -7683,7 +7807,9 @@
                       [_
                         (ResultAstSpmdSpecializationParseState.Err
                           "parse: :spmd-callable lanes expects one integer")]))]
-                [(= key (cbi.compiler-builtin-ctfe-ref 248))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 248))
                   (if state.seen-args
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable args field")
@@ -7704,7 +7830,9 @@
                             true
                             state.seen-result
                             state.seen-index-param))]))]
-                [(= key (cbi.compiler-builtin-ctfe-ref 249))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 249))
                   (if state.seen-result
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable result field")
@@ -7723,7 +7851,9 @@
                             state.seen-args
                             true
                             state.seen-index-param))]))]
-                [(= key (cbi.compiler-builtin-ctfe-ref 250))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 250))
                   (if state.seen-index-param
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable index-param field")
@@ -7746,7 +7876,7 @@
                   (ResultAstSpmdSpecializationParseState.Err
                     (str_cat.str-cat
                       "parse: unknown :spmd-callable specialization field "
-                      (compiler-parse-name-text key)))])]
+                      (ci.intern-syntax-id-text key)))])]
             [_
               (ResultAstSpmdSpecializationParseState.Err
                 "parse: malformed :spmd-callable specialization field")])]
@@ -7872,7 +8002,9 @@
         [(reader.SexprView.Cons name-node fields)
           (match (reader.sexpr-view name-node)
             [(reader.SexprView.Sym name)
-              (if (= name (cbi.compiler-builtin-ctfe-ref 251))
+              (if (=
+                (ci.intern-syntax-id-value name)
+                (cbi.compiler-builtin-ctfe-ref 251))
                 (match (parse-ast-spmd-specialization fields param-count)
                   [(ResultAstSpmdSpecialization.Err message)
                     (ResultAstSpmdCallable.Err message)]
@@ -7915,8 +8047,9 @@
         [(reader.SexprView.Nil)
           (match (reader.sexpr-view value-node)
             [(reader.SexprView.Str value-id)
-              (if (> (string.string-length (ci.intern-str value-id)) 0)
-                (ResultAstFnExport.Ok (ast.ast-fn-export-id value-id))
+              (if (> (string.string-length (ci.intern-id-str value-id)) 0)
+                (ResultAstFnExport.Ok
+                  (ast.ast-fn-export-id (ci.intern-id-value value-id)))
                 (ResultAstFnExport.Err
                   "parse: define :export-symbol must not be empty"))]
             [_
@@ -8017,7 +8150,9 @@
               (match (reader.sexpr-view key-node)
                 [(reader.SexprView.Sym key)
                   (cond
-                    [(= key (cbi.compiler-builtin-ctfe-ref 252))
+                    [(=
+                        (ci.intern-syntax-id-value key)
+                        (cbi.compiler-builtin-ctfe-ref 252))
                       (if seen-export
                         (ResultAstDecl.Err
                           "parse: duplicate define :export-symbol metadata")
@@ -8035,7 +8170,9 @@
                               tail)]
                           [(ResultAstFnExport.Err message)
                             (ResultAstDecl.Err message)]))]
-                    [(= key (cbi.compiler-builtin-ctfe-ref 253))
+                    [(=
+                        (ci.intern-syntax-id-value key)
+                        (cbi.compiler-builtin-ctfe-ref 253))
                       (if seen-spmd-callable
                         (ResultAstDecl.Err
                           "parse: duplicate define :spmd-callable metadata")
@@ -8059,7 +8196,7 @@
                       (ResultAstDecl.Err
                         (str_cat.str-cat
                           "parse: unknown define metadata "
-                          (compiler-parse-name-text key)))]
+                          (ci.intern-syntax-id-text key)))]
                     [else
                       (ResultAstDecl.Err "parse: malformed function metadata")])]
                 [_ (ResultAstDecl.Err "parse: malformed function definition")])]
@@ -8111,11 +8248,20 @@
     [(reader.SpannedSexprView.Cons head after-name _)
       (match (reader.spanned-sexpr-view head)
         [(reader.SpannedSexprView.Sym name _)
-          (parse-ast-define-value dispatch pools name after-name)]
+          (parse-ast-define-value
+            dispatch
+            pools
+            (ci.intern-syntax-id-value name)
+            after-name)]
         [(reader.SpannedSexprView.Cons name-node params _)
           (match (reader.spanned-sexpr-view name-node)
             [(reader.SpannedSexprView.Sym name _)
-              (parse-ast-define-fn dispatch pools name params after-name)]
+              (parse-ast-define-fn
+                dispatch
+                pools
+                (ci.intern-syntax-id-value name)
+                params
+                after-name)]
             [_ (ResultAstDecl.Err "parse: malformed define")])]
         [_ (ResultAstDecl.Err "parse: malformed define")])]
     [_ (ResultAstDecl.Err "parse: malformed define")]))
@@ -8157,7 +8303,7 @@
                                           [(ResultAstExpr.Ok parsed-body)
                                             (ResultAstDecl.Ok
                                               (ast.ast-decl-def-macro-id
-                                                name
+                                                (ci.intern-syntax-id-value name)
                                                 parsed-params
                                                 parsed-ret
                                                 parsed-body))]
@@ -8177,28 +8323,28 @@
         [_ (ResultAstDecl.Err "parse: malformed defmacro")])]
     [_ (ResultAstDecl.Err "parse: malformed defmacro")]))
 
-(define (parse-ast-extern-varargs-typed-name? [name-id : i64]) : bool
+(define (parse-ast-extern-varargs-typed-name? [name-id : ci.InternSyntaxId]) : bool
   ;; Unlike the fixed open tail `...`, typed tails encode their type in the
   ;; symbol spelling (`...T`) and therefore require this content boundary.
   (let
-    [name : String (compiler-parse-name-text name-id)]
+    [name : String (ci.intern-syntax-id-text name-id)]
     (if (> (string.string-length name) 3)
       (string.eq (string.substring name 0 3) "...")
       false)))
 
-(define (parse-ast-extern-varargs-tail-id [name-id : i64]) : i64
+(define (parse-ast-extern-varargs-tail-id [name-id : ci.InternSyntaxId]) : i64
   (let
-    [name : String (compiler-parse-name-text name-id)]
+    [name : String (ci.intern-syntax-id-text name-id)]
     (reader.string-symbol-id
       (string.substring name 3 (- (string.string-length name) 3)))))
 
-(define (parse-ast-extern-varargs-open? [name-id : i64]) : bool
-  (= name-id (cbi.compiler-builtin-ctfe-ref 222)))
+(define (parse-ast-extern-varargs-open? [name-id : ci.InternSyntaxId]) : bool
+  (= (ci.intern-syntax-id-value name-id) (cbi.compiler-builtin-ctfe-ref 222)))
 
 (define (parse-ast-extern-varargs-tail-type
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [name-id : i64]) : ResultAstType
+  [name-id : ci.InternSyntaxId]) : ResultAstType
   (if (parse-ast-extern-varargs-typed-name? name-id)
     (parse-ast-type
       dispatch
@@ -8339,7 +8485,10 @@
         [(reader.SpannedSexprView.Sym name _)
           (match (parse-ast-extern-head-items dispatch pools params)
             [(ResultAstExternHeader.Ok _ param-types abi)
-              (ResultAstExternHeader.Ok name param-types abi)]
+              (ResultAstExternHeader.Ok
+                (ci.intern-syntax-id-value name)
+                param-types
+                abi)]
             [(ResultAstExternHeader.Err message)
               (ResultAstExternHeader.Err message)])]
         [_ (ResultAstExternHeader.Err "parse: malformed extern function head")])]
@@ -8355,27 +8504,33 @@
         [(reader.SexprView.Sym name)
           (match (reader.sexpr-view rest)
             [(reader.SexprView.Nil)
-              (if (= name cbi.compiler-builtin-id-fix-c)
+              (if (=
+                (ci.intern-syntax-id-value name)
+                cbi.compiler-builtin-id-fix-c)
                 (ResultAstExternAbi.Ok (ast.AstExternAbi.C))
-                (if (= name (cbi.compiler-builtin-ctfe-ref 254))
+                (if (=
+                  (ci.intern-syntax-id-value name)
+                  (cbi.compiler-builtin-ctfe-ref 254))
                   (ResultAstExternAbi.Err
                     (parse-ast-extern-c-varargs-legacy-message))
                   (ResultAstExternAbi.Err
                     (str_cat.str-cat
                       "parse: unknown extern ABI "
-                      (compiler-parse-name-text name)))))]
+                      (ci.intern-syntax-id-text name)))))]
             [(reader.SexprView.Cons fixed-node end)
               (match (reader.sexpr-view end)
                 [(reader.SexprView.Nil)
                   (match (reader.sexpr-view fixed-node)
                     [(reader.SexprView.Int _ _)
-                      (if (= name (cbi.compiler-builtin-ctfe-ref 254))
+                      (if (=
+                        (ci.intern-syntax-id-value name)
+                        (cbi.compiler-builtin-ctfe-ref 254))
                         (ResultAstExternAbi.Err
                           (parse-ast-extern-c-varargs-legacy-message))
                         (ResultAstExternAbi.Err
                           (str_cat.str-cat
                             "parse: unknown extern ABI "
-                            (compiler-parse-name-text name))))]
+                            (ci.intern-syntax-id-text name))))]
                     [_
                       (ResultAstExternAbi.Err
                         "parse: malformed extern :abi metadata")])]
@@ -8394,9 +8549,9 @@
           (match (reader.sexpr-view value-node)
             [(reader.SexprView.Str value-id)
               (let
-                [value : String (ci.intern-str value-id)]
+                [value : String (ci.intern-id-str value-id)]
                 (if (> (string.string-length value) 0)
-                  (ResultAstExternSymbol.Ok value value-id)
+                  (ResultAstExternSymbol.Ok value (ci.intern-id-value value-id))
                   (ResultAstExternSymbol.Err
                     (str_cat.str-cat "parse: extern " key " must not be empty"))))]
             [_
@@ -8451,7 +8606,9 @@
             (match (reader.sexpr-view key-node)
               [(reader.SexprView.Sym key)
                 (cond
-                  [(= key (cbi.compiler-builtin-ctfe-ref 255))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 255))
                     (if seen-abi
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :abi metadata")
@@ -8468,7 +8625,9 @@
                             seen-symbol)]
                         [(ResultAstExternAbi.Err message)
                           (ResultAstExternParts.Err message)]))]
-                  [(= key (cbi.compiler-builtin-ctfe-ref 256))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 256))
                     (if seen-symbol
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
@@ -8485,7 +8644,9 @@
                             true)]
                         [(ResultAstExternSymbol.Err message)
                           (ResultAstExternParts.Err message)]))]
-                  [(= key (cbi.compiler-builtin-ctfe-ref 257))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 257))
                     (match (parse-ast-extern-string-tail ":link-lib" after-key)
                       [(ResultAstExternSymbol.Ok value _)
                         (begin
@@ -8503,7 +8664,9 @@
                             seen-symbol))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
-                  [(= key (cbi.compiler-builtin-ctfe-ref 258))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 258))
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       after-key)
@@ -8523,7 +8686,9 @@
                             seen-symbol))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
-                  [(= key (cbi.compiler-builtin-ctfe-ref 259))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 259))
                     (match (parse-ast-extern-string-tail ":link-arg" after-key)
                       [(ResultAstExternSymbol.Ok value _)
                         (begin
@@ -8545,7 +8710,7 @@
                     (ResultAstExternParts.Err
                       (str_cat.str-cat
                         "parse: unknown extern metadata "
-                        (compiler-parse-name-text key)))]
+                        (ci.intern-syntax-id-text key)))]
                   [else
                     (ResultAstExternParts.Err "parse: expected ':' in extern")])]
               [_ (ResultAstExternParts.Err "parse: expected ':' in extern")])]
@@ -8591,7 +8756,9 @@
           (match (reader.sexpr-view key-node)
             [(reader.SexprView.Sym key)
               (cond
-                [(= key (cbi.compiler-builtin-ctfe-ref 255))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 255))
                   (if seen-abi
                     (ResultAstExternParts.Err
                       "parse: duplicate extern :abi metadata")
@@ -8614,7 +8781,9 @@
                             (ResultAstExternParts.Err message)])]
                       [(ResultAstExternAbi.Err message)
                         (ResultAstExternParts.Err message)]))]
-                [(= key (cbi.compiler-builtin-ctfe-ref 256))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 256))
                   (if seen-symbol
                     (ResultAstExternParts.Err
                       "parse: duplicate extern :symbol metadata")
@@ -8633,7 +8802,9 @@
                           ret)]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)]))]
-                [(= key (cbi.compiler-builtin-ctfe-ref 257))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 257))
                   (match (parse-ast-extern-string-tail ":link-lib" after-key)
                     [(ResultAstExternSymbol.Ok value _)
                       (begin
@@ -8653,7 +8824,9 @@
                           ret))]
                     [(ResultAstExternSymbol.Err message)
                       (ResultAstExternParts.Err message)])]
-                [(= key (cbi.compiler-builtin-ctfe-ref 258))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 258))
                   (match (parse-ast-extern-string-tail ":link-search" after-key)
                     [(ResultAstExternSymbol.Ok value _)
                       (begin
@@ -8673,7 +8846,9 @@
                           ret))]
                     [(ResultAstExternSymbol.Err message)
                       (ResultAstExternParts.Err message)])]
-                [(= key (cbi.compiler-builtin-ctfe-ref 259))
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 259))
                   (match (parse-ast-extern-string-tail ":link-arg" after-key)
                     [(ResultAstExternSymbol.Ok value _)
                       (begin
@@ -8697,7 +8872,7 @@
                   (ResultAstExternParts.Err
                     (str_cat.str-cat
                       "parse: unknown extern metadata "
-                      (compiler-parse-name-text key)))]
+                      (ci.intern-syntax-id-text key)))]
                 [else (ResultAstExternParts.Err "parse: malformed extern")])]
             [_ (ResultAstExternParts.Err "parse: malformed extern")])]
         [_ (ResultAstExternParts.Err "parse: malformed extern")])]
@@ -8753,7 +8928,9 @@
             (match (reader.sexpr-view key-node)
               [(reader.SexprView.Sym key)
                 (cond
-                  [(= key (cbi.compiler-builtin-ctfe-ref 255))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 255))
                     (if seen-abi
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :abi metadata")
@@ -8775,7 +8952,9 @@
                               (ResultAstExternParts.Err message)])]
                         [(ResultAstExternAbi.Err message)
                           (ResultAstExternParts.Err message)]))]
-                  [(= key (cbi.compiler-builtin-ctfe-ref 256))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 256))
                     (if seen-symbol
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
@@ -8793,7 +8972,9 @@
                             param-types)]
                         [(ResultAstExternSymbol.Err message)
                           (ResultAstExternParts.Err message)]))]
-                  [(= key (cbi.compiler-builtin-ctfe-ref 257))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 257))
                     (match (parse-ast-extern-string-tail ":link-lib" after-key)
                       [(ResultAstExternSymbol.Ok value _)
                         (begin
@@ -8812,7 +8993,9 @@
                             param-types))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
-                  [(= key (cbi.compiler-builtin-ctfe-ref 258))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 258))
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       after-key)
@@ -8833,7 +9016,9 @@
                             param-types))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
-                  [(= key (cbi.compiler-builtin-ctfe-ref 259))
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 259))
                     (match (parse-ast-extern-string-tail ":link-arg" after-key)
                       [(ResultAstExternSymbol.Ok value _)
                         (begin
@@ -8856,7 +9041,7 @@
                     (ResultAstExternParts.Err
                       (str_cat.str-cat
                         "parse: unknown extern metadata "
-                        (compiler-parse-name-text key)))]
+                        (ci.intern-syntax-id-text key)))]
                   [else
                     (ResultAstExternParts.Err "parse: expected ':' in extern")])]
               [_ (ResultAstExternParts.Err "parse: expected ':' in extern")])]
@@ -8909,6 +9094,7 @@
       (match (reader.spanned-sexpr-view name-node)
         [(reader.SpannedSexprView.Sym name _)
           (let
+            [name-id : i64 (ci.intern-syntax-id-value name)]
             [link-inputs : ast.AstExternLinkInputList
               (ast.ast-extern-link-input-list-new)]
             (match (parse-ast-extern-items
@@ -8916,7 +9102,7 @@
               pools
               after-name
               (ast.AstExternAbi.C)
-              name
+              name-id
               (&mut link-inputs)
               false
               false)
@@ -8927,7 +9113,7 @@
                   parsed-ty)
                 (ResultAstDecl.Ok
                   (ast.ast-decl-extern-id
-                    name
+                    name-id
                     (ast.AstExternKind.Value)
                     (ast.AstExternMetadata.Metadata
                       parsed-abi
@@ -8935,7 +9121,7 @@
                       link-inputs
                       (ast.ast-extern-metadata-flags
                         explicit-abi
-                        (= parsed-symbol-id name))
+                        (= parsed-symbol-id name-id))
                       ast.AstImportedSpmdMetadata.No)
                     parsed-ty))]
               [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]
@@ -8951,6 +9137,7 @@
       (match (reader.spanned-sexpr-view name-node)
         [(reader.SpannedSexprView.Sym name _)
           (let
+            [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
               (reader.sp-node-push
                 (reader.SpannedSexpr.Int
@@ -8985,10 +9172,13 @@
                       "parse: defenum needs at least one variant")
                     (if (ast.ast-lifetime-list-empty? (& lifetimes))
                       (ResultAstDecl.Ok
-                        (ast.ast-decl-def-enum-id name cleanup parsed-variants))
+                        (ast.ast-decl-def-enum-id
+                          name-id
+                          cleanup
+                          parsed-variants))
                       (ResultAstDecl.Ok
                         (ast.ast-decl-def-enum-lifetimes-id
-                          name
+                          name-id
                           lifetimes
                           cleanup
                           parsed-variants)))))]
@@ -9005,6 +9195,7 @@
       (match (reader.spanned-sexpr-view name-node)
         [(reader.SpannedSexprView.Sym name _)
           (let
+            [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
               (reader.sp-node-push
                 (reader.SpannedSexpr.Int
@@ -9043,13 +9234,13 @@
                     (if (ast.ast-lifetime-list-empty? (& lifetimes))
                       (ResultAstDecl.Ok
                         (ast.ast-decl-def-struct-id
-                          name
+                          name-id
                           repr
                           cleanup
                           parsed-fields))
                       (ResultAstDecl.Ok
                         (ast.ast-decl-def-struct-lifetimes-id
-                          name
+                          name-id
                           lifetimes
                           repr
                           cleanup
@@ -9070,7 +9261,9 @@
                 (ResultAstDecl.Err
                   "parse: defdispatch needs at least one variant")
                 (ResultAstDecl.Ok
-                  (ast.ast-decl-def-dispatch-id name parsed-variants)))]
+                  (ast.ast-decl-def-dispatch-id
+                    (ci.intern-syntax-id-value name)
+                    parsed-variants)))]
             [(ResultAstDispatchVariantList.Err message)
               (ResultAstDecl.Err message)])]
         [_ (ResultAstDecl.Err "parse: malformed defdispatch")])]
@@ -9126,8 +9319,14 @@
         [(reader.SpannedSexprView.Sym name _)
           (match (reader.spanned-sexpr-view end)
             [(reader.SpannedSexprView.Nil _)
-              (ResultAstDecl.Ok (ast.ast-decl-module-id name))]
-            [_ (parse-ast-module-body dispatch pools name end)])]
+              (ResultAstDecl.Ok
+                (ast.ast-decl-module-id (ci.intern-syntax-id-value name)))]
+            [_
+              (parse-ast-module-body
+                dispatch
+                pools
+                (ci.intern-syntax-id-value name)
+                end)])]
         [_ (ResultAstDecl.Err "parse: malformed module")])]
     [_ (ResultAstDecl.Err "parse: malformed module")]))
 
@@ -9158,12 +9357,15 @@
                 [(reader.SpannedSexprView.Nil _)
                   (match (reader.spanned-sexpr-view alias-node)
                     [(reader.SpannedSexprView.Sym alias _)
-                      (if (= as-name (cbi.compiler-builtin-ctfe-ref 260))
+                      (if (=
+                        (ci.intern-syntax-id-value as-name)
+                        (cbi.compiler-builtin-ctfe-ref 260))
                         (parse-ast-import-spec
                           kind
                           path
                           module-name
-                          (ast.AstMaybeImportAlias.Some alias)
+                          (ast.AstMaybeImportAlias.Some
+                            (ci.intern-syntax-id-value alias))
                           span)
                         (ResultAstDecl.Err "parse: malformed import"))]
                     [_ (ResultAstDecl.Err "parse: malformed import")])]
@@ -9195,7 +9397,9 @@
             [(reader.SpannedSexprView.Cons head-node _ _)
               (match (reader.spanned-sexpr-view head-node)
                 [(reader.SpannedSexprView.Sym head _)
-                  (if (= head (cbi.compiler-builtin-ctfe-ref 260))
+                  (if (=
+                    (ci.intern-syntax-id-value head)
+                    (cbi.compiler-builtin-ctfe-ref 260))
                     (parse-ast-import-alias
                       (ast.AstImportKind.Macro
                         call-expr
@@ -9287,7 +9491,9 @@
         [(reader.SpannedSexprView.Cons head-node _ _)
           (match (reader.spanned-sexpr-view head-node)
             [(reader.SpannedSexprView.Sym head _)
-              (if (= head (cbi.compiler-builtin-ctfe-ref 260))
+              (if (=
+                (ci.intern-syntax-id-value head)
+                (cbi.compiler-builtin-ctfe-ref 260))
                 (parse-ast-import-alias
                   (ast.AstImportKind.Module)
                   module-name
@@ -9310,7 +9516,10 @@
           (ResultAstDecl.Err
             "parse: string-path imports are no longer supported; use a dotted module identity")]
         [(reader.SpannedSexprView.Sym module-name _)
-          (parse-ast-dotted-import-tail module-name tail span)]
+          (parse-ast-dotted-import-tail
+            (ci.intern-syntax-id-value module-name)
+            tail
+            span)]
         [(reader.SpannedSexprView.Cons _ _ _)
           (parse-ast-import-macro-tail dispatch pools path-node tail span)]
         [_ (ResultAstDecl.Err "parse: malformed import")])]
@@ -9330,7 +9539,9 @@
                   (match (reader.spanned-sexpr-view after-path)
                     [(reader.SpannedSexprView.Nil _)
                       (ResultAstDecl.Ok
-                        (ast.AstDecl.IncludeStr name (ci.intern-str path-id)))]
+                        (ast.AstDecl.IncludeStr
+                          (ci.intern-syntax-id-value name)
+                          (ci.intern-id-str path-id)))]
                     [_
                       (ResultAstDecl.Err
                         "parse: include-str expects exactly two operands")])]
@@ -9361,8 +9572,8 @@
                     [(reader.SpannedSexprView.Nil _)
                       (ResultAstDecl.Ok
                         (ast.AstDecl.IncludeStrComptime
-                          name
-                          (ci.intern-str path-id)))]
+                          (ci.intern-syntax-id-value name)
+                          (ci.intern-id-str path-id)))]
                     [_
                       (ResultAstDecl.Err
                         "parse: include-str-comptime expects exactly two operands")])]
@@ -9394,7 +9605,9 @@
                   (match (reader.spanned-sexpr-view end)
                     [(reader.SpannedSexprView.Nil _)
                       (ResultAstDecl.Ok
-                        (ast.AstDecl.IncludeStrLzss name (ci.intern-str path)))]
+                        (ast.AstDecl.IncludeStrLzss
+                          (ci.intern-syntax-id-value name)
+                          (ci.intern-id-str path)))]
                     [_
                       (ResultAstDecl.Err
                         "parse: include-str-lzss expects exactly two operands")])]
@@ -9424,7 +9637,9 @@
                   (match (reader.spanned-sexpr-view after-path)
                     [(reader.SpannedSexprView.Nil _)
                       (ResultAstDecl.Ok
-                        (ast.AstDecl.IncludeBin name (ci.intern-str path-id)))]
+                        (ast.AstDecl.IncludeBin
+                          (ci.intern-syntax-id-value name)
+                          (ci.intern-id-str path-id)))]
                     [_
                       (ResultAstDecl.Err
                         "parse: include-bin expects exactly two operands")])]
@@ -9463,7 +9678,7 @@
                 [(ResultAstExprList.Ok exprs)
                   (ResultAstDecl.Ok
                     (ast.ast-decl-test-id
-                      name
+                      (ci.intern-syntax-id-value name)
                       (parse-ast-test-body pools exprs)
                       form-span))]
                 [(ResultAstExprList.Err message) (ResultAstDecl.Err message)])])]
@@ -9554,7 +9769,10 @@
           (match (reader.spanned-sexpr-view head-node)
             [(reader.SpannedSexprView.Sym head _)
               (let
-                [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
+                [tag : i64
+                  (compiler-parse-dispatch-tag
+                    dispatch
+                    (ci.intern-syntax-id-value head))]
                 (cond
                   [(= tag (compiler-parse-tag-decl-define))
                     (parse-ast-define dispatch pools rest)]
@@ -9588,7 +9806,8 @@
                     (parse-ast-include-bin rest)]
                   [(= tag (compiler-parse-tag-decl-module))
                     (parse-ast-module dispatch pools rest)]
-                  [(parse-ast-removed-declaration-name? head)
+                  [(parse-ast-removed-declaration-name?
+                      (ci.intern-syntax-id-value head))
                     (ResultAstDecl.Err (parse-ast-removed-declaration-message))]
                   [(= tag (compiler-parse-tag-expr-unsafe))
                     (parse-ast-unsafe-decl dispatch pools rest)]
@@ -9599,7 +9818,8 @@
                       rest
                       (ast-source-span-from-source-span
                         (reader.spanned-sexpr-span s)))]
-                  [(compiler-parse-policy-form? head)
+                  [(compiler-parse-policy-form?
+                      (ci.intern-syntax-id-value head))
                     (ResultAstDecl.Err
                       (compiler-parse-abstraction-policy-message))]
                   [else (parse-ast-module-macro-call dispatch pools s)]))]
@@ -9617,7 +9837,9 @@
         [(reader.SpannedSexprView.Cons head-node rest _)
           (match (reader.spanned-sexpr-view head-node)
             [(reader.SpannedSexprView.Sym head _)
-              (if (= head (cbi.compiler-builtin-ctfe-ref 243))
+              (if (=
+                (ci.intern-syntax-id-value head)
+                (cbi.compiler-builtin-ctfe-ref 243))
                 (match (reader.spanned-sexpr-view rest)
                   [(reader.SpannedSexprView.Cons pred decl-tail _)
                     (match (reader.spanned-sexpr-view decl-tail)
@@ -9835,9 +10057,14 @@
         (match (reader.spanned-sexpr-view head-node)
           [(reader.SpannedSexprView.Sym head _)
             (let
-              [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
+              [tag : i64
+                (compiler-parse-dispatch-tag
+                  dispatch
+                  (ci.intern-syntax-id-value head))]
               (cond
-                [(= head (cbi.compiler-builtin-ctfe-ref 243))
+                [(=
+                    (ci.intern-syntax-id-value head)
+                    (cbi.compiler-builtin-ctfe-ref 243))
                   (match (reader.spanned-sexpr-view rest)
                     [(reader.SpannedSexprView.Cons _ decl-tail _)
                       (match (reader.spanned-sexpr-view decl-tail)
@@ -13598,12 +13825,17 @@
     [source-dots : i64 (reader.stable-symbol-id "...")]
     [generated-dots : i64 (ci.intern-generated-canonical-name "...")]
     (and
-      (parse-ast-macro-type-kind-known? source-kind)
-      (not (parse-ast-macro-type-kind-known? generated-kind))
-      (parse-ast-macro-type-kind-known? (reader.stable-symbol-id "box"))
+      (parse-ast-macro-type-kind-known?
+        (ci.intern-syntax-id-from-raw source-kind))
       (not
         (parse-ast-macro-type-kind-known?
-          (ci.intern-generated-canonical-name "box")))
+          (ci.intern-syntax-id-from-raw generated-kind)))
+      (parse-ast-macro-type-kind-known?
+        (ci.intern-syntax-id-from-raw (reader.stable-symbol-id "box")))
+      (not
+        (parse-ast-macro-type-kind-known?
+          (ci.intern-syntax-id-from-raw
+            (ci.intern-generated-canonical-name "box"))))
       (= source-all (cbi.compiler-builtin-ctfe-ref 219))
       (not (= generated-all (cbi.compiler-builtin-ctfe-ref 219)))
       (= source-dots (cbi.compiler-builtin-ctfe-ref 222))

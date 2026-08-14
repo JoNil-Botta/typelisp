@@ -64,13 +64,13 @@
 
 (defenum SexprView
   (Int i64 String)
-  ;; Compatibility traversal view. The stored `Sexpr` payload is nominal;
-  ;; parser migration can consume this raw value only as identity and must use
-  ;; an explicit `InternSyntaxId` conversion before rendering it.
-  (Sym i64)
+  ;; Symbols retain their mixed renderable/structural syntax identity while
+  ;; crossing the traversal surface. Consumers must explicitly preserve the
+  ;; identity or reduce it to a renderable source name.
+  (Sym ci.InternSyntaxId)
   (Nil)
   (Cons Sexpr Sexpr)
-  (Str i64)
+  (Str ci.InternId)
   (Char char)
   (Float String))
 
@@ -89,12 +89,10 @@
 
 (defenum SpannedSexprView
   (Int i64 String token.SourceSpan)
-  ;; See `SexprView.Sym`: storage is typed while this traversal surface remains
-  ;; the staged compatibility edge into the existing parser call graph.
-  (Sym i64 token.SourceSpan)
+  (Sym ci.InternSyntaxId token.SourceSpan)
   (Nil token.SourceSpan)
   (Cons SpannedSexpr SpannedSexpr token.SourceSpan)
-  (Str i64 token.SourceSpan)
+  (Str ci.InternId token.SourceSpan)
   (Char char token.SourceSpan)
   (Float String token.SourceSpan)
   (BracketList SpannedSexpr token.SourceSpan))
@@ -187,11 +185,6 @@
 
 (define (symbol-text-for-syntax-id [id : ci.InternSyntaxId]) : String
   (ci.intern-syntax-id-text id))
-
-;; Staged parser/metadata compatibility view. Stored syntax nodes are nominal;
-;; raw traversal consumers re-enter through this checked mixed-domain edge.
-(define (symbol-text-for-id [id : i64]) : String
-  (symbol-text-for-syntax-id (ci.intern-syntax-id-from-raw id)))
 
 (define (sp-node-pool-len) : i64
   sp-node-pool-count)
@@ -732,22 +725,21 @@
 (define (sexpr-view [s : Sexpr]) : SexprView
   (match s
     [(Sexpr.Int n text) (SexprView.Int n text)]
-    [(Sexpr.Sym name) (SexprView.Sym (ci.intern-syntax-id-value name))]
+    [(Sexpr.Sym name) (SexprView.Sym name)]
     [(Sexpr.List start length)
       (if (<= length 0)
         SexprView.Nil
         (SexprView.Cons
           (sexpr-node-get start)
           (Sexpr.List (+ start 1) (- length 1))))]
-    [(Sexpr.Str text) (SexprView.Str (ci.intern-id-value text))]
+    [(Sexpr.Str text) (SexprView.Str text)]
     [(Sexpr.Char c) (SexprView.Char c)]
     [(Sexpr.Float text) (SexprView.Float text)]))
 
 (define (spanned-sexpr-view [s : SpannedSexpr]) : SpannedSexprView
   (match s
     [(SpannedSexpr.Int n text span) (SpannedSexprView.Int n text span)]
-    [(SpannedSexpr.Sym name span)
-      (SpannedSexprView.Sym (ci.intern-syntax-id-value name) span)]
+    [(SpannedSexpr.Sym name span) (SpannedSexprView.Sym name span)]
     [(SpannedSexpr.List start length span)
       (if (<= length 0)
         (SpannedSexprView.Nil span)
@@ -755,8 +747,7 @@
           (sp-node-get start)
           (SpannedSexpr.List (+ start 1) (- length 1) span)
           span))]
-    [(SpannedSexpr.Str text span)
-      (SpannedSexprView.Str (ci.intern-id-value text) span)]
+    [(SpannedSexpr.Str text span) (SpannedSexprView.Str text span)]
     [(SpannedSexpr.Char c span) (SpannedSexprView.Char c span)]
     [(SpannedSexpr.Float text span) (SpannedSexprView.Float text span)]
     [(SpannedSexpr.BracketList start length span)
@@ -1385,7 +1376,8 @@
 
 (define (reader-test-symbol? [form : Sexpr] [expected : String]) : bool
   (match (sexpr-view form)
-    [(SexprView.Sym name-id) (string.eq (symbol-text-for-id name-id) expected)]
+    [(SexprView.Sym name-id)
+      (string.eq (symbol-text-for-syntax-id name-id) expected)]
     [_ false]))
 
 (define (reader-test-projection-suffix-cursor?
@@ -1490,7 +1482,7 @@
                               (match (spanned-sexpr-view alpha)
                                 [(SpannedSexprView.Sym name-id _)
                                   (string.eq
-                                    (symbol-text-for-id name-id)
+                                    (symbol-text-for-syntax-id name-id)
                                     "alpha")]
                                 [_ false])
                               (match (spanned-sexpr-view tail)
@@ -1573,7 +1565,7 @@
                     (and
                       (match (spanned-sexpr-view value)
                         [(SpannedSexprView.Sym name-id _)
-                          (string.eq (symbol-text-for-id name-id) "beta")]
+                          (string.eq (symbol-text-for-syntax-id name-id) "beta")]
                         [_ false])
                       (match (spanned-sexpr-view tail)
                         [(SpannedSexprView.Nil _) true]
@@ -1584,6 +1576,41 @@
       (sp-node-pool-reset!)
       (sexpr-node-pool-reset!)
       ok)))
+
+(define (reader-test-typed-traversal-ids?) : bool
+  (let
+    [source : ci.InternId (ci.intern-source-slice-id "reader-view-name" 0 16)]
+    [text : ci.InternId (ci.intern-source-slice-id "reader-view-string" 0 18)]
+    [structural : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-structural-local-id 7 (ci.intern-id-value source)))]
+    [span : token.SourceSpan (token.source-span-new 2 3 2 7)]
+    (and
+      (match (sexpr-view (Sexpr.Sym structural))
+        [(SexprView.Sym found)
+          (and
+            (ci.intern-syntax-id-eq? found structural)
+            (string.eq (symbol-text-for-syntax-id found) "reader-view-name"))]
+        [_ false])
+      (match (sexpr-view (Sexpr.Str text))
+        [(SexprView.Str found) (ci.intern-id-eq? found text)]
+        [_ false])
+      (match (spanned-sexpr-view (SpannedSexpr.Sym structural span))
+        [(SpannedSexprView.Sym found found-span)
+          (and
+            (ci.intern-syntax-id-eq? found structural)
+            (= (token.span-start-line found-span) 2)
+            (= (token.span-start-col found-span) 3))]
+        [_ false])
+      (match (spanned-sexpr-view (SpannedSexpr.Str text span))
+        [(SpannedSexprView.Str found _) (ci.intern-id-eq? found text)]
+        [_ false]))))
+
+(test
+  reader-traversal-ids-typed-and-preserved
+  (if (reader-test-typed-traversal-ids?)
+    unit
+    (io.panic "reader: typed traversal identity self-test failed")))
 
 (test
   reader-dense-child-ranges

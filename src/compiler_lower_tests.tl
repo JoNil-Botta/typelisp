@@ -13758,6 +13758,12 @@
 (define (compiler-lower-module-phase-cache-storage-ok?) : bool
   (compiler_lower.compiler-lower-module-phase-cache-storage-ok?))
 
+(define (compiler-lower-checked-pools-state-isolation-ok?) : bool
+  (compiler_lower.compiler-lower-checked-pools-state-isolation-ok?))
+
+(define (compiler-lower-checked-pools-abort-lifecycle-ok?) : bool
+  (compiler_lower.compiler-lower-checked-pools-abort-lifecycle-ok?))
+
 (define (compiler-lower-type-cache-i64-keys-ok?) : bool
   (let
     [lower-state : compiler_lower.CompilerLowerState
@@ -14687,6 +14693,18 @@
     (compiler-lower-module-phase-cache-storage-ok?)
     "module phase caches use sparse indexes, unique dense slots, and job-local reset"))
 
+(test
+  compiler-lower-checked-pools-state-isolation
+  (test.assert-true
+    (compiler-lower-checked-pools-state-isolation-ok?)
+    "checked-pool retirement handoff is job-owned and clears to context-free state"))
+
+(test
+  compiler-lower-checked-pools-abort-lifecycle
+  (test.assert-true
+    (compiler-lower-checked-pools-abort-lifecycle-ok?)
+    "rollover abort releases deferred/materialized arenas exactly once"))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -14758,6 +14776,12 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-phase-cache-storage-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-checked-pools-state-isolation-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-checked-pools-abort-lifecycle-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-type-cache-i64-keys-ok?)

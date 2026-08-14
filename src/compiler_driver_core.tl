@@ -2388,6 +2388,26 @@
         (set! compiler-driver-pending-frontend-return-arena 0)
         (compiler-driver-restore-arena-owner-current! return-arena)))))
 
+;; Lowering can report an error while the checked-pool handoff owns a temporary
+;; macro frontend that abort must retire. Deep-copy the diagnostic into the
+;; compile state's retained surface before that transition runs; the result can
+;; then cross the load/lower boundary without borrowing the retiring arena.
+(define (compiler-driver-diagnostic-copy-to-state-surface
+  [state : CompilerDriverState]
+  [diag : (Box compiler_diagnostic.CompilerDiagnostic)]) : (Box
+    compiler_diagnostic.CompilerDiagnostic)
+  (let
+    [active-arena : i64 (arena.tl_arena_current)]
+    [_use-surface : unit
+      (compiler-driver-restore-arena-owner-current!
+        (compiler-driver-state-surface-arena state))]
+    [owned-diag : (Box compiler_diagnostic.CompilerDiagnostic)
+      (box (compiler_diagnostic.compiler-diagnostic-copy (__tl-box-place diag)))]
+    (begin
+      (unsafe
+        (arena.tl_arena_set active-arena))
+      owned-diag)))
+
 (define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
   (and
     (>= opt-level 1)
@@ -3719,6 +3739,7 @@
             [_arm-release : unit
               (if release-source-pools?
                 (compiler_lower.compiler-lower-checked-dest-pools-use!
+                  (compiler-driver-state-owned-lower-state state)
                   dest-pools
                   source-pools-arena
                   (compiler_ast_types.ast-node-pool-context-expr-storage-arena
@@ -3728,8 +3749,9 @@
                   (if route-source-allocations?
                     frontend-arena
                     0))
-                (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
-            [lowered : compiler_lower.ResultCompilerLower
+                (compiler_lower.compiler-lower-checked-dest-pools-clear!
+                  (compiler-driver-state-owned-lower-state state)))]
+            [lowered-raw : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
                 (compiler-driver-state-owned-lower-state state)
                 state.load-session
@@ -3750,13 +3772,25 @@
                 source-names
                 (compiler-driver-state-owned-interns state)
                 (compiler-driver-state-owned-builtins state))]
+            [lowered : compiler_lower.ResultCompilerLower
+              (match lowered-raw
+                [(compiler_lower.ResultCompilerLower.Ok program spans)
+                  (compiler_lower.ResultCompilerLower.Ok program spans)]
+                [(compiler_lower.ResultCompilerLower.Err diag)
+                  (compiler_lower.ResultCompilerLower.Err
+                    (compiler-driver-diagnostic-copy-to-state-surface
+                      state
+                      diag))])]
             [dest-committed? : bool
-              (compiler_lower.compiler-lower-checked-dest-pools-committed?)]
+              (compiler_lower.compiler-lower-checked-dest-pools-committed?
+                (compiler-driver-state-owned-lower-state state))]
             [frontend-released? : bool
-              (compiler_lower.compiler-lower-checked-frontend-released?)]
+              (compiler_lower.compiler-lower-checked-frontend-released?
+                (compiler-driver-state-owned-lower-state state))]
             [result-pools : compiler_ast_types.AstNodePoolContext
               (if dest-committed?
-                (compiler_lower.compiler-lower-checked-dest-pools-current)
+                (compiler_lower.compiler-lower-checked-dest-pools-current
+                  (compiler-driver-state-owned-lower-state state))
                 pools)]
             [_adopt-dest : unit
               (if dest-committed?
@@ -3765,7 +3799,8 @@
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
                 (begin
-                  (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!)
+                  (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!
+                    (compiler-driver-state-owned-lower-state state))
                   (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
                 unit)]
             [_restore-entry-arena : unit
@@ -3782,7 +3817,8 @@
                         entry-arena))))
                 unit)]
             [_clear-release : unit
-              (compiler_lower.compiler-lower-checked-dest-pools-clear!)]
+              (compiler_lower.compiler-lower-checked-dest-pools-clear!
+                (compiler-driver-state-owned-lower-state state))]
             (match lowered
               [(compiler_lower.ResultCompilerLower.Ok program spans)
                 (begin
@@ -3974,6 +4010,7 @@
             [_arm-release : unit
               (if release-source-pools?
                 (compiler_lower.compiler-lower-checked-dest-pools-use!
+                  (compiler-driver-state-owned-lower-state state)
                   dest-pools
                   source-pools-arena
                   (compiler_ast_types.ast-node-pool-context-expr-storage-arena
@@ -3981,8 +4018,9 @@
                   (compiler_ast_types.ast-node-pool-context-type-storage-arena
                     pools)
                   0)
-                (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
-            [lowered : compiler_lower.ResultCompilerLower
+                (compiler_lower.compiler-lower-checked-dest-pools-clear!
+                  (compiler-driver-state-owned-lower-state state)))]
+            [lowered-raw : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
                 (compiler-driver-state-owned-lower-state state)
                 state.load-session
@@ -4003,11 +4041,22 @@
                 source-names
                 (compiler-driver-state-owned-interns state)
                 (compiler-driver-state-owned-builtins state))]
+            [lowered : compiler_lower.ResultCompilerLower
+              (match lowered-raw
+                [(compiler_lower.ResultCompilerLower.Ok program spans)
+                  (compiler_lower.ResultCompilerLower.Ok program spans)]
+                [(compiler_lower.ResultCompilerLower.Err diag)
+                  (compiler_lower.ResultCompilerLower.Err
+                    (compiler-driver-diagnostic-copy-to-state-surface
+                      state
+                      diag))])]
             [dest-committed? : bool
-              (compiler_lower.compiler-lower-checked-dest-pools-committed?)]
+              (compiler_lower.compiler-lower-checked-dest-pools-committed?
+                (compiler-driver-state-owned-lower-state state))]
             [result-pools : compiler_ast_types.AstNodePoolContext
               (if dest-committed?
-                (compiler_lower.compiler-lower-checked-dest-pools-current)
+                (compiler_lower.compiler-lower-checked-dest-pools-current
+                  (compiler-driver-state-owned-lower-state state))
                 pools)]
             [_adopt-dest : unit
               (if dest-committed?
@@ -4016,7 +4065,8 @@
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
                 (begin
-                  (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!)
+                  (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!
+                    (compiler-driver-state-owned-lower-state state))
                   (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
                 unit)]
             [_restore-entry-arena : unit
@@ -4029,7 +4079,8 @@
                       entry-arena)))
                 unit)]
             [_clear-release : unit
-              (compiler_lower.compiler-lower-checked-dest-pools-clear!)]
+              (compiler_lower.compiler-lower-checked-dest-pools-clear!
+                (compiler-driver-state-owned-lower-state state))]
             (match lowered
               [(compiler_lower.ResultCompilerLower.Ok program spans)
                 (begin

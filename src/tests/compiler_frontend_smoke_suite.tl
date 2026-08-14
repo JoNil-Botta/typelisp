@@ -14,14 +14,9 @@
 (import compiler_parse_core as parser)
 (import compiler_intern as ci)
 (import compiler_diagnostic as cdiag)
+(import compiler_embedded_stdlib as embedded_stdlib)
 (import doc_test)
 (import compiler_builtin_ids as cbi)
-
-(include-str compiler-ctfe-stdlib-comptime-source "../../stdlib/comptime.tl")
-
-(define (compiler-ctfe-stdlib-comptime-source-shared-view) : String
-  (unsafe
-    (ptr-read (ptr-addr-of compiler-ctfe-stdlib-comptime-source))))
 
 (define (compiler-ctfe-source-parity-value-eq?
   [a : compiler_ctfe.CompilerCtfeValue]
@@ -517,14 +512,18 @@
 (define (compiler-ctfe-stdlib-source-parity-ok?) : bool
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (match (parser.parse-ast-source
-      (compiler-ctfe-stdlib-comptime-source-shared-view))
-      [(parser.ResultAstProgram.Ok program)
-        (match program
-          [(ast.AstProgram.Program decls-box)
-            (compiler-ctfe-stdlib-source-parity-for-decls?
-              (__tl-box-place decls-box))])]
-      [(parser.ResultAstProgram.Err _) false])))
+    (match (embedded_stdlib.compiler-embedded-stdlib-lookup "comptime.tl")
+      [(embedded_stdlib.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
+        (match (parser.parse-ast-source source)
+          [(parser.ResultAstProgram.Ok program)
+            (match program
+              [(ast.AstProgram.Program decls-box)
+                (compiler-ctfe-stdlib-source-parity-for-decls?
+                  (__tl-box-place decls-box))])]
+          [(parser.ResultAstProgram.Err _) false])]
+      [(embedded_stdlib.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+        false])))
 
 (define (compiler-smoke-suite-child-ok? [name : String]) : bool
   (process.result-output-eq?

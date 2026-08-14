@@ -665,6 +665,13 @@
     (ctfe-builtin-ref 63)
     (ctfe-builtin-ref 64)))
 
+(define (ctfe-builtin-inspector-id? [name-id : i64]) : bool
+  (or
+    (ctfe-builtin-direct-inspector-id? name-id)
+    (ctfe-builtin-sequence-length-id? name-id)
+    (ctfe-builtin-sequence-nth-id? name-id)
+    (ctfe-builtin-expr-binding-clause-inspector-id? name-id)))
+
 (define (ctfe-comptime-syntax-helper-id? [name-id : i64]) : bool
   (begin
     (ctfe-builtin-refresh!)
@@ -730,7 +737,7 @@
         (ctfe-builtin-ref 282)
         (ctfe-builtin-ref 283)
         (ctfe-builtin-ref 284))
-      (ctfe-builtin-direct-inspector-id? name-id)
+      (ctfe-builtin-inspector-id? name-id)
       (ctfe-builtin-expr-clause-list-inspector-id? name-id)
       (ctfe-builtin-expr-binding-clause-list-inspector-id? name-id))))
 

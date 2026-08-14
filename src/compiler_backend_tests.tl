@@ -42131,7 +42131,7 @@
         (compiler_regalloc.compiler-reg-fill-i64-array present 0)
         (compiler_regalloc.compiler-reg-fill-i64-array ref-counts 0)
         (compiler_regalloc.compiler-reg-fill-interval-seq-array! segments 0)
-        ;; Fixed RCX lives across the complete region.
+        ;; Fixed RCX overlaps the simultaneous conflict below.
         (set!
           (array-ref items 0)
           (compiler_regalloc.CompilerRegScratchAssignment
@@ -42141,7 +42141,7 @@
               (compiler_regalloc.CompilerRegScratchRole.CallTarget)
               gp-fixed-rcx
               0
-              4
+              1
               0)
             false
             false
@@ -42181,11 +42181,11 @@
           (array-ref items 3)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
-              2
               0
+              3
               (compiler_regalloc.CompilerRegScratchRole.BoundsLength)
               gp-fixed-rcx
-              2
+              0
               3
               3)
             false
@@ -42229,6 +42229,12 @@
           ref-counts
           registers
           (array-length registers)
+          (compiler_regalloc.compiler-reg-scratch-default-pool
+            (compiler_abi.CompilerRegTargetAbi.Linux)
+            (compiler_regalloc.CompilerRegScratchClass.Gp))
+          (compiler_regalloc.compiler-reg-scratch-default-pool
+            (compiler_abi.CompilerRegTargetAbi.Linux)
+            (compiler_regalloc.CompilerRegScratchClass.Xmm))
           5)
         (and
           (=
@@ -43110,6 +43116,243 @@
             prev-vars)
           ok)))))
 
+;; #phi-staged-copy under a ROTATED loop. The blocks below are already in the
+;; order a block layout pass emits when it rotates: the preheader jumps forward
+;; into the header, and the LATCH (`lat`) sits ABOVE it, so the genuine back
+;; edge `lat -> head` runs FORWARD in emission order. The obligation the staged
+;; copy has to discharge on that edge -- "the staging register is free at the
+;; TARGET block's entry" -- used to be asked only when `target <= point`, i.e.
+;; only when the edge also ran backward in emission order. On this layout that
+;; test reads the back edge as a forward edge, and a register holding a value
+;; live into the header would lose its pushq/popq bracket.
+;;
+;; `v4` opens at the header's first instruction and is homed in %r8, so %r8 is
+;; FREE across the staging window at the latch's edge point and OCCUPIED at the
+;; header's entry point: exactly the split the emission-point comparison got
+;; wrong.
+(define (compiler-backend-phi-rotated-back-edge-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.I64 8)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "head"))
+            compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "lat")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            3
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "head"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "sunk")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              5
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Mov
+                6
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  7
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    8
+                    (compiler_ir_types.CompilerIrValue.I64 1)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Mov
+                      9
+                      (compiler_ir_types.CompilerIrValue.I64 1)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Mov
+                        10
+                        (compiler_ir_types.CompilerIrValue.I64 1)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Mov
+                          11
+                          (compiler_ir_types.CompilerIrValue.I64 1)
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Jump
+                            (compiler_ir_types.compiler-ir-label "exit"))
+                          compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "head")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 2)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  2
+                  (compiler_ir_types.CompilerIrBinOp.Lt)
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.Bool))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 2)
+                    (compiler_ir_types.compiler-ir-label "lat")
+                    (compiler_ir_types.compiler-ir-label "sunk"))
+                  compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 3)))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (compiler-backend-phi-rotated-back-edge-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [prev-starts : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
+        (compiler_backend.compiler-backend-state-function-state backend-state))]
+    [prev-ends : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-ends
+        (compiler_backend.compiler-backend-state-function-state backend-state))]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-assignments
+        (compiler_backend.compiler-backend-state-function-state backend-state))]
+    [prev-plan-mask : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+        (compiler_backend.compiler-backend-state-function-state backend-state))]
+    [prev-occupied-masks : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-occupied-masks
+        (compiler_backend.compiler-backend-state-function-state backend-state))]
+    [prev-vars : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-vars
+        (compiler_backend.compiler-backend-state-function-state backend-state))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          4
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r8))
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    ;; entry is 3 instructions (0,1,2), `lat` is 2 (3,4), `sunk` is 8 (5..12)
+    ;; and `head` opens at 13. So the latch's edge is emitted at instruction 4
+    ;; -- point 8 -- and the header's entry is point 26: the back edge runs
+    ;; FORWARD, and it runs forward by more than the staging window, which is
+    ;; what leaves the point-local query alone with the question.
+    [edge-point : i64 8]
+    [target-point : i64 26]
+    (begin
+      (compiler-backend-test-scavenge-install-ctx!
+        "phi_rotated_back_edge"
+        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ast_types.AstType.I64)
+        12
+        (compiler-backend-phi-rotated-back-edge-blocks)
+        assignments
+        backend-state)
+      (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+        backend-state
+        4)
+      (compiler_backend.compiler-backend-function-state-set-current-phi-target-point!
+        backend-state
+        target-point)
+      (compiler_backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
+        backend-state
+        0)
+      (let
+        [function-state : compiler_backend.CompilerBackendFunctionState
+          (compiler_backend.compiler-backend-state-function-state backend-state)]
+        [r8 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r8")]
+        [r10 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r10")]
+        [ok : bool
+          (and
+            ;; the fixture really is the hazard shape ...
+            (=
+              (compiler_backend.compiler-backend-function-state-emission-point
+                function-state)
+              edge-point)
+            (> target-point edge-point)
+            (=
+              (bit-and
+                (compiler_backend.compiler-backend-scavenge-occupied-mask-over-range
+                  function-state
+                  edge-point
+                  (+
+                    edge-point
+                    compiler_backend.compiler-backend-scavenge-staging-window))
+                r8)
+              0)
+            (not
+              (=
+                (bit-and
+                  (compiler_backend.compiler-backend-scavenge-occupied-mask-at-point
+                    function-state
+                    target-point)
+                  r8)
+                0))
+            ;; ... and the bracket is KEPT on it, because the target-entry
+            ;; obligation is asked on every edge and not just on the ones the
+            ;; emitted order happens to run backwards.
+            (not
+              (compiler_backend.compiler-backend-phi-staged-copy-proven?
+                backend-state
+                "%r8"))
+            ;; A register free at both ends still un-brackets, so this is a
+            ;; sharper test than "the predicate says no".
+            (=
+              (bit-and
+                (compiler_backend.compiler-backend-scavenge-occupied-mask-at-point
+                  function-state
+                  target-point)
+                r10)
+              0)
+            (compiler_backend.compiler-backend-phi-staged-copy-proven?
+              backend-state
+              "%r10"))]
+        (begin
+          (compiler_backend.compiler-backend-set-scavenge-ctx-ready!
+            function-state
+            prev-starts
+            prev-ends
+            prev-assignment-index
+            prev-plan-mask
+            prev-occupied-masks
+            prev-vars)
+          ok)))))
+
 ;; #5982. The constant-remainder expansion ends `subq product, SRC`, so electing
 ;; the dividend's own home as SRC needs the REGISTER free afterwards, not just
 ;; the VALUE dead. Model the miscompiled shape at point 10 with three vars
@@ -43536,6 +43779,126 @@
               (compiler_backend.compiler-backend-string-contains?
                 wrapped
                 "    movq -64(%rbp), %rdi\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
+;; BoundsCheck is unusual among scalar emitters: it stages only operands that
+;; do not already have a direct register/memory/immediate spelling. The scratch
+;; plan may therefore lend that committed load a live-through home. Verify that
+;; consuming the planned index arms the ordinary per-instruction wrapper, so a
+;; loop-carried value in the same register survives the check.
+(define (compiler-backend-bounds-index-arms-planned-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 2)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.BoundsLength)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                2)
+              false
+              false
+              compiler_abi.compiler-reg-id-rdi))
+          (set!
+            (array-ref items 1)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                1
+                (compiler_regalloc.CompilerRegScratchRole.BoundsIndex)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                2)
+              true
+              false
+              compiler_abi.compiler-reg-id-rsi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 2))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [program-index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        program-index.backend-state]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Spill -8))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              1
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r12))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned-index : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          1
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-bounds-check
+        (compiler_backend.CompilerBackendTarget.Linux)
+        "_tl_test"
+        assignments
+        ""
+        planned-index
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "bounds_ok")
+        (compiler-backend-runtime-helper-full-plan)
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil
+        program-index)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (let
+            [wrapped : String
+              (compiler_backend.compiler-backend-emergency-wrap
+                asm
+                backend-state)]
+            (and
+              (string.eq planned-index "%rsi")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq %rsi, -64(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq -8(%rbp), %rsi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    cmpq %r12, %rsi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq -64(%rbp), %rsi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
@@ -45737,10 +46100,12 @@ b_keep:
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
+        (compiler-backend-phi-rotated-back-edge-ok?)
         (compiler-backend-divmod-live-dividend-src-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-fused-store-pair-arms-planned-preserve-ok?)
         (compiler-backend-fused-gep-store-arms-planned-preserve-ok?)
+        (compiler-backend-bounds-index-arms-planned-preserve-ok?)
         (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
@@ -46023,6 +46388,7 @@ b_keep:
     (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
     (compiler-backend-scratch-vreg-select-plan-ok?)
     (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
+    (compiler-backend-bounds-index-arms-planned-preserve-ok?)
     (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
     (compiler-backend-scratch-vreg-constraint-shapes-ok?)
     (compiler-backend-phi-parallel-copy-ok?)

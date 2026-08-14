@@ -4136,6 +4136,35 @@
         (set! (array-ref depths 2) 0)
         depths))))
 
+(cfg
+  test
+  (define (compiler-reg-loop-region-rotated-ranges) : (__tl_dyn-array i64)
+    (let
+      [ranges : (__tl_dyn-array i64) (array.make-array i64 6)]
+      (begin
+        ;; block 0: the preheader, no predecessors
+        (set! (array-ref ranges 0) 3)
+        (set! (array-ref ranges 1) (- 0 1))
+        ;; block 1: the body, entered only from the header at block 2
+        (set! (array-ref ranges 2) 2)
+        (set! (array-ref ranges 3) 2)
+        ;; block 2: the header, entered from the preheader and over the back
+        ;; edge from the body
+        (set! (array-ref ranges 4) 0)
+        (set! (array-ref ranges 5) 1)
+        ranges))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-region-rotated-depths) : (__tl_dyn-array i64)
+    (let
+      [depths : (__tl_dyn-array i64) (array.make-array i64 3)]
+      (begin
+        (set! (array-ref depths 0) 0)
+        (set! (array-ref depths 1) 1)
+        (set! (array-ref depths 2) 1)
+        depths))))
+
 ;; (e) Single-entry admission. The header may be entered ONLY from its layout
 ;; predecessor and from inside the region; any other edge in means the anchor
 ;; does not dominate the remapped uses.
@@ -4149,6 +4178,7 @@
         (compiler-reg-loop-region-depths 1)
         3
         1
+        1
         1)
       ;; a later block also jumps into the header -> refuse
       (not
@@ -4156,6 +4186,7 @@
           (compiler-reg-loop-region-ranges 0 2)
           (compiler-reg-loop-region-depths 1)
           3
+          1
           1
           1))
       ;; no edge from the layout predecessor -> there is no preheader to anchor
@@ -4165,6 +4196,7 @@
           (compiler-reg-loop-region-depths 1)
           3
           1
+          1
           1))
       ;; not a loop at all
       (not
@@ -4172,6 +4204,7 @@
           (compiler-reg-loop-region-ranges 0 1)
           (compiler-reg-loop-region-depths 0)
           3
+          1
           1
           1))
       ;; the header is block 0: no layout predecessor exists
@@ -4181,7 +4214,20 @@
           (compiler-reg-loop-region-depths 1)
           3
           0
-          0)))))
+          0
+          0))
+      ;; ROTATED: the span is [1..2] and the header is its LAST block, entered
+      ;; from block 0 (the preheader, directly above the span) and from block 1
+      ;; (the body, over the back edge that falls through into it). The anchor
+      ;; is the span's layout predecessor, so admission holds with the header
+      ;; in the middle of the region rather than at its start.
+      (reg.compiler-reg-call-region-loop-admit?
+        (compiler-reg-loop-region-rotated-ranges)
+        (compiler-reg-loop-region-rotated-depths)
+        3
+        2
+        1
+        2))))
 
 ;; (d) Scoring. A block row charges its entry reload against refs that run at
 ;; the same frequency; a loop row's reload has LEFT the loop, so its uses take
@@ -13484,8 +13530,872 @@
       (not idle-after?)
       restored?)))
 
+;; --- CFG loop nest ----------------------------------------------------------
+;;
+;; The depth analysis used to read the block LAYOUT: a backward edge from index
+;; p to index q <= p made every index in [q, p] one level deeper. These fixtures
+;; are the shapes that encoding gets WRONG -- an in-range block that is not in
+;; the loop, and a backward-in-layout edge that is not a loop edge at all -- and
+;; the shapes both readings must agree on, so a future layout permutation is
+;; measured against a nest that does not move with it.
+(define (compiler-reg-loop-nest-jump [target : String]) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label target))
+    ir.CompilerIrInstrList.Nil))
+
+(define (compiler-reg-loop-nest-branch
+  [true-label : String]
+  [false-label : String]) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Branch
+      (ir.CompilerIrValue.Bool false)
+      (ir.compiler-ir-label true-label)
+      (ir.compiler-ir-label false-label))
+    ir.CompilerIrInstrList.Nil))
+
+(define (compiler-reg-loop-nest-return) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+    ir.CompilerIrInstrList.Nil))
+
+;; A block that ends WITHOUT a terminator: control runs on into whatever block
+;; is laid out next, an edge no instruction names.
+(define (compiler-reg-loop-nest-open) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Mov 0 (ir.CompilerIrValue.I64 1) (compiler-reg-i64-ty))
+    ir.CompilerIrInstrList.Nil))
+
+(define (compiler-reg-loop-nest-block
+  [label : String]
+  [instrs : ir.CompilerIrInstrList]
+  [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-block-cons
+    (ir.compiler-ir-block (ir.compiler-ir-label label) instrs)
+    rest))
+
+(define (compiler-reg-loop-nest-depth-at
+  [depths : (__tl_dyn-array i64)]
+  [index : i64]) : i64
+  (if (and (>= index 0) (< index (array-length depths)))
+    (array-ref depths index)
+    -1))
+
+;; entry / header / body / early / latch / exit.
+;;
+;; `early` is the loop's break arm: it is laid out INSIDE [header, latch], so
+;; the range encoding charges it loop frequency, but it reaches the exit and
+;; never the latch, so it runs at most once per loop ENTRY. The CFG nest leaves
+;; it at depth 0.
+(define (compiler-reg-loop-nest-early-exit-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "header")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-branch "early" "latch")
+        (compiler-reg-loop-nest-block
+          "early"
+          (compiler-reg-loop-nest-jump "exit")
+          (compiler-reg-loop-nest-block
+            "latch"
+            (compiler-reg-loop-nest-jump "header")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-early-exit-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-early-exit-blocks))]
+    (and
+      (= (array-length depths) 6)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
+
+;; entry / hot / join / cold. The motivating shape of the layout arc: `cold` is
+;; sunk below every block it can reach, so its jump to `join` runs BACKWARD in
+;; layout. The range encoding reads that as a loop covering [join, cold]; there
+;; is no cycle in the CFG at all, and the nest says depth 0 everywhere.
+(define (compiler-reg-loop-nest-sunk-cold-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-branch "hot" "cold")
+    (compiler-reg-loop-nest-block
+      "hot"
+      (compiler-reg-loop-nest-jump "join")
+      (compiler-reg-loop-nest-block
+        "join"
+        (compiler-reg-loop-nest-return)
+        (compiler-reg-loop-nest-block
+          "cold"
+          (compiler-reg-loop-nest-jump "join")
+          ir.CompilerIrBlockList.Nil)))))
+
+(define (compiler-reg-loop-nest-sunk-cold-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-sunk-cold-blocks))]
+    (and
+      (= (array-length depths) 4)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 0))))
+
+;; entry / header / body / cont / tail / exit. TWO back edges into one header --
+;; a `continue` arm and the body tail. That is one loop with two latches, not
+;; two nested loops: every body block stays at depth 1.
+(define (compiler-reg-loop-nest-two-latch-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "header")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-branch "cont" "tail")
+        (compiler-reg-loop-nest-block
+          "cont"
+          (compiler-reg-loop-nest-jump "header")
+          (compiler-reg-loop-nest-block
+            "tail"
+            (compiler-reg-loop-nest-jump "header")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-two-latch-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-two-latch-blocks))]
+    (and
+      (= (array-length depths) 6)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
+
+;; entry / outer / inner / inner-latch / outer-latch / exit. Containment is what
+;; makes the level count a NEST: `inner-latch` reaches the outer latch through
+;; the inner header, so it carries both levels.
+(define (compiler-reg-loop-nest-nested-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "outer")
+    (compiler-reg-loop-nest-block
+      "outer"
+      (compiler-reg-loop-nest-branch "inner" "exit")
+      (compiler-reg-loop-nest-block
+        "inner"
+        (compiler-reg-loop-nest-branch "inner-latch" "outer-latch")
+        (compiler-reg-loop-nest-block
+          "inner-latch"
+          (compiler-reg-loop-nest-jump "inner")
+          (compiler-reg-loop-nest-block
+            "outer-latch"
+            (compiler-reg-loop-nest-jump "outer")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-nested-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-nested-blocks))]
+    (and
+      (= (array-length depths) 6)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 2)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 2)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
+
+;; entry / header / body / tail / latch / exit, where `body` ends without a
+;; terminator. The ONLY edge into `tail` is the unnamed fall-through, so a nest
+;; built from named successors alone would leave `body` outside its own loop.
+(define (compiler-reg-loop-nest-fallthrough-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "header")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-open)
+        (compiler-reg-loop-nest-block
+          "tail"
+          (compiler-reg-loop-nest-jump "latch")
+          (compiler-reg-loop-nest-block
+            "latch"
+            (compiler-reg-loop-nest-jump "header")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-fallthrough-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-fallthrough-blocks))]
+    (and
+      (= (array-length depths) 6)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 5) 0))))
+
+;; A loop among blocks the entry cannot reach is still emitted and still
+;; allocated, so the DFS is a forest and ranks it. Parity with the range
+;; encoding, which never asked about reachability at all.
+(define (compiler-reg-loop-nest-unreachable-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-return)
+    (compiler-reg-loop-nest-block
+      "dead-header"
+      (compiler-reg-loop-nest-jump "dead-latch")
+      (compiler-reg-loop-nest-block
+        "dead-latch"
+        (compiler-reg-loop-nest-jump "dead-header")
+        ir.CompilerIrBlockList.Nil))))
+
+(define (compiler-reg-loop-nest-unreachable-ok?) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-unreachable-blocks))]
+    (and
+      (= (array-length depths) 3)
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1))))
+
+;; --- CFG loop nest: the member set, and what admits a hoist on it -----------
+;;
+;; The const-hoist reads the same nest, but it does not want a DEPTH: it wants
+;; the loop as a SET, because everything it has to prove -- nothing enters the
+;; loop except at the header, so a load placed before the header runs before
+;; every site -- is a question about membership, and the answers the index
+;; range gave to it were answers about the emitted order.
+;; entry / body / latch / header / exit, with the header laid out BELOW the
+;; blocks it heads: what a rotation produces, and the shape the index range
+;; cannot read. `loop-ends` records a back edge only when the source is at or
+;; after the target, so the real latch (block 2, jumping UP to block 3) is
+;; invisible to it; it reads block 1 as a header instead, over the range
+;; [1..3], and then rejects the loop outright, because `entry` -- outside that
+;; range -- branches to block 3, strictly inside it. That false side entry is
+;; the refusal the hoist measured. As a member set the same loop is
+;; unremarkable: {header, body, latch}, entered only at the header, with
+;; `entry` the header's one predecessor from outside it.
+(define (compiler-reg-loop-nest-rotated-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-jump "header")
+    (compiler-reg-loop-nest-block
+      "body"
+      (compiler-reg-loop-nest-jump "latch")
+      (compiler-reg-loop-nest-block
+        "latch"
+        (compiler-reg-loop-nest-jump "header")
+        (compiler-reg-loop-nest-block
+          "header"
+          (compiler-reg-loop-nest-branch "body" "exit")
+          (compiler-reg-loop-nest-block
+            "exit"
+            (compiler-reg-loop-nest-return)
+            ir.CompilerIrBlockList.Nil))))))
+
+(define (compiler-reg-loop-nest-rotated-ok?) : bool
+  (let
+    [nest : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build (compiler-reg-loop-nest-rotated-blocks))]
+    [total : i64 (reg.compiler-reg-loop-nest-header-members! nest 3 1)]
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-rotated-blocks))]
+    (and
+      (= (reg.compiler-reg-loop-nest-header-count nest) 1)
+      (= (reg.compiler-reg-loop-nest-header nest 0) 3)
+      (= total 2)
+      (reg.compiler-reg-loop-nest-member? nest 1 1)
+      (reg.compiler-reg-loop-nest-member? nest 2 1)
+      (reg.compiler-reg-loop-nest-member? nest 3 1)
+      (not (reg.compiler-reg-loop-nest-member? nest 0 1))
+      (not (reg.compiler-reg-loop-nest-member? nest 4 1))
+      ;; The preheader, named without consulting the layout: `entry` is the
+      ;; header's only predecessor that is not itself in the loop.
+      (= (reg.compiler-reg-loop-nest-outside-pred nest 3 1) 0)
+      ;; The span the members occupy is still what an instruction-point hull
+      ;; has to be written in, and it does NOT start at the header.
+      (= (reg.compiler-reg-loop-nest-member-lo nest 3 total) 1)
+      (= (reg.compiler-reg-loop-nest-member-hi nest 3 total) 3)
+      ;; And the rotation costs the frequency ranking nothing either.
+      (= (compiler-reg-loop-nest-depth-at depths 0) 0)
+      (= (compiler-reg-loop-nest-depth-at depths 1) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 2) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 3) 1)
+      (= (compiler-reg-loop-nest-depth-at depths 4) 0))))
+
+;; entry / header / body / latch / second / exit: `second` jumps to the header
+;; as well, so the loop has TWO entries. No single place runs before every
+;; iteration, and a magic loaded at either one is absent on the other path.
+;; Membership cannot express that refusal -- the member set is the honest loop
+;; either way -- so the refusal is the predecessor COUNT: two from outside.
+(define (compiler-reg-loop-nest-two-entry-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-branch "header" "second")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-jump "latch")
+        (compiler-reg-loop-nest-block
+          "latch"
+          (compiler-reg-loop-nest-jump "header")
+          (compiler-reg-loop-nest-block
+            "second"
+            (compiler-reg-loop-nest-jump "header")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; entry / header / body / latch / side / exit, where `side` jumps into the
+;; loop BODY rather than its header. The natural-loop walk stops only at the
+;; header, so it follows `side` back to `entry` and swallows both: an
+;; irreducible entry is answered as a conservative SUPERSET, which is the safe
+;; direction. The header is then left with no predecessor from outside its own
+;; set at all, and the hoist has nowhere to inject -- refused, by the same one
+;; count, without a second predicate.
+(define (compiler-reg-loop-nest-side-entry-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-branch "header" "side")
+    (compiler-reg-loop-nest-block
+      "header"
+      (compiler-reg-loop-nest-branch "body" "exit")
+      (compiler-reg-loop-nest-block
+        "body"
+        (compiler-reg-loop-nest-jump "latch")
+        (compiler-reg-loop-nest-block
+          "latch"
+          (compiler-reg-loop-nest-jump "header")
+          (compiler-reg-loop-nest-block
+            "side"
+            (compiler-reg-loop-nest-jump "body")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-loop-nest-multi-entry-ok?) : bool
+  (let
+    [two : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build
+        (compiler-reg-loop-nest-two-entry-blocks))]
+    [two-total : i64 (reg.compiler-reg-loop-nest-header-members! two 1 1)]
+    [side : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build
+        (compiler-reg-loop-nest-side-entry-blocks))]
+    ;; WHICH of the two blocks the DFS names the header of an irreducible pair
+    ;; depends on the order it walks `entry`'s arms in -- either answer is a
+    ;; correct natural loop -- so read it from the nest instead of assuming.
+    [side-header : i64 (reg.compiler-reg-loop-nest-header side 0)]
+    [side-total : i64
+      (reg.compiler-reg-loop-nest-header-members! side side-header 1)]
+    (and
+      ;; Two entries into the header: header + body + latch, and `second`
+      ;; stays outside, so the header keeps two predecessors from outside.
+      (= (reg.compiler-reg-loop-nest-header-count two) 1)
+      (= two-total 2)
+      (not (reg.compiler-reg-loop-nest-member? two 4 1))
+      (= (reg.compiler-reg-loop-nest-outside-pred two 1 1) (- 0 2))
+      ;; An entry into the BODY instead. The walk stops only at the header, and
+      ;; this header does not dominate its own latch, so it runs back past the
+      ;; loop until it runs out of graph -- and swallows the function's ENTRY
+      ;; block. That is the shape the hoist has to refuse and CANNOT refuse on
+      ;; a predecessor count: block 0 is reached from the caller, through no
+      ;; predecessor at all, so no injection dominates the set however few
+      ;; edges cross into it. The guard is the entry itself being a member
+      ;; under a header that is not the entry.
+      (= (reg.compiler-reg-loop-nest-header-count side) 1)
+      (reg.compiler-reg-loop-nest-member? side 0 1)
+      (not (= side-header 0))
+      (= (reg.compiler-reg-loop-nest-member-lo side side-header side-total) 0))))
+
+;; The two shapes the range encoding overcharged, read as membership. `early`
+;; is laid out inside the loop's span but reaches the exit and never the latch,
+;; so it is not a member: the leaf scan skips it, and a call there no longer
+;; costs the loop its hoist. The sunk `cold` block's backward-in-layout jump
+;; closes no cycle at all, so the nest offers the hoist no region there to
+;; consider in the first place.
+(define (compiler-reg-loop-nest-non-member-ok?) : bool
+  (let
+    [nest : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build
+        (compiler-reg-loop-nest-early-exit-blocks))]
+    [total : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 1)]
+    [sunk : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build
+        (compiler-reg-loop-nest-sunk-cold-blocks))]
+    (and
+      (= (reg.compiler-reg-loop-nest-header-count nest) 1)
+      (= (reg.compiler-reg-loop-nest-header nest 0) 1)
+      (= total 2)
+      (reg.compiler-reg-loop-nest-member? nest 2 1)
+      (reg.compiler-reg-loop-nest-member? nest 4 1)
+      (not (reg.compiler-reg-loop-nest-member? nest 3 1))
+      (= (reg.compiler-reg-loop-nest-member-lo nest 1 total) 1)
+      (= (reg.compiler-reg-loop-nest-member-hi nest 1 total) 4)
+      (= (reg.compiler-reg-loop-nest-outside-pred nest 1 1) 0)
+      (= (reg.compiler-reg-loop-nest-header-count sunk) 0))))
+
+;; The depth vector is one CONSUMER of the producer and not a second analysis:
+;; charging one level per member set by hand, from the same nest, has to
+;; reproduce `compiler-reg-function-loop-depths` entry for entry.
+(define (compiler-reg-loop-nest-producer-agrees?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (let
+    [depths : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths blocks)]
+    [nest : reg.CompilerRegLoopNest (reg.compiler-reg-loop-nest-build blocks)]
+    [count : i64 (array-length depths)]
+    [mine : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< index (reg.compiler-reg-loop-nest-header-count nest))
+        (let
+          [header : i64 (reg.compiler-reg-loop-nest-header nest index)]
+          [generation : i64 (+ index 1)]
+          [_total : i64
+            (reg.compiler-reg-loop-nest-header-members! nest header generation)]
+          [block : i64 0]
+          (begin
+            (while (< block count)
+              (begin
+                (if (reg.compiler-reg-loop-nest-member? nest block generation)
+                  (set! (array-ref mine block) (+ (array-ref mine block) 1))
+                  unit)
+                (set! block (+ block 1))))
+            (set! index (+ index 1)))))
+      (set! index 0)
+      (while (< index count)
+        (begin
+          (if (= (array-ref mine index) (array-ref depths index))
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
+(define (compiler-reg-loop-nest-consumer-ok?) : bool
+  (and
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-nested-blocks))
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-two-latch-blocks))
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-early-exit-blocks))
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-rotated-blocks))
+    (compiler-reg-loop-nest-producer-agrees?
+      (compiler-reg-loop-nest-fallthrough-blocks))))
+
+;; The producer keeps nothing a later question could inherit: the same header,
+;; asked twice under two generations, answers with the same set, and the inner
+;; loop asked in between neither shrinks nor widens it.
+(define (compiler-reg-loop-nest-regeneration-ok?) : bool
+  (let
+    [nest : reg.CompilerRegLoopNest
+      (reg.compiler-reg-loop-nest-build (compiler-reg-loop-nest-nested-blocks))]
+    [outer : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 1)]
+    [inner : i64 (reg.compiler-reg-loop-nest-header-members! nest 2 2)]
+    [again : i64 (reg.compiler-reg-loop-nest-header-members! nest 1 3)]
+    (and
+      (= outer 3)
+      (= inner 1)
+      (= again outer)
+      (reg.compiler-reg-loop-nest-member? nest 2 3)
+      (reg.compiler-reg-loop-nest-member? nest 3 3)
+      (reg.compiler-reg-loop-nest-member? nest 4 3)
+      (not (reg.compiler-reg-loop-nest-member? nest 0 3))
+      (not (reg.compiler-reg-loop-nest-member? nest 5 3)))))
+
+;; --- CFG loop nest: the layout span, and the preheader spliced on it --------
+;;
+;; The last readers of the index range are the ones that still have to speak in
+;; SPANS: the loop-split rescue's region, the leaf-CSR region, the call
+;; region's loop row. What those want is not "the highest block with an edge
+;; into h from at or below it" but "the block range h's loop actually occupies"
+;; -- the same numbers only for a layout that keeps every loop contiguous and
+;; header-first, and an answer at all for blocks that head no loop whatever.
+;;
+;; The span is anchored on the loop's lowest MEMBER, so a ROTATED loop -- one
+;; whose header is laid out below the body it dominates -- gets a span too;
+;; only the assumption "the header is the span's first block" is gone.
+(define (compiler-reg-loop-nest-span-lo
+  [spans : (__tl_dyn-array i64)]
+  [index : i64]) : i64
+  (if (and (>= index 0) (< (+ (* 2 index) 1) (array-length spans)))
+    (array-ref spans (* 2 index))
+    (- 0 2)))
+
+(define (compiler-reg-loop-nest-span-hi
+  [spans : (__tl_dyn-array i64)]
+  [index : i64]) : i64
+  (if (and (>= index 0) (< (+ (* 2 index) 1) (array-length spans)))
+    (array-ref spans (+ (* 2 index) 1))
+    (- 0 2)))
+
+(define (compiler-reg-loop-nest-spans-of [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+    i64)
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    (reg.compiler-reg-loop-nest-spans-seq
+      seq
+      (ir.compiler-ir-block-seq-count seq))))
+
+(define (compiler-reg-loop-nest-spans-ok?) : bool
+  (let
+    [nested : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-spans-of (compiler-reg-loop-nest-nested-blocks))]
+    [early : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-spans-of
+        (compiler-reg-loop-nest-early-exit-blocks))]
+    [sunk : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-spans-of
+        (compiler-reg-loop-nest-sunk-cold-blocks))]
+    [rotated : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-spans-of (compiler-reg-loop-nest-rotated-blocks))]
+    (and
+      ;; A nest: each loop's span is recorded on its OWN header, and the outer
+      ;; span contains the inner one rather than being merged with it.
+      (= (compiler-reg-loop-nest-span-lo nested 1) 1)
+      (= (compiler-reg-loop-nest-span-hi nested 1) 4)
+      (= (compiler-reg-loop-nest-span-lo nested 2) 2)
+      (= (compiler-reg-loop-nest-span-hi nested 2) 3)
+      (= (compiler-reg-loop-nest-span-hi nested 0) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi nested 3) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi nested 4) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi nested 5) (- 0 1))
+      ;; The break arm is laid out inside the span and is not a member. The
+      ;; span stays the overapproximation it always was -- which is why every
+      ;; consumer of it still re-proves single entry over the range it uses.
+      (= (compiler-reg-loop-nest-span-lo early 1) 1)
+      (= (compiler-reg-loop-nest-span-hi early 1) 4)
+      (= (compiler-reg-loop-nest-span-hi early 3) (- 0 1))
+      ;; The sunk cold block's backward-in-layout jump closes no cycle, so no
+      ;; block is given a span at all -- where the range encoding published one
+      ;; covering [join, cold] and charged a rescue region for it.
+      (= (compiler-reg-loop-nest-span-hi sunk 0) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi sunk 1) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi sunk 2) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi sunk 3) (- 0 1))
+      ;; A ROTATED loop is contiguous but does not START at its header: the
+      ;; span is [body..header] and it is published under the header, block 3.
+      ;; A hull anchored on the header could only answer -1 here, which is what
+      ;; used to cost every rotated loop its rescue. No other block heads
+      ;; anything -- in particular block 1, which the range encoding read as a
+      ;; header with no out-of-loop predecessor at all.
+      (= (compiler-reg-loop-nest-span-lo rotated 3) 1)
+      (= (compiler-reg-loop-nest-span-hi rotated 3) 3)
+      (= (compiler-reg-loop-nest-span-hi rotated 0) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi rotated 1) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi rotated 2) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi rotated 4) (- 0 1)))))
+
+;; entry / body / latch / header / other / exit. The rescue's motivating case
+;; under rotation: `header` is laid out BELOW the body and latch it heads, and
+;; `entry` reaches it over a CRITICAL edge (entry has two successors, header
+;; has two predecessors), which is exactly the shape that cannot receive a
+;; once-per-loop INTO copy without a dedicated preheader.
+;;
+;; The index range cannot find that header: it records a back edge only from a
+;; source at or after the target, and every edge into block 3 comes from above
+;; it, so loop-ends[3] stays -1 and block 1 is read as the header of [1..3]
+;; instead -- a block with no out-of-loop predecessor at all. Nothing is
+;; spliced and the rescue is refused. As a member set the loop is
+;; {header, body, latch}, entered only through `entry`, and the preheader goes
+;; in where it belongs.
+(define (compiler-reg-preheader-rotated-blocks) : ir.CompilerIrBlockList
+  (compiler-reg-loop-nest-block
+    "entry"
+    (compiler-reg-loop-nest-branch "header" "other")
+    (compiler-reg-loop-nest-block
+      "body"
+      (compiler-reg-loop-nest-jump "latch")
+      (compiler-reg-loop-nest-block
+        "latch"
+        (compiler-reg-loop-nest-jump "header")
+        (compiler-reg-loop-nest-block
+          "header"
+          (compiler-reg-loop-nest-branch "body" "exit")
+          (compiler-reg-loop-nest-block
+            "other"
+            (compiler-reg-loop-nest-jump "exit")
+            (compiler-reg-loop-nest-block
+              "exit"
+              (compiler-reg-loop-nest-return)
+              ir.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-reg-preheader-label-at
+  [blocks : ir.CompilerIrBlockList]
+  [index : i64]) : i64
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    (if (or (< index 0) (>= index (ir.compiler-ir-block-seq-count seq)))
+      (ir.compiler-ir-label-none)
+      (match (ir.compiler-ir-block-seq-ref seq index)
+        [(ir.CompilerIrBlock.Block label _) label]))))
+
+(define (compiler-reg-preheader-succ-has?
+  [blocks : ir.CompilerIrBlockList]
+  [index : i64]
+  [label : i64]) : bool
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    (if (or (< index 0) (>= index (ir.compiler-ir-block-seq-count seq)))
+      false
+      (live.compiler-live-label-set-contains?
+        (live.compiler-live-block-successors
+          (ir.compiler-ir-block-seq-ref seq index))
+        label))))
+
+(define (compiler-reg-preheader-rotated-splice-ok?) : bool
+  (let
+    [blocks : ir.CompilerIrBlockList (compiler-reg-preheader-rotated-blocks)]
+    [spliced : ir.CompilerIrBlockList
+      (reg.compiler-reg-loop-split-splice-preheader
+        blocks
+        (ir.compiler-ir-label "header"))]
+    ;; Asked a second time, the splice finds the preheader it already made and
+    ;; leaves the function alone.
+    [again : ir.CompilerIrBlockList
+      (reg.compiler-reg-loop-split-splice-preheader
+        spliced
+        (ir.compiler-ir-label "header"))]
+    ;; And asked about the block the RANGE encoding would have called a header
+    ;; of the sunk-cold shape, there is no loop to give a preheader to.
+    [sunk : ir.CompilerIrBlockList
+      (reg.compiler-reg-loop-split-splice-preheader
+        (compiler-reg-loop-nest-sunk-cold-blocks)
+        (ir.compiler-ir-label "join"))]
+    (and
+      (= (ir.compiler-ir-block-list-count blocks) 6)
+      (= (ir.compiler-ir-block-list-count spliced) 7)
+      ;; The new block sits immediately before the header it serves.
+      (=
+        (compiler-reg-preheader-label-at spliced 3)
+        (ir.compiler-ir-label "header.preheader"))
+      (=
+        (compiler-reg-preheader-label-at spliced 4)
+        (ir.compiler-ir-label "header"))
+      ;; `entry`'s critical edge now lands on the preheader, and the latch's
+      ;; back edge -- inside the loop -- is left pointing at the header.
+      (compiler-reg-preheader-succ-has?
+        spliced
+        0
+        (ir.compiler-ir-label "header.preheader"))
+      (not
+        (compiler-reg-preheader-succ-has?
+          spliced
+          0
+          (ir.compiler-ir-label "header")))
+      (compiler-reg-preheader-succ-has?
+        spliced
+        2
+        (ir.compiler-ir-label "header"))
+      (= (ir.compiler-ir-block-list-count again) 7)
+      (= (ir.compiler-ir-block-list-count sunk) 4))))
+
+;; The span array owns no state across calls either: the same block list asked
+;; twice gives the same spans, and another shape asked in between must not leak
+;; a stamp generation into the second answer.
+(define (compiler-reg-loop-nest-spans-deterministic-ok?) : bool
+  (let
+    [first : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-spans-of (compiler-reg-loop-nest-nested-blocks))]
+    [_other : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-spans-of
+        (compiler-reg-loop-nest-two-latch-blocks))]
+    [second : (__tl_dyn-array i64)
+      (compiler-reg-loop-nest-spans-of (compiler-reg-loop-nest-nested-blocks))]
+    [count : i64 (array-length first)]
+    [index : i64 0]
+    [ok : bool (= count (array-length second))]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref first index) (array-ref second index))
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
+;; --- live-in bridge at a block that opens with a call -----------------------
+;;
+;; A segment's START is read as the value's own definition, so a clobber AT the
+;; start is that definition's own instruction and is not spanned. That reading
+;; is sound only while the value's linearly-first live POINT really is its def,
+;; which is a property of the block ORDER, not of the program: here `use` is
+;; laid out before `def`, so var 0's first touch would be its READ at the return
+;; -- and the call that opens `use`, which var 0 is live across, would sit below
+;; the hull and read as un-spanned. Handing it a caller-saved home there is a
+;; miscompile. The live-in bridge opens the segment at the odd point below the
+;; block's first instruction, so the call lands inside the hull for every order.
+(define (compiler-reg-live-in-call-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "live_in_call")
+    ir.CompilerIrParamList.Nil
+    (compiler-reg-i64-ty)
+    2
+    (compiler-reg-loop-nest-block
+      "entry"
+      (compiler-reg-loop-nest-jump "def")
+      (compiler-reg-loop-nest-block
+        "use"
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Call
+            1
+            (ir.compiler-ir-test-symbol "side_effect")
+            (ir.CompilerIrCallArgs.Nil)
+            (ast.AstType.Unit))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Return
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+            ir.CompilerIrInstrList.Nil))
+        (compiler-reg-loop-nest-block
+          "def"
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 9)
+              (compiler-reg-i64-ty))
+            (compiler-reg-loop-nest-jump "use"))
+          ir.CompilerIrBlockList.Nil)))))
+
+(define (compiler-reg-live-in-call-ok?) : bool
+  (let
+    [func : ir.CompilerIrFunction (compiler-reg-live-in-call-function)]
+    [liveness : live.CompilerFunctionLiveness
+      (live.compiler-live-analyze-function func)]
+    (match (reg.compiler-reg-live-interval-selection func liveness)
+      [(reg.CompilerRegIntervalSelection.Selection _ index)
+        (and
+          ;; The jump is point 0, so `use` opens at point 2 and the bridge
+          ;; anchors var 0 at point 1 -- the odd slot no instruction occupies.
+          (= (array-ref index.starts 0) 1)
+          ;; And that is what makes the call spanned: hull start 1, exclusive,
+          ;; still admits the call at point 2.
+          (reg.compiler-reg-segments-span-clobber?
+            (array-ref index.segments 0)
+            (reg.compiler-reg-direct-call-points func)
+            (array-ref index.starts 0)
+            false))])))
+
+;; The analysis owns no state across calls: the same block list ranked twice
+;; must give the same vector, and ranking another shape in between must not
+;; leak a stamp generation into it.
+(define (compiler-reg-loop-nest-deterministic-ok?) : bool
+  (let
+    [first : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-nested-blocks))]
+    [_other : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-two-latch-blocks))]
+    [second : (__tl_dyn-array i64)
+      (reg.compiler-reg-function-loop-depths
+        (compiler-reg-loop-nest-nested-blocks))]
+    [count : i64 (array-length first)]
+    [index : i64 0]
+    [ok : bool (= count (array-length second))]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref first index) (array-ref second index))
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
 (define (compiler-regalloc-core-self-test?) : bool
   (begin
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-early-exit-ok?"
+      (compiler-reg-loop-nest-early-exit-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-sunk-cold-ok?"
+      (compiler-reg-loop-nest-sunk-cold-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-two-latch-ok?"
+      (compiler-reg-loop-nest-two-latch-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-nested-ok?"
+      (compiler-reg-loop-nest-nested-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-fallthrough-ok?"
+      (compiler-reg-loop-nest-fallthrough-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-unreachable-ok?"
+      (compiler-reg-loop-nest-unreachable-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-deterministic-ok?"
+      (compiler-reg-loop-nest-deterministic-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-rotated-ok?"
+      (compiler-reg-loop-nest-rotated-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-multi-entry-ok?"
+      (compiler-reg-loop-nest-multi-entry-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-non-member-ok?"
+      (compiler-reg-loop-nest-non-member-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-consumer-ok?"
+      (compiler-reg-loop-nest-consumer-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-regeneration-ok?"
+      (compiler-reg-loop-nest-regeneration-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-spans-ok?"
+      (compiler-reg-loop-nest-spans-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-nest-spans-deterministic-ok?"
+      (compiler-reg-loop-nest-spans-deterministic-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-preheader-rotated-splice-ok?"
+      (compiler-reg-preheader-rotated-splice-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-live-in-call-ok?"
+      (compiler-reg-live-in-call-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-program-maps-suppression-ok?"
       (compiler-reg-program-maps-suppression-ok?))

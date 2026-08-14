@@ -1540,7 +1540,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # hygiene, dependency, and reflection-prescan traversal arms. The
     # authoritative Windows probe measured 2,755,843 used nodes, crossing the
     # boundary to 43 segments: 2,818,048 capacity and 90,177,536 physical
-    # payload bytes.
+    # payload bytes. Merged with this bank's optimizer, backend, regalloc, and
+    # planned bounds-preservation regression helper, the authoritative Windows
+    # probe measured 2,764,373 used nodes and retained the same capacity and
+    # physical payload boundary.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -1567,7 +1570,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 2,229,797 used nodes, leaving 63,963 nodes of headroom. #6543's optimizer
     # additions also retained 35 segments in its prior current-main CI; the
     # post-#5754 composition remains pinned here and is measured by the same
-    # required Windows profile gate.
+    # required Windows profile gate. This bank's spilled-stage compare fold /
+    # memory-destination RMW / commutation-and-promotion / jump-forwarding /
+    # loop-model series adds ~4,500 lines of optimizer, backend and regalloc
+    # source and retains 35 segments: the authoritative Windows probe on the
+    # rebased tree measured 2,238,298 used nodes, 2,293,760 capacity and
+    # 73,400,320 physical payload bytes, leaving 55,462 nodes of headroom.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 35 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -1581,9 +1589,18 @@ if [ "$NL_HOST_OS" = windows ]; then
     # optimizer passes and their self-tests barely touch the macro-walk type
     # footprint, so a step here means new macro-expanded type structure, not
     # source volume.
+    # That reading holds through this bank: the spilled-stage compare fold /
+    # memory-destination RMW / commutation-and-promotion / jump-forwarding /
+    # loop-model series added ~4,500 lines and spent 123 of these nodes, still
+    # 24 segments. It is now genuinely tight -- the authoritative Windows probe
+    # on the rebased tree measured 24,485 used nodes against 24,576 capacity,
+    # leaving 91 nodes, 0.37% of one segment, below the 25-segment line. Expect
+    # the next series that introduces macro-expanded type structure to cross it.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+    # Same series, same probe: 8,527 used nodes against 9,216 capacity, 689
+    # nodes of headroom below the 10-segment line.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

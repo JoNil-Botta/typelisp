@@ -140,6 +140,37 @@ count_backward_branch() {
     ' "$1"
 }
 
+# Count compares that read back a frame slot an earlier line in the SAME basic
+# block wrote from a register -- `movq %rV, N(%rsp)` ... `cmpq N(%rsp), %rX`.
+# That is the exact give-away of a fused load the M6 family failed to claim:
+# the value was materialised into a scratch, stored to its home, and then read
+# straight back as the compare's memory operand, when the compare could have
+# addressed the element itself. Slots are cleared at every label so only a
+# straight-line write/read pair counts.
+count_store_then_cmp_same_slot() {
+    awk '
+        /^[^[:blank:]:]+:$/ { delete stored; next }
+        /^    movq %[a-z0-9]+, -?[0-9]+\(%rsp\)$/ { stored[$3] = 1; next }
+        /^    cmpq -?[0-9]+\(%rsp\), %[a-z0-9]+$/ {
+            slot = $2
+            sub(/,$/, "", slot)
+            if (slot in stored) n++
+            next
+        }
+        END { print n + 0 }
+    ' "$1"
+}
+
+assert_store_then_cmp_same_slot_eq() {
+    _file=$1
+    _want=$2
+    _label=$3
+    _got=$(count_store_then_cmp_same_slot "$_file")
+    if [ "$_got" -ne "$_want" ]; then
+        fail "$_label expected $_want store-then-compare-the-same-slot pair(s), got $_got"
+    fi
+}
+
 # Count adjacent GP copy chains `movq SRC, TMP; movq TMP, %rax`. Constant
 # quotient lowering must not route a live dividend through its own destination
 # before seeding fixed %rax. A remainder still needs one mutable SRC copy, so
@@ -178,6 +209,76 @@ assert_no_fallthrough_jmp() {
     _got=$(count_fallthrough_jmp "$_file")
     if [ "$_got" -ne 0 ]; then
         fail "$_label kept $_got jmp(s) whose target is reached by falling through label definitions only"
+    fi
+}
+
+# Count branch lines whose target label names a block that emits nothing but a
+# single `jmp` -- the shape backend jump forwarding retires. A block's body is
+# read across any run of adjacent label definitions (an emptied merge shares its
+# successor's code), and a lone `jmp` back to the block's own label is a
+# self-loop, which forwarding must refuse and which therefore does not count.
+count_jump_into_jump_only_block() {
+    awk '
+        { line[NR] = $0 }
+        /^[^[:blank:]:]+:$/ { at[substr($0, 1, length($0) - 1)] = NR }
+        END {
+            for (l in at) {
+                i = at[l] + 1
+                while (i <= NR && line[i] ~ /^[^[:blank:]:]+:$/) i++
+                if (i > NR || line[i] !~ /^    jmp [^[:blank:]*%(,]+$/) continue
+                target = substr(line[i], 9)
+                if (target == l) continue
+                j = i + 1
+                if (j > NR || line[j] ~ /^[^[:blank:]:]+:$/ || line[j] ~ /^[[:space:]]*\./)
+                    solo[l] = 1
+            }
+            for (k = 1; k <= NR; k++)
+                if (line[k] ~ /^    j[a-z]+ [^[:blank:]*%(,]+$/) {
+                    t = line[k]
+                    sub(/^    j[a-z]+ /, "", t)
+                    if (t in solo) n++
+                }
+            print n + 0
+        }
+    ' "$1"
+}
+
+assert_no_jump_into_jump_only_block() {
+    _file=$1
+    _label=$2
+    _got=$(count_jump_into_jump_only_block "$_file")
+    if [ "$_got" -ne 0 ]; then
+        fail "$_label kept $_got branch(es) into a block that emits nothing but one jmp"
+    fi
+}
+
+# Count `jmp L` whose only preceding lines back to `L:` are label definitions --
+# an empty infinite loop, whose header and body labels collapse onto the same
+# address. Jump forwarding must refuse these: every block in the run hands its
+# jumps to another block in the same run, so there is no exit to name.
+count_self_loop_jmp() {
+    awk '
+        /^[^[:blank:]:]+:$/ {
+            run[++depth] = substr($0, 1, length($0) - 1)
+            next
+        }
+        /^    jmp [^[:blank:]*%(,]+$/ {
+            target = substr($0, 9)
+            for (i = 1; i <= depth; i++)
+                if (run[i] == target) { n++; break }
+        }
+        { depth = 0 }
+        END { print n + 0 }
+    ' "$1"
+}
+
+assert_self_loop_jmp_at_least() {
+    _file=$1
+    _want=$2
+    _label=$3
+    _got=$(count_self_loop_jmp "$_file")
+    if [ "$_got" -lt "$_want" ]; then
+        fail "$_label expected at least $_want self-loop jmp(s), got $_got"
     fi
 }
 
@@ -1014,10 +1115,180 @@ check_load_widen_cast_fold() {
 }
 
 
+# Count the block that starts at the FIRST `__unroll_body:` label and runs to
+# the next label definition -- one unrolled group, whose line count IS the
+# unroll factor for a body that emits one line per copy.
+unroll_body_block() {
+    _file=$1
+    _out="$WORKDIR/$(basename "$_file").unroll_body"
+    awk '
+        started && /^[^[:blank:]]*:$/ { exit }
+        started { print }
+        !started && /__unroll_body:$/ { started = 1 }
+    ' "$_file" > "$_out"
+    printf '%s\n' "$_out"
+}
+
+check_mem_dest_rmw_fold() {
+    _asm=$(compile_gate mem_dest_rmw_fold tests/integration/mem_dest_rmw_fold.tl)
+    # GAP10: `a[i] = a[i] OP x` must become an x86 memory-DESTINATION ALU op.
+    # Each kernel emits its merge in three places -- the four copies of the
+    # unrolled fast body, the fast remainder, and the checked slow body -- so
+    # six memory-destination lines and, decisively, ZERO memory-SOURCE lines:
+    # a memory-source op is the old three-instruction round trip's middle
+    # instruction, and its absence is what proves the load and the store-back
+    # are both gone.
+    for _kernel in merge_or merge_and merge_add merge_reg; do
+        _body=$(function_body "$_asm" "_tl_mem_dest_rmw_fold_$_kernel")
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' \
+            6 "mem-dest-rmw-$_kernel"
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' \
+            0 "mem-dest-rmw-$_kernel-no-memory-source"
+    done
+    # The register-source kernel folds to ONE instruction per word: the other
+    # operand is loop-invariant, so nothing is staged and no element is loaded.
+    _reg=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_reg)
+    assert_not_matches "$_reg" \
+        '^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' mem-dest-rmw-merge-reg
+    # Refused neighbours: one-token edits of the admitted shape that must keep
+    # the three-instruction round trip. Each keeps exactly the six memory-SOURCE
+    # ALU ops the fold would have consumed and gains no memory destination.
+    #   shifted    -- stores to a different element than it loaded
+    #   reused     -- the loaded element has a second reader
+    #   interposed -- another store lands between the load and the store-back
+    for _kernel in merge_shifted merge_reused merge_interposed; do
+        _body=$(function_body "$_asm" "_tl_mem_dest_rmw_fold_$_kernel")
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' \
+            0 "mem-dest-rmw-$_kernel-refused"
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' \
+            6 "mem-dest-rmw-$_kernel-still-emitted"
+    done
+    # Byte width: the same source shape at a width the fold refuses, because a
+    # `q` op cannot agree with the load's zero-extension and the store's
+    # truncation. The merge is still emitted, as `orb`.
+    _bytes=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_bytes)
+    assert_regex_count_eq "$_bytes" \
+        '^[[:space:]]+(orq|orb) (%r[a-z0-9]+b?|%[a-d]l|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,1\)$' \
+        0 mem-dest-rmw-merge-bytes-refused
+    assert_matches "$_bytes" '^[[:space:]]+orb ' mem-dest-rmw-merge-bytes-still-emitted
+}
+
+check_word_merge_unroll() {
+    _asm=$(compile_gate word_merge_unroll tests/integration/mem_dest_rmw_fold.tl)
+    # The word-merge unroll tier: a load-and-store body whose every access is a
+    # 64-bit word through a 64-bit-element gep runs at K=4, not the class
+    # default K=2. One group of the unrolled body therefore holds FOUR folded
+    # merges and one counter step of 4.
+    _or=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_or)
+    _or_group=$(unroll_body_block "$_or")
+    assert_regex_count_eq "$_or_group" \
+        '^[[:space:]]+orq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 4 \
+        word-merge-unroll-k4
+    assert_contains "$_or_group" 'addq $4,' word-merge-unroll-k4-step
+    # The refusal that keeps the K=2 pin two-sided: the byte-wide twin is the
+    # SAME loop written over `(Array u8)`. It is still the load-and-store class,
+    # so it still unrolls -- at the class default of 2, with a counter step of
+    # 2. Raising the class instead of adding a tier would move this one too.
+    _bytes=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_bytes)
+    _bytes_group=$(unroll_body_block "$_bytes")
+    assert_regex_count_eq "$_bytes_group" '^[[:space:]]+orb ' 2 word-merge-unroll-bytes-k2
+    assert_contains "$_bytes_group" 'addq $2,' word-merge-unroll-bytes-k2-step
+    # The container shape the K=2 constant was pinned for: a word payload
+    # updated alongside a NARROW tag. Its word half still takes the
+    # memory-destination fold -- that fold is per-instruction -- but ONE narrow
+    # access is enough to refuse the tier, and the body stays at K=2. This is
+    # where the two mechanisms are pinned as independent.
+    _mixed=$(function_body "$_asm" _tl_mem_dest_rmw_fold_merge_mixed)
+    _mixed_group=$(unroll_body_block "$_mixed")
+    assert_contains "$_mixed_group" 'addq $2,' word-merge-unroll-mixed-k2-step
+    assert_regex_count_eq "$_mixed_group" \
+        '^[[:space:]]+orq \$1, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 2 \
+        word-merge-unroll-mixed-k2
+}
+
+check_gep_load_cmp_spilled_stage() {
+    _asm=$(compile_gate gep_load_cmp_spilled_stage         tests/integration/gep_load_cmp_spilled_stage.tl)
+    _changed=$(function_body "$_asm"         _tl_gep_load_cmp_spilled_stage_changed_question)
+    _refused=$(function_body "$_asm" _tl_gep_load_cmp_spilled_stage_refused)
+    # M6-H: `changed?` spills both hoisted base-relative addresses AND the two
+    # compared elements. Every one of its four compare sites (the two bounds-
+    # eliminated clones and their versioned twins) must address the element
+    # through the staged base instead of materialising it:
+    #     movq SPILL(%rsp), %rT
+    #     cmpq (%rT,%rIDX,8), %rOTHER
+    # Before this packet only ONE site folded; the others stored the loaded
+    # element to its home and compared against that home.
+    assert_regex_count_at_least "$_changed"         '^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 4         gep-load-cmp-spilled-stage
+    # And no compare anywhere in the function reads back a slot the same block
+    # had just written from a register. That pair is the defect itself; the
+    # baseline emitted exactly one.
+    assert_store_then_cmp_same_slot_eq "$_changed" 0         gep-load-cmp-spilled-stage
+    # Nearest refused neighbour: `refused` reads each loaded element a SECOND
+    # time to fold it into a sum, so the value is not single-use, the fold
+    # cannot retire it, and its home stays load-bearing. No compare in it
+    # addresses an element directly.
+    assert_regex_count_eq "$_refused"         '^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 0         gep-load-cmp-spilled-stage-refused
+    # The elements are still loaded and still compared there -- the refusal is
+    # a refusal to fold, not a refusal to emit.
+    assert_matches "$_refused"         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$'         gep-load-cmp-spilled-stage-refused
+}
+
+# Backend jump-only block forwarding (#jump-forward). A run of if_merge blocks
+# whose phi copies coalesce emits one `jmp` each; a branch into the head of the
+# run used to walk the whole run. Forwarding names the run's exit directly. The
+# blocks are still emitted -- only jump operands move -- so the merge labels
+# must all still be there, and a jump-only SELF loop must keep its own jump.
+check_jump_only_forward() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "jump_only_forward_$_suffix" \
+            tests/integration/jump_only_forward.tl "$_target")
+
+        _forward=$(function_body "$_asm" _tl_jump_only_forward_forward_probe)
+        _diamond=$(function_body "$_asm" _tl_jump_only_forward_diamond_probe)
+        _main=$(function_body "$_asm" main)
+
+        # The core property over every compiled body: nothing branches into a
+        # block that does nothing but jump. Three such branches survive in the
+        # forward probe before the forwarding table exists.
+        for _body in "$_forward" "$_diamond" "$_main"; do
+            assert_no_jump_into_jump_only_block "$_body" \
+                "jump-only-forward-$_target"
+            assert_no_fallthrough_jmp "$_body" "jump-only-forward-$_target"
+        done
+
+        # Not vacuous: the merge run is still four real blocks, still reached by
+        # branches. Forwarding retargets jumps; it never deletes a block.
+        assert_regex_count_at_least "$_forward" \
+            '^\.L[^ ]*_if_merge\.[0-9.]+:$' 4 "jump-only-forward-$_target"
+        assert_regex_count_at_least "$_forward" \
+            '^[[:space:]]+j[a-z]+ \.L[^ ]*_if_merge\.[0-9.]+$' 4 \
+            "jump-only-forward-$_target"
+        assert_backward_branch_at_least "$_forward" 1 \
+            "jump-only-forward-$_target"
+
+        # REFUSED: the diamond's merges carry values that differ per edge, so
+        # they are not jump-only and the branches naming them stay put.
+        assert_regex_count_at_least "$_diamond" \
+            '^[[:space:]]+j[a-z]+ \.L[^ ]*_if_merge\.[0-9.]+$' 3 \
+            "jump-only-forward-diamond-$_target"
+
+        # REFUSED: the inlined empty infinite loop keeps its self-jump.
+        assert_self_loop_jmp_at_least "$_main" 1 "jump-only-forward-spin-$_target"
+    done
+}
+
+check_mem_dest_rmw_fold
+check_word_merge_unroll
 check_divmagic_hoist
 check_hoist_priority
 check_lftr_counter_retire
 check_fallthrough_jmp_chain
+check_jump_only_forward
 check_wide_const_hoist
 check_group_pair_home
 check_group_pair_phi_home
@@ -1050,5 +1321,6 @@ check_load_widen_cast_fold
 check_mask_test_admission
 check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
+check_gep_load_cmp_spilled_stage
 
 echo "Assembly shape gates passed."

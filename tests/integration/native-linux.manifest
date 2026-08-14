@@ -108,6 +108,7 @@ divmagic_hoist|tests/integration/divmagic_hoist.tl|42|-|-|stdlib/io.tl
 divmod_live_dividend|tests/integration/divmod_live_dividend.tl|42|-|-|stdlib/io.tl
 hoist_priority|tests/integration/hoist_priority.tl|42|-|-|stdlib/io.tl
 fallthrough_jmp_chain|tests/integration/fallthrough_jmp_chain.tl|42|-|-|-
+jump_only_forward|tests/integration/jump_only_forward.tl|42|-|-|-
 wide_const_hoist|tests/integration/wide_const_hoist.tl|42|-|-|stdlib/io.tl
 target_asm_loop_divmod_parity|tests/integration/target_asm_loop_divmod_parity.tl|42|-|-|stdlib/io.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
@@ -133,8 +134,12 @@ total_switch_runtime|tests/integration/total_switch_runtime.tl|42|-|-|stdlib/arr
 gap_switch_runtime|tests/integration/gap_switch_runtime.tl|42|-|-|stdlib/array.tl
 cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 load_widen_cast_fold|tests/integration/load_widen_cast_fold.tl|42|-|-|stdlib/array.tl
+gep_load_cmp_spilled_stage|tests/integration/gep_load_cmp_spilled_stage.tl|42|-|-|stdlib/array.tl
 alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|
+mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
 load_sink_trap_parity|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/linux/load_sink_trap_parity/load_sink_trap_parity.tl:33:37: array index out of bounds: index=4 length=4\n
+mem_dest_rmw_trap_parity|tests/integration/mem_dest_rmw_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/linux/mem_dest_rmw_trap_parity/mem_dest_rmw_trap_parity.tl:27:68: array index out of bounds: index=4 length=4\n
+
 gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 const_global_mask_unroll|tests/integration/const_global_mask_unroll.tl|0|-|-|stdlib/array.tl

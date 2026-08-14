@@ -138,8 +138,7 @@
               (begin
                 (set! (array-ref a i) i)
                 (set! (array-ref c i) (* i 3))
-                (set! i (+ i 1)))
-              )
+                (set! i (+ i 1))))
             (set! i 0)
             (while (< i 16)
               (begin

@@ -91,6 +91,6 @@
     [a : i64 (forward-probe 64 128)]
     [b : i64 (diamond-probe 64 128)]
     [c : i64 (spin-probe 6)]
-    (if (and (= a 898) (and (= b 30678) (= c 7)))
+    (if (and (= a 898) (= b 30678) (= c 7))
       42
       1)))

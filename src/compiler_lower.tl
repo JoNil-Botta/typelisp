@@ -27,7 +27,7 @@
 (import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg compile-profile (import stdlib.profile))
-(cfg compile-profile (import stdlib.io))
+(import stdlib.io)
 (import sym_i64_env)
 
 (defstruct LowerNameBinding
@@ -470,6 +470,49 @@
   (scratch-arena (__tl_dyn-array i64))
   (ir-arena (__tl_dyn-array i64)))
 
+;; The cache is one owner-private dense cell. Its 15 scalar entries replace the
+;; former process globals without copying a wide aggregate on every call query.
+(define lower-comptime-cache-size : i64
+  15)
+(define lower-comptime-cache-generation-index : i64
+  0)
+(define lower-comptime-cache-table-id-index : i64
+  1)
+(define lower-comptime-cache-id-index : i64
+  2)
+(define lower-comptime-cache-comptime-dot-id-index : i64
+  3)
+(define lower-comptime-cache-comptime-slash-id-index : i64
+  4)
+(define lower-comptime-cache-comptime-error-dot-id-index : i64
+  5)
+(define lower-comptime-cache-comptime-error-slash-id-index : i64
+  6)
+(define lower-comptime-cache-stdlib-dot-dot-id-index : i64
+  7)
+(define lower-comptime-cache-stdlib-dot-slash-id-index : i64
+  8)
+(define lower-comptime-cache-stdlib-slash-dot-id-index : i64
+  9)
+(define lower-comptime-cache-stdlib-slash-slash-id-index : i64
+  10)
+(define lower-comptime-cache-stdlib-error-dot-dot-id-index : i64
+  11)
+(define lower-comptime-cache-stdlib-error-dot-slash-id-index : i64
+  12)
+(define lower-comptime-cache-stdlib-error-slash-dot-id-index : i64
+  13)
+(define lower-comptime-cache-stdlib-error-slash-slash-id-index : i64
+  14)
+
+(define (lower-comptime-error-id-cache-empty) : (__tl_dyn-array i64)
+  (let
+    [cache : (__tl_dyn-array i64) (make-array i64 lower-comptime-cache-size)]
+    (begin
+      (set! (array-ref cache lower-comptime-cache-generation-index) -1)
+      (set! (array-ref cache lower-comptime-cache-table-id-index) -1)
+      cache)))
+
 ;; The owner points at a fixed directory of typed cell addresses. Keeping the
 ;; directory untyped avoids reflecting one giant aggregate (and recomputing its
 ;; layout at every accessor expansion) while every mutable value still has one
@@ -538,6 +581,8 @@
   30)
 (define intern-owner : i64
   31)
+(define comptime-error-cache : i64
+  32)
 
 (defstruct CompilerLowerState
   (address i64))
@@ -596,7 +641,7 @@
 (define (compiler-lower-state-new-with-intern-state
   [intern-state : ci.InternCompatState]) : CompilerLowerState
   (let
-    [cells : (__tl_dyn-array i64) (array.make-array i64 32)]
+    [cells : (__tl_dyn-array i64) (array.make-array i64 33)]
     [address : i64
       (cast
         (unsafe
@@ -720,6 +765,11 @@
       (set!
         (array-ref cells intern-owner)
         (compiler-lower-state-cell ci.InternCompatState intern-state))
+      (set!
+        (array-ref cells comptime-error-cache)
+        (compiler-lower-state-cell
+          (__tl_dyn-array i64)
+          (lower-comptime-error-id-cache-empty)))
       state)))
 
 ;; Serial/test compatibility adapter. Driver-owned jobs construct the lower
@@ -778,7 +828,8 @@
   (module-decl-index-ends i64)
   (module-decl-index-positions i64)
   (module-decl-index-arena i64)
-  (intern-owner i64))
+  (intern-owner i64)
+  (comptime-error-cache i64))
 
 (define (compiler-lower-state-size) : i64
   (comptime (size-of (type CompilerLowerState))))
@@ -810,6 +861,22 @@
                 (unsafe
                   (ptr-read
                     (int->ptr (cast (+ base (* index 8)) : u64) : (Ptr i64)))))))
+          (set! index (+ index 1))))
+      out)))
+
+(define (lower-comptime-error-id-cache-fingerprint [state : CompilerLowerState]) : i64
+  (let
+    [cache : (__tl_dyn-array i64)
+      (compiler-lower-state-read
+        state
+        (__tl_dyn-array i64)
+        comptime-error-cache)]
+    [index : i64 0]
+    [out : i64 0]
+    (begin
+      (while (< index lower-comptime-cache-size)
+        (begin
+          (set! out (hash.combine out (hash.i64 (array-ref cache index))))
           (set! index (+ index 1))))
       out)))
 
@@ -899,7 +966,8 @@
     (compiler-lower-state-field-fingerprint
       state
       ci.InternCompatState
-      intern-owner)))
+      intern-owner)
+    (lower-comptime-error-id-cache-fingerprint state)))
 
 (define (compiler-lower-state-observation-eq?
   [left : CompilerLowerStateObservation]
@@ -935,7 +1003,8 @@
     (= left.module-decl-index-ends right.module-decl-index-ends)
     (= left.module-decl-index-positions right.module-decl-index-positions)
     (= left.module-decl-index-arena right.module-decl-index-arena)
-    (= left.intern-owner right.intern-owner)))
+    (= left.intern-owner right.intern-owner)
+    (= left.comptime-error-cache right.comptime-error-cache)))
 
 (define (lower-active-global-name-cache-current [state : CompilerLowerState]) : LowerNameCache
   (compiler-lower-state-read state LowerNameCache active-global-name-cache))
@@ -7590,7 +7659,8 @@
     (lower-alias-overlay-reset! lower-state)
     (lower-alias-symbol-memo-release! lower-state)
     (lower-reach-scratch-state-reset! lower-state)
-    (lower-module-decl-index-reset! lower-state)))
+    (lower-module-decl-index-reset! lower-state)
+    (lower-comptime-error-ids-reset! lower-state)))
 
 (define (compiler-lower-state-reset? [lower-state : CompilerLowerState]) : bool
   (let
@@ -7710,7 +7780,8 @@
       (= (array-length index-starts) 0)
       (= (array-length index-ends) 0)
       (= (array-length index-positions) 0)
-      (= (compiler-lower-state-read lower-state i64 module-decl-index-arena) 0))))
+      (= (compiler-lower-state-read lower-state i64 module-decl-index-arena) 0)
+      (lower-comptime-error-ids-reset? lower-state))))
 
 (define (lower-reset-file-state!) : unit
   (begin
@@ -12802,140 +12873,166 @@
 (define (lower-comptime-runtime-skip-module? [module : String]) : bool
   (string.eq module "stdlib.comptime"))
 
-(define lower-comptime-error-id-generation : i64
-  -1)
-(define lower-comptime-error-id-table-id : i64
-  -1)
-(define lower-comptime-error-id : i64
-  0)
-(define lower-comptime-error-comptime-dot-id : i64
-  0)
-(define lower-comptime-error-comptime-slash-id : i64
-  0)
-(define lower-comptime-error-comptime-error-dot-id : i64
-  0)
-(define lower-comptime-error-comptime-error-slash-id : i64
-  0)
-(define lower-comptime-error-stdlib-dot-dot-id : i64
-  0)
-(define lower-comptime-error-stdlib-dot-slash-id : i64
-  0)
-(define lower-comptime-error-stdlib-slash-dot-id : i64
-  0)
-(define lower-comptime-error-stdlib-slash-slash-id : i64
-  0)
-(define lower-comptime-error-stdlib-error-dot-dot-id : i64
-  0)
-(define lower-comptime-error-stdlib-error-dot-slash-id : i64
-  0)
-(define lower-comptime-error-stdlib-error-slash-dot-id : i64
-  0)
-(define lower-comptime-error-stdlib-error-slash-slash-id : i64
-  0)
+(define (lower-comptime-error-ids-reset! [lower-state : CompilerLowerState]) : unit
+  (let
+    [cache : (__tl_dyn-array i64)
+      (compiler-lower-state-read
+        lower-state
+        (__tl_dyn-array i64)
+        comptime-error-cache)]
+    [index : i64 0]
+    (begin
+      (while (< index lower-comptime-cache-size)
+        (begin
+          (set! (array-ref cache index) 0)
+          (set! index (+ index 1))))
+      (set! (array-ref cache lower-comptime-cache-generation-index) -1)
+      (set! (array-ref cache lower-comptime-cache-table-id-index) -1))))
 
-(define (lower-comptime-error-ids-ensure! [lower-state : CompilerLowerState]) : unit
+(define (lower-comptime-error-ids-reset? [lower-state : CompilerLowerState]) : bool
+  (let
+    [cache : (__tl_dyn-array i64)
+      (compiler-lower-state-read
+        lower-state
+        (__tl_dyn-array i64)
+        comptime-error-cache)]
+    (and
+      (= (array-ref cache lower-comptime-cache-generation-index) -1)
+      (= (array-ref cache lower-comptime-cache-table-id-index) -1)
+      (= (array-ref cache lower-comptime-cache-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-comptime-dot-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-comptime-slash-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-comptime-error-dot-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-comptime-error-slash-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-stdlib-dot-dot-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-stdlib-dot-slash-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-stdlib-slash-dot-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-stdlib-slash-slash-id-index) 0)
+      (= (array-ref cache lower-comptime-cache-stdlib-error-dot-dot-id-index) 0)
+      (=
+        (array-ref cache lower-comptime-cache-stdlib-error-dot-slash-id-index)
+        0)
+      (=
+        (array-ref cache lower-comptime-cache-stdlib-error-slash-dot-id-index)
+        0)
+      (=
+        (array-ref cache lower-comptime-cache-stdlib-error-slash-slash-id-index)
+        0))))
+
+(define (lower-comptime-error-ids-ensure!
+  [lower-state : CompilerLowerState]
+  [builtin-state : cbi.CompilerBuiltinIdsState]) : unit
   (let
     [intern-state : ci.InternCompatState
       (compiler-lower-state-interns lower-state)]
+    [generation : i64 (ci.intern-compat-state-generation intern-state)]
+    [table-id : i64 (ci.intern-compat-state-table-id intern-state)]
+    [cache : (__tl_dyn-array i64)
+      (compiler-lower-state-read
+        lower-state
+        (__tl_dyn-array i64)
+        comptime-error-cache)]
     (if (and
-      (=
-        lower-comptime-error-id-table-id
-        (ci.intern-compat-state-table-id intern-state))
-      (=
-        lower-comptime-error-id-generation
-        (ci.intern-compat-state-generation intern-state)))
+      (= (array-ref cache lower-comptime-cache-table-id-index) table-id)
+      (= (array-ref cache lower-comptime-cache-generation-index) generation))
       unit
       (begin
+        (unless
+          (cbi.state-table-current-with? builtin-state generation table-id)
+          (io.panic "lower: builtin snapshot does not match intern owner"))
         (set!
-          lower-comptime-error-id
-          cbi.compiler-builtin-id-fix-comptime_error)
+          (array-ref cache lower-comptime-cache-id-index)
+          (cbi.state-ref builtin-state 94))
         (set!
-          lower-comptime-error-comptime-dot-id
-          cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
+          (array-ref cache lower-comptime-cache-comptime-dot-id-index)
+          (cbi.state-ref builtin-state 90))
         (set!
-          lower-comptime-error-comptime-slash-id
-          cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
+          (array-ref cache lower-comptime-cache-comptime-slash-id-index)
+          (cbi.state-ref builtin-state 90))
         (set!
-          lower-comptime-error-comptime-error-dot-id
-          cbi.compiler-builtin-id-fix-comptime_dot_error)
+          (array-ref cache lower-comptime-cache-comptime-error-dot-id-index)
+          (cbi.state-ref builtin-state 91))
         (set!
-          lower-comptime-error-comptime-error-slash-id
-          cbi.compiler-builtin-id-fix-comptime_dot_error)
+          (array-ref cache lower-comptime-cache-comptime-error-slash-id-index)
+          (cbi.state-ref builtin-state 91))
         (set!
-          lower-comptime-error-stdlib-dot-dot-id
-          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+          (array-ref cache lower-comptime-cache-stdlib-dot-dot-id-index)
+          (cbi.state-ref builtin-state 149))
         (set!
-          lower-comptime-error-stdlib-dot-slash-id
-          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+          (array-ref cache lower-comptime-cache-stdlib-dot-slash-id-index)
+          (cbi.state-ref builtin-state 149))
         (set!
-          lower-comptime-error-stdlib-slash-dot-id
-          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+          (array-ref cache lower-comptime-cache-stdlib-slash-dot-id-index)
+          (cbi.state-ref builtin-state 149))
         (set!
-          lower-comptime-error-stdlib-slash-slash-id
-          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+          (array-ref cache lower-comptime-cache-stdlib-slash-slash-id-index)
+          (cbi.state-ref builtin-state 149))
         (set!
-          lower-comptime-error-stdlib-error-dot-dot-id
-          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+          (array-ref cache lower-comptime-cache-stdlib-error-dot-dot-id-index)
+          (cbi.state-ref builtin-state 150))
         (set!
-          lower-comptime-error-stdlib-error-dot-slash-id
-          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+          (array-ref cache lower-comptime-cache-stdlib-error-dot-slash-id-index)
+          (cbi.state-ref builtin-state 150))
         (set!
-          lower-comptime-error-stdlib-error-slash-dot-id
-          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+          (array-ref cache lower-comptime-cache-stdlib-error-slash-dot-id-index)
+          (cbi.state-ref builtin-state 150))
         (set!
-          lower-comptime-error-stdlib-error-slash-slash-id
-          cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+          (array-ref
+            cache
+            lower-comptime-cache-stdlib-error-slash-slash-id-index)
+          (cbi.state-ref builtin-state 150))
+        ;; Publish the stamp last so readers never accept partially rebuilt IDs.
+        (set! (array-ref cache lower-comptime-cache-table-id-index) table-id)
         (set!
-          lower-comptime-error-id-table-id
-          (ci.intern-compat-state-table-id intern-state))
-        (set!
-          lower-comptime-error-id-generation
-          (ci.intern-compat-state-generation intern-state))))))
+          (array-ref cache lower-comptime-cache-generation-index)
+          generation)))))
 
-(define (lower-comptime-error-call-id-with-cache? [id : i64]) : bool
-  (or
-    (= id lower-comptime-error-id)
-    (= id lower-comptime-error-comptime-dot-id)
-    (= id lower-comptime-error-comptime-slash-id)
-    (= id lower-comptime-error-comptime-error-dot-id)
-    (= id lower-comptime-error-comptime-error-slash-id)
-    (= id lower-comptime-error-stdlib-dot-dot-id)
-    (= id lower-comptime-error-stdlib-dot-slash-id)
-    (= id lower-comptime-error-stdlib-slash-dot-id)
-    (= id lower-comptime-error-stdlib-slash-slash-id)
-    (= id lower-comptime-error-stdlib-error-dot-dot-id)
-    (= id lower-comptime-error-stdlib-error-dot-slash-id)
-    (= id lower-comptime-error-stdlib-error-slash-dot-id)
-    (= id lower-comptime-error-stdlib-error-slash-slash-id)))
+(define (lower-comptime-error-call-id-with-cache?
+  [lower-state : CompilerLowerState]
+  [id : i64]) : bool
+  (let
+    [cache : (__tl_dyn-array i64)
+      (compiler-lower-state-read
+        lower-state
+        (__tl_dyn-array i64)
+        comptime-error-cache)]
+    (or
+      (= id (array-ref cache lower-comptime-cache-id-index))
+      (= id (array-ref cache lower-comptime-cache-comptime-dot-id-index))
+      (= id (array-ref cache lower-comptime-cache-comptime-slash-id-index))
+      (= id (array-ref cache lower-comptime-cache-comptime-error-dot-id-index))
+      (=
+        id
+        (array-ref cache lower-comptime-cache-comptime-error-slash-id-index))
+      (= id (array-ref cache lower-comptime-cache-stdlib-dot-dot-id-index))
+      (= id (array-ref cache lower-comptime-cache-stdlib-dot-slash-id-index))
+      (= id (array-ref cache lower-comptime-cache-stdlib-slash-dot-id-index))
+      (= id (array-ref cache lower-comptime-cache-stdlib-slash-slash-id-index))
+      (=
+        id
+        (array-ref cache lower-comptime-cache-stdlib-error-dot-dot-id-index))
+      (=
+        id
+        (array-ref cache lower-comptime-cache-stdlib-error-dot-slash-id-index))
+      (=
+        id
+        (array-ref cache lower-comptime-cache-stdlib-error-slash-dot-id-index))
+      (=
+        id
+        (array-ref cache lower-comptime-cache-stdlib-error-slash-slash-id-index)))))
 
 (define (lower-comptime-error-call-id?
   [lower-state : CompilerLowerState]
   [id : i64]) : bool
-  (begin
-    (lower-comptime-error-ids-ensure! lower-state)
-    (lower-comptime-error-call-id-with-cache? id)))
+  (lower-comptime-error-call-id-with-cache? lower-state id))
 
 (define (lower-comptime-error-source-or-lookup-id?
   [lower-state : CompilerLowerState]
   [source-id : i64]
   [lookup-id : i64]) : bool
-  (begin
-    (lower-comptime-error-ids-ensure! lower-state)
-    (or
-      (= source-id lower-comptime-error-id)
-      (= source-id lower-comptime-error-comptime-dot-id)
-      (= source-id lower-comptime-error-comptime-slash-id)
-      (= source-id lower-comptime-error-comptime-error-dot-id)
-      (= source-id lower-comptime-error-comptime-error-slash-id)
-      (= source-id lower-comptime-error-stdlib-dot-dot-id)
-      (= source-id lower-comptime-error-stdlib-dot-slash-id)
-      (= source-id lower-comptime-error-stdlib-slash-dot-id)
-      (= source-id lower-comptime-error-stdlib-slash-slash-id)
-      (= source-id lower-comptime-error-stdlib-error-dot-dot-id)
-      (= source-id lower-comptime-error-stdlib-error-dot-slash-id)
-      (= source-id lower-comptime-error-stdlib-error-slash-dot-id)
-      (= source-id lower-comptime-error-stdlib-error-slash-slash-id)
-      (lower-comptime-error-call-id-with-cache? lookup-id))))
+  (or
+    (lower-comptime-error-call-id-with-cache? lower-state source-id)
+    (lower-comptime-error-call-id-with-cache? lower-state lookup-id)))
 
 (define (lower-decl-kept-by-reach-or-dispatch?
   [lower-state : CompilerLowerState]
@@ -67201,19 +67298,23 @@
   [path : String]
   [program : ast.AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (begin
-    ;; This compatibility adapter receives an already-parsed program. Parsing
-    ;; may have advanced both source and generated intern lanes since its lower
-    ;; carrier was constructed, so snapshot the complete active scalar view at
-    ;; this boundary before explicit lowerer allocation can publish it.
-    (compiler-lower-state-use-intern-state!
-      lower-state
-      (ci.intern-compat-state-capture-active))
-    (match (lower-compiler-program-unlocated-mode lower-state program mode)
-      [(ResultCompilerLower.Ok ir spans) (ResultCompilerLower.Ok ir spans)]
-      [(ResultCompilerLower.Err diag)
-        (ResultCompilerLower.Err
-          (box (lower-diagnostic-with-fallback-path (__tl-box-place diag) path)))])))
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [builtin-state : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    (begin
+      ;; This compatibility adapter receives an already-parsed program. Parsing
+      ;; may have advanced both source and generated intern lanes since its lower
+      ;; carrier was constructed, so snapshot the complete active scalar view at
+      ;; this boundary before explicit lowerer allocation can publish it.
+      (compiler-lower-state-use-intern-state! lower-state intern-state)
+      (lower-comptime-error-ids-ensure! lower-state builtin-state)
+      (match (lower-compiler-program-unlocated-mode lower-state program mode)
+        [(ResultCompilerLower.Ok ir spans) (ResultCompilerLower.Ok ir spans)]
+        [(ResultCompilerLower.Err diag)
+          (ResultCompilerLower.Err
+            (box
+              (lower-diagnostic-with-fallback-path (__tl-box-place diag) path)))]))))
 
 (define (lower-compiler-program-with-path-mode
   [path : String]
@@ -67776,7 +67877,8 @@
     cache-scope
     (ast.ast-node-pool-context-capture-active)
     (ci.intern-source-name-session-capture-active-handle)
-    (ci.intern-compat-state-capture-active)))
+    (ci.intern-compat-state-capture-active)
+    (cbi.state-capture)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache
   [entry-path : String]
@@ -67807,9 +67909,11 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state : ci.InternCompatState]) : ResultCompilerLower
+  [intern-state : ci.InternCompatState]
+  [builtin-state : cbi.CompilerBuiltinIdsState]) : ResultCompilerLower
   (begin
     (compiler-lower-state-use-intern-state! lower-state intern-state)
+    (lower-comptime-error-ids-ensure! lower-state builtin-state)
     (cfg compile-profile (compiler-lower-profile-start))
     (tc_core.tc-agg-caches-reset!)
     ;; Generate declaration families before macro expansion (see
@@ -68075,7 +68179,8 @@
     cache-scope
     pools
     source-names
-    (ci.intern-compat-state-capture-active)))
+    (ci.intern-compat-state-capture-active)
+    (cbi.state-capture)))
 
 ;; Serial/test compatibility adapter. Driver-owned compilation uses the
 ;; explicit load-state entry above.

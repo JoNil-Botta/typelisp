@@ -3521,7 +3521,8 @@
                   cfgs)
                 pools
                 source-names
-                (compiler-driver-state-owned-interns state))]
+                (compiler-driver-state-owned-interns state)
+                (compiler-driver-state-owned-builtins state))]
             [dest-committed? : bool
               (compiler_lower.compiler-lower-checked-dest-pools-committed?)]
             [frontend-released? : bool
@@ -3773,7 +3774,8 @@
                   cfgs)
                 pools
                 source-names
-                (compiler-driver-state-owned-interns state))]
+                (compiler-driver-state-owned-interns state)
+                (compiler-driver-state-owned-builtins state))]
             [dest-committed? : bool
               (compiler_lower.compiler-lower-checked-dest-pools-committed?)]
             [result-pools : compiler_ast_types.AstNodePoolContext

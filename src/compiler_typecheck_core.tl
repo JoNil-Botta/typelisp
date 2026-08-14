@@ -101559,6 +101559,7 @@
                 (ctfe_support.ctfe-fuel-limit)
                 (macro-stdlib-tlci-native-cookie)
                 (ctfe_support.ctfe-env-reflections env)
+                (ctfe_support.ctfe-env-source-names env)
                 (ctfe_support.ctfe-env-macro-state env))
               (cfg
                 compile-profile

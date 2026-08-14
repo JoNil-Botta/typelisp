@@ -408,6 +408,9 @@
 (define compiler-comptime-host-reflections : (__tl_dyn-array
     ctfe_support.CtfeReflectInfoList)
   (array.make-array ctfe_support.CtfeReflectInfoList 1))
+(define compiler-comptime-host-session-source-names : (__tl_dyn-array
+    ci.InternSourceNameSessionHandle)
+  (array.make-array ci.InternSourceNameSessionHandle 1))
 (define compiler-comptime-host-session-macro-state : (__tl_dyn-array
     ctfe_support.CompilerCtfeMacroState)
   (array.make-array ctfe_support.CompilerCtfeMacroState 1))
@@ -489,6 +492,7 @@
   [fuel : i64]
   [cookie : i64]
   [reflections : ctfe_support.CtfeReflectInfoList]
+  [source-names : ci.InternSourceNameSessionHandle]
   [macro-state : ctfe_support.CompilerCtfeMacroState]) : unit
   (begin
     (cfg
@@ -498,6 +502,9 @@
         (+ compiler-embedded-stdlib-tlci-stress-session-generations 1)))
     (set! (array-ref compiler-comptime-host-pools 0) pools)
     (set! (array-ref compiler-comptime-host-reflections 0) reflections)
+    (set!
+      (array-ref compiler-comptime-host-session-source-names 0)
+      source-names)
     (set! (array-ref compiler-comptime-host-session-macro-state 0) macro-state)
     (let
       [index : i64 0]
@@ -536,10 +543,25 @@
     fuel
     cookie
     reflections
+    (ci.intern-source-name-session-capture-active-handle)
     (ctfe_support.compiler-ctfe-serial-macro-state)))
 
 (define (compiler-comptime-host-session-macro-state-value) : ctfe_support.CompilerCtfeMacroState
   (array-ref compiler-comptime-host-session-macro-state 0))
+
+;; Rebuild the lightweight CTFE adapter used by native callbacks with the
+;; source-name capability of the transformer being evaluated. In particular,
+;; a generated identity may have the same spelling as a parsed module name but
+;; must still resolve in its original session.
+(define (compiler-comptime-host-ctfe-env) : ctfe_support.CtfeEnv
+  (ctfe_support.ctfe-env-empty-with-pools-and-source-names
+    (array-ref
+      (compiler-comptime-host-global-shared-view compiler-comptime-host-pools)
+      0)
+    (array-ref
+      (compiler-comptime-host-global-shared-view
+        compiler-comptime-host-session-source-names)
+      0)))
 
 (define (compiler-comptime-host-session-close!) : unit
   (begin
@@ -547,6 +569,9 @@
     (set!
       (array-ref compiler-comptime-host-session-macro-state 0)
       (ctfe_support.CompilerCtfeMacroState 0))
+    (set!
+      (array-ref compiler-comptime-host-session-source-names 0)
+      (ci.InternSourceNameSessionHandle 0))
     (set!
       compiler-comptime-host-session-status
       tlci.tlci-host-callback-status-ok)
@@ -710,12 +735,7 @@
       (CompilerCtfeMaybeNameId.Some name-id)]
     [(ctfe_support.CompilerCtfeValue.String text string-id)
       (let
-        [env : ctfe_support.CtfeEnv
-          (ctfe_support.ctfe-env-empty-with-pools
-            (array-ref
-              (compiler-comptime-host-global-shared-view
-                compiler-comptime-host-pools)
-              0))]
+        [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
         (CompilerCtfeMaybeNameId.Some
           (ctfe_support.ctfe-string-syntax-name-id
             (ctfe_support.ctfe-env-source-names env)
@@ -817,13 +837,7 @@
     [(ctfe_support.CompilerCtfeValue.Expr node _) node]
     [(ctfe_support.CompilerCtfeValue.CapturedExpr node _ _) node]
     [(ctfe_support.CompilerCtfeValue.Type ty)
-      (ctfe_support.ctfe-type-to-expr
-        ty
-        (ctfe_support.ctfe-env-empty-with-pools
-          (array-ref
-            (compiler-comptime-host-global-shared-view
-              compiler-comptime-host-pools)
-            0)))]
+      (ctfe_support.ctfe-type-to-expr ty (compiler-comptime-host-ctfe-env))]
     [_ -1]))
 
 ;; Pop two operand expressions (second then target) and push a two-operand
@@ -923,12 +937,7 @@
   (match payloads-value
     [(ctfe_support.CompilerCtfeValue.PatternList payloads)
       (let
-        [env : ctfe_support.CtfeEnv
-          (ctfe_support.ctfe-env-empty-with-pools
-            (array-ref
-              (compiler-comptime-host-global-shared-view
-                compiler-comptime-host-pools)
-              0))]
+        [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
         (begin
           (set!
             compiler-comptime-host-stack-len
@@ -3731,12 +3740,7 @@
               (- compiler-comptime-host-stack-len 1))
               [(ctfe_support.CompilerCtfeValue.String text string-id)
                 (let
-                  [env : ctfe_support.CtfeEnv
-                    (ctfe_support.ctfe-env-empty-with-pools
-                      (array-ref
-                        (compiler-comptime-host-global-shared-view
-                          compiler-comptime-host-pools)
-                        0))]
+                  [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
                   (begin
                     (set!
                       compiler-comptime-host-stack-len
@@ -3752,12 +3756,7 @@
                         (ctfe_support.ctfe-untyped-expr-type)))))]
               [(ctfe_support.CompilerCtfeValue.Name _ name-id)
                 (let
-                  [env : ctfe_support.CtfeEnv
-                    (ctfe_support.ctfe-env-empty-with-pools
-                      (array-ref
-                        (compiler-comptime-host-global-shared-view
-                          compiler-comptime-host-pools)
-                        0))]
+                  [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
                   (begin
                     (set!
                       compiler-comptime-host-stack-len
@@ -4262,11 +4261,7 @@
                 [(ctfe_support.CompilerCtfeValue.String text string-id)
                   (let
                     [env : ctfe_support.CtfeEnv
-                      (ctfe_support.ctfe-env-empty-with-pools
-                        (array-ref
-                          (compiler-comptime-host-global-shared-view
-                            compiler-comptime-host-pools)
-                          0))]
+                      (compiler-comptime-host-ctfe-env)]
                     (begin
                       (set!
                         compiler-comptime-host-stack-len
@@ -4297,12 +4292,7 @@
   [name-id : i64]
   [type-value : ctfe_support.CompilerCtfeValue]) : i64
   (let
-    [env : ctfe_support.CtfeEnv
-      (ctfe_support.ctfe-env-empty-with-pools
-        (array-ref
-          (compiler-comptime-host-global-shared-view
-            compiler-comptime-host-pools)
-          0))]
+    [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
     (match (ctfe_support.ctfe-pattern-binding-type-value
       type-value
       (ast.AstExpr.Literal (ast.AstLiteral.Unit))
@@ -4357,11 +4347,7 @@
                 [(ctfe_support.CompilerCtfeValue.String text string-id)
                   (let
                     [env : ctfe_support.CtfeEnv
-                      (ctfe_support.ctfe-env-empty-with-pools
-                        (array-ref
-                          (compiler-comptime-host-global-shared-view
-                            compiler-comptime-host-pools)
-                          0))]
+                      (compiler-comptime-host-ctfe-env)]
                     (compiler-comptime-host-build-pattern-binding-typed!
                       (ctfe_support.ctfe-string-syntax-name-id
                         (ctfe_support.ctfe-env-source-names env)
@@ -5188,11 +5174,7 @@
                   [(ctfe_support.CompilerCtfeValue.String text string-id)
                     (let
                       [env : ctfe_support.CtfeEnv
-                        (ctfe_support.ctfe-env-empty-with-pools
-                          (array-ref
-                            (compiler-comptime-host-global-shared-view
-                              compiler-comptime-host-pools)
-                            0))]
+                        (compiler-comptime-host-ctfe-env)]
                       (compiler-comptime-host-build-struct-get-from-id!
                         target-node
                         (ctfe_support.ctfe-string-syntax-name-id
@@ -5257,11 +5239,7 @@
                   [(ctfe_support.CompilerCtfeValue.String text string-id)
                     (let
                       [env : ctfe_support.CtfeEnv
-                        (ctfe_support.ctfe-env-empty-with-pools
-                          (array-ref
-                            (compiler-comptime-host-global-shared-view
-                              compiler-comptime-host-pools)
-                            0))]
+                        (compiler-comptime-host-ctfe-env)]
                       (compiler-comptime-host-build-struct-set-from-id!
                         target-node
                         (ctfe_support.ctfe-string-syntax-name-id
@@ -6009,12 +5987,7 @@
           (if (< compiler-comptime-host-stack-len 1)
             tlci.tlci-host-callback-status-bad-request
             (let
-              [env : ctfe_support.CtfeEnv
-                (ctfe_support.ctfe-env-empty-with-pools
-                  (array-ref
-                    (compiler-comptime-host-global-shared-view
-                      compiler-comptime-host-pools)
-                    0))]
+              [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
               (match (array-ref
                 (compiler-comptime-host-global-shared-view
                   compiler-comptime-host-stack)
@@ -6071,12 +6044,7 @@
           (if (< compiler-comptime-host-stack-len 1)
             tlci.tlci-host-callback-status-bad-request
             (let
-              [env : ctfe_support.CtfeEnv
-                (ctfe_support.ctfe-env-empty-with-pools
-                  (array-ref
-                    (compiler-comptime-host-global-shared-view
-                      compiler-comptime-host-pools)
-                    0))]
+              [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
               (match (array-ref
                 (compiler-comptime-host-global-shared-view
                   compiler-comptime-host-stack)
@@ -6126,12 +6094,7 @@
           (if (< compiler-comptime-host-stack-len 1)
             tlci.tlci-host-callback-status-bad-request
             (let
-              [env : ctfe_support.CtfeEnv
-                (ctfe_support.ctfe-env-empty-with-pools
-                  (array-ref
-                    (compiler-comptime-host-global-shared-view
-                      compiler-comptime-host-pools)
-                    0))]
+              [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
               (match (array-ref
                 (compiler-comptime-host-global-shared-view
                   compiler-comptime-host-stack)
@@ -6206,12 +6169,7 @@
           (if (< compiler-comptime-host-stack-len 1)
             tlci.tlci-host-callback-status-bad-request
             (let
-              [env : ctfe_support.CtfeEnv
-                (ctfe_support.ctfe-env-empty-with-pools
-                  (array-ref
-                    (compiler-comptime-host-global-shared-view
-                      compiler-comptime-host-pools)
-                    0))]
+              [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
               (match (array-ref
                 (compiler-comptime-host-global-shared-view
                   compiler-comptime-host-stack)
@@ -7312,11 +7270,7 @@
                     (- compiler-comptime-host-stack-len 1))
                   (compiler-comptime-host-push!
                     (ctfe_support.ctfe-syntax-expr-push
-                      (ctfe_support.ctfe-env-empty-with-pools
-                        (array-ref
-                          (compiler-comptime-host-global-shared-view
-                            compiler-comptime-host-pools)
-                          0))
+                      (compiler-comptime-host-ctfe-env)
                       (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
                       (ast.AstType.String))))]
               [(ctfe_support.CompilerCtfeValue.Name _ name-id)
@@ -7326,11 +7280,7 @@
                     (- compiler-comptime-host-stack-len 1))
                   (compiler-comptime-host-push!
                     (ctfe_support.ctfe-syntax-expr-push
-                      (ctfe_support.ctfe-env-empty-with-pools
-                        (array-ref
-                          (compiler-comptime-host-global-shared-view
-                            compiler-comptime-host-pools)
-                          0))
+                      (compiler-comptime-host-ctfe-env)
                       (ast.AstExpr.Literal (ast.AstLiteral.String name-id))
                       (ast.AstType.String))))]
               [_ tlci.tlci-host-callback-status-bad-request]))]

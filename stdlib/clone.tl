@@ -24,11 +24,15 @@
                   (comptime.expr-var
                     (comptime.expr-string-value
                       (comptime.expr-list-nth types type-index)))]
+                ;; Naming this reflection also changes the producer identity so
+                ;; a published seed from before the native source-name handoff
+                ;; evaluates this one bootstrap generation interpretively.
+                [type-kind-name : String (type-kind type-expr)]
                 (set!
                   out
                   (comptime.expr-list-cons
                     `(module ,module-name)
-                    (match (type-kind type-expr)
+                    (match type-kind-name
                       ["struct"
                         (let
                           [type-name : String (type-nominal-name type-expr)]

@@ -1,12 +1,12 @@
 ;; compiler_intern.tl - process-global string interning table for identifiers.
 ;;
-;; SELF-CONTAINED (no imports): every programmer-written identifier is interned
+;; LEAF-DEPENDENCY ONLY: every programmer-written identifier is interned
 ;; to a stable u32-backed id, so name comparisons become integer `=`, id-keyed lookups
 ;; replace string hashing, and the AST stores ids instead of copied Strings.
-;; Being import-free is deliberate -- this module is reached from the core
+;; Keeping dependencies minimal is deliberate -- this module is reached from the core
 ;; compiler_ast_types.tl (and from sym_i64_env.tl), which are imported by tiny
-;; integration cases; pulling stdlib/hashmap here would ripple new transitive
-;; deps onto every one of those cases.
+;; integration cases. The dependency-free arena leaf provides checker-visible
+;; allocation extents without pulling collection or formatting modules into them.
 ;;
 ;; The table is PERSISTENT for a compile (ids stay valid across the loader's
 ;; per-file parse-arena destroy -- ids are integers, so they survive); it resets
@@ -43,8 +43,10 @@
 ;; renderable names. The compiler call graph still exposes some i64 boundaries
 ;; while the public `InternId` distinction migrates outward from this
 ;; authoritative table.
-;: Local arena hooks keep this module import-free while letting persistent
-;: intern entries survive scoped compile arenas.
+(import stdlib.arena)
+
+;: Low-level arena hooks retain the explicit non-local reset/destroy protocols;
+;: persistent allocation extents use the typed arena leaf above.
 (extern (tl_arena_make) : i64)
 (extern (tl_arena_current) : i64)
 (extern (tl_region_mark) : i64)
@@ -733,19 +735,12 @@
     (__tl_make-array i64 (intern-structural-cache-capacity))
     0))
 
-(define (intern-structural-table-cell-new-in-arena [arena : i64]) : (__tl_dyn-array
+(define (intern-structural-table-cell-new-in-arena [arena-handle : i64]) : (__tl_dyn-array
     InternStructuralTable)
   (let
-    [previous-arena : i64 (tl_arena_current)]
-    (begin
-      (unsafe
-        (tl_arena_set arena))
-      (let
-        [table : InternStructuralTable (intern-structural-table-new)]
-        (begin
-          (unsafe
-            (tl_arena_set previous-arena))
-          (__tl_make-array table))))))
+    [table : InternStructuralTable
+      (in-arena (arena.Arena arena-handle) (intern-structural-table-new))]
+    (__tl_make-array table)))
 
 (define intern-persistent-arena : i64
   (tl_arena_make))
@@ -886,16 +881,14 @@
 
 (define (intern-structural-table-grow-records!
   [cell : (__tl_dyn-array InternStructuralTable)]
-  [arena : i64]) : unit
+  [arena-handle : i64]) : unit
   (let
     [table : InternStructuralTable (array-ref cell 0)]
     [count : i64 table.len]
     [old-capacity : i64 (array-length table.kinds)]
     [new-capacity : i64 (* old-capacity 2)]
-    [previous-arena : i64 (tl_arena_current)]
-    (begin
-      (unsafe
-        (tl_arena_set arena))
+    (in-arena
+      (arena.Arena arena-handle)
       (let
         [next-kinds : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
         [next-lefts : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
@@ -906,8 +899,6 @@
         [next-generated-symbol-handles : (__tl_dyn-array InternSlotId)
           (__tl_make-array InternSlotId new-capacity)]
         (begin
-          (unsafe
-            (tl_arena_set previous-arena))
           (intern-structural-copy-array! table.kinds next-kinds count)
           (intern-structural-copy-array! table.lefts next-lefts (* count 8))
           (intern-structural-copy-array! table.middles next-middles (* count 8))
@@ -946,19 +937,15 @@
 
 (define (intern-structural-table-grow-map!
   [cell : (__tl_dyn-array InternStructuralTable)]
-  [arena : i64]) : unit
+  [arena-handle : i64]) : unit
   (let
     [table : InternStructuralTable (array-ref cell 0)]
     [new-capacity : i64 (* (array-length table.map-slots) 2)]
-    [previous-arena : i64 (tl_arena_current)]
-    (begin
-      (unsafe
-        (tl_arena_set arena))
+    (in-arena
+      (arena.Arena arena-handle)
       (let
         [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
         (begin
-          (unsafe
-            (tl_arena_set previous-arena))
           (set! table.map-slots next-slots)
           (let
             [index : i64 0]
@@ -1060,18 +1047,11 @@
 
 (define (intern-structural-table-reinitialize-in-arena!
   [cell : (__tl_dyn-array InternStructuralTable)]
-  [arena : i64]) : unit
+  [arena-handle : i64]) : unit
   (let
-    [previous-arena : i64 (tl_arena_current)]
-    (begin
-      (unsafe
-        (tl_arena_set arena))
-      (let
-        [next : InternStructuralTable (intern-structural-table-new)]
-        (begin
-          (unsafe
-            (tl_arena_set previous-arena))
-          (set! (array-ref cell 0) next))))))
+    [next : InternStructuralTable
+      (in-arena (arena.Arena arena-handle) (intern-structural-table-new))]
+    (set! (array-ref cell 0) next)))
 
 (define (intern-structural-session-reset!
   [table-cell : (__tl_dyn-array InternStructuralTable)]) : unit
@@ -1290,19 +1270,16 @@
 ;; arena handles synchronized so they never retain destroyed storage.
 (define (intern-compat-state-persistent-arena-floor-refresh!
   [state : InternCompatState]) : unit
-  (let
-    [prev-arena : i64 (tl_arena_current)]
+  (in-arena
+    (arena.Arena (intern-compat-state-persistent-arena state))
     (begin
-      (unsafe
-        (tl_arena_set (intern-compat-state-persistent-arena state)))
       (set! (array-ref state.persistent-arena-floor-mark 0) (tl_region_mark))
       (if (= (intern-active-table-id) (intern-compat-state-table-id state))
         (set!
           intern-persistent-arena-floor-mark
           (intern-compat-state-persistent-arena-floor-mark state))
         unit)
-      (unsafe
-        (tl_arena_set prev-arena)))))
+      unit)))
 
 (define (intern-compat-state-persistent-arena-floor-ensure!
   [state : InternCompatState]) : unit
@@ -1456,27 +1433,9 @@
   [text : String]
   [start : i64]
   [len : i64]) : String
-  (let
-    [prev-arena : i64 (tl_arena_current)]
-    (if (= prev-arena (intern-compat-state-persistent-arena state))
-      (let
-        [copied : String (intern-substring text start len)]
-        (begin
-          (set! (array-ref state.persistent-arena 0) (tl_arena_current))
-          copied))
-      (let
-        [out : String
-          (begin
-            (unsafe
-              (tl_arena_set (intern-compat-state-persistent-arena state)))
-            (let
-              [copied : String (intern-substring text start len)]
-              (begin
-                (set! (array-ref state.persistent-arena 0) (tl_arena_current))
-                (unsafe
-                  (tl_arena_set prev-arena))
-                copied)))]
-        out))))
+  (in-arena
+    (arena.Arena (intern-compat-state-persistent-arena state))
+    (intern-substring text start len)))
 
 (define (intern-compat-state-persistent-copy
   [state : InternCompatState]
@@ -1731,14 +1690,9 @@
       (intern-persistent-arena-floor-refresh!))))
 
 (define (intern-persistent-arena-floor-refresh!) : unit
-  (let
-    [prev-arena : i64 (tl_arena_current)]
-    (begin
-      (unsafe
-        (tl_arena_set intern-persistent-arena))
-      (set! intern-persistent-arena-floor-mark (tl_region_mark))
-      (unsafe
-        (tl_arena_set prev-arena)))))
+  (in-arena
+    (arena.Arena intern-persistent-arena)
+    (set! intern-persistent-arena-floor-mark (tl_region_mark))))
 
 (define (intern-persistent-arena-floor-ensure!) : unit
   (if (= intern-persistent-arena-floor-mark 0)
@@ -1774,8 +1728,8 @@
 ;; cost), and the entry counters attribute those hashes to intern/intern-slice/
 ;; intern-lookup. The render counter records each successful intern-str call;
 ;; invalid IDs stay separate so diagnostics cannot hide semantic render work.
-;; `compiler_intern` is import-free, so it only exposes reset and value
-;; accessors; the driver (which owns `io`) prints them at compile end.
+;; `compiler_intern` has no formatting dependency, so it only exposes reset and
+;; value accessors; the driver (which owns `io`) prints them at compile end.
 (cfg
   compile-profile
   (define intern-profile-hash-words-count : i64
@@ -2120,27 +2074,9 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
 
 (define (intern-persistent-substring [text : String] [start : i64] [len : i64]) : String
-  (let
-    [prev-arena : i64 (tl_arena_current)]
-    (if (= prev-arena intern-persistent-arena)
-      (let
-        [copied : String (intern-substring text start len)]
-        (begin
-          (set! intern-persistent-arena (tl_arena_current))
-          copied))
-      (let
-        [out : String
-          (begin
-            (unsafe
-              (tl_arena_set intern-persistent-arena))
-            (let
-              [copied : String (intern-substring text start len)]
-              (begin
-                (set! intern-persistent-arena (tl_arena_current))
-                (unsafe
-                  (tl_arena_set prev-arena))
-                copied)))]
-        out))))
+  (in-arena
+    (arena.Arena intern-persistent-arena)
+    (intern-substring text start len)))
 
 (define (intern-persistent-copy [text : String]) : String
   (intern-persistent-substring text 0 (__tl_string_length text)))
@@ -3768,24 +3704,19 @@
   (intern-source-name-session-from-state (intern-compat-state-capture-active)))
 
 (define (intern-source-name-session-handle [session : InternSourceNameSession]) : InternSourceNameSessionHandle
-  (let
-    [previous-arena : i64 (tl_arena_current)]
-    (begin
-      (unsafe
-        (tl_arena_set intern-persistent-arena))
-      (let
-        [cell : (__tl_dyn-array InternSourceNameSession)
-          (__tl_make-array InternSourceNameSession 1)]
-        (begin
-          (set! (array-ref cell 0) session)
-          (unsafe
-            (tl_arena_set previous-arena))
-          (InternSourceNameSessionHandle
-            (cast
-              (unsafe
-                (ptr->int
-                  (ptr-cast (array-data cell) : (Ptr InternSourceNameSession))))
-              : i64)))))))
+  (in-arena
+    (arena.Arena intern-persistent-arena)
+    (let
+      [cell : (__tl_dyn-array InternSourceNameSession)
+        (__tl_make-array InternSourceNameSession 1)]
+      (begin
+        (set! (array-ref cell 0) session)
+        (InternSourceNameSessionHandle
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (array-data cell) : (Ptr InternSourceNameSession))))
+            : i64))))))
 
 (define (intern-source-name-session-handle-from-state
   [state : InternCompatState]) : InternSourceNameSessionHandle
@@ -4616,6 +4547,7 @@
             state
             structural-id
             "state/pre-growth+state/post-growth")]
+        [structural-grow-index : i64 0]
         [equal-branch-head : i64 -1]
         [equal-copy : String
           (begin
@@ -4633,6 +4565,18 @@
                 copied)))]
         [ok : bool true]
         (begin
+          ;; Force both retained structural arrays and the open-addressing map
+          ;; through their checker-visible target-arena growth extents.
+          (while (< structural-grow-index 600)
+            (begin
+              (intern-structural-table-intern
+                state.structural-table-cell
+                grown-arena
+                (intern-structural-kind-pair)
+                (+ 1000000 structural-grow-index)
+                0
+                (+ 2000000 structural-grow-index))
+              (set! structural-grow-index (+ structural-grow-index 1))))
           (unless grew? (set! ok false))
           (unless (= grown-arena initial-arena) (set! ok false))
           (unless (not (= grown-head initial-head)) (set! ok false))
@@ -4668,6 +4612,17 @@
               (intern-private-string-ref source 0))
             (set! ok false))
           (unless post-copy-restored? (set! ok false))
+          (unless (= (tl_arena_current) home) (set! ok false))
+          (let
+            [grown-structural-table : InternStructuralTable
+              (array-ref state.structural-table-cell 0)]
+            (begin
+              (unless
+                (>= (array-length grown-structural-table.kinds) 512)
+                (set! ok false))
+              (unless
+                (>= (array-length grown-structural-table.map-slots) 1024)
+                (set! ok false))))
           (unless
             (=
               equal-branch-head
@@ -4741,6 +4696,7 @@
 
 (define (intern-source-name-session-tests-ok?) : bool
   (let
+    [home : i64 (tl_arena_current)]
     [state-a : InternCompatState (intern-compat-state-new)]
     [state-b : InternCompatState (intern-compat-state-new)]
     [equal-id : i64 (intern-compat-state-intern state-a "equal")]
@@ -4754,6 +4710,11 @@
       (begin
         (intern-compat-state-intern state-b "equal")
         (intern-source-name-session-from-state state-b))]
+    [persistent-handle : InternSourceNameSessionHandle
+      (intern-source-name-session-handle session-a)]
+    [persistent-handle-session : InternSourceNameSession
+      (intern-source-name-session-handle-session persistent-handle)]
+    [persistent-handle-restored? : bool (= (tl_arena_current) home)]
     [generated-id : i64 (- (intern-capacity) 1)]
     [generated-a : InternSyntaxTextIdentity
       (intern-source-name-session-identity session-a generated-id)]
@@ -4763,6 +4724,15 @@
       (intern-compat-state-intern state-a "after-boundary")]
     [ok : bool true]
     (begin
+      (unless persistent-handle-restored? (set! ok false))
+      (unless
+        (= persistent-handle-session.table-id session-a.table-id)
+        (set! ok false))
+      (unless
+        (=
+          persistent-handle-session.reset-generation
+          session-a.reset-generation)
+        (set! ok false))
       (match (intern-compat-state-lookup state-a "equal")
         [(InternLookupFound id) (unless (= id equal-id) (set! ok false))]
         [(InternLookupMissing) (set! ok false)])

@@ -4136,6 +4136,35 @@
         (set! (array-ref depths 2) 0)
         depths))))
 
+(cfg
+  test
+  (define (compiler-reg-loop-region-rotated-ranges) : (__tl_dyn-array i64)
+    (let
+      [ranges : (__tl_dyn-array i64) (array.make-array i64 6)]
+      (begin
+        ;; block 0: the preheader, no predecessors
+        (set! (array-ref ranges 0) 3)
+        (set! (array-ref ranges 1) (- 0 1))
+        ;; block 1: the body, entered only from the header at block 2
+        (set! (array-ref ranges 2) 2)
+        (set! (array-ref ranges 3) 2)
+        ;; block 2: the header, entered from the preheader and over the back
+        ;; edge from the body
+        (set! (array-ref ranges 4) 0)
+        (set! (array-ref ranges 5) 1)
+        ranges))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-region-rotated-depths) : (__tl_dyn-array i64)
+    (let
+      [depths : (__tl_dyn-array i64) (array.make-array i64 3)]
+      (begin
+        (set! (array-ref depths 0) 0)
+        (set! (array-ref depths 1) 1)
+        (set! (array-ref depths 2) 1)
+        depths))))
+
 ;; (e) Single-entry admission. The header may be entered ONLY from its layout
 ;; predecessor and from inside the region; any other edge in means the anchor
 ;; does not dominate the remapped uses.
@@ -4149,6 +4178,7 @@
         (compiler-reg-loop-region-depths 1)
         3
         1
+        1
         1)
       ;; a later block also jumps into the header -> refuse
       (not
@@ -4156,6 +4186,7 @@
           (compiler-reg-loop-region-ranges 0 2)
           (compiler-reg-loop-region-depths 1)
           3
+          1
           1
           1))
       ;; no edge from the layout predecessor -> there is no preheader to anchor
@@ -4165,6 +4196,7 @@
           (compiler-reg-loop-region-depths 1)
           3
           1
+          1
           1))
       ;; not a loop at all
       (not
@@ -4172,6 +4204,7 @@
           (compiler-reg-loop-region-ranges 0 1)
           (compiler-reg-loop-region-depths 0)
           3
+          1
           1
           1))
       ;; the header is block 0: no layout predecessor exists
@@ -4181,7 +4214,20 @@
           (compiler-reg-loop-region-depths 1)
           3
           0
-          0)))))
+          0
+          0))
+      ;; ROTATED: the span is [1..2] and the header is its LAST block, entered
+      ;; from block 0 (the preheader, directly above the span) and from block 1
+      ;; (the body, over the back edge that falls through into it). The anchor
+      ;; is the span's layout predecessor, so admission holds with the header
+      ;; in the middle of the region rather than at its start.
+      (reg.compiler-reg-call-region-loop-admit?
+        (compiler-reg-loop-region-rotated-ranges)
+        (compiler-reg-loop-region-rotated-depths)
+        3
+        2
+        1
+        2))))
 
 ;; (d) Scoring. A block row charges its entry reload against refs that run at
 ;; the same frequency; a loop row's reload has LEFT the loop, so its uses take
@@ -13852,73 +13898,89 @@
       (not (reg.compiler-reg-loop-nest-member? nest 0 3))
       (not (reg.compiler-reg-loop-nest-member? nest 5 3)))))
 
-;; --- CFG loop nest: the layout hull, and the preheader spliced on it --------
+;; --- CFG loop nest: the layout span, and the preheader spliced on it --------
 ;;
 ;; The last readers of the index range are the ones that still have to speak in
 ;; SPANS: the loop-split rescue's region, the leaf-CSR region, the call
 ;; region's loop row. What those want is not "the highest block with an edge
-;; into h from at or below it" but "the highest block h's loop actually
-;; reaches" -- the same number only for a layout that keeps every loop
-;; contiguous and header-first, and an answer at all for blocks that head no
-;; loop whatever.
-(define (compiler-reg-loop-nest-hull-at
-  [hulls : (__tl_dyn-array i64)]
+;; into h from at or below it" but "the block range h's loop actually occupies"
+;; -- the same numbers only for a layout that keeps every loop contiguous and
+;; header-first, and an answer at all for blocks that head no loop whatever.
+;;
+;; The span is anchored on the loop's lowest MEMBER, so a ROTATED loop -- one
+;; whose header is laid out below the body it dominates -- gets a span too;
+;; only the assumption "the header is the span's first block" is gone.
+(define (compiler-reg-loop-nest-span-lo
+  [spans : (__tl_dyn-array i64)]
   [index : i64]) : i64
-  (if (and (>= index 0) (< index (array-length hulls)))
-    (array-ref hulls index)
+  (if (and (>= index 0) (< (+ (* 2 index) 1) (array-length spans)))
+    (array-ref spans (* 2 index))
     (- 0 2)))
 
-(define (compiler-reg-loop-nest-hulls-of [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+(define (compiler-reg-loop-nest-span-hi
+  [spans : (__tl_dyn-array i64)]
+  [index : i64]) : i64
+  (if (and (>= index 0) (< (+ (* 2 index) 1) (array-length spans)))
+    (array-ref spans (+ (* 2 index) 1))
+    (- 0 2)))
+
+(define (compiler-reg-loop-nest-spans-of [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
     i64)
   (let
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
-    (reg.compiler-reg-loop-nest-hulls-seq
+    (reg.compiler-reg-loop-nest-spans-seq
       seq
       (ir.compiler-ir-block-seq-count seq))))
 
-(define (compiler-reg-loop-nest-hulls-ok?) : bool
+(define (compiler-reg-loop-nest-spans-ok?) : bool
   (let
     [nested : (__tl_dyn-array i64)
-      (compiler-reg-loop-nest-hulls-of (compiler-reg-loop-nest-nested-blocks))]
+      (compiler-reg-loop-nest-spans-of (compiler-reg-loop-nest-nested-blocks))]
     [early : (__tl_dyn-array i64)
-      (compiler-reg-loop-nest-hulls-of
+      (compiler-reg-loop-nest-spans-of
         (compiler-reg-loop-nest-early-exit-blocks))]
     [sunk : (__tl_dyn-array i64)
-      (compiler-reg-loop-nest-hulls-of
+      (compiler-reg-loop-nest-spans-of
         (compiler-reg-loop-nest-sunk-cold-blocks))]
     [rotated : (__tl_dyn-array i64)
-      (compiler-reg-loop-nest-hulls-of (compiler-reg-loop-nest-rotated-blocks))]
+      (compiler-reg-loop-nest-spans-of (compiler-reg-loop-nest-rotated-blocks))]
     (and
       ;; A nest: each loop's span is recorded on its OWN header, and the outer
       ;; span contains the inner one rather than being merged with it.
-      (= (compiler-reg-loop-nest-hull-at nested 1) 4)
-      (= (compiler-reg-loop-nest-hull-at nested 2) 3)
-      (= (compiler-reg-loop-nest-hull-at nested 0) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at nested 3) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at nested 4) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at nested 5) (- 0 1))
+      (= (compiler-reg-loop-nest-span-lo nested 1) 1)
+      (= (compiler-reg-loop-nest-span-hi nested 1) 4)
+      (= (compiler-reg-loop-nest-span-lo nested 2) 2)
+      (= (compiler-reg-loop-nest-span-hi nested 2) 3)
+      (= (compiler-reg-loop-nest-span-hi nested 0) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi nested 3) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi nested 4) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi nested 5) (- 0 1))
       ;; The break arm is laid out inside the span and is not a member. The
       ;; span stays the overapproximation it always was -- which is why every
       ;; consumer of it still re-proves single entry over the range it uses.
-      (= (compiler-reg-loop-nest-hull-at early 1) 4)
-      (= (compiler-reg-loop-nest-hull-at early 3) (- 0 1))
+      (= (compiler-reg-loop-nest-span-lo early 1) 1)
+      (= (compiler-reg-loop-nest-span-hi early 1) 4)
+      (= (compiler-reg-loop-nest-span-hi early 3) (- 0 1))
       ;; The sunk cold block's backward-in-layout jump closes no cycle, so no
       ;; block is given a span at all -- where the range encoding published one
       ;; covering [join, cold] and charged a rescue region for it.
-      (= (compiler-reg-loop-nest-hull-at sunk 0) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at sunk 1) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at sunk 2) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at sunk 3) (- 0 1))
-      ;; A ROTATED loop reaches below its own header, so no span STARTING at
-      ;; the header contains it: published to nobody, because every consumer
-      ;; here anchors its region on the header. The range encoding instead
-      ;; handed out a span under a block that heads nothing.
-      (= (compiler-reg-loop-nest-hull-at rotated 0) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at rotated 1) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at rotated 2) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at rotated 3) (- 0 1))
-      (= (compiler-reg-loop-nest-hull-at rotated 4) (- 0 1)))))
+      (= (compiler-reg-loop-nest-span-hi sunk 0) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi sunk 1) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi sunk 2) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi sunk 3) (- 0 1))
+      ;; A ROTATED loop is contiguous but does not START at its header: the
+      ;; span is [body..header] and it is published under the header, block 3.
+      ;; A hull anchored on the header could only answer -1 here, which is what
+      ;; used to cost every rotated loop its rescue. No other block heads
+      ;; anything -- in particular block 1, which the range encoding read as a
+      ;; header with no out-of-loop predecessor at all.
+      (= (compiler-reg-loop-nest-span-lo rotated 3) 1)
+      (= (compiler-reg-loop-nest-span-hi rotated 3) 3)
+      (= (compiler-reg-loop-nest-span-hi rotated 0) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi rotated 1) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi rotated 2) (- 0 1))
+      (= (compiler-reg-loop-nest-span-hi rotated 4) (- 0 1)))))
 
 ;; entry / body / latch / header / other / exit. The rescue's motivating case
 ;; under rotation: `header` is laid out BELOW the body and latch it heads, and
@@ -14026,18 +14088,18 @@
       (= (ir.compiler-ir-block-list-count again) 7)
       (= (ir.compiler-ir-block-list-count sunk) 4))))
 
-;; The hull array owns no state across calls either: the same block list asked
+;; The span array owns no state across calls either: the same block list asked
 ;; twice gives the same spans, and another shape asked in between must not leak
 ;; a stamp generation into the second answer.
-(define (compiler-reg-loop-nest-hulls-deterministic-ok?) : bool
+(define (compiler-reg-loop-nest-spans-deterministic-ok?) : bool
   (let
     [first : (__tl_dyn-array i64)
-      (compiler-reg-loop-nest-hulls-of (compiler-reg-loop-nest-nested-blocks))]
+      (compiler-reg-loop-nest-spans-of (compiler-reg-loop-nest-nested-blocks))]
     [_other : (__tl_dyn-array i64)
-      (compiler-reg-loop-nest-hulls-of
+      (compiler-reg-loop-nest-spans-of
         (compiler-reg-loop-nest-two-latch-blocks))]
     [second : (__tl_dyn-array i64)
-      (compiler-reg-loop-nest-hulls-of (compiler-reg-loop-nest-nested-blocks))]
+      (compiler-reg-loop-nest-spans-of (compiler-reg-loop-nest-nested-blocks))]
     [count : i64 (array-length first)]
     [index : i64 0]
     [ok : bool (= count (array-length second))]
@@ -14176,11 +14238,11 @@
       "compiler-reg-loop-nest-regeneration-ok?"
       (compiler-reg-loop-nest-regeneration-ok?))
     (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-hulls-ok?"
-      (compiler-reg-loop-nest-hulls-ok?))
+      "compiler-reg-loop-nest-spans-ok?"
+      (compiler-reg-loop-nest-spans-ok?))
     (compiler-regalloc-self-test-require!
-      "compiler-reg-loop-nest-hulls-deterministic-ok?"
-      (compiler-reg-loop-nest-hulls-deterministic-ok?))
+      "compiler-reg-loop-nest-spans-deterministic-ok?"
+      (compiler-reg-loop-nest-spans-deterministic-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-preheader-rotated-splice-ok?"
       (compiler-reg-preheader-rotated-splice-ok?))

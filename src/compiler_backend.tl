@@ -39996,17 +39996,30 @@
 ;; already holds:
 ;;   (1) `reg` is a pooled register -- a spelling with no scavenge bit (%rbp,
 ;;       %rsp) cannot be tested at all and is refused;
-;;   (2) `reg` is FREE over the scavenge staging window at this point. This is the
-;;       same query the scavenge itself ran, re-asked so an EMERGENCY pick (which
-;;       returns an OCCUPIED register plus a pending save) keeps its bracket. On a
-;;       BACK edge (target point <= this point) `reg` must ALSO be free at the
-;;       TARGET block's entry: a value carried around the loop whose next use is
-;;       the next iteration's phi is what a point-local query at the bottom of the
-;;       body can fail to see, and the header entry point is where it is
-;;       guaranteed occupied. On a forward or fall-through edge every value live
-;;       into the target has an interval covering this point already (its def
-;;       dominates the edge and its use is ahead), so the point-local query is
-;;       sufficient there -- exactly the split the bracket's own comment named.
+;;   (2) `reg` is FREE over the scavenge staging window at this point AND at the
+;;       TARGET block's entry. The window query is the same one the scavenge
+;;       itself ran, re-asked so an EMERGENCY pick (which returns an OCCUPIED
+;;       register plus a pending save) keeps its bracket. The target-entry query
+;;       is what catches a value carried around a loop whose next use is the next
+;;       iteration's phi: a point-local query at the bottom of the body can fail
+;;       to see it, and the header entry point is where it is guaranteed
+;;       occupied.
+;;
+;;       This obligation used to be discharged by the target-entry query only
+;;       when `target <= point`, reading that EMISSION-POINT comparison as "this
+;;       is a back edge" -- true only while lowering's source order is what the
+;;       backend emits. A block layout pass that rotates a loop puts the latch
+;;       ABOVE the header, so the genuine back edge runs FORWARD in emission
+;;       order (`target > point`) and would take the cheap path, dropping the
+;;       bracket on a register holding a loop-carried value. The comparison is
+;;       therefore gone: the target-entry query is asked on EVERY edge, which is
+;;       the layout-independent phrasing of the same obligation and is strictly
+;;       more conservative than the split it replaces. Measured neutral at the
+;;       current layout -- whole-compiler assembly byte-identical at opt1 and
+;;       opt2, all 22 benchmark rows unchanged -- because a forward edge's target
+;;       entry is covered by the interval of every value live into it (the def
+;;       dominates the edge and the use is ahead), so the query it now also runs
+;;       answers the same as the point-local one.
 ;;   (3) `reg` is not the home of ANY dst of this edge's copy list, so no drained
 ;;       copy's placed phi value is sitting in it.
 ;; With all three the value in `reg` at this point is dead, so the bracket saves
@@ -40041,15 +40054,13 @@
             (+ point compiler-backend-scavenge-staging-window))
           bit)
         0)
-      (or
-        (> target point)
-        (=
-          (bit-and
-            (compiler-backend-scavenge-occupied-mask-at-point
-              function-state
-              target)
-            bit)
-          0)))))
+      (=
+        (bit-and
+          (compiler-backend-scavenge-occupied-mask-at-point
+            function-state
+            target)
+          bit)
+        0))))
 
 (cfg
   scratch-vreg
@@ -40860,10 +40871,11 @@
     ;; spilled phi dst, so the mask is set even though nothing is live in %r8
     ;; across the edge. Measured: 0 of 2044 sites in the benchmark corpus plus
     ;; stage2.s un-bracket that way. #phi-staged-copy discharges the real
-    ;; obligations instead -- per-EDGE occupancy (point-local on forward and
-    ;; fall-through edges, unioned with the TARGET block entry on back edges) plus
-    ;; the edge's dst-home mask -- and drops the bracket when they hold, leaving
-    ;; the 2-instruction register-staged copy. See
+    ;; obligations instead -- per-EDGE occupancy (point-local, unioned with the
+    ;; TARGET block entry, which is asked on every edge because no
+    ;; emission-order comparison survives a block layout pass) plus the edge's
+    ;; dst-home mask -- and drops the bracket when they hold, leaving the
+    ;; 2-instruction register-staged copy. See
     ;; compiler-backend-phi-staged-copy-proven?.
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       type-segment-bases

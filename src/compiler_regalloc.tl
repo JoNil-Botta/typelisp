@@ -11017,9 +11017,9 @@
           (set! index (+ index 1))))
       found)))
 
-;; The LAYOUT HULL of every loop, one entry per block: hulls[h] is the highest
-;; block index any member of the loop headed by h occupies, and -1 for a block
-;; that heads no loop.
+;; The LAYOUT SPAN of every loop, two entries per block: spans[2h] is the
+;; LOWEST block index any member of the loop headed by h occupies and
+;; spans[2h+1] is the highest. Both are -1 for a block that heads no loop.
 ;;
 ;; This is the currency of the consumers that still have to name a CONTIGUOUS
 ;; SPAN -- an instruction-point region, a block range to scan. They used to
@@ -11027,16 +11027,26 @@
 ;; the same number only while a loop's blocks are laid out contiguously with
 ;; the header first, and which answered for blocks heading no loop at all.
 ;;
-;; A loop whose set reaches BELOW its header is left at -1: no span STARTING at
-;; h describes it, and every consumer of this array anchors its region on the
-;; header. Blocks laid out inside the span that are not members are the same
+;; The span is anchored on the loop's lowest MEMBER and not on its header. That
+;; is what lets it describe a ROTATED loop -- one laid out with its header
+;; BELOW the body it dominates, so the back edge falls through and the loop is
+;; entered by a forward jump. Such a loop is perfectly contiguous; it just does
+;; not START at its header, and a hull anchored on the header could only answer
+;; -1 for it. Answering -1 is sound (every consumer fails closed) but it costs
+;; the rescues their coverage on exactly the loops a layout pass rewrites, so
+;; the anchor moved and the header travels beside the span instead: it is still
+;; where control enters, still where the loop-carried phis are read, and it is
+;; no longer assumed to be the span's first block.
+;;
+;; Blocks laid out inside the span that are not members are the same
 ;; overapproximation the range encoding always had -- the callers re-prove
-;; single entry over the span they use.
-(define (compiler-reg-loop-nest-hulls!
+;; single entry over the span they use, now against the header rather than
+;; against the span's first block.
+(define (compiler-reg-loop-nest-spans!
   [nest : CompilerRegLoopNest]
-  [hulls : (__tl_dyn-array i64)]) : unit
+  [spans : (__tl_dyn-array i64)]) : unit
   (let
-    [count : i64 (array-length hulls)]
+    [count : i64 (/ (array-length spans) 2)]
     [headers : i64 nest.header-count]
     [index : i64 0]
     [generation : i64 0]
@@ -11050,27 +11060,62 @@
             (set!
               total
               (compiler-reg-loop-nest-header-members! nest header generation))
-            (if (and
-              (>= header 0)
-              (< header count)
-              (= (compiler-reg-loop-nest-member-lo nest header total) header))
-              (set!
-                (array-ref hulls header)
-                (compiler-reg-loop-nest-member-hi nest header total))
+            (if (and (>= header 0) (< header count))
+              (begin
+                (set!
+                  (array-ref spans (* 2 header))
+                  (compiler-reg-loop-nest-member-lo nest header total))
+                (set!
+                  (array-ref spans (+ (* 2 header) 1))
+                  (compiler-reg-loop-nest-member-hi nest header total)))
               unit)))
         (set! index (+ index 1))))))
 
-(define (compiler-reg-loop-nest-hulls-seq
+(define (compiler-reg-loop-nest-spans-seq
   [seq : ir.CompilerIrBlockSeq]
   [count : i64]) : (__tl_dyn-array i64)
   (let
-    [hulls : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [spans : (__tl_dyn-array i64) (array.make-array i64 (* 2 count))]
     (begin
-      (compiler-reg-fill-i64-array hulls (- 0 1))
-      (compiler-reg-loop-nest-hulls!
+      (compiler-reg-fill-i64-array spans (- 0 1))
+      (compiler-reg-loop-nest-spans!
         (compiler-reg-loop-nest-build-seq seq)
-        hulls)
-      hulls)))
+        spans)
+      spans)))
+
+;; The span low of the loop headed by `h`, or -1 when `h` heads no loop.
+(define (compiler-reg-loop-span-lo [spans : (__tl_dyn-array i64)] [h : i64]) : i64
+  (if (or (< h 0) (>= (+ (* 2 h) 1) (array-length spans)))
+    (- 0 1)
+    (array-ref spans (* 2 h))))
+
+(define (compiler-reg-loop-span-hi [spans : (__tl_dyn-array i64)] [h : i64]) : i64
+  (if (or (< h 0) (>= (+ (* 2 h) 1) (array-length spans)))
+    (- 0 1)
+    (array-ref spans (+ (* 2 h) 1))))
+
+;; The header of the loop whose span is exactly [lo, hi], or -1 when no loop
+;; occupies that span. A consumer that recovered a region from instruction
+;; POINTS rather than from the nest needs the header back to re-prove
+;; admission, and the span identifies it: two loops with the same first and
+;; last block are the same loop.
+(define (compiler-reg-loop-span-header
+  [spans : (__tl_dyn-array i64)]
+  [count : i64]
+  [lo : i64]
+  [hi : i64]) : i64
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (and
+              (= (compiler-reg-loop-span-lo spans index) lo)
+              (= (compiler-reg-loop-span-hi spans index) hi))
+            (return index))
+          (set! index (+ index 1))))
+      (- 0 1))))
 
 ;; The first consumer of the producer above: one level for every loop a block
 ;; is in. The level saturates, so the order the headers arrive in cannot move
@@ -14428,9 +14473,14 @@
 ;; phi-correctness gate (every header-phi input is in the group) guarantees that,
 ;; so the INTO copy cannot race a real phi-lowering move.
 ;;
-;; ADMITTED SHAPE: a natural loop spanning [H..E] (E = hulls[H], the highest block
-;; H's loop has a member at) whose BODY blocks (H..E] are each entered only from
-;; inside the region, so the region's ONLY entry is H. That is the soundness witness the
+;; ADMITTED SHAPE: a natural loop occupying the span [S..E] (the lowest and
+;; highest block its members reach, spans[2H]/spans[2H+1]) whose blocks OTHER
+;; than the header H are each entered only from inside the region, so the
+;; region's ONLY entry is H. H is the span's first block unless the loop was
+;; rotated, in which case control enters the span in the middle -- the witness
+;; is about the single entry, not about where in the layout it sits.
+;;
+;; That single entry is the soundness witness the
 ;; INTO copy needs: the planner places a header-edge INTO copy at PredEnd (H has
 ;; >1 predecessor, so SuccEntry is unavailable and a multi-successor preheader is
 ;; refused as critical), which puts the `R = slot` load AHEAD of the lowered
@@ -14625,25 +14675,31 @@
           (set! b (+ b 1))))
       ranges)))
 
-;; Single-entry gate for the region [h..end]: every BODY block (h..end] has ALL
-;; of its predecessors inside the region, so the only way in is the header h.
-;; With end == h+1 and a body whose one predecessor is h this is exactly the
-;; original 2-block `pred-counts[h+1] == 1` test.
+;; Single-entry gate for the region [lo..end]: every block in it EXCEPT the
+;; header `h` has ALL of its predecessors inside the region, so the only way in
+;; is `h`. The header is skipped by identity and not by position, which is what
+;; makes the gate hold for a rotated loop whose header sits in the middle -- or
+;; at the end -- of its own span; with `lo` = `h` the skip lands on the first
+;; block and the walk is the [h+1..end] one this generalizes. With end == h+1
+;; and a body whose one predecessor is h this is still exactly the original
+;; 2-block `pred-counts[h+1] == 1` test.
 (define (compiler-reg-loop-phi-mb-body-entered-inside?
   [ranges : (__tl_dyn-array i64)]
-  [body : i64]
+  [lo : i64]
   [end : i64]
   [h : i64]) : bool
   (let
-    [b : i64 body]
+    [b : i64 lo]
     (begin
       (while (<= b end)
         (begin
           (unless
-            (and
-              (< (+ (* 2 b) 1) (array-length ranges))
-              (>= (array-ref ranges (* 2 b)) h)
-              (<= (array-ref ranges (+ (* 2 b) 1)) end))
+            (or
+              (= b h)
+              (and
+                (< (+ (* 2 b) 1) (array-length ranges))
+                (>= (array-ref ranges (* 2 b)) lo)
+                (<= (array-ref ranges (+ (* 2 b) 1)) end)))
             (return false))
           (set! b (+ b 1))))
       true)))
@@ -14653,7 +14709,7 @@
   [_func : ir.CompilerIrFunction]
   [liveness : live.CompilerFunctionLiveness]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
-  [h : i64]
+  [region-lo : i64]
   [end-idx : i64]
   [header-instrs : ir.CompilerIrInstrSeq]
   [region-labels : CompilerRegLabelSeq]
@@ -14685,7 +14741,7 @@
                   [mentions : i64
                     (compiler-reg-loop-phi-mb-region-mentions
                       block-array
-                      h
+                      region-lo
                       end-idx
                       members)]
                   [region-intervals : CompilerRegIntervalSeq
@@ -14776,7 +14832,7 @@
   [liveness : live.CompilerFunctionLiveness]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
   [header-block : live.CompilerLiveBlock]
-  [h : i64]
+  [region-lo : i64]
   [end-idx : i64]
   [region-labels : CompilerRegLabelSeq]
   [region-start : i64]
@@ -14798,7 +14854,12 @@
       var)
     (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var))
     (compiler-reg-interval-index-var-has-segments? intervals var)
-    (not (compiler-reg-loop-phi-mb-region-defines? block-array h end-idx var)))
+    (not
+      (compiler-reg-loop-phi-mb-region-defines?
+        block-array
+        region-lo
+        end-idx
+        var)))
     (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegMaybeLocation.Some location)
         (match location
@@ -14809,7 +14870,7 @@
                   [mentions : i64
                     (compiler-reg-loop-phi-mb-region-var-mentions
                       block-array
-                      h
+                      region-lo
                       end-idx
                       var)]
                   [region-intervals : CompilerRegIntervalSeq
@@ -14880,7 +14941,7 @@
   [liveness : live.CompilerFunctionLiveness]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
   [header-block : live.CompilerLiveBlock]
-  [h : i64]
+  [region-lo : i64]
   [end-idx : i64]
   [header-instrs : ir.CompilerIrInstrSeq]
   [region-labels : CompilerRegLabelSeq]
@@ -14903,7 +14964,7 @@
       func
       liveness
       block-array
-      h
+      region-lo
       end-idx
       header-instrs
       region-labels
@@ -14926,7 +14987,7 @@
           liveness
           block-array
           header-block
-          h
+          region-lo
           end-idx
           region-labels
           region-start
@@ -14950,7 +15011,7 @@
           liveness
           block-array
           header-block
-          h
+          region-lo
           end-idx
           header-instrs
           region-labels
@@ -14970,10 +15031,12 @@
       [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
         (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)])))
 
-;; Scan block indices for a loop header whose loop occupies the span
-;; [h..hulls[h]] at loop depth>0 and whose body blocks (h..hulls[h]] are each
-;; entered from inside the region only, then try to home one of its phi-carried
-;; groups or, failing that, one of its spilled loop invariants.
+;; Scan block indices for a loop header `h` at loop depth>0 whose loop occupies
+;; the span [spans[2h], spans[2h+1]], and whose blocks other than `h` itself are
+;; each entered from inside that span only, then try to home one of its
+;; phi-carried groups or, failing that, one of its spilled loop invariants. The
+;; header need not be the span's first block: a rotated loop is entered in the
+;; middle of its own span, and the region is the span either way.
 (define (compiler-reg-loop-phi-mb-select-headers
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -14981,7 +15044,7 @@
   [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
   [points : (__tl_dyn-array i64)]
-  [hulls : (__tl_dyn-array i64)]
+  [spans : (__tl_dyn-array i64)]
   [pred-ranges : (__tl_dyn-array i64)]
   [depths : (__tl_dyn-array i64)]
   [h : i64]
@@ -14996,31 +15059,34 @@
   (if (>= h (array-length block-array))
     (CompilerRegLoopSplitCandidate.NoCandidate)
     (let
-      [end-idx : i64
-        (if (< h (array-length hulls))
-          (array-ref hulls h)
-          (- 0 1))]
-      [body : i64 (+ h 1)]
+      ;; The region is the loop's whole SPAN, which starts at the header only
+      ;; when the loop was not rotated; `start-idx` is what the region is built
+      ;; from and `h` stays the header the carried phis are read at.
+      [start-idx : i64 (compiler-reg-loop-span-lo spans h)]
+      [end-idx : i64 (compiler-reg-loop-span-hi spans h)]
       (if (and
-        (>= end-idx body)
+        (>= start-idx 0)
+        (> end-idx start-idx)
+        (<= start-idx h)
+        (<= h end-idx)
         (< end-idx (array-length block-array))
         (< h (array-length depths))
         (< h (array-length live-blocks))
         (> (array-ref depths h) 0)
         (compiler-reg-loop-phi-mb-body-entered-inside?
           pred-ranges
-          body
+          start-idx
           end-idx
           h))
         (let
-          [region-start : i64 (array-ref points h)]
+          [region-start : i64 (array-ref points start-idx)]
           [region-end : i64 (array-ref points (+ end-idx 1))]
           [candidate-regs : CompilerRegIdSeq
             (compiler-reg-loop-split-candidate-regs
               (not
                 (compiler-reg-loop-phi-mb-region-has-call?
                   block-array
-                  h
+                  start-idx
                   end-idx))
               (compiler-reg-loop-split-region-rcx-safe?
                 type-segment-bases
@@ -15037,11 +15103,14 @@
             liveness
             block-array
             (array-ref live-blocks h)
-            h
+            start-idx
             end-idx
             (match (array-ref block-array h)
               [(ir.CompilerIrBlock.Block _ instrs) instrs])
-            (compiler-reg-loop-phi-mb-region-labels block-array h end-idx)
+            (compiler-reg-loop-phi-mb-region-labels
+              block-array
+              start-idx
+              end-idx)
             region-start
             region-end
             (array-ref depths h)
@@ -15063,7 +15132,7 @@
                 live-blocks
                 block-array
                 points
-                hulls
+                spans
                 pred-ranges
                 depths
                 (+ h 1)
@@ -15084,7 +15153,7 @@
           live-blocks
           block-array
           points
-          hulls
+          spans
           pred-ranges
           depths
           (+ h 1)
@@ -15130,7 +15199,7 @@
         live-blocks
         block-array
         (compiler-reg-loop-phi-mb-block-points block-array)
-        (compiler-reg-loop-nest-hulls-seq seq count)
+        (compiler-reg-loop-nest-spans-seq seq count)
         (compiler-reg-loop-phi-mb-pred-ranges liveness live-blocks)
         depths
         0
@@ -15751,7 +15820,7 @@
   [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
   [points : (__tl_dyn-array i64)]
-  [hulls : (__tl_dyn-array i64)]
+  [spans : (__tl_dyn-array i64)]
   [depths : (__tl_dyn-array i64)]
   [header : i64]
   [vars : i64]
@@ -15767,17 +15836,21 @@
   (if (>= header (array-length block-array))
     CompilerRegLeafCsrSplitCandidate.NoCandidate
     (let
-      [end-index : i64
-        (if (< header (array-length hulls))
-          (array-ref hulls header)
-          (- 0 1))]
+      ;; The region is the loop's SPAN. Its first block is the header only when
+      ;; the loop was not rotated, but the invariant this rescue homes is live
+      ;; across the whole span either way.
+      [start-index : i64 (compiler-reg-loop-span-lo spans header)]
+      [end-index : i64 (compiler-reg-loop-span-hi spans header)]
       (if (and
-        (>= end-index header)
+        (>= start-index 0)
+        (>= end-index start-index)
+        (<= start-index header)
+        (<= header end-index)
         (< (+ end-index 1) (array-length points))
         (< header (array-length depths))
         (> (array-ref depths header) 0))
         (let
-          [region-start : i64 (array-ref points header)]
+          [region-start : i64 (array-ref points start-index)]
           [region-end : i64 (array-ref points (+ end-index 1))]
           [inner-regs : CompilerRegIdSeq
             (compiler-reg-leaf-csr-caller-regs
@@ -15793,9 +15866,9 @@
             block-array
             (compiler-reg-loop-phi-mb-region-labels
               block-array
-              header
+              start-index
               end-index)
-            header
+            start-index
             end-index
             region-start
             region-end
@@ -15820,7 +15893,7 @@
                 live-blocks
                 block-array
                 points
-                hulls
+                spans
                 depths
                 (+ header 1)
                 vars
@@ -15857,7 +15930,7 @@
           live-blocks
           block-array
           points
-          hulls
+          spans
           depths
           (+ header 1)
           vars
@@ -16141,7 +16214,7 @@
                       live-blocks
                       block-array
                       (compiler-reg-loop-phi-mb-block-points block-array)
-                      (compiler-reg-loop-nest-hulls-seq
+                      (compiler-reg-loop-nest-spans-seq
                         seq
                         (array-length block-array))
                       depths
@@ -17109,8 +17182,8 @@
 ;; net equally.
 ;;
 ;; kind = compiler-reg-call-region-kind-loop (1): a whole natural loop
-;; spanning [h..hulls[h]], anchored at the LAST instruction of the layout
-;; predecessor h-1 (its preheader). The entry reload runs ONCE per loop entry
+;; occupying the span [s..e] its members reach, anchored at the LAST
+;; instruction of the layout predecessor s-1 (its preheader). The entry reload runs ONCE per loop entry
 ;; while every use runs once per iteration, so the two sides sit at different
 ;; frequencies and the score must weight them separately -- that asymmetry, not
 ;; the extra span, is what makes a one-use-per-iteration loop invariant
@@ -18691,8 +18764,8 @@
 ;; leave the loop entirely.
 ;;
 ;; So the region model gains a second shape. A LOOP row covers the natural loop
-;; spanning [h..hulls[h]] and is anchored at the LAST instruction of block h-1 -- the
-;; loop's preheader -- which the rewrite already knows how to handle: the
+;; over the span [s..e] its members reach and is anchored at the LAST
+;; instruction of block s-1 -- the loop's preheader -- which the rewrite already knows how to handle: the
 ;; activation mov is emitted just before the anchor instruction, so it runs once
 ;; per loop entry, and the remap then covers every use inside the loop.
 ;;
@@ -18701,18 +18774,19 @@
 ;; are (a) the anchor dominates every remapped reference and (b) nothing in the
 ;; span rewrites either side of the copy.
 ;;
-;;   (a) DOMINATION. Admission demands that every body block (h..e] has ALL of
-;;       its predecessors inside [h..e] (the single-entry witness the loop-phi
-;;       multi-block machinery already uses) AND that the header's predecessor
-;;       set is exactly {h-1} plus in-region back edges. Together those make
-;;       h-1 the sole way in, so the anchor -- the last instruction of h-1,
-;;       which every edge into h executes -- dominates the whole region. The
+;;   (a) DOMINATION. Admission demands that every block of [s..e] other than
+;;       the header has ALL of its predecessors inside [s..e] (the single-entry
+;;       witness the loop-phi multi-block machinery already uses) AND that the
+;;       header's predecessor set is exactly {s-1} plus in-region back edges.
+;;       Together those make s-1 the sole way in, so the anchor -- the last
+;;       instruction of s-1, which every edge into h executes -- dominates the
+;;       whole region. The
 ;;       back edge stays INSIDE the point span, so the shadow survives across
 ;;       iterations with no per-iteration copy; that is where the win comes
 ;;       from.
 ;;
 ;;   (b) NO REWRITE OF EITHER SIDE. The root must not be DEFINED anywhere in
-;;       [h..e] (the loop-invariant class), which is also why phis are a
+;;       [s..e] (the loop-invariant class), which is also why phis are a
 ;;       non-issue: a phi def disqualifies the var outright, so a loop row's
 ;;       root never has a header phi to race, and the rewrite's standing
 ;;       phi-exclusion rule is left exactly as it was. defs = 0 also means
@@ -18792,30 +18866,37 @@
           (set! b (+ b 1))))
       ranges)))
 
-;; Region admission for header `h` over the span [h..e] its loop occupies (e =
-;; hulls[h], so h heading a loop whose members all lie at or below e is already
-;; proven). e == h is the single-block self-loop, which is admitted: it is the
-;; flagship's inner shape, and its empty body range makes the single-entry scan
-;; trivially true.
+;; Region admission for header `h` over the span [s..e] its loop occupies (both
+;; from the nest, so `h` heading a loop whose members all lie inside [s..e] is
+;; already proven). e == s is the single-block self-loop, which is admitted: it
+;; is the flagship's inner shape, and its empty body range makes the
+;; single-entry scan trivially true. `h` is inside [s..e] but need not be `s`:
+;; a rotated loop is entered in the middle of its own span.
 (define (compiler-reg-call-region-loop-admit?
   [ranges : (__tl_dyn-array i64)]
   [depths : (__tl_dyn-array i64)]
   [nblocks : i64]
   [h : i64]
+  [s : i64]
   [e : i64]) : bool
   (and
-    (>= h 1)
-    (>= e h)
+    (>= s 1)
+    (>= e s)
+    (<= s h)
+    (<= h e)
     (< e nblocks)
     (< h (array-length depths))
     (> (array-ref depths h) 0)
     (< (+ (* 2 h) 1) (array-length ranges))
-    ;; the header's lowest predecessor is the LAYOUT predecessor h-1 (so no
-    ;; earlier block jumps into the loop) and its highest is inside the region
-    ;; (so no later block does either): h-1 is the single preheader.
-    (= (array-ref ranges (* 2 h)) (- h 1))
+    ;; the header's lowest predecessor is the LAYOUT predecessor of the SPAN,
+    ;; s-1 (so no earlier block jumps into the loop) and its highest is inside
+    ;; the region (so no later block does either): s-1 is the single preheader.
+    ;; A rotated loop reaches its header by jumping forward over the body it
+    ;; falls out of, so what sits directly above the loop is still the
+    ;; preheader -- it is the SPAN it sits above, not the header.
+    (= (array-ref ranges (* 2 h)) (- s 1))
     (<= (array-ref ranges (+ (* 2 h) 1)) e)
-    (compiler-reg-loop-phi-mb-body-entered-inside? ranges (+ h 1) e h)))
+    (compiler-reg-loop-phi-mb-body-entered-inside? ranges s e h)))
 
 ;; Per-var accumulator for one region scan. `stamp` carries the header id, so
 ;; each region starts from zero counters without an O(vars) clear per header.
@@ -19080,8 +19161,8 @@
       (let
         [points : (__tl_dyn-array i64)
           (compiler-reg-loop-phi-mb-block-points bslots)]
-        [hulls : (__tl_dyn-array i64)
-          (compiler-reg-loop-nest-hulls-seq seq nblocks)]
+        [spans : (__tl_dyn-array i64)
+          (compiler-reg-loop-nest-spans-seq seq nblocks)]
         [ranges : (__tl_dyn-array i64)
           (compiler-reg-call-region-pred-ranges
             bslots
@@ -19099,10 +19180,12 @@
           (compiler-reg-fill-i64-array stamp (- 0 1))
           (while (< h nblocks)
             (let
-              [e : i64
-                (if (< h (array-length hulls))
-                  (array-ref hulls h)
-                  (- 0 1))]
+              ;; `s` is the loop's first block in the LAYOUT and `h` is where
+              ;; control enters it; they differ exactly when the loop is
+              ;; rotated. The region, the preheader and the anchor all hang off
+              ;; `s`; the row's identity and depth still hang off `h`.
+              [s : i64 (compiler-reg-loop-span-lo spans h)]
+              [e : i64 (compiler-reg-loop-span-hi spans h)]
               (begin
                 (when
                   (compiler-reg-call-region-loop-admit?
@@ -19110,23 +19193,24 @@
                     depths
                     nblocks
                     h
+                    s
                     e)
                   (let
-                    ;; anchor = last instruction of the preheader h-1;
+                    ;; anchor = last instruction of the preheader s-1;
                     ;; hi = last instruction of the loop's final block e.
-                    [lo : i64 (- (array-ref points h) 2)]
+                    [lo : i64 (- (array-ref points s) 2)]
                     [hi : i64 (- (array-ref points (+ e 1)) 2)]
                     (when
                       (and
-                        (>= lo (array-ref points (- h 1)))
+                        (>= lo (array-ref points (- s 1)))
                         (> hi lo)
                         (compiler-reg-call-region-loop-anchor-ok?
                           type-segment-bases
-                          (array-ref bslots (- h 1)))
+                          (array-ref bslots (- s 1)))
                         (compiler-reg-call-region-loop-scan-blocks!
                           type-segment-bases
                           bslots
-                          h
+                          s
                           e
                           cand
                           n
@@ -20238,19 +20322,19 @@
       (let
         [points : (__tl_dyn-array i64)
           (compiler-reg-loop-phi-mb-block-points bslots)]
-        [h : i64 (compiler-reg-call-region-evict-header-of points nblocks lo)]
-        (if (< h 1)
+        [s : i64 (compiler-reg-call-region-evict-header-of points nblocks lo)]
+        (if (< s 1)
           (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
           (let
             [e : i64
-              (compiler-reg-call-region-evict-end-of points nblocks h hi)]
+              (compiler-reg-call-region-evict-end-of points nblocks s hi)]
             [ids : reg_label_i64_map.Map
               (compiler-reg-loop-depth-block-ids
                 blocks
                 (reg_label_i64_map.with-capacity
                   (compiler-reg-bits-map-capacity nblocks))
                 0)]
-            (if (< e h)
+            (if (< e s)
               (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
               (let
                 [ranges : (__tl_dyn-array i64)
@@ -20260,7 +20344,12 @@
                     ranges
                     depths
                     nblocks
-                    h
+                    (compiler-reg-loop-span-header
+                      (compiler-reg-loop-nest-spans-seq seq nblocks)
+                      nblocks
+                      s
+                      e)
+                    s
                     e))
                   (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick)
                   (let
@@ -20289,7 +20378,7 @@
                       (compiler-reg-call-region-evict-mark-blocks!
                         bslots
                         points
-                        (- h 1)
+                        (- s 1)
                         e
                         lo
                         n
@@ -20373,7 +20462,7 @@
                         (if (compiler-reg-call-region-evict-var-mentioned?
                           bslots
                           points
-                          (- h 1)
+                          (- s 1)
                           e
                           lo
                           parents
@@ -20419,7 +20508,7 @@
                                   nblocks
                                   ids
                                   points
-                                  h
+                                  s
                                   e
                                   out-points))
                               (when
@@ -20448,8 +20537,8 @@
                                   (set! i (+ i 1))))
                               (if (compiler-reg-call-region-evict-price-ok?
                                 uses
-                                (array-ref depths h)
-                                (array-ref depths (- h 1))
+                                (array-ref depths s)
+                                (array-ref depths (- s 1))
                                 (compiler-reg-call-region-evict-def-weight
                                   points
                                   nblocks
@@ -20478,16 +20567,16 @@
                                             (*
                                               uses
                                               (compiler-reg-loop-depth-weight
-                                                (array-ref depths h)))
+                                                (array-ref depths s)))
                                             (compiler-reg-call-region-trip-multiplier
                                               (-
-                                                (array-ref depths h)
-                                                (array-ref depths (- h 1)))))
+                                                (array-ref depths s)
+                                                (array-ref depths (- s 1)))))
                                           (+
                                             (*
                                               (+ 1 live-exits)
                                               (compiler-reg-loop-depth-weight
-                                                (array-ref depths (- h 1))))
+                                                (array-ref depths (- s 1))))
                                             (compiler-reg-call-region-evict-def-weight
                                               points
                                               nblocks

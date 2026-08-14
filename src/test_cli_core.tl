@@ -1620,6 +1620,13 @@
         [array : ast.AstExpr (ast.ast-node-get array-box)]
         [index : ast.AstExpr (ast.ast-node-get index-box)]
         (tltest-reach-mark-expr index (tltest-reach-mark-expr array names)))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr (ast.ast-node-get place-box)]
+        [replacement : ast.AstExpr (ast.ast-node-get replacement-box)]
+        (tltest-reach-mark-expr
+          replacement
+          (tltest-reach-mark-expr place names)))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr (ast.ast-node-get array-box)]

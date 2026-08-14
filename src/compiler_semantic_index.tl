@@ -2682,6 +2682,10 @@
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env index))]
+    [(ast.AstExpr.Replace place replacement)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env place)
+        (compiler-semantic-walk-quasiquote-node! state scope env replacement))]
     [(ast.AstExpr.ArrayPush target value)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
@@ -3645,6 +3649,10 @@
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env index))]
+    [(ast.AstExpr.Replace place replacement)
+      (begin
+        (compiler-semantic-walk-node! state scope env place)
+        (compiler-semantic-walk-node! state scope env replacement))]
     [(ast.AstExpr.ArrayPush target value)
       (begin
         (compiler-semantic-walk-node! state scope env target)

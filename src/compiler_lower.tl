@@ -2602,6 +2602,8 @@
       (lower-expr-id-first-span3 target live index)]
     [(ast.AstExpr.FixedArrayTake target index)
       (lower-expr-id-first-span2 target index)]
+    [(ast.AstExpr.Replace place replacement)
+      (lower-expr-id-first-span2 place replacement)]
     [(ast.AstExpr.ArrayPush target value)
       (lower-expr-id-first-span2 target value)]
     [(ast.AstExpr.StringRef target index)
@@ -8691,6 +8693,29 @@
                       (lower-context-expr-push ctx rewritten-index))))]
               [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
           [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
+        [replacement : ast.AstExpr (lower-context-expr-get ctx replacement-box)]
+        (match (lower-spmd-inline-expr ctx env type-env place subst shadowed)
+          [(ResultLowerAstExpr.Ok rewritten-place)
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              replacement
+              subst
+              shadowed)
+              [(ResultLowerAstExpr.Ok rewritten-replacement)
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-replace-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-place)
+                      (lower-context-expr-push ctx rewritten-replacement))))]
+              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
+          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -10186,6 +10211,18 @@
           names
           (lower-reach-expr pools all-functions names state array)
           index))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr
+          (ast.ast-node-pool-context-expr-get pools place-box)]
+        [replacement : ast.AstExpr
+          (ast.ast-node-pool-context-expr-get pools replacement-box)]
+        (lower-reach-expr
+          pools
+          all-functions
+          names
+          (lower-reach-expr pools all-functions names state place)
+          replacement))]
     [(ast.AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : ast.AstExpr
@@ -12126,6 +12163,12 @@
         (lower-used-types-add-expr-id pools used module array-box)
         module
         index-box)]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (lower-used-types-add-expr-id
+        pools
+        (lower-used-types-add-expr-id pools used module place-box)
+        module
+        replacement-box)]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (lower-used-types-add-expr-id
         pools
@@ -26656,6 +26699,11 @@
       (let
         [box-expr : ast.AstExpr (lower-context-expr-get ctx box-expr-box)]
         (lower-box-get-result-type-fast ctx env type-env type-cache box-expr))]
+    [(ast.AstExpr.Replace place-box _)
+      (tc_core.tc-replace-place-value-type
+        ctx
+        type-env
+        (lower-context-expr-get ctx place-box))]
     [(ast.AstExpr.Set _ _) (tc_core.ResultTcType.Ok (ast.AstType.Unit))]
     [(ast.AstExpr.StructSet _ _ _) (tc_core.ResultTcType.Ok (ast.AstType.Unit))]
     [(ast.AstExpr.BoxSet _ _) (tc_core.ResultTcType.Ok (ast.AstType.Unit))]
@@ -28029,6 +28077,11 @@
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
         (lower-fixed-array-take ctx state env type-env arr index expr-ty))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
+        [replacement : ast.AstExpr (lower-context-expr-get ctx replacement-box)]
+        (lower-replace ctx state env type-env place replacement expr-ty origin))]
     [(ast.AstExpr.ArrayPush arr-box value-box)
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
@@ -39594,6 +39647,72 @@
           (ResultLowerState.Ok state)))]
     [(tc_core.TcMaybeNameId.No) (ResultLowerState.Ok state)]))
 
+(define (lower-replace
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [place : ast.AstExpr]
+  [replacement : ast.AstExpr]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-mutable-place-address ctx state env type-env place origin)
+    [(ResultLowerExpr.Ok addressed)
+      (match addressed
+        [(LowerExpr.Expr place-state place-ptr place-ty)
+          (let
+            [value-ty : ast.AstType
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-resolve-type ctx place-ty))]
+            (match (lower-expr-expected
+              ctx
+              place-state
+              env
+              type-env
+              replacement
+              value-ty
+              replacement)
+              [(ResultLowerExpr.Ok lowered-replacement)
+                (match lowered-replacement
+                  [(LowerExpr.Expr replacement-state replacement-value _)
+                    (match (lower-fixed-array-take-old
+                      ctx
+                      replacement-state
+                      place-ptr
+                      value-ty)
+                      [(ResultLowerExpr.Ok old)
+                        (match old
+                          [(LowerExpr.Expr old-state old-value _)
+                            (let
+                              [stored-state : LowerState
+                                (if (= (lower-type-size ctx value-ty) 0)
+                                  old-state
+                                  (lower-array-elem-store-state
+                                    ctx
+                                    old-state
+                                    place-ptr
+                                    replacement-value
+                                    value-ty))]
+                              (match (lower-refresh-register-resident-root-after-store
+                                ctx
+                                stored-state
+                                env
+                                type-env
+                                place
+                                origin)
+                                [(ResultLowerState.Ok refreshed)
+                                  (ResultLowerExpr.Ok
+                                    (LowerExpr.Expr
+                                      refreshed
+                                      old-value
+                                      result-ty))]
+                                [(ResultLowerState.Err message)
+                                  (ResultLowerExpr.Err message)]))])]
+                      [(ResultLowerExpr.Err message)
+                        (ResultLowerExpr.Err message)])])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))])]
+    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
 (define (lower-register-resident-local-place?
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
@@ -41802,6 +41921,7 @@
       (or
         (lower-spmd-reduce-node-writes-id? ctx name array-box)
         (lower-spmd-reduce-node-writes-id? ctx name index-box))]
+    [(ast.AstExpr.Replace _ _) true]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (or
         (lower-spmd-reduce-node-writes-id? ctx name array-box)

@@ -2200,6 +2200,10 @@
       (selfhost-lint-dead-expr-refs
         (ast.ast-node-get index)
         (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs))]
+    [(ast.AstExpr.Replace place replacement)
+      (selfhost-lint-dead-expr-refs
+        (ast.ast-node-get replacement)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get place) refs))]
     [(ast.AstExpr.ArrayPush array value)
       (selfhost-lint-dead-expr-refs
         (ast.ast-node-get value)

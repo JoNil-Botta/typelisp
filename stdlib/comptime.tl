@@ -195,6 +195,11 @@
 (define (expr-array-ref [target : Expr] [index : Expr]) : Expr
   (expr-array-ref target index))
 
+;: Build a move-safe replacement expression during macro CTFE.
+;: The expanded program validates that `place` is initialized writable storage.
+(define (expr-replace [place : Expr] [replacement : Expr]) : Expr
+  (expr-replace place replacement))
+
 ;: Build an ordered empty expression argument list during macro CTFE.
 (define (expr-list-empty) : ExprList
   (expr-list-empty))

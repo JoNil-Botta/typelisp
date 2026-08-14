@@ -416,6 +416,11 @@
           (codec.surface-ast-write-i64! out 79)
           (codec.surface-ast-write-i64! out target)
           (codec.surface-ast-write-i64! out index))]
+      [(ast.AstExpr.Replace place replacement)
+        (begin
+          (codec.surface-ast-write-i64! out 84)
+          (codec.surface-ast-write-i64! out place)
+          (codec.surface-ast-write-i64! out replacement))]
       [(ast.AstExpr.ArrayPush target value)
         (begin
           (codec.surface-ast-write-i64! out 17)
@@ -1056,6 +1061,10 @@
           (codec.surface-ast-read-i64! reader)
           (ast.ast-tuple-set-field-id-from-index
             (codec.surface-ast-read-i64! reader))
+          (codec.surface-ast-read-i64! reader))]
+      [(= tag 84)
+        (ast.AstExpr.Replace
+          (codec.surface-ast-read-i64! reader)
           (codec.surface-ast-read-i64! reader))]
       [else
         (begin

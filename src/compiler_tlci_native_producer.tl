@@ -430,6 +430,7 @@
     [(compiler_ast_types.AstExpr.Array _) "array"]
     [(compiler_ast_types.AstExpr.ArrayTake _ _ _) "array-take"]
     [(compiler_ast_types.AstExpr.FixedArrayTake _ _) "array-take"]
+    [(compiler_ast_types.AstExpr.Replace _ _) "replace"]
     [(compiler_ast_types.AstExpr.BoxTake _) "box-take"]
     [(compiler_ast_types.AstExpr.BoxSet _ _) "box-set"]
     [(compiler_ast_types.AstExpr.IntToPtr _ _) "int->ptr"]
@@ -1714,6 +1715,31 @@
                   "0"
                   "0")
                 (+ target-opened index-opened 1))))))]
+    [(compiler_ast_types.AstExpr.Replace place-node replacement-node)
+      (let
+        [place-opened : i64
+          (embedded-native-template-ops params place-node ops ops-count)]
+        (if (< place-opened 0)
+          -1
+          (let
+            [replacement-opened : i64
+              (embedded-native-template-ops
+                params
+                replacement-node
+                ops
+                ops-count)]
+            (if (< replacement-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-replace)
+                  "0"
+                  "0"
+                  "0")
+                (+ place-opened replacement-opened 1))))))]
     [(compiler_ast_types.AstExpr.ArrayPush target-node value-node)
       (let
         [target-opened : i64
@@ -3285,6 +3311,19 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
                   (tlci_core.tlci-host-callback-name-shared-view
                     tlci_core.tlci-host-callback-name-expr-array-ref)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-replace")
+                    (string.eq head "expr-replace"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-replace)
                   ops
                   ops-count)]
               [(and
@@ -6896,6 +6935,7 @@
     "(extern comptime-host-expr-span-unquoted (:symbol \"_tl_comptime_host_expr-span-unquoted\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-tuple (:symbol \"_tl_comptime_host_expr-tuple\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-ref (:symbol \"_tl_comptime_host_expr-array-ref\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-replace (:symbol \"_tl_comptime_host_expr-replace\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-push (:symbol \"_tl_comptime_host_expr-array-push\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-make-array (:symbol \"_tl_comptime_host_expr-make-array\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-operand-type-kind-eq (:symbol \"_tl_comptime_host_operand-type-kind-eq\") : (-> i64 i64 i64 i64 i64 i64))\n"

@@ -5498,6 +5498,22 @@
                   index-state)]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr (spec-state-expr-get state place-box)]
+        [replacement : ast.AstExpr (spec-state-expr-get state replacement-box)]
+        (match (spec-rewrite-expr place templates state)
+          [(ResultSpecExpr.Ok rewritten-place place-state)
+            (match (spec-rewrite-expr replacement templates place-state)
+              [(ResultSpecExpr.Ok rewritten-replacement replacement-state)
+                (ResultSpecExpr.Ok
+                  (ast.ast-expr-replace-with-pools
+                    (spec-state-pools state)
+                    rewritten-place
+                    rewritten-replacement)
+                  replacement-state)]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr (spec-state-expr-get state array-box)]
@@ -6397,6 +6413,24 @@
                     (spec-owner-pools owner)
                     rewritten-array
                     rewritten-index))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr (spec-owner-expr-get owner place-box)]
+        [replacement : ast.AstExpr (spec-owner-expr-get owner replacement-box)]
+        (match (spec-substitute-values-expr-with-owner owner place subs)
+          [(ResultSpecSubExpr.Ok rewritten-place)
+            (match (spec-substitute-values-expr-with-owner
+              owner
+              replacement
+              subs)
+              [(ResultSpecSubExpr.Ok rewritten-replacement)
+                (ResultSpecSubExpr.Ok
+                  (ast.ast-expr-replace-with-pools
+                    (spec-owner-pools owner)
+                    rewritten-place
+                    rewritten-replacement))]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.Var name)
@@ -8056,6 +8090,24 @@
                     (spec-owner-pools owner)
                     rewritten-array
                     rewritten-index))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr (spec-owner-expr-get owner place-box)]
+        [replacement : ast.AstExpr (spec-owner-expr-get owner replacement-box)]
+        (match (spec-substitute-types-expr-with-owner owner place subs)
+          [(ResultSpecSubExpr.Ok rewritten-place)
+            (match (spec-substitute-types-expr-with-owner
+              owner
+              replacement
+              subs)
+              [(ResultSpecSubExpr.Ok rewritten-replacement)
+                (ResultSpecSubExpr.Ok
+                  (ast.ast-expr-replace-with-pools
+                    (spec-owner-pools owner)
+                    rewritten-place
+                    rewritten-replacement))]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.ArrayPush array-box value-box)

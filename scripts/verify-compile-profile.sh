@@ -1536,8 +1536,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # (walk_hygiene_nodes_copied 233,130 here). Do not reconstruct this
     # boundary by adding published deltas; it is close enough to a step that
     # only a direct Windows measurement decides it.
+    # #6241's move-safe replace expression adds the missing macro expansion,
+    # hygiene, dependency, and reflection-prescan traversal arms. The
+    # authoritative Windows probe measured 2,755,843 used nodes, crossing the
+    # boundary to 43 segments: 2,818,048 capacity and 90,177,536 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

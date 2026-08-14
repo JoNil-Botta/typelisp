@@ -360,7 +360,7 @@
   (array (Address 111 "Oxford") (Address 222 "Paris")))
 
 (define (serialize-make-samples) : (__tl_dyn-array i64)
-  (make-array 7 8))
+  (__tl_make-array 7 8))
 
 (define (serialize-combo) : (Tuple
     i64

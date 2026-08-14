@@ -25,8 +25,8 @@
   (let
     [items : (__tl_dyn-array Pair) (array.make-array Pair 0)]
     (begin
-      (array-push! items (Pair 1 2))
-      (array-push! items (Pair 3 4))
+      (__tl_array-push! items (Pair 1 2))
+      (__tl_array-push! items (Pair 3 4))
       (__tl-project-set-field (array-ref items 1) x 30)
       (__tl-project-set-field (array-ref items 0) y 12)
       (+

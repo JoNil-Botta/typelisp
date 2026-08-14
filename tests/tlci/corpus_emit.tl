@@ -24,11 +24,11 @@
 (define (tlci-v2-corpus-sections-image) : tlci_core.TlciImage
   (let
     [fixups : (__tl_dyn-array u8)
-      (make-array u8 tlci_core.tlci-section-fixup-record-size)]
+      (__tl_make-array u8 tlci_core.tlci-section-fixup-record-size)]
     [entries : (__tl_dyn-array u8)
-      (make-array u8 tlci_core.tlci-section-entry-record-size)]
+      (__tl_make-array u8 tlci_core.tlci-section-entry-record-size)]
     [symbols : (__tl_dyn-array u8)
-      (make-array u8 tlci_core.tlci-section-symbol-record-size)]
+      (__tl_make-array u8 tlci_core.tlci-section-symbol-record-size)]
     (begin
       ;; One inert load-base fixup, entry, and symbol record. The fixture is
       ;; parsed and inspected, never mapped or executed.
@@ -46,12 +46,12 @@
         tlci_core.tlci-callback-abi-version
         "tlci-v2-corpus"
         (tlci_core.tlci-make-metadata "v1" "corpus.sections" "1.0.0")
-        (make-array
+        (__tl_make-array
           (tlci_core.tlci-byte 222)
           (tlci_core.tlci-byte 173)
           (tlci_core.tlci-byte 190)
           (tlci_core.tlci-byte 239))
-        (make-array
+        (__tl_make-array
           (tlci_core.tlci-byte 195)
           (tlci_core.tlci-byte 144)
           (tlci_core.tlci-byte 144))

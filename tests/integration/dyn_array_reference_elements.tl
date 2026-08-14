@@ -29,13 +29,13 @@
     [i : i64 0]
     [ok : bool true]
     (begin
-      (array-push! words left-word)
-      (array-push! words right-word)
+      (__tl_array-push! words left-word)
+      (__tl_array-push! words right-word)
       ;; Repeated pushes force several reallocations while retaining both
       ;; distinct substring words in their original order.
       (while (< i 32)
         (begin
-          (array-push!
+          (__tl_array-push!
             words
             (if (= (% i 2) 0)
               left-word

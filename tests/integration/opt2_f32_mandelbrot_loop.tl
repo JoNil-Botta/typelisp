@@ -49,7 +49,7 @@
 ;; an immediate escape, and a point that must reach its iteration limit.
 (define (main) : i64
   (let
-    [output : (__tl_dyn-array i32) (make-array i32 1)]
+    [output : (__tl_dyn-array i32) (__tl_make-array i32 1)]
     [bounded : i32 0]
     [immediate : i32 0]
     [maxed : i32 0]

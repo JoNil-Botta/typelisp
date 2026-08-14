@@ -162,7 +162,7 @@
                 (set! chunk-start chunk-end))))
           (if (> n 16)
             (let
-              [scratch : (__tl_dyn-array ,T) (make-array ,T n)]
+              [scratch : (__tl_dyn-array ,T) (__tl_make-array ,T n)]
               [width : i64 16]
               (while (< width n)
                 (let

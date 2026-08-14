@@ -251,7 +251,10 @@
               (if (< capacity 1)
                 1
                 capacity)]
-            (Vec (SlotState (make-array ,T 0) (make-array bool 0)) 0 cap)))
+            (Vec
+              (SlotState (__tl_make-array ,T 0) (__tl_make-array bool 0))
+              0
+              cap)))
         (define (new) : Vec
           (with-capacity 4))
         (define (set [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
@@ -282,8 +285,8 @@
                     1
                     (* v.capacity 2)))
                 unit)
-              (array-push! v.state.slots value)
-              (array-push! v.state.live true)
+              (__tl_array-push! v.state.slots value)
+              (__tl_array-push! v.state.live true)
               (set! v.len (+ index 1)))))
         (define (push-owned [v : Vec (:consume)] [value : ,T]) : Vec
           (begin
@@ -322,7 +325,7 @@
               (if (< capacity 1)
                 1
                 capacity)]
-            (Vec (make-array ,T cap) 0)))
+            (Vec (__tl_make-array ,T cap) 0)))
         (define (new) : Vec
           (with-capacity 4))
         (define (get [v : (& v Vec)] [index : i64] [fallback : ,T]) : ,T
@@ -355,7 +358,7 @@
               (if (< old-cap 1)
                 1
                 (* old-cap 2))]
-            [bigger : (__tl_dyn-array ,T) (make-array ,T new-cap)]
+            [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
             (begin
               (copy-range! (&mut bigger) (& v.slots) 0 n)
               (set! v.slots bigger))))
@@ -504,7 +507,7 @@
                           (,iter-mut-borrow-name (array-ref iter.slots index)))))))
                 (define (into-live-slots [len : i64]) : (__tl_dyn-array bool)
                   (let
-                    [live : (__tl_dyn-array bool) (make-array bool len)]
+                    [live : (__tl_dyn-array bool) (__tl_make-array bool len)]
                     [index : i64 0]
                     (begin
                       (while (< index len)

@@ -4,7 +4,7 @@
   (set! (array-ref items 0) value))
 
 (define (push-tail [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
-  (array-push! items value))
+  (__tl_array-push! items value))
 
 (define (put-fixed [items : (&mut items (Array i64 2))] [value : i64]) : unit
   (set! (array-ref items 1) value))

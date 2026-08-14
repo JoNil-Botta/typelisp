@@ -11,7 +11,7 @@
     (begin
       (while (< i limit)
         (begin
-          (array-push! items (& n))
+          (__tl_array-push! items (& n))
           (set! n 2)
           (set! i (+ i 1))))
       (read-items items))))

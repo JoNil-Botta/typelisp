@@ -101,10 +101,10 @@
     [slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
     [i : i64 0]
     (begin
-      (array-push! slots (borrowed-string-word value))
+      (__tl_array-push! slots (borrowed-string-word value))
       (while (< i rest.len)
         (begin
-          (array-push! slots (array-ref rest.slots i))
+          (__tl_array-push! slots (array-ref rest.slots i))
           (set! i (+ i 1))))
       (ProcessBorrowedStringList slots value (+ 1 rest.len)))))
 
@@ -124,12 +124,12 @@
     (begin
       (while (< i n-left)
         (begin
-          (array-push! slots (array-ref left.slots i))
+          (__tl_array-push! slots (array-ref left.slots i))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i n-right)
         (begin
-          (array-push! slots (array-ref right.slots i))
+          (__tl_array-push! slots (array-ref right.slots i))
           (set! i (+ i 1))))
       (ProcessBorrowedStringList slots left.anchor (+ n-left n-right)))))
 
@@ -171,12 +171,12 @@
     [value-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
     [i : i64 0]
     (begin
-      (array-push! name-slots (borrowed-string-word name))
-      (array-push! value-slots (borrowed-string-word value))
+      (__tl_array-push! name-slots (borrowed-string-word name))
+      (__tl_array-push! value-slots (borrowed-string-word value))
       (while (< i rest.len)
         (begin
-          (array-push! name-slots (array-ref rest.name-slots i))
-          (array-push! value-slots (array-ref rest.value-slots i))
+          (__tl_array-push! name-slots (array-ref rest.name-slots i))
+          (__tl_array-push! value-slots (array-ref rest.value-slots i))
           (set! i (+ i 1))))
       (ProcessBorrowedEnvList name-slots value-slots name (+ 1 rest.len)))))
 
@@ -199,14 +199,14 @@
     (begin
       (while (< i n-left)
         (begin
-          (array-push! name-slots (array-ref left.name-slots i))
-          (array-push! value-slots (array-ref left.value-slots i))
+          (__tl_array-push! name-slots (array-ref left.name-slots i))
+          (__tl_array-push! value-slots (array-ref left.value-slots i))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i n-right)
         (begin
-          (array-push! name-slots (array-ref right.name-slots i))
-          (array-push! value-slots (array-ref right.value-slots i))
+          (__tl_array-push! name-slots (array-ref right.name-slots i))
+          (__tl_array-push! value-slots (array-ref right.value-slots i))
           (set! i (+ i 1))))
       (ProcessBorrowedEnvList
         name-slots

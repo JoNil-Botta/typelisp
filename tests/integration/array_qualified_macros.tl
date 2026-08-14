@@ -15,7 +15,7 @@
   (set! (array-ref items index) value))
 
 (define (push-mut! [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
-  (array-push! items value))
+  (__tl_array-push! items value))
 
 (define (dynamic-score) : i64
   (let
@@ -23,7 +23,7 @@
     (begin
       (set! (array-ref items 0) 10)
       (set! (array-ref items 1) 20)
-      (array-push! items 5)
+      (__tl_array-push! items 5)
       (put-mut! (&mut items) 2 12)
       (push-mut! (&mut items) 0)
       (if (= (array-length items) 4)

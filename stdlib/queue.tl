@@ -82,7 +82,7 @@
             (if (< capacity 1)
               1
               capacity)]
-          (,deque-name (make-array ,T cap) 0 0)))
+          (,deque-name (__tl_make-array ,T cap) 0 0)))
       (define (new) : ,deque-name
         (with-capacity 4))
       (define (next-index [index : i64] [capacity : i64]) : i64
@@ -127,7 +127,7 @@
             (if (< old-cap 1)
               1
               (* old-cap 2))]
-          [bigger : (__tl_dyn-array ,T) (make-array ,T new-cap)]
+          [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
           (begin
             (copy-live! (&mut bigger) (& q.slots) q.head old-cap n 0)
             (set! q.slots bigger)

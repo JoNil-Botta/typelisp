@@ -47,6 +47,6 @@
 (define (main) : i64
   (let
     [initial-sp : i64 (string.>int (io.arg 1))]
-    [program : (__tl_dyn-array UnderflowInst) (make-array (Add))]
+    [program : (__tl_dyn-array UnderflowInst) (__tl_make-array (Add))]
     [stack : (__tl_dyn-array i64) (array.make-array i64 4)]
     (run-underflow program stack initial-sp)))

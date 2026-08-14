@@ -45,7 +45,7 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 3)]
-    [ops : (__tl_dyn-array Op) (make-array Op n)]
+    [ops : (__tl_dyn-array Op) (__tl_make-array Op n)]
     [i : i64 0]
     (begin
       (while (< i n)

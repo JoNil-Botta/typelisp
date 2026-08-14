@@ -8,7 +8,7 @@
 (define (push-with-len
   [items : (&mut items (__tl_dyn-array i64))]
   [value : i64]) : unit
-  (array-push! items value))
+  (__tl_array-push! items value))
 
 (define (main) : i64
   (let

@@ -10,7 +10,7 @@
   (begin
     (while run
       (begin
-        (array-push! refs (&mut (array-ref items 0)))
+        (__tl_array-push! refs (&mut (array-ref items 0)))
         (return 0)))
     (begin
       (set! (array-ref items 0) 4)

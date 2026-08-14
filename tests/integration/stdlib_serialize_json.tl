@@ -247,7 +247,7 @@
     (serialize-json-combo-ok? person.combo)))
 
 (define (serialize-json-make-samples) : (__tl_dyn-array i64)
-  (make-array 7 8))
+  (__tl_make-array 7 8))
 
 (define (serialize-json-previous-addresses) : (Array Address 2)
   (array (Address 111 "Oxford") (Address 222 "Paris")))

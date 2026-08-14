@@ -400,9 +400,9 @@
             (if (= (cast byte : i64) 0)
               (set! done true)
               (begin
-                (array-push! out.slots byte)
+                (__tl_array-push! out.slots byte)
                 (set! i (+ i 1))))))
-        (array-push! out.slots (cast '\n' : u8))))))
+        (__tl_array-push! out.slots (cast '\n' : u8))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (read-dir-bytes-string [out : (&mut out byte_buf_core.ByteBufBuilder)]) : String

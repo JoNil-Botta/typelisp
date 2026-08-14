@@ -11,7 +11,9 @@
 (define (main) : unit
   (let
     [pair : ReborrowDeadSiblingArrays
-      (ReborrowDeadSiblingArrays (make-array i64 1) (make-array i64 1))]
+      (ReborrowDeadSiblingArrays
+        (__tl_make-array i64 1)
+        (__tl_make-array i64 1))]
     (let
       [result : (& pair i64)
         (let

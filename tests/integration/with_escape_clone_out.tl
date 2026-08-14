@@ -20,7 +20,7 @@
     (string.append ":" (string.int->string slot))))
 
 (define (make-items [seed : i64]) : (__tl_dyn-array String)
-  (make-array (piece seed 1) (piece seed 2)))
+  (__tl_make-array (piece seed 1) (piece seed 2)))
 
 (define (escape-items [scratch : arena.Arena] [seed : i64]) : (__tl_dyn-array
     String)

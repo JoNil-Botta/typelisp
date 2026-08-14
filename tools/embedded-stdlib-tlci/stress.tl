@@ -361,7 +361,7 @@
     [operand-node : i64 (stress-operand-node pools)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
-    [detail : (__tl_dyn-array i64) (make-array stress-status-ok)]
+    [detail : (__tl_dyn-array i64) (__tl_make-array stress-status-ok)]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
@@ -534,7 +534,7 @@
       [tier : i64 (string.>int (io.arg 1))]
       [iterations : i64 (string.>int (io.arg 2))]
       [progress-path : String (io.arg 3)]
-      [failed-at : (__tl_dyn-array i64) (make-array -1)]
+      [failed-at : (__tl_dyn-array i64) (__tl_make-array -1)]
       (match (tlci_loader.tlci-loader-load-from-bytes-with-host
         (arena.tl_arena_current)
         (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)

@@ -16,7 +16,7 @@
     (tlci_core.tlci-make-metadata "v1" package-name "1.0.0")
     (tlci_core.tlci-empty-bytes)
     (if code-bearing
-      (make-array
+      (__tl_make-array
         (tlci_core.tlci-byte 195)
         (tlci_core.tlci-byte 144)
         (tlci_core.tlci-byte 144))

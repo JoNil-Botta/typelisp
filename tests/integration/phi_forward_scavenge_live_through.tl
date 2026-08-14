@@ -9,16 +9,16 @@
 
 (define (phi-forward-repro [n : i64] [items : (__tl_dyn-array PhiForwardItem)]) : i64
   (let
-    [b0 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b1 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b2 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b3 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b4 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b5 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b6 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b7 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b8 : (__tl_dyn-array i64) (make-array i64 n)]
-    [b9 : (__tl_dyn-array i64) (make-array i64 n)]
+    [b0 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b1 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b2 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b3 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b4 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b5 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b6 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b7 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b8 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b9 : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [c0 : i64 0]
     [c1 : i64 0]
     [c2 : i64 0]
@@ -66,7 +66,7 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array PhiForwardItem) (make-array PhiForwardItem 3)]
+    [items : (__tl_dyn-array PhiForwardItem) (__tl_make-array PhiForwardItem 3)]
     (begin
       (set! (array-ref items 0) (PhiForwardC 7 8 9))
       (set! (array-ref items 1) (PhiForwardC 7 8 9))

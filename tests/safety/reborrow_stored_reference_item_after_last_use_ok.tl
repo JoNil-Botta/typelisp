@@ -26,7 +26,7 @@
 
 (define (main) : unit
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (let
       [first : (SharedReborrowAfterNext items)
         (let

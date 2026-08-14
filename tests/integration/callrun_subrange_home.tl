@@ -60,7 +60,7 @@
 (define (main) : i64
   (let
     [ac : i64 (io.arg-count)]
-    [p : (__tl_dyn-array i64) (make-array i64 3)]
+    [p : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     (begin
       (set! (array-ref p 0) (+ ac 10))
       (set! (array-ref p 1) (+ ac 12))

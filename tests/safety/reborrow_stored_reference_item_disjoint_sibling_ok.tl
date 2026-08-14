@@ -32,7 +32,7 @@
 (define (main) : unit
   (let
     [pairs : ReborrowSiblingArrays
-      (ReborrowSiblingArrays (make-array i64 1) (make-array i64 1))]
+      (ReborrowSiblingArrays (__tl_make-array i64 1) (__tl_make-array i64 1))]
     (let
       [first : (ReborrowSiblingNext pairs)
         (let

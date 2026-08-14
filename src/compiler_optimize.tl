@@ -11703,7 +11703,7 @@
   (let
     [items : opt_ssa_dense_vec.Vec sites.items]
     (begin
-      (opt_ssa_dense_vec.push
+      (opt_ssa_dense_vec.push-ref!
         (&mut items)
         (OptSsaDenseEntry.PhiSite var label ty phi-var))
       (OptSsaPhiSites items))))
@@ -11731,7 +11731,7 @@
   (let
     [items : opt_ssa_dense_vec.Vec blocks.items]
     (begin
-      (opt_ssa_dense_vec.push
+      (opt_ssa_dense_vec.push-ref!
         (&mut items)
         (OptSsaDenseEntry.RenameBlock label instrs))
       (OptSsaRenameBlocks items))))
@@ -11759,7 +11759,7 @@
   (let
     [items : opt_ssa_dense_vec.Vec outs.items]
     (begin
-      (opt_ssa_dense_vec.push
+      (opt_ssa_dense_vec.push-ref!
         (&mut items)
         (OptSsaDenseEntry.BlockOut label env))
       (OptSsaBlockOuts items))))
@@ -56298,7 +56298,7 @@
   (let
     [items : opt_dense_i64_vec.Vec vars.items]
     (begin
-      (opt_dense_i64_vec.push (&mut items) var)
+      (opt_dense_i64_vec.push-ref! (&mut items) var)
       (OptBceMbVarList items))))
 
 (define (opt-bce-mb-var-list-ref [vars : OptBceMbVarList] [index : i64]) : i64
@@ -56402,7 +56402,7 @@
       ;; array per element.
       (while (< index count)
         (begin
-          (opt_dense_i64_vec.push
+          (opt_dense_i64_vec.push-ref!
             (&mut items)
             (opt-bce-mb-var-list-physical-ref first index))
           (set! index (+ index 1))))
@@ -59573,7 +59573,7 @@
   (let
     [items : opt_bce_mb_fused_vec.Vec fused.items]
     (begin
-      (opt_bce_mb_fused_vec.push (&mut items) (OptBceMbFusedPair lhs rhs))
+      (opt_bce_mb_fused_vec.push-ref! (&mut items) (OptBceMbFusedPair lhs rhs))
       (OptBceMbFused items))))
 
 (define (opt-bce-mb-fused-insert
@@ -60263,7 +60263,7 @@
     (let
       [items : opt_bce_mb_upper_vec.Vec uppers.items]
       (begin
-        (opt_bce_mb_upper_vec.push (&mut items) value)
+        (opt_bce_mb_upper_vec.push-ref! (&mut items) value)
         (OptBceMbUppers items)))))
 
 (cfg
@@ -60782,7 +60782,7 @@
   (let
     [items : opt_bce_fold_cond_vec.Vec conds.items]
     (begin
-      (opt_bce_fold_cond_vec.push (&mut items) (OptBceFoldCond op lhs rhs))
+      (opt_bce_fold_cond_vec.push-ref! (&mut items) (OptBceFoldCond op lhs rhs))
       (OptBceFoldCondList items))))
 
 (define (opt-bce-fold-cond-list-ref [conds : OptBceFoldCondList] [index : i64]) : OptBceFoldCond

@@ -24,13 +24,11 @@
   (let
     [worlds : (Array World 1) (array (World (ivec.new) 9))]
     (begin
-      (ivec.push!
-        (struct-get (array-ref worlds (next-index)) balls)
-        (next-value))
+      (ivec.push! (array-ref worlds (next-index)).balls (next-value))
       (if (and
         (= evaluation-order 12)
-        (= (ivec.len (& (struct-get (array-ref worlds 0) balls))) 1)
-        (= (ivec.get (& (struct-get (array-ref worlds 0) balls)) 0 0) 42)
-        (= (struct-get (array-ref worlds 0) marker) 9))
+        (= (ivec.len (& (array-ref worlds 0).balls)) 1)
+        (= (ivec.get (& (array-ref worlds 0).balls) 0 0) 42)
+        (= (array-ref worlds 0).marker 9))
         42
         1))))

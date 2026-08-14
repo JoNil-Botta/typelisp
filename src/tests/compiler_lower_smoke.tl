@@ -329,7 +329,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (svec.push-ref! (&mut items) "stdlib")
           items))]
     (begin
       (load.compiler-load-test-mkdir dir)

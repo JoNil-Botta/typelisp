@@ -13512,8 +13512,8 @@
         second-order
         "(module root_order)
 (define answer : i64 2)")
-      (svec.push (&mut roots) first-root)
-      (svec.push (&mut roots) second-root)
+      (svec.push-ref! (&mut roots) first-root)
+      (svec.push-ref! (&mut roots) second-root)
       (let
         [order-ok : bool
           (match (compiler-load-resolve-package-import-spec

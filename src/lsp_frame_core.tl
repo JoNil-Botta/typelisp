@@ -8219,9 +8219,7 @@
             (lsp-workspace-sources-get (& workspace.sources) source-index)]
           (begin
             (if (string.eq source.root-uri root.uri)
-              (lsp_svec.push-ref!
-                (&mut paths)
-                (string.copy (& source.path)))
+              (lsp_svec.push-ref! (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
       (lsp-workspace-index-remove-root-uri! workspace root.uri)
@@ -8248,9 +8246,7 @@
               (package_source_core.package-source-path-location-eligible-for-root?
                 root.path
                 source.path))
-              (lsp_svec.push-ref!
-                (&mut paths)
-                (string.copy (& source.path)))
+              (lsp_svec.push-ref! (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
       (lsp-workspace-index-recover-live-paths! workspace docs paths))))
@@ -14174,19 +14170,19 @@
       (lsp-workspace-sources-new)]
     (begin
       ;; Deliberately insert in the reverse of the required result order.
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut z-decls)
         (lsp-workspace-symbol-test-decl "mytarget" 4))
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut z-decls)
         (lsp-workspace-symbol-test-decl "targetPrefix" 3))
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut z-decls)
         (lsp-workspace-symbol-test-decl "target" 2))
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut z-decls)
         (lsp-workspace-symbol-test-decl "Target" 1))
-      (lsp_decl_vec.push
+      (lsp_decl_vec.push-ref!
         (&mut a-decls)
         (lsp-workspace-symbol-test-decl "target" 5))
       (lsp-workspace-sources-push!
@@ -14250,12 +14246,14 @@
     (begin
       (while (< index 300)
         (begin
-          (lsp_decl_vec.push
+          (lsp_decl_vec.push-ref!
             (&mut decls)
             (lsp-workspace-symbol-test-decl "same" (+ index 1)))
           (set! index (+ index 1))))
       ;; Exact duplicate source identities collapse to one result.
-      (lsp_decl_vec.push (&mut decls) (lsp-workspace-symbol-test-decl "same" 1))
+      (lsp_decl_vec.push-ref!
+        (&mut decls)
+        (lsp-workspace-symbol-test-decl "same" 1))
       (let
         [sources : lsp_vector_families.LspWorkspaceSources
           (lsp-workspace-sources-new)]

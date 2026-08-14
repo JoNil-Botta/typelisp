@@ -37,8 +37,8 @@
           ;; refresh for session B would move the global mark past mark-a.
           (ci.intern "driver-state-a/name.one.five")
           (load.compiler-load-session-state-use-with-intern-state! session-b b)
-          ;; B's table ends at 3 entries, the installed one at 2, so a
-          ;; global-path floor for session B would read 2, not 3.
+          ;; Full module/dotted metadata leaves B at 14 entries. Its owner-local
+          ;; floor must observe that value without reading the installed table.
           (ci.intern-compat-state-intern b "driver-state-b/name.two")
           (ci.intern-compat-state-intern b "driver-state-b/name.two.five")
           (ci.intern-compat-state-intern b "driver-state-b/name.two.nine")
@@ -46,7 +46,7 @@
           (and
             (= (driver-state-smoke-global-floor-mark) mark-a)
             (= (ci.intern-compat-state-table-id a) (ci.intern-active-table-id))
-            (= (ci.intern-compat-state-pool-len b) 9)
+            (= (ci.intern-compat-state-pool-len b) 14)
             (=
               (load.compiler-load-session-state-intern-floor-value session-b)
               (ci.intern-compat-state-pool-len b))

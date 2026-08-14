@@ -3385,43 +3385,42 @@
 (define (producer-test-clone-route-result-ok? [pools : ast.AstNodePoolContext]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.ExprList items)
-      (begin
-        (and
-          (= (ast.ast-expr-list-len (& items)) 2)
-          (match (producer-test-expr-get
-            pools
-            (ast.ast-expr-list-get (& items) 0 -1))
-            [(ast.AstExpr.Call callee args)
-              (and
-                (match (producer-test-expr-get pools callee)
-                  [(ast.AstExpr.Var name-id)
-                    (= name-id (producer-test-name-id "module"))]
-                  [_ false])
-                (= (ast.ast-expr-list-len (& args)) 1)
-                (match (producer-test-expr-get
-                  pools
-                  (ast.ast-expr-list-get (& args) 0 -1))
-                  [(ast.AstExpr.Var name-id)
-                    (string.eq (ci.intern-str name-id) "clone.module")]
-                  [_ false]))]
-            [_ false])
-          (match (producer-test-expr-get
-            pools
-            (ast.ast-expr-list-get (& items) 1 -1))
-            [(ast.AstExpr.Call callee args)
-              (and
-                (match (producer-test-expr-get pools callee)
-                  [(ast.AstExpr.Var name-id)
-                    (= name-id (producer-test-name-id "marker"))]
-                  [_ false])
-                (= (ast.ast-expr-list-len (& args)) 1)
-                (match (producer-test-expr-get
-                  pools
-                  (ast.ast-expr-list-get (& args) 0 -1))
-                  [(ast.AstExpr.Var name-id)
-                    (string.eq (ci.intern-str name-id) "i64")]
-                  [_ false]))]
-            [_ false])))]
+      (and
+        (= (ast.ast-expr-list-len (& items)) 2)
+        (match (producer-test-expr-get
+          pools
+          (ast.ast-expr-list-get (& items) 0 -1))
+          [(ast.AstExpr.Call callee args)
+            (and
+              (match (producer-test-expr-get pools callee)
+                [(ast.AstExpr.Var name-id)
+                  (= name-id (producer-test-name-id "module"))]
+                [_ false])
+              (= (ast.ast-expr-list-len (& args)) 1)
+              (match (producer-test-expr-get
+                pools
+                (ast.ast-expr-list-get (& args) 0 -1))
+                [(ast.AstExpr.Var name-id)
+                  (string.eq (ci.intern-str name-id) "clone.module")]
+                [_ false]))]
+          [_ false])
+        (match (producer-test-expr-get
+          pools
+          (ast.ast-expr-list-get (& items) 1 -1))
+          [(ast.AstExpr.Call callee args)
+            (and
+              (match (producer-test-expr-get pools callee)
+                [(ast.AstExpr.Var name-id)
+                  (= name-id (producer-test-name-id "marker"))]
+                [_ false])
+              (= (ast.ast-expr-list-len (& args)) 1)
+              (match (producer-test-expr-get
+                pools
+                (ast.ast-expr-list-get (& args) 0 -1))
+                [(ast.AstExpr.Var name-id)
+                  (string.eq (ci.intern-str name-id) "i64")]
+                [_ false]))]
+          [_ false]))]
     [_ false]))
 
 ;; Miniature clone route: captured TypeLiteral projection, computed string

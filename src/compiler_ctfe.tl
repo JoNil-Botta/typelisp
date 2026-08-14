@@ -738,10 +738,11 @@
         (ctfe-builtin-ref 277)
         (ctfe-builtin-ref 278))
       (= name-id (ctfe-builtin-ref 279))
-      (ctfe-builtin-id-any2?
+      (ctfe-builtin-id-any3?
         name-id
         (ctfe-builtin-ref 282)
-        (ctfe-builtin-ref 283))
+        (ctfe-builtin-ref 283)
+        (ctfe-builtin-ref 284))
       (ctfe-builtin-source-helper-id? name-id)
       (ctfe-builtin-expr-clause-list-inspector-id? name-id)
       (ctfe-builtin-expr-binding-clause-list-inspector-id? name-id))))
@@ -2609,6 +2610,7 @@
     [(ast.AstExpr.ArraySet _ _ _) "array-set!"]
     [(ast.AstExpr.ArrayTake _ _ _) "array-take!"]
     [(ast.AstExpr.FixedArrayTake _ _) "array-take!"]
+    [(ast.AstExpr.Replace _ _) "replace!"]
     [(ast.AstExpr.ArrayPush _ _) "array-push!"]
     [(ast.AstExpr.StringRef _ _) "string-ref"]
     [(ast.AstExpr.While _ _) "while"]
@@ -4395,6 +4397,13 @@
       (let
         [rhs : ast.AstExpr (ctfe-ast-get env rhs-box)]
         (ctfe-eval-set name rhs expr env fuel))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (ctfe-eval-replace
+        (ctfe-ast-get env place-box)
+        (ctfe-ast-get env replacement-box)
+        expr
+        env
+        fuel)]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -6806,6 +6815,53 @@
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr expr "expr-array-ref expects exactly two args")))))
+
+;; `(expr-replace place replacement)` builds the dedicated replacement node;
+;; ownership and place validity are checked after macro expansion.
+(define (ctfe-eval-expr-replace-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [place-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
+      [replacement-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
+      (match (compiler-ctfe-eval place-arg env fuel)
+        [(ResultCtfe.Ok place-value place-fuel)
+          (let
+            [place-node : i64 (ctfe-syntax-expr-value-node place-value)]
+            (if (>= place-node 0)
+              (match (compiler-ctfe-eval replacement-arg env place-fuel)
+                [(ResultCtfe.Ok replacement-value replacement-fuel)
+                  (let
+                    [replacement-node : i64
+                      (ctfe-syntax-expr-value-node replacement-value)]
+                    (if (>= replacement-node 0)
+                      (ResultCtfe.Ok
+                        (ctfe-syntax-expr-value
+                          env
+                          (ast.ast-expr-replace-with-pools
+                            (ctfe-env-pools env)
+                            place-node
+                            replacement-node)
+                          (ctfe-untyped-expr-type))
+                        replacement-fuel)
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-replace replacement expects Expr")))))]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-replace place expects Expr")))))]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr expr "expr-replace expects exactly two args")))))
 
 ;; Build the ordered, persistent syntax-list values used by expression calls.
 (define (ctfe-eval-expr-list-empty-call
@@ -9336,6 +9392,8 @@
             (ctfe-eval-expr-borrow-call false "expr-borrow" args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 283))
             (ctfe-eval-expr-array-ref-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 284))
+            (ctfe-eval-expr-replace-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 95))
             (ctfe-eval-expr-call-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 96))
@@ -10160,6 +10218,39 @@
               origin
               "comptime set! requires a local let binding"))))]
     [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+
+(define (ctfe-eval-replace
+  [place : ast.AstExpr]
+  [replacement : ast.AstExpr]
+  [origin : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (ctfe-expr-unspan env place)
+    [(ast.AstExpr.Var name-id)
+      (match (compiler-ctfe-eval replacement env fuel)
+        [(ResultCtfe.Ok value replacement-fuel)
+          (match (ctfe-env-lookup-id env name-id)
+            [(CtfeMaybeValue.Some old)
+              (if (ctfe-env-set-local-id! env name-id value)
+                (ResultCtfe.Ok old replacement-fuel)
+                (ResultCtfe.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      origin
+                      "comptime replace! requires a mutable local let binding"))))]
+            [(CtfeMaybeValue.None)
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    origin
+                    "comptime replace! requires a mutable local let binding")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+    [_
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            origin
+            "comptime replace! currently supports local let bindings only")))]))
 
 ;; Evaluate `let` bindings sequentially, threading both fuel and the extended
 ;; environment. The original `env` is preserved for siblings because each
@@ -12520,6 +12611,23 @@
                   index-fuel)]
               [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr (ctfe-ast-get env place-box)]
+        [replacement : ast.AstExpr (ctfe-ast-get env replacement-box)]
+        (match (ctfe-quote-expr place env fuel quasiquote)
+          [(ResultCtfeQuoteExpr.Ok quoted-place _ place-fuel)
+            (match (ctfe-quote-expr replacement env place-fuel quasiquote)
+              [(ResultCtfeQuoteExpr.Ok quoted-replacement _ replacement-fuel)
+                (ResultCtfeQuoteExpr.Ok
+                  (ast.ast-expr-replace-with-pools
+                    (ctfe-env-pools env)
+                    quoted-place
+                    quoted-replacement)
+                  (ast.AstType.Expr)
+                  replacement-fuel)]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr (ctfe-ast-get env array-box)]
@@ -13557,6 +13665,19 @@
               (and
                 (ctfe-expr-eq-in-env env a-target b-target)
                 (ctfe-expr-eq-in-env env a-index b-index)))]
+          [_ false]))]
+    [(ast.AstExpr.Replace a-place-box a-replacement-box)
+      (let
+        [a-place : ast.AstExpr (ctfe-ast-get env a-place-box)]
+        [a-replacement : ast.AstExpr (ctfe-ast-get env a-replacement-box)]
+        (match b
+          [(ast.AstExpr.Replace b-place-box b-replacement-box)
+            (and
+              (ctfe-expr-eq-in-env env a-place (ctfe-ast-get env b-place-box))
+              (ctfe-expr-eq-in-env
+                env
+                a-replacement
+                (ctfe-ast-get env b-replacement-box)))]
           [_ false]))]
     [(ast.AstExpr.ArrayPush a-target-box a-value-box)
       (let

@@ -1427,6 +1427,9 @@
 (define (compiler-parse-tag-expr-fixed-array-take) : i64
   305)
 
+(define (compiler-parse-tag-expr-replace) : i64
+  314)
+
 (define (compiler-parse-tag-expr-for-owned-state) : i64
   306)
 
@@ -2109,6 +2112,12 @@
       (set!
         out
         (compiler-parse-dispatch-bind out "set!" (compiler-parse-tag-expr-set)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "replace!"
+          (compiler-parse-tag-expr-replace)))
       (set!
         out
         (compiler-parse-dispatch-bind out "ann" (compiler-parse-tag-expr-ann)))
@@ -5087,6 +5096,52 @@
         [_ (ResultAstExpr.Err "parse: malformed set!")])]
     [_ (ResultAstExpr.Err "parse: malformed set!")]))
 
+(define (parse-ast-replace-place?
+  [pools : ast.AstNodePoolContext]
+  [expr-id : i64]) : bool
+  (match (ast.ast-expr-unspan-with-pools
+    pools
+    (ast.ast-node-pool-context-expr-get pools expr-id))
+    [(ast.AstExpr.Var _) true]
+    [(ast.AstExpr.StructGet _ _) true]
+    [(ast.AstExpr.TupleRef _ index) (>= index 0)]
+    [(ast.AstExpr.ArrayRef _ _) true]
+    [(ast.AstExpr.BoxGet _) true]
+    [(ast.AstExpr.BoxTake _) true]
+    [_ false]))
+
+(define (parse-ast-replace
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view rest)
+    [(reader.SpannedSexprView.Cons place-node replacement-tail _)
+      (match (reader.spanned-sexpr-view replacement-tail)
+        [(reader.SpannedSexprView.Cons replacement-node end _)
+          (match (reader.spanned-sexpr-view end)
+            [(reader.SpannedSexprView.Nil _)
+              (match (parse-ast-expr-with-pools dispatch pools place-node)
+                [(ResultAstExpr.Ok place-id)
+                  (if (parse-ast-replace-place? pools place-id)
+                    (match (parse-ast-expr-with-pools
+                      dispatch
+                      pools
+                      replacement-node)
+                      [(ResultAstExpr.Ok replacement-id)
+                        (ResultAstExpr.Ok
+                          (ast.ast-expr-replace-with-pools
+                            pools
+                            place-id
+                            replacement-id))]
+                      [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])
+                    (ResultAstExpr.Err
+                      "parse: replace! target must be a mutable place"))]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_
+              (ResultAstExpr.Err "parse: replace! expects exactly two operands")])]
+        [_ (ResultAstExpr.Err "parse: replace! expects exactly two operands")])]
+    [_ (ResultAstExpr.Err "parse: replace! expects exactly two operands")]))
+
 (define (parse-ast-ann-like
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -7132,6 +7187,8 @@
     [(= tag (compiler-parse-tag-expr-unsafe))
       (parse-ast-unsafe dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-set)) (parse-ast-set dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-replace))
+      (parse-ast-replace dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-ann))
       (parse-ast-ann-like dispatch pools false rest)]
     [(= tag (compiler-parse-tag-expr-cast))
@@ -11697,6 +11754,22 @@
       "(define (main [items : (Array i64 1)] [live : (Array bool 1)]) : i64 (array-take! items live 0))"
       "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")))
 
+(define (compiler-parse-replace-ok?) : bool
+  (and
+    (compiler-parse-ok?
+      "(define (main) : i64 (let [value : i64 1] (replace! value 2)))")
+    (compiler-parse-ok?
+      "(define (main [items : (Array i64 2)] [i : i64]) : i64 (replace! (array-ref items i) 7))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (replace! (+ 1 2) 3))"
+      "parse: replace! target must be a mutable place")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (replace! value))"
+      "parse: replace! expects exactly two operands")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (replace! value 1 2))"
+      "parse: replace! expects exactly two operands")))
+
 (define (compiler-parse-reference-source) : String
   "(define (use [s : (& n String)] [view : (& n str)] [items : (&mut value (__tl_dyn-array i64))]) : unit unit)")
 
@@ -13750,6 +13823,7 @@
         (compiler-parse-source-symbol-ids-preserved-ok?)
         (compiler-parse-box-ok?)
         (compiler-parse-array-take-ok?)
+        (compiler-parse-replace-ok?)
         (compiler-parse-reference-ok?)
         (compiler-parse-borrow-ok?)
         (compiler-parse-resource-with-shape-ok?)

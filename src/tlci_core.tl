@@ -665,13 +665,14 @@
 (define tlci-host-callback-name-expr-span-unquoted : String
   "expr-span-unquoted")
 
-;; Intrinsic array-node construction: pop two operand expressions and push the
-;; array-ref / array-push expression node the parser produces for these forms
-;; (they are recognized as dedicated AST nodes, not generic calls). Refs #5213.
+;; Intrinsic node construction: pop two operand expressions and push the
+;; dedicated node the parser produces (rather than a generic call). Refs #5213.
 (define tlci-host-callback-name-expr-array-ref : String
   "expr-array-ref")
 (define tlci-host-callback-name-expr-array-push : String
   "expr-array-push")
+(define tlci-host-callback-name-expr-replace : String
+  "expr-replace")
 
 ;; Pop a size expression and a type value and push the make-array node the
 ;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.

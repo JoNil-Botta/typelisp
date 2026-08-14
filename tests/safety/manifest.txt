@@ -513,6 +513,31 @@ fixed_array_take_borrow_live_reject|check-fail|tests/safety/fixed_array_take_bor
 fixed_array_take_legacy_arity_reject|check-fail|tests/safety/fixed_array_take_legacy_arity_reject.tl|-|expects exactly two operands
 fixed_array_take_global_noncopy_reject|check-fail|tests/safety/fixed_array_take_global_noncopy_reject.tl|-|cannot move out of global `global-items`
 
+# Move-safe replace! requires initialized writable storage, reserves its place
+# across RHS evaluation, preserves lifetime/ownership facts, and checks indexes
+# before running the replacement expression.
+replace_reference_lifetime_ok|check-ok|tests/safety/replace_reference_lifetime_ok.tl|-|-
+replace_shared_ref_reject|check-fail|tests/safety/replace_shared_ref_reject.tl|-|set! array element requires mutable array access
+replace_raw_pointer_reject|check-fail|tests/safety/replace_raw_pointer_reject.tl|-|replace! target must be a storage place
+replace_temporary_reject|check-fail|tests/safety/replace_temporary_reject.tl|-|replace! target must be a mutable place
+replace_moved_reject|check-fail|tests/safety/replace_moved_reject.tl|-|use of moved value `text`
+replace_partial_root_reject|check-fail|tests/safety/replace_partial_root_reject.tl|-|use of moved value `owners`
+replace_moved_field_reject|check-fail|tests/safety/replace_moved_field_reject.tl|-|use of moved value `owners.left`
+replace_borrow_live_reject|check-fail|tests/safety/replace_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `value`
+replace_self_move_reject|check-fail|tests/safety/replace_self_move_reject.tl|-|cannot move borrowed place `text`
+replace_whole_subpath_overlap_reject|check-fail|tests/safety/replace_whole_subpath_overlap_reject.tl|-|cannot move borrowed place `owners.left`
+replace_dynamic_overlap_reject|check-fail|tests/safety/replace_dynamic_overlap_reject.tl|-|cannot move owner-consuming value out of aggregate path
+replace_rhs_mutation_reject|check-fail|tests/safety/replace_rhs_mutation_reject.tl|-|cannot mutably borrow borrowed place `value`
+replace_global_noncopy_reject|check-fail|tests/safety/replace_global_noncopy_reject.tl|-|cannot move out of global `global-text`
+replace_cleanup_owner_reject|check-fail|tests/safety/replace_cleanup_owner_reject.tl|-|replace! cannot replace an active cleanup owner
+replace_spmd_reject|check-fail|tests/safety/replace_spmd_reject.tl|-|replace! is not supported in SPMD
+replace_type_mismatch_reject|check-fail|tests/safety/replace_type_mismatch_reject.tl|-|replace! replacement type mismatch
+replace_lifetime_store_reject|check-fail|tests/safety/replace_lifetime_store_reject.tl|-|source lifetime `short-life` does not outlive required lifetime `long-life`
+replace_comptime_nonlocal_reject|check-fail|tests/safety/replace_comptime_nonlocal_reject.tl|-|comptime replace! requires a mutable local let binding
+replace_equal_bounds_trap|run-trap|tests/safety/replace_equal_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+replace_negative_bounds_trap|run-trap|tests/safety/replace_negative_bounds_trap.tl|134|array index out of bounds: index=-1 length=1
+replace_huge_bounds_trap|run-trap|tests/safety/replace_huge_bounds_trap.tl|134|array index out of bounds: index=9223372036854775807 length=1
+
 # Scalar loop joins distinguish repetition, break, and function-exit paths.
 loop_move_return_paths_ok|check-ok|tests/safety/loop_move_return_paths_ok.tl|-|-
 loop_move_break_paths_ok|check-ok|tests/safety/loop_move_break_paths_ok.tl|-|-

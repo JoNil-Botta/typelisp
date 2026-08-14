@@ -1535,11 +1535,15 @@ if [ "$NL_HOST_OS" = windows ]; then
     # physical payload bytes, which is 3,814 nodes past the 41-segment line
     # (walk_hygiene_nodes_copied 233,130 here). Do not reconstruct this
     # boundary by adding published deltas; it is close enough to a step that
-    # only a direct Windows measurement decides it. This bank's optimizer,
-    # backend and regalloc series initially retained 42 segments. The planned
-    # bounds-preservation regression helper then crossed the next boundary: the
-    # authoritative Windows probe measured 2,759,962 used nodes, 2,818,048
-    # capacity and 90,177,536 physical payload bytes.
+    # only a direct Windows measurement decides it.
+    # #6241's move-safe replace expression adds the missing macro expansion,
+    # hygiene, dependency, and reflection-prescan traversal arms. The
+    # authoritative Windows probe measured 2,755,843 used nodes, crossing the
+    # boundary to 43 segments: 2,818,048 capacity and 90,177,536 physical
+    # payload bytes. Merged with this bank's optimizer, backend, regalloc, and
+    # planned bounds-preservation regression helper, the authoritative Windows
+    # probe measured 2,764,373 used nodes and retained the same capacity and
+    # physical payload boundary.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

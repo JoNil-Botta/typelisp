@@ -6167,6 +6167,20 @@
             alias
             summary
             locals)))]
+    [(ast.AstExpr.Replace place replacement)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-session-state-lazy-expr-demand
+          state
+          (ast.ast-node-get place)
+          alias
+          summary
+          locals)
+        (compiler-load-session-state-lazy-expr-demand
+          state
+          (ast.ast-node-get replacement)
+          alias
+          summary
+          locals))]
     [(ast.AstExpr.ArrayPush items value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand

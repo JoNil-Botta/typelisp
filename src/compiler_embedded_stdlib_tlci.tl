@@ -827,8 +827,8 @@
     [_ -1]))
 
 ;; Pop two operand expressions (second then target) and push a two-operand
-;; intrinsic node: kind 0 is array-ref, kind 1 is array-push. Both take the
-;; target and operand node ids the interpreted quasiquote builders receive.
+;; intrinsic node: kind 0 is array-ref, kind 1 is array-push, and kind 2 is
+;; replace. All take the node ids the interpreted builders receive.
 (define (compiler-comptime-host-build-binary-intrinsic! [kind : i64]) : i64
   (if (< compiler-comptime-host-stack-len 2)
     tlci.tlci-host-callback-status-bad-request
@@ -856,10 +856,12 @@
           [node : i64
             (if (= kind 0)
               (ast.ast-expr-array-ref-with-pools pools target-node operand-node)
-              (ast.ast-expr-array-push-with-pools
-                pools
-                target-node
-                operand-node))]
+              (if (= kind 1)
+                (ast.ast-expr-array-push-with-pools
+                  pools
+                  target-node
+                  operand-node)
+                (ast.ast-expr-replace-with-pools pools target-node operand-node)))]
           (begin
             (set!
               compiler-comptime-host-stack-len
@@ -2260,9 +2262,9 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
-;; Intrinsic two-operand array nodes: pop the second operand then the
-;; target and push the array-ref / array-push node the parser recognizes
-;; for these forms, matching the interpreted quasiquote builders.
+;; Intrinsic two-operand place/array nodes: pop the second operand then the
+;; target and push the node the parser recognizes for array-ref, replace!, or
+;; array-push, matching the interpreted quasiquote builders.
 (define (compiler-comptime-host-callback-expr-array-ref
   [session : i64]
   [_arg-a : i64]
@@ -2279,6 +2281,28 @@
       compiler-comptime-host-session-status
       (let
         [result : i64 (compiler-comptime-host-build-binary-intrinsic! 0)]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-expr-replace
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64 (compiler-comptime-host-build-binary-intrinsic! 2)]
         (begin
           (when
             (not (= result tlci.tlci-host-callback-status-ok))
@@ -8333,6 +8357,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-array-ref)
         compiler-comptime-host-callback-expr-array-ref)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-replace)
+        compiler-comptime-host-callback-expr-replace)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

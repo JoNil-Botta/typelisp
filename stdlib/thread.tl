@@ -442,7 +442,7 @@
     (begin
       (while (< i n)
         (begin
-          (thread-i64-vec.push (&mut out) (thread-i64-vec.get (& src) i 0))
+          (thread-i64-vec.push-ref! (&mut out) (thread-i64-vec.get (& src) i 0))
           (set! i (+ i 1))))
       out)))
 

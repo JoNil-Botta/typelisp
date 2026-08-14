@@ -4008,7 +4008,7 @@
                 (match offset
                   [(ir.CompilerIrValue.I64 field-offset)
                     (begin
-                      (opt_aggregate_pointer_vec.push
+                      (opt_aggregate_pointer_vec.push-ref!
                         (&mut ptrs)
                         (OptAggregatePointer.Pointer
                           dst
@@ -4041,7 +4041,7 @@
             (match (opt-aggregate-value-offset base ptrs src)
               [(option_i64.Some offset)
                 (begin
-                  (opt_aggregate_access_vec.push
+                  (opt_aggregate_access_vec.push-ref!
                     (&mut accesses)
                     (OptAggregateAccess.Load dst offset load-ty))
                   (opt-aggregate-scan-instrs
@@ -4077,7 +4077,7 @@
                 (if (opt-aggregate-value-has-pointer? base ptrs value)
                   (OptAggregateScanResult.Reject)
                   (begin
-                    (opt_aggregate_access_vec.push
+                    (opt_aggregate_access_vec.push-ref!
                       (&mut accesses)
                       (OptAggregateAccess.Store offset store-ty))
                     (opt-aggregate-scan-instrs
@@ -4185,7 +4185,7 @@
             index)
             [(OptAggregateScanResult.Ok ptrs accesses)
               (begin
-                (opt_aggregate_candidate_vec.push
+                (opt_aggregate_candidate_vec.push-ref!
                   (&mut candidates)
                   (OptAggregateAllocCandidate.Candidate
                     base
@@ -4280,7 +4280,7 @@
     (begin
       (while (< i right-count)
         (begin
-          (opt_aggregate_candidate_vec.push
+          (opt_aggregate_candidate_vec.push-ref!
             (&mut left)
             (array-ref (opt_aggregate_candidate_vec.slots (& right)) i))
           (set! i (+ i 1))))
@@ -4448,7 +4448,7 @@
                   [slot-count : i64 (opt-aggregate-stack-slot-count size)]
                   [storage : i64 (+ frame (- slot-count 1))]
                   (begin
-                    (opt_aggregate_promote_slot_vec.push
+                    (opt_aggregate_promote_slot_vec.push-ref!
                       (&mut promote-slots)
                       (OptAggregatePromoteSlot.Slot base storage))
                     (set! frame (+ frame slot-count))))
@@ -11621,7 +11621,7 @@
     [order : opt_dense_i64_vec.Vec types.order]
     (begin
       (while (<= (opt_ssa_var_type_vec.len (& entries)) var)
-        (opt_ssa_var_type_vec.push
+        (opt_ssa_var_type_vec.push-ref!
           (&mut entries)
           (OptSsaVarTypeEntry false (ast.AstType.I64))))
       (let
@@ -11630,11 +11630,11 @@
             (array-ref (opt_ssa_var_type_vec.slots (& entries)) var)
             present)]
         (begin
-          (opt_ssa_var_type_vec.set
+          (opt_ssa_var_type_vec.set-ref!
             (&mut entries)
             var
             (OptSsaVarTypeEntry true ty))
-          (unless was-present? (opt_dense_i64_vec.push (&mut order) var))
+          (unless was-present? (opt_dense_i64_vec.push-ref! (&mut order) var))
           (OptSsaVarTypes entries order))))))
 
 ;; Newest-first walk support: the number of bound vars and the i-th newest.
@@ -11703,7 +11703,7 @@
   (let
     [items : opt_ssa_dense_vec.Vec sites.items]
     (begin
-      (opt_ssa_dense_vec.push
+      (opt_ssa_dense_vec.push-ref!
         (&mut items)
         (OptSsaDenseEntry.PhiSite var label ty phi-var))
       (OptSsaPhiSites items))))
@@ -11731,7 +11731,7 @@
   (let
     [items : opt_ssa_dense_vec.Vec blocks.items]
     (begin
-      (opt_ssa_dense_vec.push
+      (opt_ssa_dense_vec.push-ref!
         (&mut items)
         (OptSsaDenseEntry.RenameBlock label instrs))
       (OptSsaRenameBlocks items))))
@@ -11759,7 +11759,7 @@
   (let
     [items : opt_ssa_dense_vec.Vec outs.items]
     (begin
-      (opt_ssa_dense_vec.push
+      (opt_ssa_dense_vec.push-ref!
         (&mut items)
         (OptSsaDenseEntry.BlockOut label env))
       (OptSsaBlockOuts items))))
@@ -14003,7 +14003,9 @@
   (let
     [items : opt_global_fact_vec.Vec facts.items]
     (begin
-      (opt_global_fact_vec.push (&mut items) (OptGlobalDenseFact.Expr fact))
+      (opt_global_fact_vec.push-ref!
+        (&mut items)
+        (OptGlobalDenseFact.Expr fact))
       (OptGlobalExprFacts items))))
 
 (define (opt-global-expr-facts-ref [facts : OptGlobalExprFacts] [index : i64]) : OptGlobalExprFact
@@ -14028,7 +14030,9 @@
   (let
     [items : opt_global_fact_vec.Vec facts.items]
     (begin
-      (opt_global_fact_vec.push (&mut items) (OptGlobalDenseFact.Copy fact))
+      (opt_global_fact_vec.push-ref!
+        (&mut items)
+        (OptGlobalDenseFact.Copy fact))
       (OptGlobalCopyFacts items))))
 
 (define (opt-global-copy-facts-ref [facts : OptGlobalCopyFacts] [index : i64]) : OptGlobalCopyFact
@@ -14053,7 +14057,9 @@
   (let
     [items : opt_global_fact_vec.Vec facts.items]
     (begin
-      (opt_global_fact_vec.push (&mut items) (OptGlobalDenseFact.PackWord fact))
+      (opt_global_fact_vec.push-ref!
+        (&mut items)
+        (OptGlobalDenseFact.PackWord fact))
       (OptGlobalPackWordFacts items))))
 
 (define (opt-global-pack-word-facts-ref
@@ -14296,7 +14302,7 @@
       (let
         [buckets : (__tl_dyn-array OptGlobalCopyFacts) table.buckets]
         (if (and (>= dst 0) (< dst (array-length buckets)))
-          (opt_global_fact_vec.push
+          (opt_global_fact_vec.push-ref!
             (&mut (__tl-project-field (array-ref buckets dst) items))
             (OptGlobalDenseFact.Copy
               (OptGlobalCopyFact.Fact dst src def-block-id def-pos)))
@@ -14451,7 +14457,7 @@
       (let
         [buckets : (__tl_dyn-array OptGlobalPackWordFacts) table.buckets]
         (if (and (>= group 0) (< group (array-length buckets)))
-          (opt_global_fact_vec.push
+          (opt_global_fact_vec.push-ref!
             (&mut (__tl-project-field (array-ref buckets group) items))
             (OptGlobalDenseFact.PackWord
               (OptGlobalPackWordFact.Fact
@@ -15364,7 +15370,7 @@
         [buckets : (__tl_dyn-array OptGlobalExprFacts) table.buckets]
         [bucket : i64
           (opt-global-expr-bucket-index type-segment-bases buckets key)]
-        (opt_global_fact_vec.push
+        (opt_global_fact_vec.push-ref!
           (&mut (__tl-project-field (array-ref buckets bucket) items))
           (OptGlobalDenseFact.Expr
             (OptGlobalExprFact.Fact key dst def-block-id def-pos))))]))
@@ -18775,7 +18781,7 @@
   (let
     [items : opt_licm_store_root_vec.Vec stores.items]
     (begin
-      (opt_licm_store_root_vec.push (&mut items) root)
+      (opt_licm_store_root_vec.push-ref! (&mut items) root)
       (OptLicmStoreRootList items))))
 
 (define (opt-licm-store-roots-safe?
@@ -35227,7 +35233,7 @@
   (let
     [buckets : opt_dense_i64_vec.Vec changes.buckets]
     (begin
-      (opt_dense_i64_vec.push (&mut buckets) bucket)
+      (opt_dense_i64_vec.push-ref! (&mut buckets) bucket)
       (OptGvnScopeChanges buckets))))
 
 ;; Number of times `var` appears as a definition site (instruction destination
@@ -48599,13 +48605,13 @@
   [kmax : i64]
   [index : i64]) : unit
   (if (>= index (opt_uce_group_vec.len groups))
-    (opt_uce_group_vec.push groups (OptUceGroup base length kmin kmax))
+    (opt_uce_group_vec.push-ref! groups (OptUceGroup base length kmin kmax))
     (let
       [g : OptUceGroup (array-ref (opt_uce_group_vec.slots groups) index)]
       (if (and
         (= g.base base)
         (opt-unroll-const-guard-value-eq? g.length length))
-        (opt_uce_group_vec.set
+        (opt_uce_group_vec.set-ref!
           groups
           index
           (OptUceGroup
@@ -48719,7 +48725,7 @@
                         kmin
                         kmax
                         0)
-                      (opt_dense_i64_vec.push skips index)
+                      (opt_dense_i64_vec.push-ref! skips index)
                       (opt-unroll-const-guard-scan
                         instrs
                         phi-count
@@ -49644,7 +49650,7 @@
     (let
       [items : opt_unroll_simd_memory_vec.Vec memory-bases.items]
       (begin
-        (opt_unroll_simd_memory_vec.push
+        (opt_unroll_simd_memory_vec.push-ref!
           (&mut items)
           (OptUnrollSimdMemory base ty))
         (OptUnrollSimdMemoryList items)))))
@@ -56292,7 +56298,7 @@
   (let
     [items : opt_dense_i64_vec.Vec vars.items]
     (begin
-      (opt_dense_i64_vec.push (&mut items) var)
+      (opt_dense_i64_vec.push-ref! (&mut items) var)
       (OptBceMbVarList items))))
 
 (define (opt-bce-mb-var-list-ref [vars : OptBceMbVarList] [index : i64]) : i64
@@ -56396,7 +56402,7 @@
       ;; array per element.
       (while (< index count)
         (begin
-          (opt_dense_i64_vec.push
+          (opt_dense_i64_vec.push-ref!
             (&mut items)
             (opt-bce-mb-var-list-physical-ref first index))
           (set! index (+ index 1))))
@@ -57922,7 +57928,7 @@
   (let
     [items : opt_dense_i64_vec.Vec drops.items]
     (begin
-      (opt_dense_i64_vec.push (&mut items) var)
+      (opt_dense_i64_vec.push-ref! (&mut items) var)
       (OptLateBoundsPairDrop items))))
 
 (define (opt-late-bounds-pair-selected-length?
@@ -59567,7 +59573,7 @@
   (let
     [items : opt_bce_mb_fused_vec.Vec fused.items]
     (begin
-      (opt_bce_mb_fused_vec.push (&mut items) (OptBceMbFusedPair lhs rhs))
+      (opt_bce_mb_fused_vec.push-ref! (&mut items) (OptBceMbFusedPair lhs rhs))
       (OptBceMbFused items))))
 
 (define (opt-bce-mb-fused-insert
@@ -60257,7 +60263,7 @@
     (let
       [items : opt_bce_mb_upper_vec.Vec uppers.items]
       (begin
-        (opt_bce_mb_upper_vec.push (&mut items) value)
+        (opt_bce_mb_upper_vec.push-ref! (&mut items) value)
         (OptBceMbUppers items)))))
 
 (cfg
@@ -60776,7 +60782,7 @@
   (let
     [items : opt_bce_fold_cond_vec.Vec conds.items]
     (begin
-      (opt_bce_fold_cond_vec.push (&mut items) (OptBceFoldCond op lhs rhs))
+      (opt_bce_fold_cond_vec.push-ref! (&mut items) (OptBceFoldCond op lhs rhs))
       (OptBceFoldCondList items))))
 
 (define (opt-bce-fold-cond-list-ref [conds : OptBceFoldCondList] [index : i64]) : OptBceFoldCond
@@ -74133,8 +74139,8 @@
     [len : i64 worklist.len]
     (begin
       (if (< len (opt_dense_i64_vec.len (& items)))
-        (opt_dense_i64_vec.set (&mut items) len slot)
-        (opt_dense_i64_vec.push (&mut items) slot))
+        (opt_dense_i64_vec.set-ref! (&mut items) len slot)
+        (opt_dense_i64_vec.push-ref! (&mut items) slot))
       (OptReachWorklist items (+ len 1)))))
 
 (define (opt-reach-worklist-pop [worklist : OptReachWorklist]) : OptReachWorklistPop

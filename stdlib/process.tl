@@ -377,8 +377,8 @@
   [name : String]
   [value : String]) : unit
   (begin
-    (svec.push (&mut env.names) name)
-    (svec.push (&mut env.values) value)))
+    (svec.push-ref! (&mut env.names) name)
+    (svec.push-ref! (&mut env.values) value)))
 
 ;: Fill dense public env storage from a vector-backed override set.
 (define (env-vec-to-list-fill
@@ -1081,7 +1081,7 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
+      (svec.push-ref! (&mut items) a)
       items)))
 
 ;: Inline test helper for generated string-vector argv buffers.
@@ -1089,8 +1089,8 @@
   (let
     [items : svec.Vec (svec.with-capacity 2)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
+      (svec.push-ref! (&mut items) a)
+      (svec.push-ref! (&mut items) b)
       items)))
 
 ;: Inline test helper for generated string-vector argv buffers.
@@ -1098,9 +1098,9 @@
   (let
     [items : svec.Vec (svec.with-capacity 3)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
+      (svec.push-ref! (&mut items) a)
+      (svec.push-ref! (&mut items) b)
+      (svec.push-ref! (&mut items) c)
       items)))
 
 ;: Inline test helper for vector-backed environment overrides.
@@ -1130,7 +1130,7 @@
     [names : svec.Vec (svec.new)]
     [values : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut names) "ONLY_NAME")
+      (svec.push-ref! (&mut names) "ONLY_NAME")
       (ProcessEnvVec names values))))
 
 ;: Inline test body for command and argv helpers.

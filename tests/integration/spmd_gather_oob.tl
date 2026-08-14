@@ -12,14 +12,14 @@
     [ix : i64v.Vec (i64z.make 8)]
     [out : i64v.Vec (i64z.make 8)]
     (begin
-      (i64v.set (&mut ix) 0 0)
-      (i64v.set (&mut ix) 1 9223372036854775807)
-      (i64v.set (&mut ix) 2 1)
-      (i64v.set (&mut ix) 3 (- 0 1))
-      (i64v.set (&mut ix) 4 2)
-      (i64v.set (&mut ix) 5 3)
-      (i64v.set (&mut ix) 6 4)
-      (i64v.set (&mut ix) 7 5)
+      (i64v.set-ref! (&mut ix) 0 0)
+      (i64v.set-ref! (&mut ix) 1 9223372036854775807)
+      (i64v.set-ref! (&mut ix) 2 1)
+      (i64v.set-ref! (&mut ix) 3 (- 0 1))
+      (i64v.set-ref! (&mut ix) 4 2)
+      (i64v.set-ref! (&mut ix) 5 3)
+      (i64v.set-ref! (&mut ix) 6 4)
+      (i64v.set-ref! (&mut ix) 7 5)
       (let
         [xs-slots (i64v.slots (& xs))]
         [ix-slots (i64v.slots (& ix))]

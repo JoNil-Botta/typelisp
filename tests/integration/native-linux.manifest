@@ -32,6 +32,7 @@ borrow_reborrow_stored_reference_aggregate|tests/integration/borrow_reborrow_sto
 vector_shared_iterator|tests/integration/vector_shared_iterator.tl|42|-|-|stdlib/vector.tl
 vector_consuming_iterator|tests/integration/vector_consuming_iterator.tl|42|-|-|stdlib/vector.tl
 vector_cleanup_consuming_iterator|tests/integration/vector_cleanup_consuming_iterator.tl|42|-|-|stdlib/vector.tl stdlib/test.tl
+vector_bang_eval_once|tests/integration/vector_bang_eval_once.tl|42|-|-|stdlib/vector.tl
 for_macro|tests/integration/for_macro.tl|42|-|-|stdlib/iterator.tl stdlib/string.tl stdlib/vector.tl
 two_phase_mutable_call_borrow|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
@@ -155,6 +156,7 @@ clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdl
 clone_macro_handoff|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl
 clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 clone_generated_vector_element|tests/integration/clone_generated_vector_element.tl|42|-|-|stdlib/vector.tl stdlib/string.tl
+generated_macro_clone_handoff|tests/integration/generated_macro_clone_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl
 clone_imported_nominal_direct|tests/integration/clone_imported_nominal_direct.tl|41|-|-|clone_imported_nominal_dep.tl stdlib/string.tl
 clone_imported_nominal_wrapper|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|42|-|-|-

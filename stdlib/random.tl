@@ -509,10 +509,10 @@
   (let
     [weights : i64v.Vec (i64v.new)]
     (begin
-      (i64v.push (&mut weights) 0)
-      (i64v.push (&mut weights) 10)
-      (i64v.push (&mut weights) 0)
-      (i64v.push (&mut weights) 5)
+      (i64v.push-ref! (&mut weights) 0)
+      (i64v.push-ref! (&mut weights) 10)
+      (i64v.push-ref! (&mut weights) 0)
+      (i64v.push-ref! (&mut weights) 5)
       weights)))
 
 ;: Weighted-vector fixture whose total is zero.
@@ -520,8 +520,8 @@
   (let
     [weights : i64v.Vec (i64v.new)]
     (begin
-      (i64v.push (&mut weights) 0)
-      (i64v.push (&mut weights) 0)
+      (i64v.push-ref! (&mut weights) 0)
+      (i64v.push-ref! (&mut weights) 0)
       weights)))
 
 ;: Weighted-vector fixture with a negative weight.
@@ -529,8 +529,8 @@
   (let
     [weights : i64v.Vec (i64v.new)]
     (begin
-      (i64v.push (&mut weights) 1)
-      (i64v.push (&mut weights) -1)
+      (i64v.push-ref! (&mut weights) 1)
+      (i64v.push-ref! (&mut weights) -1)
       weights)))
 
 ;: Exercise the public borrowed-vector API with an owned test fixture.

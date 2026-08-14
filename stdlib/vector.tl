@@ -1,20 +1,25 @@
 ;# Generated concrete vector family (collections v1).
 ;#
 ;# A growable, owned sequence with private dynamic backing storage plus a
-;# live-element count (`len`). Capacity is the backing buffer length; `push`
+;# live-element count (`len`). Capacity is the backing buffer length; `push!`
 ;# doubles that buffer when it is full, copying the live prefix into the larger
 ;# buffer. Each generated module has a stable namespace keyed by its element
 ;# type.
 ;#
-;# Mutating operations take `&mut Vec`: `set`, `push`, `pop`, and `reverse!`
-;# update the backing array in place, while `push` grows that array when needed.
+;# Public mutators take a caller place: `set!`, `push!`, `pop!`, and `reverse!`
+;# expand to explicit `&mut` calls to their `*-ref!` helpers. This keeps
+;# ordinary mutable-reference calls explicit while making the common
+;# caller-owned-place form concise. `push!` grows the backing array when needed.
+;# Code that already owns a mutable reference calls the helper directly, for
+;# example `(ivec.push-ref! (&mut v) 10)` or `(ivec.push-ref! borrowed 10)`.
 ;# Reads are bounds-checked and return a caller-supplied fallback rather than
 ;# panicking, so the module typechecks on every stage0 regardless of the
 ;# never-type.
 ;#
 ;# `(vector T)` emits the full API. Append-oriented users can import
 ;# `(vector T core)` to emit only `Vec`, construction, length/capacity,
-;# native Slice views, bounds-checked get/set, push, and their storage/growth
+;# native Slice views, bounds-checked `get`/`set!`, `push!`, and their
+;# storage/growth
 ;# helpers. Core mode does not construct iterator, clone/pop, map/fold,
 ;# reverse, or contains declarations, so non-cloneable aggregate elements
 ;# remain usable.
@@ -25,8 +30,8 @@
 ;# Generated family metadata is type-agnostic. Struct and enum element
 ;# instantiations use the same private dynamic storage and
 ;# `array-ref`/`array-set!`
-;# move pattern as scalar and `String` families: `push`/`set` move the element
-;# into a live slot, `pop` moves the last live element out with the shrunk
+;# move pattern as scalar and `String` families: `push!`/`set!` move the element
+;# into a live slot, `pop!` moves the last live element out with the shrunk
 ;# vector, and growth helpers move the live prefix into fresh storage. The same
 ;# source API works whether aggregate elements occupy handle slots or are stored
 ;# inline in the backing buffer.
@@ -44,7 +49,7 @@
 ;# private `__tl_array-take!` without copying or cloning; repeated exhaustion
 ;# is stable.
 ;# Cleanup-owning element types select an ownership-safe specialization whose
-;# backing arrays contain only constructed elements. `set` cleans replacements,
+;# backing arrays contain only constructed elements. `set!` cleans replacements,
 ;# `push-owned` supports consuming expression-style construction, yielded items
 ;# own their cleanup, and abandoning an iterator drains unvisited live slots.
 ;# Clone-dependent helpers are omitted from that specialization.
@@ -71,9 +76,9 @@
 ;#     [v : ivec.Vec (ivec.new)]
 ;#     [words : svec.Vec (svec.new)]
 ;#     (begin
-;#       (ivec.push (&mut v) 10)
-;#       (ivec.push (&mut v) 32)
-;#       (svec.push (&mut words) "x")
+;#       (ivec.push! v 10)
+;#       (ivec.push! v 32)
+;#       (svec.push! words "x")
 ;#       (+ (ivec.len (& v)) (svec.len (& words))))))
 ;# ```
 (import stdlib.eq)
@@ -82,9 +87,9 @@
 ;:
 ;: `(vector T)` retains the full vector API. `(vector T core)` emits only
 ;: `Vec`, `new`, `with-capacity`, `len`, `capacity`, `view`, `view-mut`, `get`,
-;: `set`, and `push` plus their shared storage/growth helpers. Core mode is
+;: `set!`, and `push!` plus their shared storage/growth helpers. Core mode is
 ;: suitable for append-oriented compiler-private collections and does not
-;: instantiate clone-dependent operations such as `from-slice`, `pop`, or
+;: instantiate clone-dependent operations such as `from-slice`, `pop!`, or
 ;: generated equality for `contains?`.
 ;: The kind constraint is the complete storable `type-kind` vocabulary.
 ;: Future kinds must be added here when vector backing storage supports them;
@@ -110,13 +115,25 @@
             [_
               (comptime-error "vector: optional capability must be bare `core`")])]
         [_ (comptime-error "vector: expected at most one capability")])]
-    [module-name : Expr
-      (expr-var
-        (comptime.string-append
-          (if core-only
-            "stdlib.vector.generated.core."
-            "stdlib.vector.generated.")
-          (type-key T)))]
+    [module-name-text : String
+      (comptime.string-append
+        (if core-only
+          "stdlib.vector.generated.core."
+          "stdlib.vector.generated.")
+        (type-key T))]
+    [module-name : Expr (expr-var module-name-text)]
+    [set-helper-name : Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".set-ref!"))]
+    [push-helper-name : Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".push-ref!"))]
+    [pop-helper-name : Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".pop-ref!"))]
+    [reverse-helper-name : Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".reverse-ref!"))]
     [cleanup-owning : bool (type-cleanup-owning? T)]
     [cleanup-function : String
       (if (type-cleanup-owning? T)
@@ -257,7 +274,7 @@
               cap)))
         (define (new) : Vec
           (with-capacity 4))
-        (define (set [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
+        (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
           (if (if (>= index 0)
             (< index v.len)
             false)
@@ -274,7 +291,7 @@
                     value))
                 (set! (array-ref v.state.live index) true)))
             (,cleanup-function-expr value)))
-        (define (push [v : (&mut v Vec)] [value : ,T]) : unit
+        (define (push-ref! [v : (&mut v Vec)] [value : ,T]) : unit
           (let
             [index : i64 v.len]
             (begin
@@ -290,7 +307,7 @@
               (set! v.len (+ index 1)))))
         (define (push-owned [v : Vec (:consume)] [value : ,T]) : Vec
           (begin
-            (push (&mut v) value)
+            (push-ref! (&mut v) value)
             v))
         ,@cleanup-extra-decls)]
     ;; Construct the append/read/mutate core once, then splice that exact
@@ -334,7 +351,7 @@
             false)
             (array-ref (slots v) index)
             fallback))
-        (define (set [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
+        (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
           (if (if (>= index 0)
             (< index v.len)
             false)
@@ -362,7 +379,7 @@
             (begin
               (copy-range! (&mut bigger) (& v.slots) 0 n)
               (set! v.slots bigger))))
-        (define (push [v : (&mut v Vec)] [value : ,T]) : unit
+        (define (push-ref! [v : (&mut v Vec)] [value : ,T]) : unit
           (begin
             (if (< v.len (array-length v.slots))
               unit
@@ -372,7 +389,7 @@
               (begin
                 (set! (array-ref v.slots index) value)
                 (set! v.len (+ index 1)))))))]
-    (if cleanup-owning
+    (match (if cleanup-owning
       cleanup-module-decls
       (match core-decls
         [(Expr.Begin core)
@@ -428,7 +445,9 @@
                     (begin
                       (while (< index count)
                         (begin
-                          (push (&mut out) (clone (array-ref source index)))
+                          (push-ref!
+                            (&mut out)
+                            (clone (array-ref source index)))
                           (set! index (+ index 1))))
                       out)))
                 (defenum ,pop-name
@@ -536,7 +555,7 @@
                             (,into-done-name)))))))
                 (define (last [v : (& v ,vec-name)] [fallback : ,T]) : ,T
                   (get v (- (len v) 1) fallback))
-                (define (pop [v : (&mut v ,vec-name)]) : ,pop-name
+                (define (pop-ref! [v : (&mut v ,vec-name)]) : ,pop-name
                   (if (<= v.len 0)
                     (,pop-empty-name)
                     (let
@@ -557,10 +576,14 @@
                         (set! (array-ref items lo) (array-ref items hi))
                         (set! (array-ref items hi) tmp)
                         (reverse-range! items (+ lo 1) (- hi 1))))))
-                (define (reverse! [v : (&mut v ,vec-name)]) : unit
+                (define (reverse-ref! [v : (&mut v ,vec-name)]) : unit
                   (let
                     [last-index : i64 (- v.len 1)]
                     (reverse-range! (&mut v.slots) 0 last-index)))
+                (defmacro (pop! [place : Expr]) : ,pop-name
+                  (expr-mut-call0 (expr-var ,pop-helper-name) place))
+                (defmacro (reverse! [place : Expr]) : unit
+                  (expr-mut-call0 (expr-var ,reverse-helper-name) place))
                 (define (fold-from
                   [v : (& v ,vec-name)]
                   [index : i64]
@@ -586,7 +609,7 @@
                   (if (>= index (len v))
                     unit
                     (begin
-                      (push out (mapper (array-ref (slots v) index)))
+                      (push-ref! out (mapper (array-ref (slots v) index)))
                       (map-build-from v (+ index 1) out mapper))))
                 (define (map-from
                   [v : (& v ,vec-name)]
@@ -610,4 +633,15 @@
                       (contains-from? v x (+ index 1)))))
                 (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool
                   (contains-from? v x 0)))))]
-        [_ (comptime-error "vector: internal core declaration shape")]))))
+        [_ (comptime-error "vector: internal core declaration shape")]))
+      [(Expr.Begin selected-decls)
+        `(begin
+          ,@selected-decls
+          (defmacro (,(comptime.expr-var "set!")
+            [place : Expr]
+            [index : Expr]
+            [value : Expr]) : unit
+            (expr-mut-call2 (expr-var ,set-helper-name) place index value))
+          (defmacro (push! [place : Expr] [value : Expr]) : unit
+            (expr-mut-call1 (expr-var ,push-helper-name) place value)))]
+      [_ (comptime-error "vector: internal selected declaration shape")])))

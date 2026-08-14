@@ -74,10 +74,10 @@
   (let
     [items : i64-vec.Vec (i64-vec.with-capacity 4)]
     (begin
-      (i64-vec.push (&mut items) base)
-      (i64-vec.push (&mut items) (+ base 10))
-      (i64-vec.push (&mut items) (+ base 20))
-      (i64-vec.push (&mut items) (+ base 30))
+      (i64-vec.push-ref! (&mut items) base)
+      (i64-vec.push-ref! (&mut items) (+ base 10))
+      (i64-vec.push-ref! (&mut items) (+ base 20))
+      (i64-vec.push-ref! (&mut items) (+ base 30))
       items)))
 
 (define (thread-api-safe-i64-vec-run) : i64

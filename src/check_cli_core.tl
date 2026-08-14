@@ -102,7 +102,7 @@
                 (let
                   [next-roots : cli_svec.Vec stdlib-roots]
                   (begin
-                    (cli_svec.push (&mut next-roots) value)
+                    (cli_svec.push-ref! (&mut next-roots) value)
                     next-roots))
                 target
                 has-target
@@ -121,7 +121,7 @@
                 (let
                   [next-cfg-names : cli_svec.Vec cfg-names]
                   (begin
-                    (cli_svec.push (&mut next-cfg-names) value)
+                    (cli_svec.push-ref! (&mut next-cfg-names) value)
                     next-cfg-names)))]
             [(cli_option.CliCommonOptionKind.Target)
               (if has-target

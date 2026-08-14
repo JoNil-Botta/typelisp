@@ -191,7 +191,7 @@
     (begin
       (while (< index capacity)
         (begin
-          (i32v.push (&mut out) 0)
+          (i32v.push! out 0)
           (set! index (+ index 1))))
       out)))
 
@@ -202,7 +202,7 @@
     (begin
       (while (< index capacity)
         (begin
-          (f32v.push (&mut out) (cast 0.0 : f32))
+          (f32v.push! out (cast 0.0 : f32))
           (set! index (+ index 1))))
       out)))
 

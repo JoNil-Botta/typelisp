@@ -33,8 +33,8 @@
   (let
     [items : counters.Vec (counters.new)]
     (begin
-      (counters.push (&mut items) (ForCounter first))
-      (counters.push (&mut items) (ForCounter second))
+      (counters.push-ref! (&mut items) (ForCounter first))
+      (counters.push-ref! (&mut items) (ForCounter second))
       items)))
 
 (define (cleanup-token-vec) : cleanup_tokens.Vec

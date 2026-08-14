@@ -1543,7 +1543,9 @@ if [ "$NL_HOST_OS" = windows ]; then
     # payload bytes. Merged with this bank's optimizer, backend, regalloc, and
     # planned bounds-preservation regression helper, the authoritative Windows
     # probe measured 2,764,373 used nodes and retained the same capacity and
-    # physical payload boundary.
+    # physical payload boundary. #5262's complete public-place surface and
+    # native source-name handoff coverage also retain this 43-segment boundary;
+    # the required Windows probe below reports the exact combined used count.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -2923,8 +2925,9 @@ assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR"
 
 # The constrained vector type operand is validated once at definition time.
-# The first concrete identity still checks all thirteen generated declarations.
-# Later distinct identities may reuse persisted proofs for the four declarations
+# The first concrete identity still checks all fifteen generated declarations,
+# including the two public place macros reconstructed by #5262.
+# Later distinct identities may reuse persisted proofs for the six declarations
 # admitted as proven safe by the exact guard; all remaining declarations stay
 # on the ordinary check path.
 assert_profile_counter_eq_in \
@@ -2942,13 +2945,13 @@ assert_profile_counter_eq_in \
 assert_profile_counter_eq_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_decl_checks_invariant_eligible" \
-    13 \
+    15 \
     "$VECTOR_ONE_STDOUT" \
     "$VECTOR_ONE_STDERR"
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks_invariant_eligible" \
-    65 \
+    75 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 assert_profile_counter_eq_in \
@@ -2972,20 +2975,20 @@ assert_profile_counter_eq_in \
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks_proof_reused" \
-    16 \
+    24 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 
 assert_profile_counter_eq_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_decl_checks" \
-    13 \
+    15 \
     "$VECTOR_ONE_STDOUT" \
     "$VECTOR_ONE_STDERR"
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks" \
-    49 \
+    51 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 

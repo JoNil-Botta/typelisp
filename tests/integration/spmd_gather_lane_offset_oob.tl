@@ -13,10 +13,10 @@
     [offsets : i64v.Vec (i64z.make 16)]
     [out : i64v.Vec (i64z.make 9)]
     (begin
-      (i64v.set (&mut offsets) 0 9223372036854775807)
-      (i64v.set (&mut offsets) 1 0)
-      (i64v.set (&mut offsets) 2 0)
-      (i64v.set (&mut offsets) 3 (- 0 7))
+      (i64v.set-ref! (&mut offsets) 0 9223372036854775807)
+      (i64v.set-ref! (&mut offsets) 1 0)
+      (i64v.set-ref! (&mut offsets) 2 0)
+      (i64v.set-ref! (&mut offsets) 3 (- 0 7))
       (let
         [xs-slots (i64v.slots (& xs))]
         [offset-slots (i64v.slots (& offsets))]

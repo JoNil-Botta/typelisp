@@ -818,7 +818,7 @@
     [bounds : i64v.Vec (i64z.make 1)]
     [out : i64v.Vec (i64z.make 3)]
     (begin
-      (i64v.set (&mut bounds) 0 3)
+      (i64v.set-ref! (&mut bounds) 0 3)
       (let
         [bound-slots (i64v.slots-mut (&mut bounds))]
         [out-slots (i64v.slots-mut (&mut out))]

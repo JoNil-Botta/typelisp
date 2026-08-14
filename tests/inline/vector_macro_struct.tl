@@ -26,7 +26,7 @@
     (begin
       (while (< i n)
         (begin
-          (pvec.push (&mut v) (Pair i (+ i 1)))
+          (pvec.push! v (Pair i (+ i 1)))
           (set! i (+ i 1))))
       v)))
 
@@ -44,12 +44,12 @@
         (pair-score (pvec.get (& v) 5 (Pair 0 0)))
         56
         "struct vector macro keeps grown element")
-      (pvec.set (&mut v) 1 (Pair 9 8))
+      (pvec.set! v 1 (Pair 9 8))
       (test.assert-i64-eq
         (pair-score (pvec.get (& v) 1 (Pair 0 0)))
         98
         "struct vector macro set in place")
-      (pvec.set (&mut v) 20 (Pair 7 7))
+      (pvec.set! v 20 (Pair 7 7))
       (test.assert-i64-eq
         (pair-score (pvec.get (& v) 1 (Pair 0 0)))
         98
@@ -60,7 +60,7 @@
   (let
     [v : pvec.Vec (vector-macro-pair-fill 3)]
     (begin
-      (pvec.reverse! (&mut v))
+      (pvec.reverse! v)
       (test.assert-i64-eq
         (pair-score (pvec.get (& v) 0 (Pair 0 0)))
         23
@@ -72,7 +72,7 @@
             (pair-score (pvec.get (& mapped) 0 (Pair 0 0)))
             32
             "struct vector map returns aggregate")
-          (match (pvec.pop (&mut v))
+          (match (pvec.pop! v)
             [(pvec.Pop.Ok value)
               (begin
                 (test.assert-i64-eq
@@ -92,15 +92,15 @@
     [pairs : pvec.Vec (pvec.new)]
     [segments : svec.Vec (svec.new)]
     (begin
-      (pvec.push (&mut pairs) (Pair 3 5))
-      (pvec.push (&mut pairs) (Pair 8 13))
+      (pvec.push! pairs (Pair 3 5))
+      (pvec.push! pairs (Pair 8 13))
       (test.assert-true
         (pvec.contains? (& pairs) (Pair 8 13))
         "contains? finds a struct element")
       (test.assert-false
         (pvec.contains? (& pairs) (Pair 8 12))
         "contains? rejects a differing struct element")
-      (svec.push (&mut segments) (Segment (Pair 1 2) (Pair 3 4)))
+      (svec.push! segments (Segment (Pair 1 2) (Pair 3 4)))
       (test.assert-true
         (svec.contains? (& segments) (Segment (Pair 1 2) (Pair 3 4)))
         "contains? finds a nested aggregate element")

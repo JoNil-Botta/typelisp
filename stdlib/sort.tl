@@ -23,9 +23,9 @@
 ;#   (let
 ;#     [v : ivec.Vec (ivec.new)]
 ;#     (begin
-;#       (ivec.push (&mut v) 3)
-;#       (ivec.push (&mut v) 1)
-;#       (ivec.push (&mut v) 2)
+;#       (ivec.push-ref! (&mut v) 3)
+;#       (ivec.push-ref! (&mut v) 1)
+;#       (ivec.push-ref! (&mut v) 2)
 ;#       (isort.sort! (&mut v))
 ;#       (+ (ivec.get (& v) 0 0) (ivec.get (& v) 2 0)))))
 ;# ```
@@ -288,7 +288,7 @@
     (let
       [v : i64v.Vec (i64v.new)]
       (begin
-        (i64v.push (&mut v) a)
+        (i64v.push-ref! (&mut v) a)
         v))))
 
 (cfg
@@ -297,9 +297,9 @@
     (let
       [v : i64v.Vec (i64v.new)]
       (begin
-        (i64v.push (&mut v) a)
-        (i64v.push (&mut v) b)
-        (i64v.push (&mut v) c)
+        (i64v.push-ref! (&mut v) a)
+        (i64v.push-ref! (&mut v) b)
+        (i64v.push-ref! (&mut v) c)
         v))))
 
 (cfg
@@ -313,11 +313,11 @@
     (let
       [v : i64v.Vec (i64v.new)]
       (begin
-        (i64v.push (&mut v) a)
-        (i64v.push (&mut v) b)
-        (i64v.push (&mut v) c)
-        (i64v.push (&mut v) d)
-        (i64v.push (&mut v) e)
+        (i64v.push-ref! (&mut v) a)
+        (i64v.push-ref! (&mut v) b)
+        (i64v.push-ref! (&mut v) c)
+        (i64v.push-ref! (&mut v) d)
+        (i64v.push-ref! (&mut v) e)
         v))))
 
 (cfg
@@ -363,7 +363,7 @@
     (let
       [v : strv.Vec (strv.new)]
       (begin
-        (strv.push (&mut v) a)
+        (strv.push-ref! (&mut v) a)
         v))))
 
 (cfg
@@ -376,10 +376,10 @@
     (let
       [v : strv.Vec (strv.new)]
       (begin
-        (strv.push (&mut v) a)
-        (strv.push (&mut v) b)
-        (strv.push (&mut v) c)
-        (strv.push (&mut v) d)
+        (strv.push-ref! (&mut v) a)
+        (strv.push-ref! (&mut v) b)
+        (strv.push-ref! (&mut v) c)
+        (strv.push-ref! (&mut v) d)
         v))))
 
 (cfg
@@ -466,7 +466,7 @@
       (begin
         (while (< i 2049)
           (begin
-            (i64v.push (&mut items) (- 2048 i))
+            (i64v.push-ref! (&mut items) (- 2048 i))
             (set! i (+ i 1))))
         (i64sort.sort! (&mut items))
         (test.assert-i64-eq (i64v.len (& items)) 2049 "large i64 sort len")
@@ -538,10 +538,10 @@
     (let
       [items : strv.Vec (strv.new)]
       (begin
-        (strv.push (&mut items) "b0")
-        (strv.push (&mut items) "a1")
-        (strv.push (&mut items) "b2")
-        (strv.push (&mut items) "a3")
+        (strv.push-ref! (&mut items) "b0")
+        (strv.push-ref! (&mut items) "a1")
+        (strv.push-ref! (&mut items) "b2")
+        (strv.push-ref! (&mut items) "a3")
         (strsort.sort! (&mut items) sort-test-first-char-less?)
         (sort-test-assert-string-vec4 items "a1" "a3" "b0" "b2")))))
 
@@ -551,38 +551,38 @@
     (let
       [items : strv.Vec (strv.new)]
       (begin
-        (strv.push (&mut items) "b0")
-        (strv.push (&mut items) "a1")
-        (strv.push (&mut items) "b2")
-        (strv.push (&mut items) "a3")
-        (strv.push (&mut items) "b4")
-        (strv.push (&mut items) "a5")
-        (strv.push (&mut items) "b6")
-        (strv.push (&mut items) "a7")
-        (strv.push (&mut items) "b8")
-        (strv.push (&mut items) "a9")
-        (strv.push (&mut items) "b10")
-        (strv.push (&mut items) "a11")
-        (strv.push (&mut items) "b12")
-        (strv.push (&mut items) "a13")
-        (strv.push (&mut items) "b14")
-        (strv.push (&mut items) "a15")
-        (strv.push (&mut items) "b16")
-        (strv.push (&mut items) "a17")
-        (strv.push (&mut items) "b18")
-        (strv.push (&mut items) "a19")
-        (strv.push (&mut items) "b20")
-        (strv.push (&mut items) "a21")
-        (strv.push (&mut items) "b22")
-        (strv.push (&mut items) "a23")
-        (strv.push (&mut items) "b24")
-        (strv.push (&mut items) "a25")
-        (strv.push (&mut items) "b26")
-        (strv.push (&mut items) "a27")
-        (strv.push (&mut items) "b28")
-        (strv.push (&mut items) "a29")
-        (strv.push (&mut items) "b30")
-        (strv.push (&mut items) "a31")
+        (strv.push-ref! (&mut items) "b0")
+        (strv.push-ref! (&mut items) "a1")
+        (strv.push-ref! (&mut items) "b2")
+        (strv.push-ref! (&mut items) "a3")
+        (strv.push-ref! (&mut items) "b4")
+        (strv.push-ref! (&mut items) "a5")
+        (strv.push-ref! (&mut items) "b6")
+        (strv.push-ref! (&mut items) "a7")
+        (strv.push-ref! (&mut items) "b8")
+        (strv.push-ref! (&mut items) "a9")
+        (strv.push-ref! (&mut items) "b10")
+        (strv.push-ref! (&mut items) "a11")
+        (strv.push-ref! (&mut items) "b12")
+        (strv.push-ref! (&mut items) "a13")
+        (strv.push-ref! (&mut items) "b14")
+        (strv.push-ref! (&mut items) "a15")
+        (strv.push-ref! (&mut items) "b16")
+        (strv.push-ref! (&mut items) "a17")
+        (strv.push-ref! (&mut items) "b18")
+        (strv.push-ref! (&mut items) "a19")
+        (strv.push-ref! (&mut items) "b20")
+        (strv.push-ref! (&mut items) "a21")
+        (strv.push-ref! (&mut items) "b22")
+        (strv.push-ref! (&mut items) "a23")
+        (strv.push-ref! (&mut items) "b24")
+        (strv.push-ref! (&mut items) "a25")
+        (strv.push-ref! (&mut items) "b26")
+        (strv.push-ref! (&mut items) "a27")
+        (strv.push-ref! (&mut items) "b28")
+        (strv.push-ref! (&mut items) "a29")
+        (strv.push-ref! (&mut items) "b30")
+        (strv.push-ref! (&mut items) "a31")
         (strsort.sort! (&mut items) sort-test-first-char-less?)
         (test.assert-i64-eq (strv.len (& items)) 32 "merge stability len")
         (sort-test-assert-owned-string-eq
@@ -627,7 +627,7 @@
       (begin
         (while (< i 512)
           (begin
-            (strv.push
+            (strv.push-ref!
               (&mut items)
               (if (< i 256)
                 "b"
@@ -656,7 +656,7 @@
       (begin
         (while (< i 32)
           (begin
-            (itemv.push (&mut items) (SortTestItem (% i 4) i))
+            (itemv.push-ref! (&mut items) (SortTestItem (% i 4) i))
             (set! i (+ i 1))))
         (itemsort.sort! (&mut items) sort-test-item-less?)
         (test.assert-i64-eq (itemv.len (& items)) 32 "aggregate sort len")

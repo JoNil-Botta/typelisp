@@ -180,8 +180,8 @@
 ;#   (let
 ;#     [xs : ints.Vec (ints.with-capacity 4)]
 ;#     (begin
-;#       (ints.push (&mut xs) 40)
-;#       (ints.push (&mut xs) 2)
+;#       (ints.push! xs 40)
+;#       (ints.push! xs 2)
 ;#       (+ (ints.get (& xs) 0 0) (ints.get (& xs) 1 0)))))
 ;# ```
 ;#

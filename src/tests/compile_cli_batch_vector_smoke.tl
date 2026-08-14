@@ -79,14 +79,14 @@
         (&mut entries))]
     [results : cli_svec.Vec (cli_svec.new)]
     (begin
-      (cli_svec.push (&mut results) "auto.tl")
-      (cli_svec.push (&mut results) "coff-object")
-      (cli_svec.push (&mut results) "auto.obj")
-      (cli_svec.push (&mut results) "none")
-      (cli_svec.push (&mut results) "forced.tl")
-      (cli_svec.push (&mut results) "assembly")
-      (cli_svec.push (&mut results) "forced.s")
-      (cli_svec.push (&mut results) "forced-assembly")
+      (cli_svec.push-ref! (&mut results) "auto.tl")
+      (cli_svec.push-ref! (&mut results) "coff-object")
+      (cli_svec.push-ref! (&mut results) "auto.obj")
+      (cli_svec.push-ref! (&mut results) "none")
+      (cli_svec.push-ref! (&mut results) "forced.tl")
+      (cli_svec.push-ref! (&mut results) "assembly")
+      (cli_svec.push-ref! (&mut results) "forced.s")
+      (cli_svec.push-ref! (&mut results) "forced-assembly")
       (and
         (= status 0)
         (= (cli_svec.len (& entries)) 8)

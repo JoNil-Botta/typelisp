@@ -15,5 +15,5 @@
     (let
       [borrowed : (& items tokens.Vec) (& items)]
       (begin
-        (tokens.set (&mut items) 0 (CleanupToken 1))
+        (tokens.set! items 0 (CleanupToken 1))
         (tokens.len borrowed)))))

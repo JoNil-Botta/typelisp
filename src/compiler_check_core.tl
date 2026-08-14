@@ -639,8 +639,8 @@
   (let
     [items : i64vec.Vec (i64vec.with-capacity 2)]
     (begin
-      (i64vec.push (&mut items) 41)
-      (i64vec.push (&mut items) 1)
+      (i64vec.push-ref! (&mut items) 41)
+      (i64vec.push-ref! (&mut items) 1)
       (i64vec.len (& items)))))")
 
 ;; Compatibility alias fixture for the __tl_dyn-array alias. The qualified stdlib.array path is
@@ -898,7 +898,7 @@
 (define (main) : i64 (+ platform-value cfg-value))"]
     [names : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut names) "tooling-feature")
+      (svec.push-ref! (&mut names) "tooling-feature")
       (and
         (match (compiler-check-source-with-roots-and-cfg
           "tests/check_cfg_linux.tl"

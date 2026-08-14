@@ -320,7 +320,7 @@
     (begin
       (while (< index capacity)
         (begin
-          (f32v.push (&mut out) (cast 0.0 : f32))
+          (f32v.push! out (cast 0.0 : f32))
           (set! index (+ index 1))))
       out)))
 

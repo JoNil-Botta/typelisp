@@ -11,9 +11,9 @@
     [selectors : i64v.Vec (i64z.make n)]
     [out : i64v.Vec (i64z.make n)]
     (begin
-      (i64v.set (&mut selectors) 0 0)
-      (i64v.set (&mut selectors) 1 1)
-      (i64v.set (&mut selectors) 2 3)
+      (i64v.set-ref! (&mut selectors) 0 0)
+      (i64v.set-ref! (&mut selectors) 1 1)
+      (i64v.set-ref! (&mut selectors) 2 3)
       (let
         [selector-slots (i64v.slots (& selectors))]
         [out-slots (i64v.slots-mut (&mut out))]

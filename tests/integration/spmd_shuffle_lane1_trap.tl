@@ -12,7 +12,7 @@
     [xs : i64v.Vec (i64z.make 1)]
     [out : i64v.Vec (i64z.make 1)]
     (begin
-      (i64v.set (&mut xs) 0 7)
+      (i64v.set-ref! (&mut xs) 0 7)
       (let
         [xs-slots (i64v.slots (& xs))]
         [out-slots (i64v.slots-mut (&mut out))]

@@ -204,7 +204,7 @@
       (init-index (&mut ix) n source-len)
       (while (< i source-len)
         (begin
-          (i32v.set (&mut xs) i (cast (+ 11 (* i 7)) : i32))
+          (i32v.set-ref! (&mut xs) i (cast (+ 11 (* i 7)) : i32))
           (set! i (+ i 1))))
       (let
         [ix-slots (i64v.slots (& ix))]
@@ -218,7 +218,7 @@
         (let
           [source-index : i64 (i64v.get (& ix) i 0)]
           (begin
-            (i32v.set
+            (i32v.set-ref!
               (&mut want)
               i
               (i32v.get (& xs) source-index (cast 0 : i32)))
@@ -247,7 +247,7 @@
       (init-index (&mut ix) n source-len)
       (while (< i source-len)
         (begin
-          (f32v.set (&mut xs) i (cast (+ 21 (* i 5)) : f32))
+          (f32v.set-ref! (&mut xs) i (cast (+ 21 (* i 5)) : f32))
           (set! i (+ i 1))))
       (let
         [ix-slots (i64v.slots (& ix))]
@@ -261,7 +261,7 @@
         (let
           [source-index : i64 (i64v.get (& ix) i 0)]
           (begin
-            (f32v.set
+            (f32v.set-ref!
               (&mut want)
               i
               (f32v.get (& xs) source-index (cast 0 : f32)))
@@ -290,7 +290,7 @@
       (init-index (&mut ix) n source-len)
       (while (< i source-len)
         (begin
-          (f64v.set (&mut xs) i (cast (+ 31 (* i 9)) : f64))
+          (f64v.set-ref! (&mut xs) i (cast (+ 31 (* i 9)) : f64))
           (set! i (+ i 1))))
       (let
         [ix-slots (i64v.slots (& ix))]
@@ -304,7 +304,7 @@
         (let
           [source-index : i64 (i64v.get (& ix) i 0)]
           (begin
-            (f64v.set
+            (f64v.set-ref!
               (&mut want)
               i
               (f64v.get (& xs) source-index (cast 0 : f64)))
@@ -335,12 +335,12 @@
     (begin
       (while (< i 16)
         (begin
-          (i64v.set (&mut offsets) i (% (* i 3) 4))
+          (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i source-len)
         (begin
-          (i32v.set (&mut xs) i (cast (+ 11 (* i 7)) : i32))
+          (i32v.set-ref! (&mut xs) i (cast (+ 11 (* i 7)) : i32))
           (set! i (+ i 1))))
       (let
         [dst (i64v.slots-mut (&mut lane-ids))]
@@ -380,12 +380,12 @@
     (begin
       (while (< i 16)
         (begin
-          (i64v.set (&mut offsets) i (% (* i 3) 4))
+          (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i source-len)
         (begin
-          (f32v.set (&mut xs) i (cast (+ 21 (* i 5)) : f32))
+          (f32v.set-ref! (&mut xs) i (cast (+ 21 (* i 5)) : f32))
           (set! i (+ i 1))))
       (let
         [dst (i64v.slots-mut (&mut lane-ids))]
@@ -425,12 +425,12 @@
     (begin
       (while (< i 16)
         (begin
-          (i64v.set (&mut offsets) i (% (* i 3) 4))
+          (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i source-len)
         (begin
-          (f64v.set (&mut xs) i (cast (+ 31 (* i 9)) : f64))
+          (f64v.set-ref! (&mut xs) i (cast (+ 31 (* i 9)) : f64))
           (set! i (+ i 1))))
       (let
         [dst (i64v.slots-mut (&mut lane-ids))]

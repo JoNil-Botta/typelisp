@@ -772,22 +772,32 @@
       (cond
         [(compiler-composite-triple-key-id? name-id)
           (compiler-symbol-module-key
-            (ci.intern-str (compiler-composite-triple-left-id name-id))
+            (ci.intern-syntax-name-text-or
+              (compiler-composite-triple-left-id name-id)
+              "<structural-module>")
             (compiler-enum-qualified-variant-name
-              (ci.intern-str (compiler-composite-triple-middle-id name-id))
-              (ci.intern-str (compiler-composite-triple-right-id name-id))))]
+              (ci.intern-syntax-name-text-or
+                (compiler-composite-triple-middle-id name-id)
+                "<structural-name>")
+              (ci.intern-syntax-name-text-or
+                (compiler-composite-triple-right-id name-id)
+                "<structural-name>")))]
         [(compiler-composite-pair-key-id? name-id)
           (compiler-enum-qualified-variant-name
-            (ci.intern-str (compiler-composite-pair-left-id name-id))
-            (ci.intern-str (compiler-composite-pair-right-id name-id)))]
+            (ci.intern-syntax-name-text-or
+              (compiler-composite-pair-left-id name-id)
+              "<structural-name>")
+            (ci.intern-syntax-name-text-or
+              (compiler-composite-pair-right-id name-id)
+              "<structural-name>"))]
         [(ci.intern-renderable-id? name-id) (ci.intern-str name-id)]
         [else "<structural-symbol>"])]
     (if (or
       (compiler-composite-triple-key-id? name-id)
       (compiler-symbol-root-module-id? module-id))
       name
-      (if (ci.intern-renderable-id? module-id)
-        (compiler-symbol-module-key (ci.intern-str module-id) name)
+      (compiler-symbol-module-key
+        (ci.intern-syntax-name-text-or module-id "<structural-module>")
         name))))
 
 (define (compiler-enum-qualified-variant-name
@@ -1842,7 +1852,8 @@
     (let
       [with-target : sym_i64_env.SymI64Env
         (sym_i64_env.sym-i64-bind-id modules target-module target-module)]
-      [target-name : String (ci.intern-str target-module)]
+      [target-name : String
+        (ci.intern-syntax-name-text-or target-module "<structural-module>")]
       [with-generated : sym_i64_env.SymI64Env
         (match (ci.intern-generated-canonical-lookup target-name)
           [(InternLookupFound generated-id)

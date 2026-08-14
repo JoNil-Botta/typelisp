@@ -97,6 +97,16 @@
   (surface-arena i64)
   (profile-state profile_state.CompilerProfileState))
 
+;; The three state fragments intentionally allocated in the driver's retained
+;; surface arena. Keeping the bundle local to construction lets one `in-arena`
+;; extent preserve their allocation order while restoring the caller before
+;; the outer state installs any of them.
+(defenum CompilerDriverSurfaceState
+  (State
+    compiler_typecheck_core.TcJobState
+    i64
+    compiler_backend.CompilerBackendState))
+
 (define (compiler-driver-state-new-from-pools-and-arena
   [expr-pool : compiler_ast_types.AstExprNodePoolState]
   [type-pool : compiler_ast_types.AstTypeNodePoolState]
@@ -120,45 +130,43 @@
     ;; The typecheck caches share the driver's lifetime with hydrated surface
     ;; data. Allocate them in that already-reserved arena instead of extending
     ;; the process entry arena by a full segment near its capacity boundary.
-    [previous-arena : i64 (arena.tl_arena_current)]
-    [_set-surface-arena : unit
-      (unsafe
-        (arena.tl_arena_set surface-arena))]
-    [typecheck-state : compiler_typecheck_core.TcJobState
-      (compiler_typecheck_core.tc-job-state-new)]
-    [_lower-state-init : unit
-      (set!
-        (array-ref lower-cell 0)
-        (__tl-project-field
-          (compiler_lower.compiler-lower-state-new-with-intern-state
-            intern-state)
-          address))]
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new intern-state)]
-    [_restore-previous-arena : unit
-      (unsafe
-        (arena.tl_arena_set previous-arena))]
-    (begin
-      (set! (array-ref expr-cell 0) expr-pool)
-      (set! (array-ref type-cell 0) type-pool)
-      (set! (array-ref intern-cell 0) intern-state)
-      (set! (array-ref builtin-cell 0) (cbi.state-new))
-      (set! (array-ref pool-arena-cell 0) pool-arena)
-      (CompilerDriverState
-        expr-cell
-        type-cell
-        intern-cell
-        (compiler_parse_core.compiler-parse-state-new-with-intern-state
-          (array-ref intern-cell 0))
-        builtin-cell
-        lower-cell
-        (compiler_load.compiler-load-session-state-new)
-        typecheck-state
-        backend-state
-        (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
-        pool-arena-cell
-        surface-arena
-        (profile_state.compiler-profile-state-new)))))
+    [surface-state : CompilerDriverSurfaceState
+      (in-arena
+        (arena.Arena surface-arena)
+        (CompilerDriverSurfaceState.State
+          (compiler_typecheck_core.tc-job-state-new)
+          (__tl-project-field
+            (compiler_lower.compiler-lower-state-new-with-intern-state
+              intern-state)
+            address)
+          (compiler_backend.compiler-backend-state-new intern-state)))]
+    (match surface-state
+      [(CompilerDriverSurfaceState.State
+          typecheck-state
+          lower-state-address
+          backend-state)
+        (begin
+          (set! (array-ref expr-cell 0) expr-pool)
+          (set! (array-ref type-cell 0) type-pool)
+          (set! (array-ref intern-cell 0) intern-state)
+          (set! (array-ref builtin-cell 0) (cbi.state-new))
+          (set! (array-ref lower-cell 0) lower-state-address)
+          (set! (array-ref pool-arena-cell 0) pool-arena)
+          (CompilerDriverState
+            expr-cell
+            type-cell
+            intern-cell
+            (compiler_parse_core.compiler-parse-state-new-with-intern-state
+              (array-ref intern-cell 0))
+            builtin-cell
+            lower-cell
+            (compiler_load.compiler-load-session-state-new)
+            typecheck-state
+            backend-state
+            (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
+            pool-arena-cell
+            surface-arena
+            (profile_state.compiler-profile-state-new)))])))
 
 ;; State-owned pools allocate fixed-size segments on demand. One expression
 ;; segment covers tiny programs while self-host-sized compiles append segments
@@ -491,23 +499,16 @@
 
 (define (compiler-driver-state-new-checked-lower-pools) : compiler_ast_types.AstNodePoolContext
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
     [pool-arena : i64 (compiler_ast_types.ast-node-pool-arena-make)]
-    [_set-pool-arena : unit
-      (unsafe
-        (arena.tl_arena_set pool-arena))]
-    [pools : compiler_ast_types.AstNodePoolContext
+    ;; Keep the context's wrapper cells with its backing arrays. Early source
+    ;; retirement can otherwise unmap wrapper cells allocated in the frontend
+    ;; arena before an error path gets a chance to release this pool.
+    (in-arena
+      (arena.Arena pool-arena)
       (compiler_ast_types.ast-node-pool-context-new-with-capacities-in-arena
         compiler-driver-checked-lower-expr-pool-initial-capacity
         compiler-driver-compile-type-pool-initial-capacity
-        pool-arena)]
-    (begin
-      ;; Keep the context's wrapper cells with its backing arrays. Early source
-      ;; retirement can otherwise unmap wrapper cells allocated in the frontend
-      ;; arena before an error path gets a chance to release this pool.
-      (unsafe
-        (arena.tl_arena_set prev-arena))
-      pools)))
+        pool-arena))))
 
 (define (compiler-driver-state-destroy-uncommitted-pools!
   [pools : compiler_ast_types.AstNodePoolContext]) : unit

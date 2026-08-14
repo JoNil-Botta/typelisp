@@ -30099,6 +30099,31 @@
         "")]
     [(option_i64.None) ""]))
 
+;; Bounds operands are loaded only on the paths that cannot use a direct
+;; register/memory/immediate spelling. A scratch-plan lookup records whether
+;; that temporary borrows a live-through home, but this emitter historically
+;; passed the spelling straight to the generic loader and never CONSUMED the
+;; preservation marker. The load then overwrote the resident value before the
+;; compare. Arm preservation at the exact committed load: direct operands keep
+;; their zero-scratch shape, while a consumed planned temporary is bracketed by
+;; the caller's per-instruction emergency wrapper. Legacy scavenging already
+;; arms that wrapper when it has to borrow an occupied home.
+(define (compiler-backend-bounds-load-value-with-plan
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]
+  [scratch : String]
+  [planned : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (begin
+    (if (string.eq planned "")
+      unit
+      (compiler-backend-preserve-planned-register! planned backend-state))
+    (compiler-backend-emit-load-value-with-plan
+      assignments
+      value
+      scratch
+      backend-state)))
+
 (define (compiler-backend-emit-bounds-check
   [target : CompilerBackendTarget]
   [function : String]
@@ -30184,10 +30209,11 @@
                 ok-symbol
                 plan
                 program-index))
-            (match (compiler-backend-emit-load-value-with-plan
+            (match (compiler-backend-bounds-load-value-with-plan
               assignments
               length
               scav-len
+              planned-len
               program-index.backend-state)
               [(ResultCompilerBackend.Ok length-asm)
                 (ResultCompilerBackend.Ok
@@ -30201,10 +30227,11 @@
                     program-index))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)]))
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-bounds-load-value-with-plan
             assignments
             index
             index-operand
+            planned-index
             program-index.backend-state)
             [(ResultCompilerBackend.Ok index-asm)
               (let
@@ -30224,10 +30251,11 @@
                       ok-symbol
                       plan
                       program-index))
-                  (match (compiler-backend-emit-load-value-with-plan
+                  (match (compiler-backend-bounds-load-value-with-plan
                     assignments
                     length
                     scav-len
+                    planned-len
                     program-index.backend-state)
                     [(ResultCompilerBackend.Ok length-asm)
                       (ResultCompilerBackend.Ok
@@ -30261,10 +30289,11 @@
               ok-symbol
               plan
               program-index))
-          (match (compiler-backend-emit-load-value-with-plan
+          (match (compiler-backend-bounds-load-value-with-plan
             assignments
             length
             scav-len
+            planned-len
             program-index.backend-state)
             [(ResultCompilerBackend.Ok length-asm)
               (ResultCompilerBackend.Ok

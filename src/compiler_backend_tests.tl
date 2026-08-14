@@ -42131,7 +42131,7 @@
         (compiler_regalloc.compiler-reg-fill-i64-array present 0)
         (compiler_regalloc.compiler-reg-fill-i64-array ref-counts 0)
         (compiler_regalloc.compiler-reg-fill-interval-seq-array! segments 0)
-        ;; Fixed RCX lives across the complete region.
+        ;; Fixed RCX overlaps the simultaneous conflict below.
         (set!
           (array-ref items 0)
           (compiler_regalloc.CompilerRegScratchAssignment
@@ -42141,7 +42141,7 @@
               (compiler_regalloc.CompilerRegScratchRole.CallTarget)
               gp-fixed-rcx
               0
-              4
+              1
               0)
             false
             false
@@ -42181,11 +42181,11 @@
           (array-ref items 3)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
-              2
               0
+              3
               (compiler_regalloc.CompilerRegScratchRole.BoundsLength)
               gp-fixed-rcx
-              2
+              0
               3
               3)
             false
@@ -42229,6 +42229,12 @@
           ref-counts
           registers
           (array-length registers)
+          (compiler_regalloc.compiler-reg-scratch-default-pool
+            (compiler_abi.CompilerRegTargetAbi.Linux)
+            (compiler_regalloc.CompilerRegScratchClass.Gp))
+          (compiler_regalloc.compiler-reg-scratch-default-pool
+            (compiler_abi.CompilerRegTargetAbi.Linux)
+            (compiler_regalloc.CompilerRegScratchClass.Xmm))
           5)
         (and
           (=
@@ -43773,6 +43779,126 @@
               (compiler_backend.compiler-backend-string-contains?
                 wrapped
                 "    movq -64(%rbp), %rdi\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
+;; BoundsCheck is unusual among scalar emitters: it stages only operands that
+;; do not already have a direct register/memory/immediate spelling. The scratch
+;; plan may therefore lend that committed load a live-through home. Verify that
+;; consuming the planned index arms the ordinary per-instruction wrapper, so a
+;; loop-carried value in the same register survives the check.
+(define (compiler-backend-bounds-index-arms-planned-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 2)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.BoundsLength)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                2)
+              false
+              false
+              compiler_abi.compiler-reg-id-rdi))
+          (set!
+            (array-ref items 1)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                1
+                (compiler_regalloc.CompilerRegScratchRole.BoundsIndex)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                2)
+              true
+              false
+              compiler_abi.compiler-reg-id-rsi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 2))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [program-index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        program-index.backend-state]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Spill -8))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              1
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r12))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned-index : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          1
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-bounds-check
+        (compiler_backend.CompilerBackendTarget.Linux)
+        "_tl_test"
+        assignments
+        ""
+        planned-index
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "bounds_ok")
+        (compiler-backend-runtime-helper-full-plan)
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil
+        program-index)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (let
+            [wrapped : String
+              (compiler_backend.compiler-backend-emergency-wrap
+                asm
+                backend-state)]
+            (and
+              (string.eq planned-index "%rsi")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq %rsi, -64(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq -8(%rbp), %rsi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    cmpq %r12, %rsi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq -64(%rbp), %rsi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
@@ -45979,6 +46105,7 @@ b_keep:
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-fused-store-pair-arms-planned-preserve-ok?)
         (compiler-backend-fused-gep-store-arms-planned-preserve-ok?)
+        (compiler-backend-bounds-index-arms-planned-preserve-ok?)
         (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
@@ -46261,6 +46388,7 @@ b_keep:
     (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
     (compiler-backend-scratch-vreg-select-plan-ok?)
     (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
+    (compiler-backend-bounds-index-arms-planned-preserve-ok?)
     (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
     (compiler-backend-scratch-vreg-constraint-shapes-ok?)
     (compiler-backend-phi-parallel-copy-ok?)

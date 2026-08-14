@@ -1599,10 +1599,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # on the rebased tree measured 24,485 used nodes against 24,576 capacity,
     # leaving 91 nodes, 0.37% of one segment, below the 25-segment line. Expect
     # the next series that introduces macro-expanded type structure to cross it.
-    # #2778's dependency-catalog observation row is that next structure: the
-    # authoritative Windows probe measured 24,577 used nodes, crossing the
-    # boundary to 25 segments, 25,600 capacity, and 614,400 physical payload
-    # bytes.
+    # #2778's dependency-catalog observation row was the first to cross it: the
+    # authoritative Windows probe on that tree measured 24,577 used nodes, 25
+    # segments, 25,600 capacity, and 614,400 physical payload bytes. The
+    # multi-exit rotation series' classified exit placement adds macro-expanded
+    # type structure on top of that: the combined tree measures 24,589 used
+    # nodes, still 25 segments with 1,011 nodes below the 26-segment line.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 25 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

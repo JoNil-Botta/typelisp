@@ -17633,7 +17633,9 @@
   (preheader-guard ir.CompilerIrInstrSeq)
   (latch-guard ir.CompilerIrInstrSeq)
   (exit-phis ir.CompilerIrInstrSeq)
-  (exit-env OptCopyEnv))
+  (exit-env OptCopyEnv)
+  (doms OptDomInfo)
+  (classified? bool))
 
 (define (opt-rotate-ssa-land-label [header : i64]) : i64
   (ir.compiler-ir-label
@@ -17870,16 +17872,10 @@
         (opt-rotate-ssa-succs-inside? body (opt-label-tail succs)))]))
 
 ;; True when the header's exit arm is the loop's ONLY way out: no body block
-;; other than the header has a successor outside the body. The fresh exit phis
-;; are defined in the exit block, so every outside reader of a loop-carried
-;; value has to be dominated by it; with a second exit (a `break`, or a lowered
-;; `(and ...)` loop condition whose second test leaves through a body block)
-;; the outside reader is reachable without passing through the exit block and
-;; the substitution is a dominance violation. That rewrite used to be built and
-;; handed to the verifier, which rejected it -- correct, but it cost a full
-;; rewrite, context build and verify per round per such loop. Only the exit-phi
-;; case needs the property, so multi-exit loops with no outside reader still
-;; rotate.
+;; other than the header has a successor outside the body. This no longer
+;; decides whether an outside reader can be served -- the classified placement
+;; below decides that per read -- but it still separates the two populations,
+;; and the flag_exit deferral is keyed on it.
 (define (opt-rotate-ssa-single-exit?
   [pred-map : OptPredMap]
   [body : OptLabelSet]
@@ -17923,6 +17919,51 @@
         (ir.compiler-ir-block-seq-to-list seq)
         header)]))
 
+;; LCSSA-style exit-value placement. Rotation deletes the header, so a
+;; loop-carried value `p` that used to be defined there is defined in the body
+;; block afterwards; an outside reader of `p` is only still dominated by a
+;; definition if it sits under one of exactly two blocks.
+;;
+;;   class 1 -- the exit block dominates the read. The rotation gives that
+;;              block the fresh exit phi `q` (merging the preheader's initial
+;;              value with the latch's back-edge value), and `q` dominates
+;;              everything the exit block dominates, so the read is rewritten
+;;              to `q`. Unreachable positions are folded in here: they are
+;;              rewritten exactly as the pre-existing pass rewrote them, and
+;;              nothing reads them.
+;;   class 2 -- the BODY block dominates the read. That is the multi-exit case:
+;;              the read hangs off a second exit that leaves the loop through a
+;;              body block, and the body block's moved phi still dominates it,
+;;              so the read keeps `p` untouched and needs no phi at all. After
+;;              rotation the body block dominates every block in the loop (the
+;;              only entries left are the landing block and the latch), which
+;;              is why a second exit target is reachable only through it.
+;;   class 0 -- neither dominates: the read is at a JOIN of the two exit paths.
+;;              A phi INPUT at such a join is still placeable, because an input
+;;              is evaluated on its own edge and the edge's source block has a
+;;              class of its own; a non-phi read is not, and refuses the loop.
+;;
+;; The header's exit arm and the second exit are the only ways out of the loop
+;; before AND after rotation (rotation only re-sources the header's exit edge
+;; onto the preheader and the latch), so this classification computed on the
+;; pre-rotation dominator tree is valid for the rotated CFG.
+(define (opt-rotate-ssa-position-class
+  [doms : OptDomInfo]
+  [body : OptLabelSet]
+  [exit-label : i64]
+  [body-label : i64]
+  [label : i64]) : i64
+  (cond
+    [(opt-dom-dominates? doms exit-label label) 1]
+    [(opt-label-contains body label) 2]
+    [(opt-dom-dominates? doms body-label label) 2]
+    [(not (opt-dom-dominates? doms label label)) 1]
+    [else 0]))
+
+;; The pre-existing flat walk: every var read anywhere outside the loop body.
+;; A single-exit loop needs nothing finer -- its whole outside region is
+;; dominated by the exit block, so every read is class 1 -- and this is the one
+;; traversal such a loop pays, exactly as before the classification existed.
 (define (opt-rotate-ssa-uses-outside-body
   [set : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]
@@ -17943,6 +17984,131 @@
         set
         (ir.compiler-ir-block-seq-to-list seq)
         body)]))
+
+;; A read's POSITION is the block holding it, except for a phi input, whose
+;; position is the label on the input's edge.
+(define (opt-rotate-ssa-class-phi-uses
+  [set : opt_i64_i64_map.Map]
+  [inputs : ir.CompilerIrPhiInputList]
+  [doms : OptDomInfo]
+  [body : OptLabelSet]
+  [exit-label : i64]
+  [body-label : i64]
+  [want : i64]) : opt_i64_i64_map.Map
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) set]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-rotate-ssa-class-phi-uses
+        set
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        doms
+        body
+        exit-label
+        body-label
+        want)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (opt-rotate-ssa-class-phi-uses
+        (if (=
+          (opt-rotate-ssa-position-class doms body exit-label body-label label)
+          want)
+          (opt-collect-value-uses set value)
+          set)
+        (__tl-box-place rest)
+        doms
+        body
+        exit-label
+        body-label
+        want)]))
+
+(define (opt-rotate-ssa-class-instr-uses
+  [set : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [block-class : i64]
+  [doms : OptDomInfo]
+  [body : OptLabelSet]
+  [exit-label : i64]
+  [body-label : i64]
+  [want : i64]) : opt_i64_i64_map.Map
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    set
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (opt-rotate-ssa-class-instr-uses
+        (match instr
+          [(ir.CompilerIrInstr.Phi _ inputs _)
+            (opt-rotate-ssa-class-phi-uses
+              set
+              inputs
+              doms
+              body
+              exit-label
+              body-label
+              want)]
+          [_
+            (if (or (= block-class want) (= want (- 0 1)))
+              (opt-collect-instr-uses set instr)
+              set)])
+        instrs
+        (+ index 1)
+        block-class
+        doms
+        body
+        exit-label
+        body-label
+        want))))
+
+;; Var ids read from a position of class `want`, over the blocks outside the
+;; loop body. `want` 1 collects the reads the exit phi has to serve, `want` 0
+;; the reads no placement can serve, and `want` -1 every NON-phi read outside
+;; the loop whatever its class -- the last one is flag_exit's C4 in the cheap
+;; form the deferral below needs.
+(define (opt-rotate-ssa-uses-at-class
+  [set : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [doms : OptDomInfo]
+  [body : OptLabelSet]
+  [exit-label : i64]
+  [body-label : i64]
+  [want : i64]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) set]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-rotate-ssa-uses-at-class
+            (if (opt-label-contains body label)
+              set
+              (opt-rotate-ssa-class-instr-uses
+                set
+                instrs
+                0
+                (opt-rotate-ssa-position-class
+                  doms
+                  body
+                  exit-label
+                  body-label
+                  label)
+                doms
+                body
+                exit-label
+                body-label
+                want))
+            (__tl-box-place rest)
+            doms
+            body
+            exit-label
+            body-label
+            want)])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-rotate-ssa-uses-at-class
+        set
+        (ir.compiler-ir-block-seq-to-list seq)
+        doms
+        body
+        exit-label
+        body-label
+        want)]))
 
 (define (opt-rotate-ssa-instr-dst [instr : ir.CompilerIrInstr]) : i64
   (match instr
@@ -18108,9 +18274,11 @@
       (opt-rotate-ssa-moved-phis-fill! recs land-label latch slots 0)
       (ir.CompilerIrInstrSeq slots count))))
 
-;; For each header phi whose destination is used outside the loop body, mint a
-;; fresh exit phi merging the same edge inputs at the exit block, and record
-;; the destination remap for the outside-use rewrite.
+;; For each header phi whose destination is read from the exit block's
+;; dominated region, mint a fresh exit phi merging the same edge inputs at the
+;; exit block, and record the destination remap for that region's rewrite.
+;; Reads under the body block (a second exit's region) are served by the moved
+;; phi itself and get no entry here.
 (define (opt-rotate-ssa-exit-phis-from
   [recs : OptRotateSsaPhiRecs]
   [outside-uses : opt_i64_i64_map.Map]
@@ -18208,8 +18376,63 @@
         ty)]
     [_ (opt-copy-subst-instr env instr)]))
 
+;; A phi input is rewritten per EDGE, not per block: only the inputs whose
+;; edge leaves the exit block's dominated region are served by the exit phi.
+;; In a single-exit loop every outside reader sits in that region, which is
+;; exactly the whole-block substitution the pass has always done.
+(define (opt-rotate-ssa-subst-phi-inputs-classified
+  [plan : OptRotateSsaPlan]
+  [inputs : ir.CompilerIrPhiInputList]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-rotate-ssa-subst-phi-inputs-classified
+        plan
+        (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        (if (= (opt-rotate-ssa-plan-class plan label) 1)
+          (opt-copy-resolve plan.exit-env value)
+          value)
+        label
+        (opt-rotate-ssa-subst-phi-inputs-classified plan (__tl-box-place rest)))]))
+
+;; A single-exit loop's whole outside region is class 1 by construction (the
+;; header's exit arm is the only way out, so the exit block dominates every
+;; reader of a loop-carried value), and saying so directly keeps that loop off
+;; the dominator queries and off the classified walks entirely -- the pass
+;; costs exactly what it cost before this file learned about second exits.
+(define (opt-rotate-ssa-plan-class [plan : OptRotateSsaPlan] [label : i64]) : i64
+  (if plan.classified?
+    (opt-rotate-ssa-position-class
+      plan.doms
+      plan.body
+      plan.exit-label
+      plan.body-label
+      label)
+    1))
+
+;; The rotation's own use rewriting. A non-phi read is served by the exit phi
+;; only where the exit block dominates the whole block; under the body block
+;; (class 2) the moved phi still reaches it and the read is left alone.
+(define (opt-rotate-ssa-subst-instr-classified
+  [plan : OptRotateSsaPlan]
+  [block-class : i64]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (ir.CompilerIrInstr.Phi
+        dst
+        (opt-rotate-ssa-subst-phi-inputs-classified plan inputs)
+        ty)]
+    [_
+      (if (= block-class 1)
+        (opt-copy-subst-instr plan.exit-env instr)
+        instr)]))
+
 (define (opt-rotate-ssa-rewrite-instr-seq
-  [env : OptCopyEnv]
+  [plan : OptRotateSsaPlan]
+  [block-class : i64]
   [subst? : bool]
   [replace-final? : bool]
   [prefix : ir.CompilerIrInstrSeq]
@@ -18246,7 +18469,7 @@
             (set!
               (array-ref slots (+ prefix-count index))
               (if subst?
-                (opt-rotate-ssa-subst-instr env instr)
+                (opt-rotate-ssa-subst-instr-classified plan block-class instr)
                 instr))
             (set! index (+ index 1)))))
       (set! index 0)
@@ -18286,9 +18509,13 @@
         [(= label plan.preheader) plan.preheader-guard]
         [(= label plan.latch) plan.latch-guard]
         [else (ir.compiler-ir-instr-seq-empty)])]
+    [inside? : bool (opt-label-contains plan.body label)]
     (opt-rotate-ssa-rewrite-instr-seq
-      plan.exit-env
-      (not (opt-label-contains plan.body label))
+      plan
+      (if inside?
+        (- 0 1)
+        (opt-rotate-ssa-plan-class plan label))
+      (not inside?)
       replace-final?
       prefix
       guard
@@ -18323,9 +18550,206 @@
         plan
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-;; True when at least one header-phi destination is read outside the loop body,
-;; i.e. when the rewrite has to mint exit phis at the exit block. Every clause
-;; that exists only to make those phis well-formed is gated on this.
+;; A block's weight for the bound below: its instruction count, or the whole
+;; cap when it makes a call. A trip that calls is never cheap enough for a
+;; two-instruction saving to matter, and the compiler's own small loops are
+;; overwhelmingly calling loops -- which is why this clause is what separates
+;; the scan loops that pay from the recursive-descent loops that do not.
+(define (opt-rotate-ssa-seq-weight
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [cap : i64]) : i64
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (ir.compiler-ir-instr-seq-count instrs)
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Call _ _ _ _) cap]
+      [(ir.CompilerIrInstr.CallIndirect _ _ _ _) cap]
+      [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) cap]
+      [(ir.CompilerIrInstr.CallCAbiStoreResult _) cap]
+      [_ (opt-rotate-ssa-seq-weight instrs (+ index 1) cap)])))
+
+;; Instructions across the loop body, capped so a big body stops counting: the
+;; only question is whether the body is SMALL, and a loop with a hundred
+;; instructions in it does not need an exact total.
+(define (opt-rotate-ssa-body-instr-count
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLabelSet]
+  [cursor : OptLabelSet]
+  [acc : i64]
+  [cap : i64]) : i64
+  (if (>= acc cap)
+    acc
+    (match cursor
+      [(OptLabelSet.Nil) acc]
+      [(OptLabelSet.Dense _ _)
+        (opt-rotate-ssa-body-instr-count
+          blocks
+          body
+          (opt-label-tail cursor)
+          (+
+            acc
+            (match (opt-cfg-find-block blocks (opt-label-ref cursor 0))
+              [(OptMaybeBlock.No) 0]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (opt-rotate-ssa-seq-weight instrs 0 cap)])]))
+          cap)])))
+
+;; THE MULTI-EXIT BOUND. Rotating a multi-exit loop buys one thing: the trip
+;; stops paying a top test plus an unconditional back edge and pays a single
+;; conditional back edge instead. That is a fixed two-instruction saving per
+;; trip, so it is worth having in a tight scan loop and worth nothing in a big
+;; one -- while the cost, a rewrite plus a fresh dominator build plus a full
+;; verify per accepted loop, is paid per loop regardless. Measured on this
+;; tree, admitting every multi-exit loop cost the opt2 self-compile +0.30%
+;; (155,033,343,221 -> 155,495,112,924) for benchmark wins that came entirely
+;; from bodies under this bound: `benchmarks/peephole_lines`'s `pl-line-end`
+;; goes 7 instructions per byte to 6 (-11.5% on the benchmark's hottest
+;; function) and `benchmarks/liveness_scan`'s word scan the same way.
+(define (opt-rotate-ssa-multi-exit-body-max) : i64
+  32)
+
+;; flag_exit's C1 monotone seed, read straight off the records this pass
+;; already built: a bool-typed header phi whose preheader edge carries a bool
+;; literal, with no non-phi reader outside the loop (flag_exit's C4, which is
+;; what decides whether it can ever fire).
+;;
+;; THE DEFERRAL. flag_exit sits six passes BELOW this one and converts exactly
+;; that shape: it redirects the clearing edge straight out of the loop, which
+;; DELETES the second exit's gate and leaves a single-exit loop this pass then
+;; rotates in the ordinary way, with the flag test gone from the trip entirely.
+;; That is worth far more than rotating the flag-carrying form, and rotating
+;; first destroys it -- rotation moves the flag phi out of the header, so C1
+;; stops matching and the conversion never fires again. Measured on
+;; `benchmarks/intern_table`'s `it-slice-eq?`: rotating its `(and (< i len)
+;; ok)` loop ahead of flag_exit costs +35,506,866 Ir (591,082,051 ->
+;; 626,588,917, +6.01%), because the converted+versioned form exits on the
+;; first mismatch at 7 instructions per byte and the rotated flag form runs the
+;; whole slice at ten with a `test`/`jcc` on the flag every trip. So a loop
+;; whose second exit is still gated by a convertible monotone flag is left to
+;; flag_exit; one whose flag has a non-phi reader outside the loop is one
+;; flag_exit can never convert, and rotates here.
+;; The back-edge input decides whether the flag is still LIVE as a flag. C1
+;; wants a var there to start its closure walk from; once flag_exit has run it
+;; pins the closure's definitions to K, so the back edge carries the literal
+;; too and there is nothing left to convert. Testing it is what keeps the
+;; deferral from outliving the conversion it defers to -- the converted loop
+;; still has two exits and still carries the (now constant) flag phis until
+;; SCCP retires them, and a deferral keyed on the seed alone would refuse the
+;; rotation flag_exit exists to enable.
+(define (opt-rotate-ssa-flag-seeded-rec?
+  [init : ir.CompilerIrValue]
+  [back : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Bool)
+      (match init
+        [(ir.CompilerIrValue.Bool _)
+          (match back
+            [(ir.CompilerIrValue.Var _) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (opt-rotate-ssa-rec-flag-seeded?
+  [recs : OptRotateSsaPhiRecs]
+  [var : i64]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) false]
+    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
+      (or
+        (and
+          (= dst var)
+          (opt-rotate-ssa-flag-seeded-rec? init back ty)
+          (not (opt-used-contains nonphi-uses dst)))
+        (opt-rotate-ssa-rec-flag-seeded? (__tl-box-place rest) var nonphi-uses))]))
+
+;; flag_exit's C3 gate, in the direct form: a block inside the loop ending in a
+;; branch ON THE FLAG ITSELF with one arm leaving the loop. C3 wants the branch
+;; condition to be a member of the flag's monotone closure, and a gate that
+;; tests something DERIVED from the flag -- `benchmarks/liveness_scan`'s
+;; `(and (< i words) (not changed))`, whose gate branches on a UnOp -- is not in
+;; that closure and is a loop flag_exit can never convert. Deferring it would
+;; cost the rotation and buy nothing (measured: liveness_scan -2,353,975 Ir when
+;; that loop rotates), so the deferral asks for the gate flag_exit asks for.
+(define (opt-rotate-ssa-flag-gate-instrs?
+  [instrs : ir.CompilerIrInstrSeq]
+  [body : OptLabelSet]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (<= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch cond-value true-label false-label)
+          (and
+            (opt-loop-rotation-exit-target? body true-label)
+            (opt-label-contains body false-label)
+            (match cond-value
+              [(ir.CompilerIrValue.Var gate-var)
+                (opt-rotate-ssa-rec-flag-seeded? recs gate-var nonphi-uses)]
+              [_ false]))]
+        [_ false]))))
+
+(define (opt-rotate-ssa-flag-gate-arms?
+  [instrs : ir.CompilerIrInstrSeq]
+  [body : OptLabelSet]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (<= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch cond-value true-label false-label)
+          (or
+            (opt-rotate-ssa-flag-gate-instrs? instrs body recs nonphi-uses)
+            (and
+              (opt-loop-rotation-exit-target? body false-label)
+              (opt-label-contains body true-label)
+              (match cond-value
+                [(ir.CompilerIrValue.Var gate-var)
+                  (opt-rotate-ssa-rec-flag-seeded? recs gate-var nonphi-uses)]
+                [_ false])))]
+        [_ false]))))
+
+(define (opt-rotate-ssa-flag-gate-blocks?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLabelSet]
+  [header : i64]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (or
+            (and
+              (not (= label header))
+              (opt-label-contains body label)
+              (opt-rotate-ssa-flag-gate-arms? instrs body recs nonphi-uses))
+            (opt-rotate-ssa-flag-gate-blocks?
+              (__tl-box-place rest)
+              body
+              header
+              recs
+              nonphi-uses))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-rotate-ssa-flag-gate-blocks?
+        (ir.compiler-ir-block-seq-to-list seq)
+        body
+        header
+        recs
+        nonphi-uses)]))
+
+;; True when at least one header-phi destination appears in the given
+;; classified read set. With the class-1 set it says the rewrite has to mint
+;; exit phis at the exit block; with the class-0 set it says a read exists that
+;; no placement can serve, which refuses the loop.
 (define (opt-rotate-ssa-recs-used-outside?
   [recs : OptRotateSsaPhiRecs]
   [outside-uses : opt_i64_i64_map.Map]) : bool
@@ -18339,6 +18763,7 @@
 (define (opt-rotate-ssa-apply
   [blocks : ir.CompilerIrBlockList]
   [pred-map : OptPredMap]
+  [doms : OptDomInfo]
   [frame : i64]
   [header : i64]
   [preheader : i64]
@@ -18352,11 +18777,76 @@
     [phis : ir.CompilerIrInstrSeq shape.phis]
     [recs : OptRotateSsaPhiRecs shape.recs]
     [guard : ir.CompilerIrInstrSeq shape.guard]
+    ;; THE PRE-EXISTING WALK, and the pre-existing cost. Every candidate still
+    ;; pays exactly this one traversal of the outside region and nothing else.
     [outside-uses : opt_i64_i64_map.Map
       (opt-rotate-ssa-uses-outside-body
         (opt_i64_i64_map.with-capacity 64)
         blocks
         body)]
+    ;; THE COST GATE. The classified placement is reached only from the SHAPE
+    ;; THE PASS ALREADY REFUSED: a loop-carried value read outside the loop
+    ;; (the pre-existing exit-phi trigger), the exit block private to the header
+    ;; (the pre-existing well-formedness demand), a second exit, and a body
+    ;; small enough for a two-instruction-per-trip saving to matter. Everything
+    ;; this pass admitted before reaches the same verdict down the same path at
+    ;; the same price; only its refusals get a second look.
+    ;;
+    ;; Every term here is lazy, and that is the point. Deciding the placement
+    ;; eagerly -- even just far enough to skip the walks -- costs the opt2
+    ;; self-compile about a quarter of a percent, because this compiler is built
+    ;; out of multi-exit loops and every one of them then pays a second-exit
+    ;; scan and three classified traversals once per round per pipeline
+    ;; iteration, to answer a question the bounds were going to discard.
+    [classify? : bool
+      (and
+        (opt-rotate-ssa-recs-used-outside? recs outside-uses)
+        (opt-rotate-ssa-only-label?
+          (opt-pred-map-lookup pred-map exit-label)
+          header)
+        (not (opt-rotate-ssa-single-exit? pred-map body body header))
+        (<
+          (opt-rotate-ssa-body-instr-count
+            blocks
+            body
+            body
+            0
+            (opt-rotate-ssa-multi-exit-body-max))
+          (opt-rotate-ssa-multi-exit-body-max)))]
+    ;; Reads the exit phi must serve, and reads nothing can serve.
+    [exit-uses : opt_i64_i64_map.Map
+      (if classify?
+        (opt-rotate-ssa-uses-at-class
+          (opt_i64_i64_map.with-capacity 64)
+          blocks
+          doms
+          body
+          exit-label
+          body-label
+          1)
+        outside-uses)]
+    [unplaceable-uses : opt_i64_i64_map.Map
+      (if classify?
+        (opt-rotate-ssa-uses-at-class
+          (opt_i64_i64_map.with-capacity 64)
+          blocks
+          doms
+          body
+          exit-label
+          body-label
+          0)
+        (opt_i64_i64_map.with-capacity 1))]
+    [nonphi-uses : opt_i64_i64_map.Map
+      (if classify?
+        (opt-rotate-ssa-uses-at-class
+          (opt_i64_i64_map.with-capacity 64)
+          blocks
+          doms
+          body
+          exit-label
+          body-label
+          (- 0 1))
+        (opt_i64_i64_map.with-capacity 1))]
     ;; The exit block only has to be the header's private successor when the
     ;; rewrite prepends phis to it. Those phis carry exactly the two loop-edge
     ;; inputs {preheader, latch}, so any third predecessor would leave them
@@ -18368,7 +18858,7 @@
     ;; block, so the pre-existing clause refused BOTH halves of every versioned
     ;; counted loop -- including the hot fast half.
     [exit-phis-needed? : bool
-      (opt-rotate-ssa-recs-used-outside? recs outside-uses)]
+      (opt-rotate-ssa-recs-used-outside? recs exit-uses)]
     (if (and
       (not (= exit-label preheader))
       (not (opt-cfg-block-exists? blocks land-label))
@@ -18381,7 +18871,23 @@
           (opt-rotate-ssa-only-label?
             (opt-pred-map-lookup pred-map exit-label)
             header)
-          (opt-rotate-ssa-single-exit? pred-map body body header)))
+          ;; A loop the gate above declined to classify gets the pre-existing
+          ;; verdict: an outside reader it cannot serve from one exit block
+          ;; refuses it.
+          (or classify? (opt-rotate-ssa-single-exit? pred-map body body header))))
+      ;; A loop-carried read at a JOIN of the two exit paths (a non-phi read
+      ;; under neither the exit block nor the body block) is the one shape the
+      ;; placement cannot express: it would need a phi at the join, whose other
+      ;; inputs the rotation does not own. That is the whole of what replaced
+      ;; the old blanket single-exit refusal -- a loop whose second exit feeds
+      ;; only phi inputs, or feeds a region the body block dominates, rotates.
+      (not (opt-rotate-ssa-recs-used-outside? recs unplaceable-uses))
+      ;; ... and a classified loop still carrying a convertible monotone flag
+      ;; belongs to flag_exit, not here.
+      (or
+        (not classify?)
+        (not
+          (opt-rotate-ssa-flag-gate-blocks? blocks body header recs nonphi-uses)))
       (opt-rotate-ssa-body-avoids-exit? pred-map body header exit-label)
       (not (opt-rotate-ssa-block-has-phi? blocks body-label))
       (not (opt-rotate-ssa-block-has-phi? blocks exit-label))
@@ -18416,7 +18922,7 @@
             [(OptRotateSsaClone.Clone latch-guard after-latch)
               (match (opt-rotate-ssa-exit-phis
                 recs
-                outside-uses
+                exit-uses
                 preheader
                 latch
                 after-latch)
@@ -18435,7 +18941,9 @@
                         preheader-guard
                         latch-guard
                         exit-phis
-                        exit-env)
+                        exit-env
+                        doms
+                        classify?)
                       blocks)
                     next-frame)])])])
       (OptRotateSsaRewrite.No))))
@@ -18475,6 +18983,7 @@
               (opt-rotate-ssa-apply
                 blocks
                 pred-map
+                context.doms
                 frame
                 header
                 preheader
@@ -79085,11 +79594,21 @@
 ;; pays liveness_scan -0.21%. The autopsy of the intern_table loss is NOT the
 ;; allocation churn the older bands document: `it-intern-slice` keeps exactly
 ;; six callee-saved pushes with `it-slice-eq?` absorbed and grows its frame by
-;; 16 bytes. What it loses is the loop BCE VERSIONING the standalone callee gets
-;; -- `it-slice-eq?` emits a `__bce_guard` plus a bounds-free `__bce_fast` inner
-;; loop of seven instructions per byte, and the absorbed copy inside
-;; `it-intern-slice` (a function the versioner never versions) runs the guarded
-;; form at fifteen. A callee-saved/spill proxy alone reads that inline as free.
+;; 16 bytes. What it loses is the MONOTONE-FLAG CONVERSION, and the rotation
+;; that rides on it. `it-slice-eq?`'s `(and (< i len) ok)` loop is multi-exit.
+;; Standalone, `flag_exit` turns the flag's clearing arm into a direct exit and
+;; `rotate_ssa` then takes the single-exit remainder bottom-tested, so the
+;; callee runs seven instructions per byte and leaves on the FIRST mismatch.
+;; Absorbed into `it-intern-slice` neither pass fires: the merged body keeps
+;; the flag, tests it every trip, jumps back unconditionally, and scans the
+;; whole slice at ten. The multi-exit rotation added above does not rescue it
+;; either -- the merged body reads the loop's counter past BOTH exits with a
+;; NON-PHI instruction at the join where they meet, and that is the one shape
+;; `opt-rotate-ssa-apply`'s classified exit placement still refuses. Measured
+;; with that placement in the tree, the merged plan prices identically (after =
+;; 5232 either way) and this site still refuses. (An earlier reading of the same
+;; loss blamed lost BCE versioning; that is disproven -- the merged copy IS
+;; versioned.) A callee-saved/spill proxy alone reads that inline as free.
 ;;
 ;; So the plan is priced in three terms, each measured on the RE-OPTIMIZED body:
 ;;

@@ -94598,6 +94598,9 @@
       (begin
         (set! produced.active false)
         (tc-macro-hygiene-produced-state-data-set! env.state produced)
+        ;; The recursive walker uses one-node copy-on-write replacements. Keep
+        ;; those transient cursors private and publish only the committed root.
+        (ast.ast-node-pool-context-expr-sync-installed! env.pools)
         (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
         result))))
 

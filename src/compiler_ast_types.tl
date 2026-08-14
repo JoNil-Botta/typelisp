@@ -3057,8 +3057,11 @@
         (ast-node-pool-context-expr-cell-address
           (ast-node-pool-context-active-live))))))
 
-;; Keep transitional global expression constructors on the same append cursor
-;; when an explicit owner mutates the cells of the installed context.
+;; Publish a completed explicit expression-pool transaction to transitional
+;; global constructors when its cells belong to the installed owner. Callers
+;; that build and then truncate temporary nodes must invoke this only after the
+;; durable cursor is known; exposing each intermediate cursor lets a nested
+;; legacy constructor observe replacement nodes that are about to be rewound.
 (define (ast-node-pool-context-expr-sync-installed!
   [pools : AstNodePoolContext]) : unit
   (if (not (ast-node-pool-context-expr-installed? pools))
@@ -3085,7 +3088,9 @@
           (if (not (= current.base-arena next.base-arena))
             (ast-node-pool-context-sync-base-arena! pools next.base-arena)
             unit)
-          (ast-node-pool-context-expr-sync-installed! pools)
+          ;; Compatibility adapters historically require eager publication.
+          ;; Ordinary explicit owners publish at their stable phase boundary.
+          (ast-node-pool-compat-context-sync-installed!)
           id)])))
 
 ;; Raw expression-node read keyed by the pool's segment-bases pointer rather
@@ -3131,7 +3136,7 @@
     (set!
       (array-ref pools.expr-pool 0)
       (ast-expr-node-pool-state-set! (array-ref pools.expr-pool 0) id node))
-    (ast-node-pool-context-expr-sync-installed! pools)))
+    (ast-node-pool-compat-context-sync-installed!)))
 
 (define (ast-node-pool-context-expr-truncate!
   [pools : AstNodePoolContext]
@@ -3140,7 +3145,7 @@
     (set!
       (array-ref pools.expr-pool 0)
       (ast-expr-node-pool-state-reset-to (array-ref pools.expr-pool 0) mark))
-    (ast-node-pool-context-expr-sync-installed! pools)))
+    (ast-node-pool-compat-context-sync-installed!)))
 
 (define (ast-node-pool-context-type-push
   [pools : AstNodePoolContext]

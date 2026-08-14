@@ -2182,7 +2182,7 @@ verify_residual_route \
 # Pin the module generator's public malformed-capability diagnostic on both
 # routes. Successful full/core expansion above covers both body branches; this
 # rejection catches computed-match/control-flow drift before syntax building.
-VECTOR_RESIDUAL_DIAG_SOURCE="$ROOT/tests/integration/compile_profile_vector_invalid_capability.tl"
+VECTOR_RESIDUAL_DIAG_SOURCE="$ROOT/tests/safety/vector_invalid_capability_reject.tl"
 VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/vector-diagnostic-embedded.stdout"
 VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/vector-diagnostic-embedded.stderr"
 VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.stdout"

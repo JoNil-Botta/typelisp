@@ -1559,7 +1559,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # payload bytes, with 64,885 nodes of headroom below the 36-segment line.
     # #5754's explicitly threaded macro-hygiene pool context retains this
     # 35-segment boundary on the combined tree: the Windows probe measured
-    # 2,229,797 used nodes, leaving 63,963 nodes of headroom.
+    # 2,229,797 used nodes, leaving 63,963 nodes of headroom. #6543's optimizer
+    # additions also retained 35 segments in its prior current-main CI; the
+    # post-#5754 composition remains pinned here and is measured by the same
+    # required Windows profile gate.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 35 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

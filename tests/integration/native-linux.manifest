@@ -352,6 +352,7 @@ fixed_array_match_pattern|tests/integration/fixed_array_match_pattern.tl|42|-|-|
 u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/linux/u16_div_zero_trap/u16_div_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 u64_high_bit_load_compare|tests/integration/u64_high_bit_load_compare.tl|42|-|-|-
+bit_test_mask_admission|tests/integration/bit_test_mask_admission.tl|42|-|-|-
 unified_place_syntax|tests/integration/unified_place_syntax.tl|42|-|-|-
 composed_place_projection|tests/integration/composed_place_projection.tl|42|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-

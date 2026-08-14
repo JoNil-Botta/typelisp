@@ -514,6 +514,10 @@ run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "TLCI native route sustained stress" \
     scripts/verify-tlci-native-route-stress.sh
+run_with_compiler \
+    "$COMPILE_PROFILE_BIN" \
+    "package metadata-only TLCI dependency catalogs" \
+    scripts/verify-package-metadata-tlci.sh
 run_with_compiler "$STAGE2_BIN" "stage2 compile-startup-profile verifier" scripts/verify-compile-startup-profile.sh
 run_with_compiler "$STAGE2_BIN" "stage2 allocation-profile verifier" scripts/verify-allocation-profile.sh
 run_with_compiler "$STAGE2_BIN" "stage2 math exp codegen verifier" scripts/verify-math-exp-codegen.sh

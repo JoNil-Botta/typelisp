@@ -217,6 +217,21 @@ if awk -F '\t' -v identity="$CLONE_NATIVE_IDENTITY" '
     echo "$CLONE_NATIVE_IDENTITY regressed to a fallback shell" >&2
     exit 1
 fi
+# #6556 removes the vector family generator's fallback shell. Keep direct
+# identity evidence alongside the aggregate coverage ratchet so an unrelated
+# native gain cannot hide a vector route regression.
+VECTOR_NATIVE_IDENTITY=stdlib.vector/vector
+if ! grep -aFq "$VECTOR_NATIVE_IDENTITY" "$IMAGE_A"; then
+    echo "embedded stdlib tlci image is missing $VECTOR_NATIVE_IDENTITY" >&2
+    exit 1
+fi
+if awk -F '\t' -v identity="$VECTOR_NATIVE_IDENTITY" '
+    $1 == identity && $2 == "blocked" { found = 1 }
+    END { exit !found }
+' "$FULL_BLOCKER_STDERR"; then
+    echo "$VECTOR_NATIVE_IDENTITY regressed to a fallback shell" >&2
+    exit 1
+fi
 if [ "$SHELL_ENTRIES" -gt 0 ] &&
     ! grep -q "$(printf '\twalked\t')" "$FULL_BLOCKER_STDERR"; then
     echo "full-blocker diagnostics did not report any walked capability" >&2

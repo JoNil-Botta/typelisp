@@ -2167,6 +2167,78 @@ if ! cmp -s "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" \
     fail "native and interpreted for diagnostics differ"
 fi
 
+echo "[compile-profile] verify vector residual routing differential (#6556)"
+verify_residual_route \
+    vector-full-residual \
+    "$ROOT/tests/integration/compile_profile_vector_full.tl" \
+    "stdlib.vector/vector"
+verify_residual_route \
+    vector-core-residual \
+    "$ROOT/tests/integration/compile_profile_vector_core.tl" \
+    "stdlib.vector/vector"
+
+# Pin the module generator's public malformed-capability diagnostic on both
+# routes. Successful full/core expansion above covers both body branches; this
+# rejection catches computed-match/control-flow drift before syntax building.
+VECTOR_RESIDUAL_DIAG_SOURCE="$ROOT/tests/integration/compile_profile_vector_invalid_capability.tl"
+VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/vector-diagnostic-embedded.stdout"
+VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/vector-diagnostic-embedded.stderr"
+VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.stdout"
+VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.stderr"
+if (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" check "$VECTOR_RESIDUAL_DIAG_SOURCE"
+) > "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
+    2> "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"; then
+    fail "embedded vector diagnostic fixture unexpectedly passed"
+fi
+if (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" check "$VECTOR_RESIDUAL_DIAG_SOURCE" \
+        --stdlib-root stdlib
+) > "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
+    2> "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"; then
+    fail "interpreted vector diagnostic fixture unexpectedly passed"
+fi
+grep -v 'compile-profile' "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR" \
+    > "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text"
+grep -v 'compile-profile' "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR" \
+    > "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
+    'vector: optional capability must be bare `core`' \
+    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
+    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
+    'vector: optional capability must be bare `core`' \
+    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
+    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
+    'in expansion of macro `stdlib.vector/vector` invoked here' \
+    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
+    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
+    'in expansion of macro `stdlib.vector/vector` invoked here' \
+    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
+    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"
+# Native callback diagnostics are anchored at the invocation by design; the
+# interpreted route can retain a transformer-expression primary span. Compare
+# the route-stable diagnostic headline exactly and require invocation
+# provenance above instead of conflating this location policy with semantics.
+head -n 1 "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
+    > "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline"
+head -n 1 "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
+    > "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline"
+if ! cmp -s "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline" \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline"; then
+    diff -u "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline" \
+        "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline" >&2 || true
+    fail "native and interpreted vector diagnostic messages differ"
+fi
+
 echo "[compile-profile] verify json/serialize residual routing differential (#5606/#5627/#5999)"
 verify_residual_route \
     serialize-json-residual \

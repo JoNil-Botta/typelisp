@@ -21,9 +21,10 @@
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
 #
-# Issue #6552 moves stdlib.clone/synthesize-helpers off its fallback shell by
-# adding captured TypeLiteral projection, computed string extraction, boxed
-# element reflection, and continuation lowering. Native coverage rises from
-# 100 to 101 of 107 entries without adding interpreted arms.
-native-entries-min 101
+# Issue #6556 moves stdlib.vector/vector off its fallback shell by adding
+# tuple-type and consuming-array template lowering plus computed local
+# destructuring/conditions. The generalized Bool result support also removes
+# the stdlib.serialize/serialize and stdlib.sort/vec shells, raising native
+# coverage from 101 to 104 of 107 entries without interpreted arms.
+native-entries-min 104
 interpreted-arms-max 0

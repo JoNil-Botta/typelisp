@@ -670,6 +670,8 @@
 ;; dedicated node the parser produces (rather than a generic call). Refs #5213.
 (define tlci-host-callback-name-expr-array-ref : String
   "expr-array-ref")
+(define tlci-host-callback-name-expr-array-take : String
+  "expr-array-take")
 (define tlci-host-callback-name-expr-array-push : String
   "expr-array-push")
 (define tlci-host-callback-name-expr-replace : String
@@ -839,6 +841,16 @@
   "local-expr-string?")
 (define tlci-host-callback-name-local-expr-var? : String
   "local-expr-var?")
+(define tlci-host-callback-name-local-expr-var-name : String
+  "local-expr-var-name")
+(define tlci-host-callback-name-local-expr-begin? : String
+  "local-expr-begin?")
+(define tlci-host-callback-name-local-expr-begin-items : String
+  "local-expr-begin-items")
+(define tlci-host-callback-name-local-bool-value : String
+  "local-bool-value")
+(define tlci-host-callback-name-value-bool : String
+  "value-bool")
 
 ;; Remaining binder-free template node kinds (refs #5605, #6240): expr-return,
 ;; expr-box, expr-box-get, and expr-box-take each pop one expression and push
@@ -1000,6 +1012,8 @@
   "type-ref")
 (define tlci-host-callback-name-type-slice : String
   "type-slice")
+(define tlci-host-callback-name-type-tuple : String
+  "type-tuple")
 
 ;; A computed struct field name is a stack value rather than caller bytes:
 ;; pop the name after the target expression and push the resulting field

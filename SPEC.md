@@ -5504,6 +5504,17 @@ configuration. Each payload schema is independently versioned. Consumers must
 validate the complete key against independently trusted package/source/build
 inputs before hydrating any AST, type, intern identity, or checked fact.
 
+Every package image produced by the checked package build carries kinds `1`,
+`2`, `4`, and `8` in one ordered auxiliary directory. The identity, expanded
+frontend AST, and checked facts are serialized from the same expansion and
+typecheck that feeds runtime lowering; package surface emission does not load,
+expand, or typecheck the source closure a second time. Native macro code and
+its base rodata remain composable with this directory. `typelisp inspect`
+reports each surface section's presence, schema version, and byte length, plus
+the producer identity and the exact-producer/source-binding trust policy.
+Legacy images with no surface kinds remain structurally valid and require the
+consumer to use the source fallback.
+
 ##### 5.17.1.2 Host ABI handshake
 
 The tlci header field at byte offset 24 is callback ABI version `2`. This is a

@@ -2509,6 +2509,9 @@
 ;; unrelated globals. Refs #6257.
 (defstruct TcLazyGlobalTableState
   (owner arena.Arena)
+  ;; Complete aggregate layouts contain retained field/payload/variant arrays.
+  ;; Keep their owner in the same state as the slots that publish those views.
+  (agg-layout-storage-owner arena.Arena)
   (type-needs-resolution-slots (__tl_dyn-array i64))
   (lazy-import-stub-module-ids (__tl_dyn-array i64))
   (lazy-import-stub-alias-ids (__tl_dyn-array i64))
@@ -2523,6 +2526,7 @@
 (define tc-lazy-global-table-state : TcLazyGlobalTableState
   (TcLazyGlobalTableState
     (arena.Arena 0)
+    (arena.Arena 0)
     (array.make-array i64 0)
     (array.make-array i64 0)
     (array.make-array i64 0)
@@ -2534,37 +2538,69 @@
     (array.make-array i64 0)
     (array.make-array i64 0)))
 
-;; Aggregate layouts outlive transient typecheck/lowering scratch regions.
-;; Keep their dense metadata arrays in a cache-owned arena. Arena handles name
-;; stable roots, so one typed handle remains valid as physical segments grow.
-(define tc-agg-layout-cache-storage-arena : arena.Arena
-  (arena.Arena 0))
-
 (define (tc-agg-layout-cache-storage-arena-handle-value) : i64
-  (arena.raw-handle tc-agg-layout-cache-storage-arena))
+  (arena.raw-handle
+    (__tl-project-field tc-lazy-global-table-state agg-layout-storage-owner)))
 
 (define (tc-agg-layout-cache-storage-handle) : arena.Arena
   (let
-    [storage : arena.Arena tc-agg-layout-cache-storage-arena]
+    [storage : arena.Arena
+      (__tl-project-field tc-lazy-global-table-state agg-layout-storage-owner)]
     (if (= (arena.raw-handle storage) 0)
       ;; Selfhost retains less than 1 MiB here. A small root leaves ample
       ;; headroom and still grows through the ordinary arena overflow path.
       (let
         [fresh : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
         (begin
-          (set! tc-agg-layout-cache-storage-arena fresh)
+          (__tl-project-set-field
+            tc-lazy-global-table-state
+            agg-layout-storage-owner
+            fresh)
           fresh))
       storage)))
 
 (define (tc-agg-layout-cache-storage-reset!) : unit
   (let
-    [storage : arena.Arena tc-agg-layout-cache-storage-arena]
+    [storage : arena.Arena
+      (__tl-project-field tc-lazy-global-table-state agg-layout-storage-owner)]
+    [index : i64 0]
     (begin
-      (set! tc-agg-layout-cache-storage-arena (arena.Arena 0))
+      ;; Unpublish every dependent view before destroying its owner. The slot
+      ;; backing array belongs to the outer persistent-table owner and is safe
+      ;; to reuse; none of its entries may retain the retired payload brand.
+      (while (<
+        index
+        (array-length
+          (__tl-project-field tc-lazy-global-table-state agg-layout-cache)))
+        (begin
+          (set!
+            (array-ref
+              (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
+              index)
+            (TcAggLayoutCacheSlot.Empty))
+          (set! index (+ index 1))))
+      (__tl-project-set-field
+        tc-lazy-global-table-state
+        agg-layout-storage-owner
+        (arena.Arena 0))
       (if (= (arena.raw-handle storage) 0)
         unit
         (unsafe
           (arena.destroy storage))))))
+
+(define (tc-agg-layout-cache-slot-empty? [index : i64]) : bool
+  (if (or
+    (< index 0)
+    (>=
+      index
+      (array-length
+        (__tl-project-field tc-lazy-global-table-state agg-layout-cache))))
+    false
+    (match (tc-global-array-element-shared-view
+      (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
+      index)
+      [(TcAggLayoutCacheSlot.Empty) true]
+      [(TcAggLayoutCacheSlot.Full _ _) false])))
 
 ;; Builders know the final cardinality from their AST vectors. Allocate one
 ;; right-sized backing array in the retained cache arena, fill it in source
@@ -51236,10 +51272,10 @@
 ;; TcInlineAggregateLayout per type name. Unlike the scalar handle-index caches,
 ;; this cache is keyed by the intern id of the nominal name: symbol handles can
 ;; be reassigned when specialization rebuilds the symbol table, while intern ids
-;; are stable until intern-reset!. The cached value is deep-cloned into the
-;; persistent program arena (node-pool-base-arena) before storing -- a layout
-;; computed while a transient lowering scratch arena is active would otherwise
-;; dangle after the arena rewinds (the scratch-arena hazard).
+;; are stable until intern-reset!. The cached value's final-size backing arrays
+;; are allocated in the cache state's retained payload owner before storing --
+;; a layout computed in a transient lowering scratch arena would otherwise
+;; dangle after that arena rewinds (the scratch-arena hazard).
 (define tc-agg-layout-cache-capacity : i64
   65536)
 (define tc-agg-layout-cache-generation : i64
@@ -51267,21 +51303,9 @@
     (tc-agg-layout-cache-table-storage-ensure!)
     (if (= tc-agg-layout-cache-generation (ci.intern-generation))
       unit
-      (let
-        [i : i64 0]
-        (begin
-          (tc-agg-layout-cache-storage-reset!)
-          (while (< i tc-agg-layout-cache-capacity)
-            (begin
-              (set!
-                (array-ref
-                  (__tl-project-field
-                    tc-lazy-global-table-state
-                    agg-layout-cache)
-                  i)
-                (TcAggLayoutCacheSlot.Empty))
-              (set! i (+ i 1))))
-          (set! tc-agg-layout-cache-generation (ci.intern-generation)))))))
+      (begin
+        (tc-agg-layout-cache-storage-reset!)
+        (set! tc-agg-layout-cache-generation (ci.intern-generation))))))
 
 ;; Cache key: the stable i64 identity of the nominal type name. Source intern
 ;; ids and structural/generated ids occupy different numeric domains, so hash

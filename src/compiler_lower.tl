@@ -27406,6 +27406,156 @@
             (lower-cast-value inner-state inner-value inner-ty expr-ty))])]
     [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))
 
+;; Assignment lowering stays together outside the main expression dispatcher:
+;; dotted-field rewrites and ordinary local/global stores share the same
+;; expected value type, aggregate copy rules, and result-alias bookkeeping.
+(define (lower-set-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [name : i64]
+  [value-box : i64]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (let
+    [name-id : i64 name]
+    [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+    [name-text : String (tc_core.tc-env-key-name-text name)]
+    (if (tc_core.tc-dotted-local-field-name-id? type-env name)
+      (match (tc_core.tc-dotted-local-field-set-expr-id type-env name value-box)
+        [(tc_core.ResultTcExprId.Ok virtual-id)
+          (lower-expr-with-type
+            ctx
+            state
+            env
+            type-env
+            (lower-context-expr-get ctx virtual-id)
+            origin
+            expr-ty)]
+        [(tc_core.ResultTcExprId.Err message)
+          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))])
+      (match (lower-lookup-type-id
+        ctx
+        (lower-state-type-cache state)
+        env
+        type-env
+        name-id)
+        [(tc_core.ResultTcType.Ok store-ty)
+          (let
+            [target-ty : ast.AstType
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-resolve-type ctx store-ty))]
+            [target-ir-ty : ast.AstType
+              (lower-one-word-register-storage-type ctx target-ty)]
+            (match (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              value
+              target-ty
+              value)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr value-state value-ir _)
+                    (let
+                      [id : i64
+                        (sym_i64_env.sym-i64-lookup-id-or
+                          env
+                          name-id
+                          (csym.compiler-symbols-missing-handle))]
+                      (if (csym.compiler-symbols-handle-found? id)
+                        (match (lower-local-assignment-value
+                          ctx
+                          value-state
+                          value-ir
+                          target-ty
+                          id)
+                          [(ResultLowerExpr.Ok assignment)
+                            (match assignment
+                              [(LowerExpr.Expr assign-value-state assign-ir _)
+                                (let
+                                  [assign-state
+                                    : LowerState
+                                    ;; A rebound aggregate param may point at
+                                    ;; current-frame storage, so its var id no
+                                    ;; longer proves tail-call forwarding is safe.
+                                    (if (and
+                                      (lower-state-tail-param-range-contains?
+                                        assign-value-state
+                                        id)
+                                      (lower-type-contains-inline-aggregate?
+                                        ctx
+                                        target-ty))
+                                      (lower-state-clear-tail-param-range
+                                        assign-value-state)
+                                      assign-value-state)]
+                                  (ResultLowerExpr.Ok
+                                    (LowerExpr.Expr
+                                      (let
+                                        [next-state : LowerState
+                                          (lower-state-emit-at-expr
+                                            assign-state
+                                            (ir.CompilerIrInstr.Mov
+                                              id
+                                              assign-ir
+                                              target-ir-ty)
+                                            origin)]
+                                        (if (>=
+                                          (lower-state-active-loop-entry-var-limit
+                                            state)
+                                          0)
+                                          (let
+                                            [assign-origin : i64
+                                              (lower-state-inline-result-alias-origin
+                                                next-state
+                                                assign-ir)]
+                                            (lower-state-inline-result-alias-set
+                                              next-state
+                                              id
+                                              assign-origin))
+                                          next-state))
+                                      ir.CompilerIrValue.Unit
+                                      expr-ty)))])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])
+                        (match (lower-return-abi-value
+                          ctx
+                          value-state
+                          value-ir
+                          target-ty)
+                          [(ResultLowerExpr.Ok store-copy)
+                            (match store-copy
+                              [(LowerExpr.Expr store-state store-ir _)
+                                (let
+                                  [target-id : i64
+                                    (lower-resolve-name-symbol-id
+                                      store-state
+                                      name-id)]
+                                  (ResultLowerExpr.Ok
+                                    (LowerExpr.Expr
+                                      (lower-state-emit-at-expr
+                                        store-state
+                                        (ir.CompilerIrInstr.Store
+                                          target-id
+                                          store-ir
+                                          target-ir-ty)
+                                        origin)
+                                      ir.CompilerIrValue.Unit
+                                      expr-ty)))])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
+        [(tc_core.ResultTcType.Err _)
+          (ResultLowerExpr.Err
+            (box
+              (lower-diagnostic-at-expr
+                origin
+                (str_cat.str-cat
+                  "lower: assignment to unknown local "
+                  name-text))))]))))
+
 (define (lower-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -27696,150 +27846,7 @@
         exprs
         expr-ty)]
     [(ast.AstExpr.Set name value-box)
-      (let
-        [name-id : i64 name]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [name-text : String (tc_core.tc-env-key-name-text name)]
-        (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-          (match (tc_core.tc-dotted-local-field-set-expr-id
-            type-env
-            name
-            value-box)
-            [(tc_core.ResultTcExprId.Ok virtual-id)
-              (lower-expr-with-type
-                ctx
-                state
-                env
-                type-env
-                (lower-context-expr-get ctx virtual-id)
-                origin
-                expr-ty)]
-            [(tc_core.ResultTcExprId.Err message)
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr origin message)))])
-          (match (lower-lookup-type-id
-            ctx
-            (lower-state-type-cache state)
-            env
-            type-env
-            name-id)
-            [(tc_core.ResultTcType.Ok store-ty)
-              (let
-                [target-ty : ast.AstType
-                  (tc_core.tc-type-without-regions
-                    (tc_core.tc-resolve-type ctx store-ty))]
-                [target-ir-ty : ast.AstType
-                  (lower-one-word-register-storage-type ctx target-ty)]
-                (match (lower-expr-expected
-                  ctx
-                  state
-                  env
-                  type-env
-                  value
-                  target-ty
-                  value)
-                  [(ResultLowerExpr.Ok lowered)
-                    (match lowered
-                      [(LowerExpr.Expr value-state value-ir _)
-                        (let
-                          [id : i64
-                            (sym_i64_env.sym-i64-lookup-id-or
-                              env
-                              name-id
-                              (csym.compiler-symbols-missing-handle))]
-                          (if (csym.compiler-symbols-handle-found? id)
-                            (match (lower-local-assignment-value
-                              ctx
-                              value-state
-                              value-ir
-                              target-ty
-                              id)
-                              [(ResultLowerExpr.Ok assignment)
-                                (match assignment
-                                  [(LowerExpr.Expr
-                                      assign-value-state
-                                      assign-ir
-                                      _)
-                                    (let
-                                      [assign-state
-                                        : LowerState
-                                        ;; A rebound aggregate param may point at
-                                        ;; current-frame storage, so its var id no
-                                        ;; longer proves tail-call forwarding is safe.
-                                        (if (and
-                                          (lower-state-tail-param-range-contains?
-                                            assign-value-state
-                                            id)
-                                          (lower-type-contains-inline-aggregate?
-                                            ctx
-                                            target-ty))
-                                          (lower-state-clear-tail-param-range
-                                            assign-value-state)
-                                          assign-value-state)]
-                                      (ResultLowerExpr.Ok
-                                        (LowerExpr.Expr
-                                          (let
-                                            [next-state : LowerState
-                                              (lower-state-emit-at-expr
-                                                assign-state
-                                                (ir.CompilerIrInstr.Mov
-                                                  id
-                                                  assign-ir
-                                                  target-ir-ty)
-                                                origin)]
-                                            (if (>=
-                                              (lower-state-active-loop-entry-var-limit
-                                                state)
-                                              0)
-                                              (let
-                                                [assign-origin : i64
-                                                  (lower-state-inline-result-alias-origin
-                                                    next-state
-                                                    assign-ir)]
-                                                (lower-state-inline-result-alias-set
-                                                  next-state
-                                                  id
-                                                  assign-origin))
-                                              next-state))
-                                          ir.CompilerIrValue.Unit
-                                          expr-ty)))])]
-                              [(ResultLowerExpr.Err message)
-                                (ResultLowerExpr.Err message)])
-                            (match (lower-return-abi-value
-                              ctx
-                              value-state
-                              value-ir
-                              target-ty)
-                              [(ResultLowerExpr.Ok store-copy)
-                                (match store-copy
-                                  [(LowerExpr.Expr store-state store-ir _)
-                                    (let
-                                      [target-id : i64
-                                        (lower-resolve-name-symbol-id
-                                          store-state
-                                          name-id)]
-                                      (ResultLowerExpr.Ok
-                                        (LowerExpr.Expr
-                                          (lower-state-emit-at-expr
-                                            store-state
-                                            (ir.CompilerIrInstr.Store
-                                              target-id
-                                              store-ir
-                                              target-ir-ty)
-                                            origin)
-                                          ir.CompilerIrValue.Unit
-                                          expr-ty)))])]
-                              [(ResultLowerExpr.Err message)
-                                (ResultLowerExpr.Err message)])))])]
-                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
-            [(tc_core.ResultTcType.Err _)
-              (ResultLowerExpr.Err
-                (box
-                  (lower-diagnostic-at-expr
-                    origin
-                    (str_cat.str-cat
-                      "lower: assignment to unknown local "
-                      name-text))))])))]
+      (lower-set-expr ctx state env type-env name value-box origin expr-ty)]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]

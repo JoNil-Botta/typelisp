@@ -574,6 +574,18 @@
 (define (compiler-lower-comptime-runtime-var-source) : String
   "(define (main [x : i64]) : i64 (comptime x))")
 
+(define (compiler-lower-comptime-error-ordinary-source) : String
+  "(import stdlib.comptime)
+(define (main) : i64
+  (begin
+    (comptime.error \"ordinary runtime forbidden\")
+    0))")
+
+(define (compiler-lower-comptime-error-tail-source) : String
+  "(import stdlib.comptime)
+(define (main) : i64
+  (comptime.error \"tail runtime forbidden\"))")
+
 (define (compiler-lower-comptime-f64-source) : String
   "(define (main) : f64 (comptime 1.5))")
 
@@ -614,6 +626,21 @@
         (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         want)]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
+
+(define (compiler-lower-comptime-error-runtime-diagnostics-ok?) : bool
+  (and
+    (compiler-lower-error-ok?
+      (compiler-lower-comptime-error-ordinary-source)
+      "lower: comptime-error is compile-time only")
+    (compiler-lower-error-ok?
+      (compiler-lower-comptime-error-tail-source)
+      "lower: comptime-error is compile-time only")))
+
+(test
+  compiler-lower-comptime-error-runtime-diagnostics
+  (test.assert-true
+    (compiler-lower-comptime-error-runtime-diagnostics-ok?)
+    "ordinary and tail-position comptime-error calls are rejected"))
 
 (define (compiler-lower-resetting-entry-live-session-guard-ok?) : bool
   (let
@@ -13387,6 +13414,217 @@
   (test.assert-true
     (compiler-lower-cleanup-owner-interleaving-ok?)
     "cleanup synthesis mutates only its explicit intern and AST-pool owners"))
+
+(define (compiler-lower-comptime-error-test-builtins
+  [intern-state : ci.InternCompatState]
+  [comptime-id : i64]
+  [comptime-error-id : i64]
+  [bare-id : i64]
+  [stdlib-comptime-id : i64]
+  [stdlib-error-id : i64]) : cbi.CompilerBuiltinIdsState
+  (let
+    [state : cbi.CompilerBuiltinIdsState (cbi.state-new)]
+    (begin
+      (cbi.state-set-generation!
+        state
+        (ci.intern-compat-state-generation intern-state))
+      (cbi.state-set-metadata!
+        state
+        (ci.intern-compat-state-table-id intern-state)
+        (ci.intern-compat-state-pool-len intern-state)
+        true)
+      (cbi.state-set! state 90 comptime-id)
+      (cbi.state-set! state 91 comptime-error-id)
+      (cbi.state-set! state 94 bare-id)
+      (cbi.state-set! state 149 stdlib-comptime-id)
+      (cbi.state-set! state 150 stdlib-error-id)
+      state)))
+
+;; Cache identity is the pair `(table-id, reset generation)`, not a numeric ID
+;; alone. A and B deliberately assign the same raw ID to different strings;
+;; the installed third state is a compatibility decoy and must remain untouched.
+(define (compiler-lower-comptime-error-cache-owner-isolation-ok?) : bool
+  (let
+    [active-intern-before : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [active-builtins-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+    [a-bare : i64 (ci.intern-compat-state-intern intern-a "comptime-error")]
+    [a-comptime : i64
+      (ci.intern-compat-state-intern intern-a "comptime.comptime-error")]
+    [a-error : i64 (ci.intern-compat-state-intern intern-a "comptime.error")]
+    [a-stdlib-comptime : i64
+      (ci.intern-compat-state-intern intern-a "stdlib.comptime.comptime-error")]
+    [a-stdlib-error : i64
+      (ci.intern-compat-state-intern intern-a "stdlib.comptime.error")]
+    [b-decoy : i64 (ci.intern-compat-state-intern intern-b "owner-b-decoy")]
+    [_b-decoy-2 : i64
+      (ci.intern-compat-state-intern intern-b "owner-b-decoy-2")]
+    [_b-decoy-3 : i64
+      (ci.intern-compat-state-intern intern-b "owner-b-decoy-3")]
+    [_b-decoy-4 : i64
+      (ci.intern-compat-state-intern intern-b "owner-b-decoy-4")]
+    [_b-decoy-5 : i64
+      (ci.intern-compat-state-intern intern-b "owner-b-decoy-5")]
+    [b-bare : i64 (ci.intern-compat-state-intern intern-b "comptime-error")]
+    [b-comptime : i64
+      (ci.intern-compat-state-intern intern-b "comptime.comptime-error")]
+    [b-error : i64 (ci.intern-compat-state-intern intern-b "comptime.error")]
+    [b-stdlib-comptime : i64
+      (ci.intern-compat-state-intern intern-b "stdlib.comptime.comptime-error")]
+    [b-stdlib-error : i64
+      (ci.intern-compat-state-intern intern-b "stdlib.comptime.error")]
+    [decoy-id : i64
+      (ci.intern-compat-state-intern intern-decoy "installed-decoy")]
+    [builtins-a : cbi.CompilerBuiltinIdsState
+      (compiler-lower-comptime-error-test-builtins
+        intern-a
+        a-comptime
+        a-error
+        a-bare
+        a-stdlib-comptime
+        a-stdlib-error)]
+    [builtins-b : cbi.CompilerBuiltinIdsState
+      (compiler-lower-comptime-error-test-builtins
+        intern-b
+        b-comptime
+        b-error
+        b-bare
+        b-stdlib-comptime
+        b-stdlib-error)]
+    [builtins-decoy : cbi.CompilerBuiltinIdsState
+      (compiler-lower-comptime-error-test-builtins
+        intern-decoy
+        decoy-id
+        decoy-id
+        decoy-id
+        decoy-id
+        decoy-id)]
+    [lower-a : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state intern-a)]
+    [lower-b : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state intern-b)]
+    [initial-a : compiler_lower.CompilerLowerStateObservation
+      (compiler_lower.compiler-lower-state-observe lower-a)]
+    [ok : bool false]
+    (begin
+      (ci.intern-compat-state-install! intern-decoy)
+      (cbi.state-install! builtins-decoy)
+      (compiler_lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
+      (compiler_lower.lower-comptime-error-ids-ensure! lower-b builtins-b)
+      (let
+        [b-before-reuse : compiler_lower.CompilerLowerStateObservation
+          (compiler_lower.compiler-lower-state-observe lower-b)]
+        [old-generation : i64 (ci.intern-compat-state-generation intern-a)]
+        (begin
+          (compiler_lower.compiler-lower-state-reset! lower-a)
+          (let
+            [reset-ok? : bool
+              (compiler_lower.compiler-lower-state-reset? lower-a)]
+            (begin
+              (ci.intern-compat-state-reset! intern-a)
+              (let
+                [_a-new-decoy-1 : i64
+                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-1")]
+                [_a-new-decoy-2 : i64
+                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-2")]
+                [_a-new-decoy-3 : i64
+                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-3")]
+                [_a-new-decoy-4 : i64
+                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-4")]
+                [_a-new-decoy-5 : i64
+                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-5")]
+                [a-new-bare : i64
+                  (ci.intern-compat-state-intern intern-a "comptime-error")]
+                [a-new-comptime : i64
+                  (ci.intern-compat-state-intern
+                    intern-a
+                    "comptime.comptime-error")]
+                [a-new-error : i64
+                  (ci.intern-compat-state-intern intern-a "comptime.error")]
+                [a-new-stdlib-comptime : i64
+                  (ci.intern-compat-state-intern
+                    intern-a
+                    "stdlib.comptime.comptime-error")]
+                [a-new-stdlib-error : i64
+                  (ci.intern-compat-state-intern
+                    intern-a
+                    "stdlib.comptime.error")]
+                [builtins-a-reused : cbi.CompilerBuiltinIdsState
+                  (compiler-lower-comptime-error-test-builtins
+                    intern-a
+                    a-new-comptime
+                    a-new-error
+                    a-new-bare
+                    a-new-stdlib-comptime
+                    a-new-stdlib-error)]
+                (begin
+                  (compiler_lower.lower-comptime-error-ids-ensure!
+                    lower-a
+                    builtins-a-reused)
+                  (set!
+                    ok
+                    (and
+                      (= a-bare b-decoy)
+                      (string.eq
+                        (ci.intern-compat-state-str intern-a a-new-bare)
+                        "comptime-error")
+                      (string.eq
+                        (ci.intern-compat-state-str intern-b b-decoy)
+                        "owner-b-decoy")
+                      (not
+                        (compiler_lower.compiler-lower-state-observation-eq?
+                          initial-a
+                          (compiler_lower.compiler-lower-state-observe lower-a)))
+                      (compiler_lower.lower-comptime-error-call-id?
+                        lower-a
+                        a-new-bare)
+                      (not
+                        (compiler_lower.lower-comptime-error-call-id?
+                          lower-a
+                          a-bare))
+                      (compiler_lower.lower-comptime-error-call-id?
+                        lower-b
+                        b-bare)
+                      (not
+                        (compiler_lower.lower-comptime-error-call-id?
+                          lower-b
+                          b-decoy))
+                      reset-ok?
+                      (not
+                        (=
+                          old-generation
+                          (ci.intern-compat-state-generation intern-a)))
+                      (compiler_lower.compiler-lower-state-observation-eq?
+                        b-before-reuse
+                        (compiler_lower.compiler-lower-state-observe lower-b))
+                      (=
+                        (ci.intern-active-table-id)
+                        (ci.intern-compat-state-table-id intern-decoy))
+                      (=
+                        (ci.intern-generation)
+                        (ci.intern-compat-state-generation intern-decoy))
+                      (= (ci.intern-pool-len) 1)
+                      (cbi.compiler-builtin-table-current?)
+                      (= cbi.compiler-builtin-id-fix-comptime_error decoy-id)))))))))
+      (ci.intern-compat-state-install! active-intern-before)
+      (cbi.state-install! active-builtins-before)
+      (unsafe
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-a))
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-b))
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-decoy)))
+      ok)))
+
+(test
+  compiler-lower-comptime-error-cache-owner-isolation
+  (test.assert-true
+    (compiler-lower-comptime-error-cache-owner-isolation-ok?)
+    "comptime-error caches use explicit intern/builtin owners and reset stamps"))
 
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let

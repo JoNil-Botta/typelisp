@@ -1164,9 +1164,9 @@
                       (and isolated-ok? b-released-ok?))))))))))))
 
 ;; The driver owns one opaque lower job state per compile state. Populate A
-;; through a successful lower, drive B through a semantic failure, then reset B
-;; through the driver lifecycle. The 30-cell structural observation of A must
-;; remain exact, while B returns to its fresh observation.
+;; through a successful lower, drive B through failures before and after cache
+;; population, then reset B through the driver lifecycle. A's complete
+;; structural observation must remain exact, while B returns to fresh state.
 (define (compiler-driver-lower-state-isolation-ok?) : bool
   (let
     [state-a : compiler_driver_core.CompilerDriverState
@@ -1178,6 +1178,12 @@
     [lower-b : compiler_lower.CompilerLowerState
       (compiler_driver_core.compiler-driver-state-owned-lower-state state-b)]
     [initial-a : compiler_lower.CompilerLowerStateObservation
+      (compiler_lower.compiler-lower-state-observe lower-a)]
+    [b-prepopulate-failed : bool
+      (match (compiler_lower.lower-compiler-source-with-state lower-b "(define")
+        [(compiler_lower.ResultCompilerLower.Err _) true]
+        [(compiler_lower.ResultCompilerLower.Ok _ _) false])]
+    [a-after-b-prepopulate-failure : compiler_lower.CompilerLowerStateObservation
       (compiler_lower.compiler-lower-state-observe lower-a)]
     (match (compiler_lower.lower-compiler-source-with-state
       lower-a
@@ -1213,6 +1219,15 @@
                 [(= lower-a.address lower-b.address)
                   (compiler-driver-reader-context-smoke-fail
                     "lower state owners alias")]
+                [(not b-prepopulate-failed)
+                  (compiler-driver-reader-context-smoke-fail
+                    "controlled pre-cache lower state B failure succeeded")]
+                [(not
+                    (compiler_lower.compiler-lower-state-observation-eq?
+                      initial-a
+                      a-after-b-prepopulate-failure))
+                  (compiler-driver-reader-context-smoke-fail
+                    "pre-cache state B failure mutated state A")]
                 [(compiler_lower.compiler-lower-state-observation-eq?
                     initial-a
                     a-before)

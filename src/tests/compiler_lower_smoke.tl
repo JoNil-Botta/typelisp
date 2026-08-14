@@ -735,11 +735,7 @@
         "macro call has too few arguments")
       (io.panic "lower: macro arity diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-error-ok?
-        "(import stdlib.comptime)
-(define (main) : i64
-  (comptime.error \"runtime forbidden\"))"
-        "lower: comptime-error is compile-time only")
+      (compiler_lower_tests.compiler-lower-comptime-error-runtime-diagnostics-ok?)
       (io.panic "lower: comptime-error runtime diagnostic smoke mismatch"))
     (unless
       (compiler_lower_tests.compiler-lower-error-ok?

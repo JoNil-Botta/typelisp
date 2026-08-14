@@ -127,31 +127,29 @@
                                 [rev-name : comptime.Expr
                                   (comptime.expr-var
                                     (comptime.string-append helper-text "$rev"))]
+                                [nil-text : String
+                                  (comptime.string-append
+                                    type-name
+                                    (comptime.string-append
+                                      "."
+                                      (enum-variant-name type-expr nil-index)))]
                                 [nil-name : comptime.Expr
-                                  (comptime.expr-var
+                                  (comptime.expr-var nil-text)]
+                                [cons-text : String
+                                  (comptime.string-append
+                                    type-name
                                     (comptime.string-append
-                                      type-name
-                                      (comptime.string-append
-                                        "."
-                                        (enum-variant-name type-expr nil-index))))]
+                                      "."
+                                      (enum-variant-name type-expr cons-index)))]
                                 [cons-name : comptime.Expr
-                                  (comptime.expr-var
-                                    (comptime.string-append
-                                      type-name
-                                      (comptime.string-append
-                                        "."
-                                        (enum-variant-name type-expr cons-index))))]
+                                  (comptime.expr-var cons-text)]
                                 [nil-pattern : comptime.Pattern
                                   (comptime.pattern-variant
-                                    (match nil-name
-                                      [(comptime.Expr.Var name) name]
-                                      [_ ""])
+                                    nil-text
                                     (comptime.pattern-list-empty))]
                                 [cons-pattern : comptime.Pattern
                                   (comptime.pattern-variant
-                                    (match cons-name
-                                      [(comptime.Expr.Var name) name]
-                                      [_ ""])
+                                    cons-text
                                     (comptime.pattern-list-cons
                                       (comptime.pattern-binding "head")
                                       (comptime.pattern-list-cons

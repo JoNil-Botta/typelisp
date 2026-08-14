@@ -2856,8 +2856,7 @@
                     (embedded-native-var-param-index
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
-                  (if (< param 0)
-                    -1
+                  (if (>= param 0)
                     (begin
                       (embedded-native-template-push!
                         ops
@@ -2867,7 +2866,26 @@
                         (string.int->string param)
                         "0"
                         "0")
-                      1)))]
+                      1)
+                    (let
+                      [opened : i64
+                        (embedded-native-computed-expr-ops
+                          params
+                          (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                          ops
+                          ops-count)]
+                      (if (< opened 0)
+                        -1
+                        (begin
+                          (embedded-native-template-push!
+                            ops
+                            ops-count
+                            (tlci_core.tlci-host-callback-name-shared-view
+                              tlci_core.tlci-host-callback-name-expr-string-value)
+                            "0"
+                            "0"
+                            "0")
+                          (+ opened 1))))))]
               ;; `(comptime.expr-string e)`: the argument's comptime String
               ;; value becomes a string-literal expression, carrying the same
               ;; intern id the interpreted builder reuses. Refs #5701.
@@ -2991,6 +3009,19 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                   (tlci_core.tlci-host-callback-name-shared-view
                     tlci_core.tlci-host-callback-name-array-element-type)
+                  "0"
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.box-element-type")
+                    (string.eq head "box-element-type"))
+                  (= argc 1))
+                (embedded-native-computed-type-query-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-box-element-type)
                   "0"
                   ops
                   ops-count)]
@@ -3644,6 +3675,35 @@
                         "0"
                         "0")
                       (+ opened 1))))]
+              ;; Resolve one captured type literal from a variadic ExprList.
+              ;; Unlike ordinary expr-list-nth, the host callback pushes a
+              ;; comptime Type value so reflection consumers see exactly the
+              ;; interpreted expr-list-type-nth result. Refs #6552.
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-list-type-nth")
+                    (string.eq head "expr-list-type-nth"))
+                  (= argc 2))
+                (let
+                  [list-param : i64
+                    (embedded-native-var-param-index
+                      params
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
+                  [index-text : String
+                    (embedded-native-data-index-text
+                      (compiler_ast_types.ast-expr-list-get (& args) 1 0))]
+                  (if (or (< list-param 0) (string.eq index-text ""))
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        (tlci_core.tlci-host-callback-name-shared-view
+                          tlci_core.tlci-host-callback-name-expr-list-type-nth)
+                        (string.int->string list-param)
+                        index-text
+                        "0")
+                      1)))]
               ;; `(comptime.expr-list-nth p index)` over a variadic operand:
               ;; the host op indexes the operand list exactly like the
               ;; interpreted builtin. Refs #5617.
@@ -4885,6 +4945,25 @@
 ;; host status, ending with the `final` operation over the produced session
 ;; value. Quasiquoted fragments reuse the general template walker.
 ;; Returns "" outside the supported subset.
+(define (embedded-native-computed-binary-code
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [left-node : i64]
+  [right-node : i64]
+  [op : String]
+  [final : String]) : String
+  (let
+    [op-final : String
+      (embedded-native-arm-block-with-final
+        (embedded-native-single-op-ops op "0" "0" "0")
+        1
+        1
+        final)]
+    [right-code : String
+      (embedded-native-computed-expr-code params right-node op-final)]
+    (if (string.eq right-code "")
+      ""
+      (embedded-native-computed-expr-code params left-node right-code))))
+
 (define (embedded-native-computed-expr-code
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]
@@ -4901,10 +4980,11 @@
       (embedded-native-computed-begin-code params (& exprs) final)]
     [(compiler_ast_types.AstExpr.Match match-box)
       (embedded-native-computed-match-code params match-box final)]
-    ;; A let nested in a computed position (an if/match branch at body
-    ;; level): the body commits like a top-level body. Refs #5603.
+    ;; A let nested in a computed position preserves the enclosing expression's
+    ;; continuation while giving its body access to the new locals. Refs #5603,
+    ;; #6552.
     [(compiler_ast_types.AstExpr.Let _)
-      (embedded-native-let-body-code params node)]
+      (embedded-native-computed-let-code params node final)]
     [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
         [(compiler_ast_types.AstExpr.Var head-id)
@@ -4912,6 +4992,28 @@
             [head : String (ci.intern-str head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             (cond
+              ;; A control-flow value used as the tail of `expr-list-cons`
+              ;; needs the caller's continuation: evaluate the head first,
+              ;; lower the match/if tail, combine the two stack values, then
+              ;; run the outer final. This is the shape used by
+              ;; stdlib.clone/synthesize-helpers. Refs #6552.
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-list-cons")
+                    (string.eq head "expr-list-cons"))
+                  (= argc 2)
+                  (match (embedded-stdlib-tlci-unwrap-expr
+                    (compiler_ast_types.ast-expr-list-get (& args) 1 0))
+                    [(compiler_ast_types.AstExpr.Match _) true]
+                    [(compiler_ast_types.AstExpr.If _ _ _) true]
+                    [_ false]))
+                (embedded-native-computed-binary-code
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-list-cons)
+                  final)]
               ;; `(comptime.expr-int data)`: reflection counts, local data, and
               ;; arithmetic over either flow into the literal builder without
               ;; forcing the value through the session stack. Refs #5701,
@@ -5682,6 +5784,44 @@
                   "")
                 arm-code))]
           [_ ""])])))
+
+;; Compile a let used in value position while preserving the caller's final
+;; continuation. The binding protocol is shared with body-level lets, but the
+;; final body expression must feed its enclosing match/call instead of
+;; committing the macro result directly. Refs #6552.
+(define (embedded-native-computed-let-code
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [node : i64]
+  [final : String]) : String
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(compiler_ast_types.AstExpr.Let let-box)
+      (match (__tl-box-place let-box)
+        [(compiler_ast_types.AstLet.Let bindings body)
+          (let
+            [saved : i64 (array-ref embedded-native-local-len 0)]
+            [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
+            [opens : (__tl_dyn-array i64) (make-array 0)]
+            [open-code : String
+              (embedded-native-let-bindings-open params (& bindings) 0 opens)]
+            (if (string.eq open-code "\x01")
+              (begin
+                (set! (array-ref embedded-native-local-len 0) saved)
+                (set! (array-ref embedded-native-data-local-len 0) data-saved)
+                "")
+              (let
+                [body-code : String
+                  (embedded-native-computed-expr-code params body final)]
+                (begin
+                  (set! (array-ref embedded-native-local-len 0) saved)
+                  (set! (array-ref embedded-native-data-local-len 0) data-saved)
+                  (if (string.eq body-code "")
+                    ""
+                    (str_cat.str-cat
+                      open-code
+                      body-code
+                      (embedded-native-closing-parens (array-ref opens 0))))))))]
+        [_ ""])]
+    [_ ""]))
 
 ;; Compile a let-rooted body: each binding's init becomes either a compile-time
 ;; data local (a scalar the host answers as data) or a session slot holding a
@@ -6775,6 +6915,7 @@
     "(extern comptime-host-syntax-name-fresh (:symbol \"_tl_comptime_host_syntax-name-fresh\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-begin-unit (:symbol \"_tl_comptime_host_expr-begin-unit\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-list-nth (:symbol \"_tl_comptime_host_expr-list-nth\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-list-type-nth (:symbol \"_tl_comptime_host_expr-list-type-nth\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-binding-clause-list-nth (:symbol \"_tl_comptime_host_expr-binding-clause-list-nth\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-binding-clause-name (:symbol \"_tl_comptime_host_expr-binding-clause-name\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-binding-clause-has-type? (:symbol \"_tl_comptime_host_expr-binding-clause-has-type?\") : (-> i64 i64 i64 i64 i64 i64))\n"
@@ -6845,6 +6986,7 @@
     "(extern comptime-host-type-var (:symbol \"_tl_comptime_host_type-var\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-scalar (:symbol \"_tl_comptime_host_type-scalar\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-array-element-type (:symbol \"_tl_comptime_host_array-element-type\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-box-element-type (:symbol \"_tl_comptime_host_box-element-type\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-reference-element-type (:symbol \"_tl_comptime_host_reference-element-type\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-function-param-count (:symbol \"_tl_comptime_host_function-param-count\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-function-return-type (:symbol \"_tl_comptime_host_function-return-type\") : (-> i64 i64 i64 i64 i64 i64))\n"
@@ -6863,6 +7005,7 @@
     "(extern comptime-host-type-slice (:symbol \"_tl_comptime_host_type-slice\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-ref (:symbol \"_tl_comptime_host_type-ref\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-operand-expr-string-value (:symbol \"_tl_comptime_host_operand-expr-string-value\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-string-value (:symbol \"_tl_comptime_host_expr-string-value\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-operand-expr-string? (:symbol \"_tl_comptime_host_operand-expr-string?\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-operand-expr-int? (:symbol \"_tl_comptime_host_operand-expr-int?\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-operand-expr-int-value (:symbol \"_tl_comptime_host_operand-expr-int-value\") : (-> i64 i64 i64 i64 i64 i64))\n"

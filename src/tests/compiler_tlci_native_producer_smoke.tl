@@ -3203,6 +3203,279 @@
     (producer-test-full-blocker-report-ok?)
     (io.panic "full blocker report tlci native producer test failed")))
 
+;; Direct host coverage for the captured type-list projection and boxed-type
+;; reflection added for stdlib.clone. Modes exercise success, a non-type item,
+;; a non-box type, an out-of-range index, and a non-list operand respectively.
+;; Refs #6552.
+(define (producer-test-type-list-callbacks-ok? [mode : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [inner-id : i64
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
+    [outer-id : i64
+      (ast.ast-node-pool-context-type-push
+        pools
+        (if (= mode 2)
+          (ast.AstType.I64)
+          (ast.AstType.Box inner-id)))]
+    [node : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (if (= mode 1)
+          (ast.AstExpr.Var (ci.intern "not-a-type"))
+          (ast.AstExpr.TypeLiteral outer-id)))]
+    [items : ast.AstExprList (ast.ast-expr-cons node (ast.ast-expr-list-new))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (if (= mode 4)
+          (compiler_ctfe.CompilerCtfeValue.Bool false)
+          (compiler_ctfe.CompilerCtfeValue.CapturedExprList items pools)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [type-status : i64
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-list-type-nth
+            producer-test-cookie
+            0
+            (if (= mode 3)
+              1
+              0)
+            0)]
+        [box-status : i64
+          (if (and (= type-status tlci.tlci-host-callback-status-ok) (< mode 3))
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-box-element-type
+              producer-test-cookie
+              0
+              0
+              0)
+            type-status)]
+        [commit-status : i64
+          (if (= mode 0)
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-commit-result
+              producer-test-cookie
+              0
+              0
+              0)
+            box-status)]
+        [ok : bool
+          (cond
+            [(= mode 0)
+              (and
+                (= commit-status tlci.tlci-host-callback-status-ok)
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                  [(compiler_ctfe.CompilerCtfeValue.Type (ast.AstType.I64))
+                    true]
+                  [_ false]))]
+            [(= mode 1)
+              (and
+                (= box-status tlci.tlci-host-callback-status-diagnostic)
+                (string.eq
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-diagnostic-text)
+                  "expr-list-type-nth expects a captured type literal"))]
+            [(= mode 2)
+              (and
+                (= box-status tlci.tlci-host-callback-status-diagnostic)
+                (string.eq
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-diagnostic-text)
+                  "box-element-type requires box type"))]
+            [(= mode 3)
+              (and
+                (= box-status tlci.tlci-host-callback-status-diagnostic)
+                (string.eq
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-diagnostic-text)
+                  "array-ref index out of range"))]
+            [else
+              (and
+                (= box-status tlci.tlci-host-callback-status-diagnostic)
+                (string.eq
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-diagnostic-text)
+                  "expr-list-type-nth expects an ExprList"))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
+(define (producer-test-expr-string-value-callback-ok? [literal : bool]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [string-id : i64 (ci.intern "clone.module")]
+    [node : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (if literal
+          (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
+          (ast.AstExpr.Var (ci.intern "not-a-string"))))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.CapturedExpr
+          node
+          (ast.AstType.Expr)
+          pools))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [push-status : i64
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+            producer-test-cookie
+            0
+            0
+            0)]
+        [value-status : i64
+          (if (= push-status tlci.tlci-host-callback-status-ok)
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-string-value
+              producer-test-cookie
+              0
+              0
+              0)
+            push-status)]
+        [commit-status : i64
+          (if (and literal (= value-status tlci.tlci-host-callback-status-ok))
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-commit-result
+              producer-test-cookie
+              0
+              0
+              0)
+            value-status)]
+        [ok : bool
+          (if literal
+            (and
+              (= commit-status tlci.tlci-host-callback-status-ok)
+              (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                [(compiler_ctfe.CompilerCtfeValue.String text actual-id)
+                  (and (string.eq text "clone.module") (= actual-id string-id))]
+                [_ false]))
+            (and
+              (= commit-status tlci.tlci-host-callback-status-diagnostic)
+              (string.eq
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-diagnostic-text)
+                "expr-string-value expects a string literal Expr")))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
+(test
+  clone-host-callbacks-tlci-native-producer
+  (unless
+    (and
+      (producer-test-type-list-callbacks-ok? 0)
+      (producer-test-type-list-callbacks-ok? 1)
+      (producer-test-type-list-callbacks-ok? 2)
+      (producer-test-type-list-callbacks-ok? 3)
+      (producer-test-type-list-callbacks-ok? 4)
+      (producer-test-expr-string-value-callback-ok? true)
+      (producer-test-expr-string-value-callback-ok? false))
+    (io.panic "clone host callbacks tlci native producer test failed")))
+
+(define (producer-test-clone-route-result-ok? [pools : ast.AstNodePoolContext]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.ExprList items)
+      (and
+        (= (ast.ast-expr-list-len (& items)) 2)
+        (match (producer-test-expr-get
+          pools
+          (ast.ast-expr-list-get (& items) 0 -1))
+          [(ast.AstExpr.Call callee args)
+            (and
+              (match (producer-test-expr-get pools callee)
+                [(ast.AstExpr.Var name-id)
+                  (= name-id (producer-test-name-id "module"))]
+                [_ false])
+              (= (ast.ast-expr-list-len (& args)) 1)
+              (match (producer-test-expr-get
+                pools
+                (ast.ast-expr-list-get (& args) 0 -1))
+                [(ast.AstExpr.Var name-id)
+                  (string.eq (ci.intern-str name-id) "clone.module")]
+                [_ false]))]
+          [_ false])
+        (match (producer-test-expr-get
+          pools
+          (ast.ast-expr-list-get (& items) 1 -1))
+          [(ast.AstExpr.Call callee args)
+            (and
+              (match (producer-test-expr-get pools callee)
+                [(ast.AstExpr.Var name-id)
+                  (= name-id (producer-test-name-id "marker"))]
+                [_ false])
+              (= (ast.ast-expr-list-len (& args)) 1)
+              (match (producer-test-expr-get
+                pools
+                (ast.ast-expr-list-get (& args) 0 -1))
+                [(ast.AstExpr.Var name-id)
+                  (string.eq (ci.intern-str name-id) "i64")]
+                [_ false]))]
+          [_ false]))]
+    [_ false]))
+
+;; Miniature clone route: captured TypeLiteral projection, computed string
+;; extraction, a match-valued expr-list-cons tail, and boxed element reflection
+;; must all run inside one native entry. Refs #6552.
+(define (producer-test-dispatch-clone-route?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [inner-id : i64
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
+    [box-id : i64
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.Box inner-id))]
+    [type-node : i64
+      (producer-test-push-spanned pools (ast.AstExpr.TypeLiteral box-id))]
+    [module-node : i64
+      (producer-test-push-spanned
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern "clone.module"))))]
+    [items : ast.AstExprList
+      (ast.ast-expr-cons
+        type-node
+        (ast.ast-expr-cons module-node (ast.ast-expr-list-new)))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.CapturedExprList items pools))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        256
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= dispatch.status tlci.tlci-host-callback-status-ok)
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                (producer-test-clone-route-result-ok? pools))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; In-package coverage: every supported shape dispatches natively and the
 ;; let-rooted body stays a counted shell. The report count must equal the
 ;; number of supported entries, and the arm-level counters must count every
@@ -3247,6 +3520,7 @@
 (defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))
 (defmacro (typetpl [value : Expr]) : Expr `(let [a : (Ptr u8) (ptr-cast (string-data ,value) : (Ptr u8))] [b : (__tl_dyn-array i64) ,value] [c : (& region str) ,value] [d : (Box i64) ,value] [e : (Array i64 4) ,value] [f : (Slice i64) ,value] (marker a b c d e f)))
 (defmacro (scan [text : Expr]) : Expr (if (comptime.expr-string? text) (let [s : String (comptime.expr-string-value text)] [n : i64 (string.string-length s)] (if (= (cast (string.string-ref s 0) : i64) 123) `(brace ,(comptime.expr-int n)) `(plain ,(comptime.expr-string (comptime.string-slice s 1 (- n 1)))))) (comptime.comptime-error \"scan: expects a string literal\")))
+(defmacro (clonepath [items : Expr ...]) : ExprList (let [T : Expr (comptime.expr-list-type-nth items 0)] [module-name : Expr (comptime.expr-var (comptime.expr-string-value (comptime.expr-list-nth items 1)))] (comptime.expr-list-cons `(module ,module-name) (match (type-kind T) [\"box\" (comptime.expr-list-cons `(marker ,(comptime.box-element-type T)) (comptime.expr-list-empty))] [_ (comptime.expr-list-empty)]))))
 "]
     [source : String
       (str_cat.str-cat
@@ -3308,13 +3582,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 37)
-                              (= captures.len 37)
+                              (= (array-length name-array) 38)
+                              (= captures.len 38)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                   0)
-                                36)
+                                37)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -3448,6 +3722,9 @@
                                 "plain"
                                 -1
                                 "yz")
+                              (producer-test-dispatch-clone-route?
+                                (& loaded)
+                                "package.macros/clonepath")
                               (producer-test-dispatch-diagnostic?
                                 (& loaded)
                                 "package.macros/scan"

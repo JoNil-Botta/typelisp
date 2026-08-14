@@ -21,9 +21,9 @@
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
 #
-# Issue #6240 adds five private one-epoch projection/Box bridges so the
-# published seed can rebuild the unified public place syntax. All five compile
-# natively, raising the image total from 102 to 107 and native coverage from 95
-# to 100 without adding interpreted arms.
-native-entries-min 100
+# Issue #6552 moves stdlib.clone/synthesize-helpers off its fallback shell by
+# adding captured TypeLiteral projection, computed string extraction, boxed
+# element reflection, and continuation lowering. Native coverage rises from
+# 100 to 101 of 107 entries without adding interpreted arms.
+native-entries-min 101
 interpreted-arms-max 0

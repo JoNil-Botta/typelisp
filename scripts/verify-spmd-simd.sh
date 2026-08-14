@@ -170,6 +170,7 @@ tests/spmd/map_shift_value_types.tl
 tests/spmd/map_shift_i16_reject.tl
 tests/spmd/masked_if_value_types.tl
 tests/spmd/masked_move_fault_suppression.tl
+tests/spmd/masked_load_cache_fault_suppression.tl
 tests/spmd/masked_if_nested_i64.tl
 tests/spmd/masked_if_i16_u16.tl
 tests/spmd/inline_helper_masked_if_i64.tl

@@ -1536,16 +1536,14 @@ if [ "$NL_HOST_OS" = windows ]; then
     # the pre-#6526 Windows probe measured 2,183,339 used nodes. #6526's
     # semantic index adds a further 10,890 checked nodes (survivor expr nodes
     # 455,537) and holds the same segment count: the authoritative Windows
-    # probe on the combined tree measured 2,194,229 used nodes, 2,228,224
-    # capacity, and 71,303,168 physical payload bytes, leaving 33,995 nodes of
-    # headroom below the 35-segment line.
-    # #6557 (typecheck: isolate type resolution pools) lands the merged tree
-    # 90 nodes past the 34-segment line: the authoritative Windows CI probe
-    # measured 2,228,314 used nodes, 2,293,760 capacity, 73,400,320 physical
-    # payload bytes on the #6543 merge ref. The boundary had 6,826 nodes of
-    # headroom before the merge and was flagged as the tightest expr
-    # boundary; the crossing is the fleet commit plus this series, measured
-    # not reconstructed.
+    # probe on the combined tree measured 2,194,229 used nodes. #6557's
+    # isolated type-resolution pools plus this optimizer series first crossed
+    # the boundary: the authoritative Windows #6543 merge-ref probe measured
+    # 2,228,314 used nodes. #5961's masked-load cache independently adds its
+    # cache and mask-ancestry types plus lowering helpers; its main probe
+    # measured 2,228,875 used nodes. Both compositions require 2,293,760
+    # capacity and 73,400,320 physical payload bytes, and remain below the
+    # 36-segment line.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 35 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

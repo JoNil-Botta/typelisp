@@ -128,6 +128,10 @@ compile and run in `avx2` and `avx512`.
   copy whose inactive lanes address an explicitly unmapped guard page, proving
   inactive masked loads and stores do not fault. Other hosts use a no-op parity
   case. Exit 42.
+- `masked_load_cache_fault_suppression.tl` - mask-dominance cache coverage:
+  child loads feed descendants, sibling and empty-mask descendants stay
+  predicated, and an aliasing store invalidates the pre-store value. Linux uses
+  an unmapped guard page; all modes check mutation results. Exit 42.
 - `masked_if_nested_i64.tl` - AVX2/AVX-512 nested masked varying `if` over
   `n = 13` i64 lanes, covering parent/child branch-mask composition and a
   masked tail. Exit 42.

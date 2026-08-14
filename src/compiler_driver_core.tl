@@ -199,7 +199,7 @@
   ;; This sentinel is never read or written. Snapshot the process-global
   ;; compatibility fallback instead of allocating a duplicate 64K expression
   ;; segment into the process-lifetime default arena.
-  (make-array (compiler_ast_types.ast-node-pool-context-capture-active)))
+  (__tl_make-array (compiler_ast_types.ast-node-pool-context-capture-active)))
 
 ;; The detached compatibility context shares process-lifetime arena pools. A
 ;; shallow view is safe only at this internal compatibility boundary.

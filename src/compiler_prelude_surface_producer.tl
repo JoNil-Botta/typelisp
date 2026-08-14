@@ -57,7 +57,7 @@
               (surface_svec.push (&mut items) path))
             (set! index (+ index 1)))))
       (let
-        [out (make-array String (surface_svec.len (& items)))]
+        [out (__tl_make-array String (surface_svec.len (& items)))]
         [copy-index : i64 0]
         [sort-index : i64 1]
         (begin
@@ -317,7 +317,7 @@
   [fact-bytes : (__tl_dyn-array u8)]) : ResultPreludeSurface
   (let
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
-      (make-array tlci.TlciAuxSection 3)]
+      (__tl_make-array tlci.TlciAuxSection 3)]
     (begin
       (set!
         (array-ref sections 0)

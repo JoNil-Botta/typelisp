@@ -117,7 +117,7 @@
 ;; (`sexpr-node-pool-release!`); the spanned pool's cannot, because its origin
 ;; records outlive parsing.
 (define sp-node-pool-slots : (__tl_dyn-array SpannedSexpr)
-  (make-array SpannedSexpr 0))
+  (__tl_make-array SpannedSexpr 0))
 
 ;; Current head of the dedicated backing arena, or zero before first use.
 (define sp-node-pool-base-arena : i64
@@ -125,17 +125,17 @@
 (define sp-node-pool-count : i64
   0)
 (define sp-builder-slots : (__tl_dyn-array SpannedSexpr)
-  (make-array SpannedSexpr 0))
+  (__tl_make-array SpannedSexpr 0))
 (define sp-builder-count : i64
   0)
 (define sexpr-node-pool-slots : (__tl_dyn-array Sexpr)
-  (make-array Sexpr 0))
+  (__tl_make-array Sexpr 0))
 (define sexpr-node-pool-base-arena : i64
   0)
 (define sexpr-node-pool-count : i64
   0)
 (define sexpr-builder-slots : (__tl_dyn-array Sexpr)
-  (make-array Sexpr 0))
+  (__tl_make-array Sexpr 0))
 (define sexpr-builder-count : i64
   0)
 
@@ -146,9 +146,9 @@
 ;; arena. The spanned pool has no counterpart on purpose: its records outlive
 ;; parsing (see `sexpr-node-pool-release!`).
 (define sexpr-node-pool-released-slots : (__tl_dyn-array Sexpr)
-  (make-array Sexpr 0))
+  (__tl_make-array Sexpr 0))
 (define sexpr-builder-released-slots : (__tl_dyn-array Sexpr)
-  (make-array Sexpr 0))
+  (__tl_make-array Sexpr 0))
 
 (define (sp-node-pool-base-arena-handle-value) : i64
   sp-node-pool-base-arena)
@@ -222,7 +222,7 @@
       (unsafe
         (arena.tl_arena_set storage-root))]
     [new-slots : (__tl_dyn-array SpannedSexpr)
-      (make-array SpannedSexpr new-cap)]
+      (__tl_make-array SpannedSexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (sp-node-pool-restore-arena-after-base-alloc!
@@ -255,7 +255,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-slots : (__tl_dyn-array Sexpr) (make-array Sexpr new-cap)]
+    [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (sp-node-pool-restore-arena-after-base-alloc!
@@ -289,7 +289,7 @@
       (unsafe
         (arena.tl_arena_set storage-root))]
     [new-slots : (__tl_dyn-array SpannedSexpr)
-      (make-array SpannedSexpr new-cap)]
+      (__tl_make-array SpannedSexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (sp-node-pool-restore-arena-after-base-alloc!
@@ -321,7 +321,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-slots : (__tl_dyn-array Sexpr) (make-array Sexpr new-cap)]
+    [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (sp-node-pool-restore-arena-after-base-alloc!
@@ -1326,7 +1326,7 @@
 ;; one datum at a time.)
 (define (result [toks : (__tl_dyn-array token.Token)]) : ResultSexpr
   (let
-    [cur : (__tl_dyn-array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (sexpr-node-pool-reset!)
       (set! (array-ref cur 0) 0)
@@ -1334,7 +1334,7 @@
 
 (define (spanned-result [toks : (__tl_dyn-array token.SpannedToken)]) : ResultSpannedSexpr
   (let
-    [cur : (__tl_dyn-array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! sp-builder-count 0)
       (set! (array-ref cur 0) 0)
@@ -1395,7 +1395,7 @@
     [(lexer.ResultSpannedTokens.Err _) false]
     [(lexer.ResultSpannedTokens.Ok toks)
       (let
-        [cur : (__tl_dyn-array i64) (make-array i64 1)]
+        [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         (begin
           (sp-node-pool-reset!)
           (set! (array-ref cur 0) 0)
@@ -1408,7 +1408,7 @@
     [(lexer.ResultSpannedTokens.Err _) false]
     [(lexer.ResultSpannedTokens.Ok toks)
       (let
-        [cur : (__tl_dyn-array i64) (make-array i64 1)]
+        [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         (begin
           (sp-node-pool-reset!)
           (set! (array-ref cur 0) 0)

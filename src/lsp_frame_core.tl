@@ -987,7 +987,7 @@
       (json.JsonString "selfhost"))))
 
 (define (lsp-diagnostic-uris-empty) : lsp_vector_families.LspDiagnosticUris
-  (lsp_vector_families.LspDiagnosticUris (make-array String 0) 0))
+  (lsp_vector_families.LspDiagnosticUris (__tl_make-array String 0) 0))
 
 (define (lsp-diagnostic-uris-single [uri : String]) : lsp_vector_families.LspDiagnosticUris
   (lsp-diagnostic-uris-add (lsp-diagnostic-uris-empty) uri))
@@ -1032,7 +1032,7 @@
               (if (< old-cap 4)
                 4
                 (* old-cap 2))]
-            [bigger : (__tl_dyn-array String) (make-array String new-cap)]
+            [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
             [index : i64 0]
             (begin
               (while (< index n)
@@ -2029,7 +2029,7 @@
 
 (define (lsp-workspace-roots-new) : lsp_vector_families.LspWorkspaceRoots
   (lsp_vector_families.LspWorkspaceRoots
-    (make-array lsp_vector_families.LspWorkspaceRoot 0)
+    (__tl_make-array lsp_vector_families.LspWorkspaceRoot 0)
     0))
 
 (define (lsp-workspace-roots-len
@@ -2063,7 +2063,7 @@
         4
         (* old-cap 2))]
     [bigger : (__tl_dyn-array lsp_vector_families.LspWorkspaceRoot)
-      (make-array lsp_vector_families.LspWorkspaceRoot new-cap)]
+      (__tl_make-array lsp_vector_families.LspWorkspaceRoot new-cap)]
     (begin
       (lsp-workspace-roots-copy-range! (&mut bigger) (& roots.slots) roots.len)
       (set! roots.slots bigger))))
@@ -2112,7 +2112,7 @@
 
 (define (lsp-workspace-sources-new) : lsp_vector_families.LspWorkspaceSources
   (lsp_vector_families.LspWorkspaceSources
-    (make-array lsp_vector_families.LspWorkspaceSource 0)
+    (__tl_make-array lsp_vector_families.LspWorkspaceSource 0)
     0))
 
 (define (lsp-workspace-sources-len
@@ -2146,7 +2146,7 @@
         8
         (* old-cap 2))]
     [bigger : (__tl_dyn-array lsp_vector_families.LspWorkspaceSource)
-      (make-array lsp_vector_families.LspWorkspaceSource new-cap)]
+      (__tl_make-array lsp_vector_families.LspWorkspaceSource new-cap)]
     (begin
       (lsp-workspace-sources-copy-range!
         (&mut bigger)
@@ -6629,7 +6629,7 @@
           (LspValidationResult.Invalid line col msg (lsp-line-at text line)))]
       [(lexer.ResultSpannedTokens.Ok toks)
         (let
-          [cur : (__tl_dyn-array i64) (make-array i64 1)]
+          [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
           [dispatch : sym_i64_env.SymI64Env
             (parser.compiler-parse-dispatch-env)]
           [done : bool false]
@@ -7812,7 +7812,9 @@
 
 (define (lsp-workspace-symbol-results-new) : LspWorkspaceSymbolResults
   (LspWorkspaceSymbolResults
-    (make-array LspWorkspaceSymbolCandidate lsp-workspace-symbol-result-limit)
+    (__tl_make-array
+      LspWorkspaceSymbolCandidate
+      lsp-workspace-symbol-result-limit)
     0))
 
 (define (lsp-workspace-symbol-results-len
@@ -9256,7 +9258,7 @@
   [uris : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
   (let
     [n : i64 (lsp-diagnostic-uris-len uris)]
-    [slots : (__tl_dyn-array String) (make-array String n)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String n)]
     [index : i64 0]
     (begin
       (while (< index n)

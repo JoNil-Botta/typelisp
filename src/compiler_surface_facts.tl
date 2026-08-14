@@ -65,7 +65,7 @@
 (cfg
   (any compiler-surface-producer embedded-stdlib-tlci)
   (define (surface-clone-observation-seq-empty) : SurfaceCloneObservationSeq
-    (SurfaceCloneObservationSeq (make-array SurfaceCloneObservation 0) 0)))
+    (SurfaceCloneObservationSeq (__tl_make-array SurfaceCloneObservation 0) 0)))
 
 (cfg
   (any compiler-surface-producer embedded-stdlib-tlci)
@@ -87,7 +87,7 @@
     (let
       [count : i64 seq.len]
       [bigger : (__tl_dyn-array SurfaceCloneObservation)
-        (make-array
+        (__tl_make-array
           SurfaceCloneObservation
           (if (< count 1)
             16
@@ -134,15 +134,15 @@
     0
     0
     0
-    (make-array i64 0)
-    (make-array i64 0)
-    (make-array i64 0)))
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)))
 
 (define surface-typecheck-facts-installed : bool
   false)
 (define surface-typecheck-facts-installed-value : (__tl_dyn-array
     SurfaceTypecheckFacts)
-  (make-array (surface-typecheck-facts-empty)))
+  (__tl_make-array (surface-typecheck-facts-empty)))
 
 (define (surface-typecheck-facts-installed-shared-view) : SurfaceTypecheckFacts
   (unsafe
@@ -263,9 +263,9 @@
         (__tl-project-field
           (surface-typecheck-facts-recording-observations-shared-view)
           len)]
-      [decl-keys : (__tl_dyn-array i64) (make-array i64 count)]
-      [root-keys : (__tl_dyn-array i64) (make-array i64 count)]
-      [call-indices : (__tl_dyn-array i64) (make-array i64 count)]
+      [decl-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [root-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [call-indices : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [index : i64 0]
       [slots : (__tl_dyn-array SurfaceCloneObservation)
         (__tl-project-field
@@ -393,9 +393,9 @@
     0
     0
     0
-    (make-array i64 0)
-    (make-array i64 0)
-    (make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
     0))
 
 (define (surface-typecheck-facts-builder-valid?
@@ -501,10 +501,12 @@
             "surface facts: composition count limit exceeded")
           (let
             [combined-count : i64 (+ builder-count fragment-count)]
-            [decl-keys : (__tl_dyn-array i64) (make-array i64 combined-count)]
-            [root-keys : (__tl_dyn-array i64) (make-array i64 combined-count)]
+            [decl-keys : (__tl_dyn-array i64)
+              (__tl_make-array i64 combined-count)]
+            [root-keys : (__tl_dyn-array i64)
+              (__tl_make-array i64 combined-count)]
             [call-indices : (__tl_dyn-array i64)
-              (make-array i64 combined-count)]
+              (__tl_make-array i64 combined-count)]
             [index : i64 0]
             (begin
               (surface-typecheck-facts-copy-i64-range!
@@ -632,9 +634,9 @@
       5
       7
       11
-      (make-array 10 10 11)
-      (make-array 20 21 22)
-      (make-array 0 0 2))))
+      (__tl_make-array 10 10 11)
+      (__tl_make-array 20 21 22)
+      (__tl_make-array 0 0 2))))
 
 (cfg
   compiler-surface-selftest
@@ -645,9 +647,9 @@
       13
       17
       19
-      (make-array 30 31)
-      (make-array 40 41)
-      (make-array 0 1))))
+      (__tl_make-array 30 31)
+      (__tl_make-array 40 41)
+      (__tl_make-array 0 1))))
 
 (cfg
   compiler-surface-selftest
@@ -661,15 +663,15 @@
       (= facts.summary-externs 30)
       (surface-typecheck-facts-i64-array-eq?
         facts.clone-decl-keys
-        (make-array 10 10 11 30 31))
+        (__tl_make-array 10 10 11 30 31))
       (surface-typecheck-facts-i64-array-eq?
         facts.clone-root-keys
-        (make-array 20 21 22 40 41))
+        (__tl_make-array 20 21 22 40 41))
       ;; The second fragment also starts at call zero. Rebasing it after the
       ;; first fragment's local range makes the boundary strictly disjoint.
       (surface-typecheck-facts-i64-array-eq?
         facts.clone-call-indices
-        (make-array 0 0 2 3 4)))))
+        (__tl_make-array 0 0 2 3 4)))))
 
 (cfg
   compiler-surface-selftest
@@ -686,9 +688,9 @@
           0
           0
           0
-          (make-array 50 50)
-          (make-array 60 61)
-          (make-array 1 0))]
+          (__tl_make-array 50 50)
+          (__tl_make-array 60 61)
+          (__tl_make-array 1 0))]
       [bad-group : SurfaceTypecheckFacts
         (SurfaceTypecheckFacts
           1
@@ -696,9 +698,9 @@
           0
           0
           0
-          (make-array 50 51)
-          (make-array 60 61)
-          (make-array 0 0))]
+          (__tl_make-array 50 51)
+          (__tl_make-array 60 61)
+          (__tl_make-array 0 0))]
       [limit-fragment : SurfaceTypecheckFacts
         (SurfaceTypecheckFacts
           surface-typecheck-facts-max-count
@@ -706,15 +708,15 @@
           surface-typecheck-facts-max-count
           surface-typecheck-facts-max-count
           surface-typecheck-facts-max-count
-          (make-array i64 0)
-          (make-array i64 0)
-          (make-array i64 0))]
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0))]
       [builder : SurfaceTypecheckFactsBuilder
         (surface-typecheck-facts-builder-empty)]
       [limit-builder : SurfaceTypecheckFactsBuilder
         (surface-typecheck-facts-builder-empty)]
       [fragments : (__tl_dyn-array SurfaceTypecheckFacts)
-        (make-array SurfaceTypecheckFacts 2)]
+        (__tl_make-array SurfaceTypecheckFacts 2)]
       [composite : SurfaceTypecheckFacts (surface-typecheck-facts-empty)]
       [ok : bool true]
       (begin
@@ -769,7 +771,7 @@
               unit
               (set! ok false))])
         (match (surface-typecheck-facts-compose
-          (make-array SurfaceTypecheckFacts 0))
+          (__tl_make-array SurfaceTypecheckFacts 0))
           [(ResultSurfaceTypecheckFacts.Err _) unit]
           [(ResultSurfaceTypecheckFacts.Ok _) (set! ok false)])
         (surface-typecheck-facts-clear!)
@@ -870,9 +872,9 @@
 
 (define (surface-typecheck-fact-reader-new [bytes : (__tl_dyn-array u8)]) : SurfaceTypecheckFactReader
   (let
-    [offset : (__tl_dyn-array i64) (make-array i64 1)]
-    [ok : (__tl_dyn-array bool) (make-array bool 1)]
-    [message : (__tl_dyn-array String) (make-array String 1)]
+    [offset : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ok : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+    [message : (__tl_dyn-array String) (__tl_make-array String 1)]
     (begin
       (set! (array-ref offset 0) 0)
       (set! (array-ref ok 0) true)
@@ -943,9 +945,9 @@
       (ResultSurfaceTypecheckFacts.Err
         "surface facts: bad magic, schema, or count")
       (let
-        [decl-keys : (__tl_dyn-array i64) (make-array i64 clone-count)]
-        [root-keys : (__tl_dyn-array i64) (make-array i64 clone-count)]
-        [call-indices : (__tl_dyn-array i64) (make-array i64 clone-count)]
+        [decl-keys : (__tl_dyn-array i64) (__tl_make-array i64 clone-count)]
+        [root-keys : (__tl_dyn-array i64) (__tl_make-array i64 clone-count)]
+        [call-indices : (__tl_dyn-array i64) (__tl_make-array i64 clone-count)]
         [identity-count : i64 (array-length remap)]
         [index : i64 0]
         (begin

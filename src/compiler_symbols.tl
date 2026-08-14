@@ -253,7 +253,11 @@
 (define (compiler-symbol-map-with-capacity [requested : i64]) : CompilerSymbolMap
   (let
     [capacity : i64 (compiler-symbol-map-round-capacity requested)]
-    (CompilerSymbolMap (make-array i64 capacity) (make-array i64 capacity) 0 0)))
+    (CompilerSymbolMap
+      (__tl_make-array i64 capacity)
+      (__tl_make-array i64 capacity)
+      0
+      0)))
 
 (define (compiler-symbol-map-empty) : CompilerSymbolMap
   (compiler-symbol-map-with-capacity 256))
@@ -374,8 +378,8 @@
         4)]
     [i : i64 0]
     (begin
-      (set! map.keys (make-array i64 new-capacity))
-      (set! map.values (make-array i64 new-capacity))
+      (set! map.keys (__tl_make-array i64 new-capacity))
+      (set! map.values (__tl_make-array i64 new-capacity))
       (set! map.len 0)
       (set! map.deleted 0)
       (while (< i old-capacity)
@@ -484,8 +488,8 @@
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
-    (make-array ast.AstDecl capacity)
-    (make-array i64 (* capacity 2))
+    (__tl_make-array ast.AstDecl capacity)
+    (__tl_make-array i64 (* capacity 2))
     decl-count))
 
 (define (compiler-symbols-empty-with-decls [decl-count : i64]) : CompilerSymbols
@@ -638,9 +642,9 @@
             [next-capacity : i64
               (compiler-symbols-growth-capacity capacity required)]
             [next-decls : (__tl_dyn-array ast.AstDecl)
-              (make-array ast.AstDecl next-capacity)]
+              (__tl_make-array ast.AstDecl next-capacity)]
             [next-owner-module-ids : (__tl_dyn-array i64)
-              (make-array i64 (* next-capacity 2))]
+              (__tl_make-array i64 (* next-capacity 2))]
             [index : i64 0]
             (begin
               (while (< index decl-count)
@@ -1998,12 +2002,12 @@
         1)]
     [decl-offset : i64 decls.offset]
     [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-    [mod-ids : (__tl_dyn-array i64) (make-array i64 cap)]
-    [mod-head : (__tl_dyn-array i64) (make-array i64 cap)]
-    [mod-tail : (__tl_dyn-array i64) (make-array i64 cap)]
-    [ent-pos : (__tl_dyn-array i64) (make-array i64 cap)]
-    [ent-ridx : (__tl_dyn-array i64) (make-array i64 cap)]
-    [ent-next : (__tl_dyn-array i64) (make-array i64 cap)]
+    [mod-ids : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [mod-head : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [mod-tail : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [ent-pos : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [ent-ridx : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [ent-next : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     [num-modules : i64 0]
     [num-entries : i64 0]
     [real-index : i64 0]

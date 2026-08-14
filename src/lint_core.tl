@@ -470,7 +470,7 @@
 ;: shared lookup helpers without requiring public driver edits.
 (define (lint-rule-registry) : LintRuleList
   (LintRuleList
-    (make-array
+    (__tl_make-array
       (lint-rule-nested-if-ladder)
       (lint-rule-nested-let)
       (lint-rule-single-begin)
@@ -557,7 +557,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (LintFindings (make-array LintFinding cap) 0)))
+    (LintFindings (__tl_make-array LintFinding cap) 0)))
 
 (define (lint-findings-empty) : LintFindings
   (lint-findings-with-capacity 4))
@@ -577,7 +577,7 @@
   (let
     [n : i64 (lint-findings-count items)]
     [bigger : (__tl_dyn-array LintFinding)
-      (make-array LintFinding (* (lint-findings-capacity items) 2))]
+      (__tl_make-array LintFinding (* (lint-findings-capacity items) 2))]
     (begin
       (lint-findings-copy-range bigger (lint-findings-slots items) 0 n)
       (LintFindings bigger n))))
@@ -1931,8 +1931,8 @@
         [loop-depth : i64 0]
         [concat-depth : i64 0]
         [stack-cap : i64 (+ (string.string-length source) 2)]
-        [loop-stack : (__tl_dyn-array bool) (make-array bool stack-cap)]
-        [concat-stack : (__tl_dyn-array bool) (make-array bool stack-cap)]
+        [loop-stack : (__tl_dyn-array bool) (__tl_make-array bool stack-cap)]
+        [concat-stack : (__tl_dyn-array bool) (__tl_make-array bool stack-cap)]
         [findings : LintFindings acc]
         (begin
           (while (not done)
@@ -3005,10 +3005,10 @@
   (len i64))
 
 (define (lint-unused-unsafe-exact-names-empty) : LintUnusedUnsafeExactNames
-  (LintUnusedUnsafeExactNames (make-array LintUnusedUnsafeExactName 0) 0))
+  (LintUnusedUnsafeExactNames (__tl_make-array LintUnusedUnsafeExactName 0) 0))
 
 (define (lint-unused-unsafe-unknown-roots-empty) : LintUnusedUnsafeUnknownRoots
-  (LintUnusedUnsafeUnknownRoots (make-array String 0) 0))
+  (LintUnusedUnsafeUnknownRoots (__tl_make-array String 0) 0))
 
 (define lint-unused-unsafe-exact-names : LintUnusedUnsafeExactNames
   (lint-unused-unsafe-exact-names-empty))
@@ -3035,7 +3035,7 @@
   (len i64))
 
 (define (lint-unused-unsafe-block-stack-empty) : LintUnusedUnsafeBlockStack
-  (LintUnusedUnsafeBlockStack (make-array LintUnusedUnsafeBlock 0) 0))
+  (LintUnusedUnsafeBlockStack (__tl_make-array LintUnusedUnsafeBlock 0) 0))
 
 (define lint-unused-unsafe-block-stack : LintUnusedUnsafeBlockStack
   (lint-unused-unsafe-block-stack-empty))
@@ -3082,7 +3082,7 @@
         (__tl-project-set-field lint-unused-unsafe-exact-names len (+ n 1)))
       (let
         [bigger : (__tl_dyn-array LintUnusedUnsafeExactName)
-          (make-array
+          (__tl_make-array
             LintUnusedUnsafeExactName
             (lint-grown-capacity
               (array-length
@@ -3119,7 +3119,7 @@
         (__tl-project-set-field lint-unused-unsafe-unknown-roots len (+ n 1)))
       (let
         [bigger : (__tl_dyn-array String)
-          (make-array
+          (__tl_make-array
             String
             (lint-grown-capacity
               (array-length
@@ -3166,7 +3166,7 @@
           (__tl-project-set-field lint-unused-unsafe-block-stack len (+ n 1)))
         (let
           [bigger : (__tl_dyn-array LintUnusedUnsafeBlock)
-            (make-array
+            (__tl_make-array
               LintUnusedUnsafeBlock
               (lint-grown-capacity
                 (array-length
@@ -3549,7 +3549,7 @@
   (findings LintFindings))
 
 (define (lint-name-set-empty) : LintNameSet
-  (LintNameSet (make-array String 0) 0))
+  (LintNameSet (__tl_make-array String 0) 0))
 
 (define (lint-name-set-contains-from?
   [items : LintNameSet]
@@ -3575,7 +3575,9 @@
           unit
           (let
             [bigger : (__tl_dyn-array String)
-              (make-array String (lint-grown-capacity (array-length slots)))]
+              (__tl_make-array
+                String
+                (lint-grown-capacity (array-length slots)))]
             [index : i64 0]
             (begin
               (while (< index n)
@@ -4270,7 +4272,7 @@
   (findings LintFindings))
 
 (define (lint-copy-on-update-structs-empty) : LintCopyOnUpdateStructList
-  (LintCopyOnUpdateStructList (make-array LintCopyOnUpdateStructShape 0) 0))
+  (LintCopyOnUpdateStructList (__tl_make-array LintCopyOnUpdateStructShape 0) 0))
 
 (define (lint-copy-on-update-struct-find-at
   [shapes : LintCopyOnUpdateStructList]
@@ -4320,7 +4322,7 @@
       (lint-copy-on-update-struct-name-from-type shapes ty)]))
 
 (define (lint-copy-on-update-locals-empty) : LintCopyOnUpdateLocalList
-  (LintCopyOnUpdateLocalList (make-array LintCopyOnUpdateLocal 0) 0))
+  (LintCopyOnUpdateLocalList (__tl_make-array LintCopyOnUpdateLocal 0) 0))
 
 (define (lint-copy-on-update-local-index
   [locals : LintCopyOnUpdateLocalList]
@@ -4344,7 +4346,7 @@
       (let
         [n : i64 (- locals.len 1)]
         [slots : (__tl_dyn-array LintCopyOnUpdateLocal)
-          (make-array LintCopyOnUpdateLocal n)]
+          (__tl_make-array LintCopyOnUpdateLocal n)]
         [index : i64 0]
         (begin
           (while (< index n)
@@ -4371,7 +4373,7 @@
       (let
         [n : i64 without.len]
         [slots : (__tl_dyn-array LintCopyOnUpdateLocal)
-          (make-array LintCopyOnUpdateLocal (+ n 1))]
+          (__tl_make-array LintCopyOnUpdateLocal (+ n 1))]
         [index : i64 0]
         (begin
           (while (< index n)
@@ -4987,7 +4989,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array LintCopyOnUpdateStructShape)
-            (make-array
+            (__tl_make-array
               LintCopyOnUpdateStructShape
               (lint-grown-capacity (array-length slots)))]
           [index : i64 0]
@@ -6302,7 +6304,7 @@
 
 (define (lint-single-element-array-candidates-empty) : LintSingleElementArrayCandidateList
   (LintSingleElementArrayCandidateList
-    (make-array LintSingleElementArrayCandidate 0)
+    (__tl_make-array LintSingleElementArrayCandidate 0)
     0))
 
 (define (lint-single-element-array-candidate-index
@@ -6330,7 +6332,7 @@
       (let
         [n : i64 (- items.len 1)]
         [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
-          (make-array LintSingleElementArrayCandidate n)]
+          (__tl_make-array LintSingleElementArrayCandidate n)]
         [index : i64 0]
         (begin
           (while (< index n)
@@ -6354,7 +6356,7 @@
       (lint-single-element-array-candidate-remove items name)]
     [n : i64 without.len]
     [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
-      (make-array LintSingleElementArrayCandidate (+ n 1))]
+      (__tl_make-array LintSingleElementArrayCandidate (+ n 1))]
     [index : i64 0]
     (begin
       (while (< index n)
@@ -6373,7 +6375,7 @@
   (let
     [n : i64 items.len]
     [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
-      (make-array LintSingleElementArrayCandidate n)]
+      (__tl_make-array LintSingleElementArrayCandidate n)]
     [index : i64 0]
     (begin
       (while (< index n)
@@ -7401,7 +7403,7 @@
         (lint-single-element-array-cells-in-decl decl acc))]))
 
 (define (lint-pending-assignment-empty) : LintPendingAssignmentList
-  (LintPendingAssignmentList (make-array LintPendingAssignment 0) 0))
+  (LintPendingAssignmentList (__tl_make-array LintPendingAssignment 0) 0))
 
 (define (lint-pending-assignment-index
   [items : LintPendingAssignmentList]
@@ -7432,7 +7434,7 @@
       (let
         [n : i64 (- items.len 1)]
         [slots : (__tl_dyn-array LintPendingAssignment)
-          (make-array LintPendingAssignment n)]
+          (__tl_make-array LintPendingAssignment n)]
         [index : i64 0]
         (begin
           (while (< index n)
@@ -7456,7 +7458,7 @@
       (lint-pending-assignment-remove items name)]
     [n : i64 without.len]
     [slots : (__tl_dyn-array LintPendingAssignment)
-      (make-array LintPendingAssignment (+ n 1))]
+      (__tl_make-array LintPendingAssignment (+ n 1))]
     [index : i64 0]
     (begin
       (while (< index n)
@@ -8102,7 +8104,7 @@
 ;; search for all span conversions. The array is rebuilt before every lint
 ;; walk, while the parsed file's scratch arena is active.
 (define lint-source-line-starts : (__tl_dyn-array i64)
-  (make-array i64 0))
+  (__tl_make-array i64 0))
 
 (define (lint-source-line-index-build! [source : String]) : unit
   (let
@@ -8117,7 +8119,7 @@
             unit)
           (set! index (+ index 1))))
       (let
-        [starts : (__tl_dyn-array i64) (make-array i64 line-count)]
+        [starts : (__tl_dyn-array i64) (__tl_make-array i64 line-count)]
         [source-index : i64 0]
         [line-index : i64 1]
         (begin
@@ -8191,10 +8193,14 @@
   (report-unused bool))
 
 (define (lint-unused-variable-bindings-empty) : LintUnusedVariableBindingList
-  (LintUnusedVariableBindingList (make-array LintUnusedVariableBinding 0) 0))
+  (LintUnusedVariableBindingList
+    (__tl_make-array LintUnusedVariableBinding 0)
+    0))
 
 (define (lint-unused-variable-frames-empty) : LintUnusedVariableFrameList
-  (LintUnusedVariableFrameList (make-array LintUnusedVariableBindingList 0) 0))
+  (LintUnusedVariableFrameList
+    (__tl_make-array LintUnusedVariableBindingList 0)
+    0))
 
 ;; Highest index of `bindings` naming `name`, or -1. Counting down keeps the
 ;; innermost-first order of the old cons walk.
@@ -9300,7 +9306,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array LintUnusedVariableBinding)
-            (make-array
+            (__tl_make-array
               LintUnusedVariableBinding
               (lint-grown-capacity (array-length slots)))]
           [index : i64 0]
@@ -9324,7 +9330,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array LintUnusedVariableBindingList)
-            (make-array
+            (__tl_make-array
               LintUnusedVariableBindingList
               (lint-grown-capacity (array-length slots)))]
           [index : i64 0]
@@ -9578,7 +9584,9 @@
     cursor
     fallback
     reportable
-    (make-array LintUnusedVariableBinding (ast.ast-param-list-len (& params)))
+    (__tl_make-array
+      LintUnusedVariableBinding
+      (ast.ast-param-list-len (& params)))
     0))
 
 ;; Params are scanned in signature order so the source cursor advances, but the
@@ -9636,7 +9644,7 @@
     cursor
     fallback
     reportable
-    (make-array
+    (__tl_make-array
       LintUnusedVariableBinding
       (ast.ast-macro-param-list-len (& params)))
     0))

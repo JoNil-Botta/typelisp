@@ -46,7 +46,7 @@
 (define (surface-ast-read-expr-list! [reader : codec.SurfaceAstReader]) : ast.AstExprList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -98,7 +98,7 @@
 (define (surface-ast-read-param-list! [reader : codec.SurfaceAstReader]) : ast.AstParamList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array ast.AstParam) (make-array ast.AstParam count)]
+    [slots : (__tl_dyn-array ast.AstParam) (__tl_make-array ast.AstParam count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -164,7 +164,8 @@
 (define (surface-ast-read-pattern-list! [reader : codec.SurfaceAstReader]) : ast.AstPatternList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
-    [slots : (__tl_dyn-array ast.AstPattern) (make-array ast.AstPattern count)]
+    [slots : (__tl_dyn-array ast.AstPattern)
+      (__tl_make-array ast.AstPattern count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -224,7 +225,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstLetBinding)
-      (make-array ast.AstLetBinding count)]
+      (__tl_make-array ast.AstLetBinding count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -264,7 +265,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstResourceBinding)
-      (make-array ast.AstResourceBinding count)]
+      (__tl_make-array ast.AstResourceBinding count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -302,7 +303,7 @@
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstMatchArm)
-      (make-array ast.AstMatchArm count)]
+      (__tl_make-array ast.AstMatchArm count)]
     [index : i64 0]
     (begin
       (while (< index count)

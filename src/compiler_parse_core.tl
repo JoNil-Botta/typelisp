@@ -251,7 +251,7 @@
         1
         capacity)]
     (CompilerParseDeclOriginAliasVec
-      (make-array CompilerParseDeclOriginAlias cap)
+      (__tl_make-array CompilerParseDeclOriginAlias cap)
       0)))
 
 (define (compiler-parse-decl-origin-alias-vec-grow!
@@ -260,7 +260,9 @@
     [old-items : (__tl_dyn-array CompilerParseDeclOriginAlias) aliases.items]
     [len : i64 aliases.len]
     [next-items : (__tl_dyn-array CompilerParseDeclOriginAlias)
-      (make-array CompilerParseDeclOriginAlias (* (array-length old-items) 2))]
+      (__tl_make-array
+        CompilerParseDeclOriginAlias
+        (* (array-length old-items) 2))]
     [index : i64 0]
     (begin
       (while (< index len)
@@ -939,7 +941,7 @@
 ;; Compatibility state for direct parser helpers and parser-only tests. Driver
 ;; paths always attach their own state with compiler-parse-state-cfgs.
 (define compiler-parse-default-state : (__tl_dyn-array CompilerParseState)
-  (make-array (compiler-parse-state-new)))
+  (__tl_make-array (compiler-parse-state-new)))
 
 (define (compiler-parse-default-state-shared-view) : CompilerParseState
   (unsafe
@@ -9678,8 +9680,8 @@
         1
         capacity)]
     (ParseAstDeclVec
-      (make-array ast.AstDecl cap)
-      (make-array ast.AstSourceSpan cap)
+      (__tl_make-array ast.AstDecl cap)
+      (__tl_make-array ast.AstSourceSpan cap)
       0)))
 
 (define (parse-ast-decl-vec-new) : ParseAstDeclVec
@@ -9726,9 +9728,10 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array ast.AstDecl) (make-array ast.AstDecl new-cap)]
+    [bigger : (__tl_dyn-array ast.AstDecl)
+      (__tl_make-array ast.AstDecl new-cap)]
     [bigger-spans : (__tl_dyn-array ast.AstSourceSpan)
-      (make-array ast.AstSourceSpan new-cap)]
+      (__tl_make-array ast.AstSourceSpan new-cap)]
     (begin
       (parse-ast-decl-vec-copy-range (&mut bigger) (& v.slots) 0 n)
       (parse-ast-decl-vec-span-copy-range (&mut bigger-spans) (& v.spans) 0 n)
@@ -11072,7 +11075,7 @@
       (match (lexer.spanned-result src)
         [(lexer.ResultSpannedTokens.Ok toks)
           (let
-            [cur : (__tl_dyn-array i64) (make-array i64 1)]
+            [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             (begin
               (set! (array-ref cur 0) 0)
               (match (reader.form-spanned-result toks cur)

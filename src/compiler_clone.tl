@@ -392,7 +392,7 @@
     [owner : i64 (clone-root-entries-arena-owner-root (arena.tl_arena_current))]
     (box
       (CloneRootEntryStore
-        (make-array CloneRootEntry 4)
+        (__tl_make-array CloneRootEntry 4)
         0
         (clone_id_map.with-capacity 8)
         owner))))
@@ -426,7 +426,7 @@
         (arena.tl_arena_set (clone-root-entries-arena-owner-current-head owner)))
       (let
         [bigger : (__tl_dyn-array CloneRootEntry)
-          (make-array CloneRootEntry new-capacity)]
+          (__tl_make-array CloneRootEntry new-capacity)]
         (begin
           ;; Only the live physical prefix is copied; snapshots share the new
           ;; dense handle and retain their old start/length bounds.

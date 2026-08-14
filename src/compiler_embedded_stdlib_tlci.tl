@@ -60,12 +60,12 @@
 ;; 0 = closed, 1 = loaded, and -1 = load failed. The separate cells avoid
 ;; requiring an artificial zero-value TlciLoadedImage enum variant.
 (define compiler-embedded-stdlib-tlci-session-state : (__tl_dyn-array i64)
-  (make-array 0))
+  (__tl_make-array 0))
 (define compiler-embedded-stdlib-tlci-session-image : (__tl_dyn-array
     loader.TlciLoadedImage)
   (array.make-array loader.TlciLoadedImage 1))
 (define compiler-embedded-stdlib-tlci-session-error : (__tl_dyn-array String)
-  (make-array ""))
+  (__tl_make-array ""))
 
 ;; #5926: bounded lifecycle evidence for the production-route stress compiler.
 ;; These cells are absent from ordinary/published builds. They count successful
@@ -422,7 +422,7 @@
 (define compiler-comptime-host-result-ready : bool
   false)
 (define compiler-comptime-host-diagnostic : (__tl_dyn-array String)
-  (make-array ""))
+  (__tl_make-array ""))
 
 ;; Computed-body local slots for let-bound transformer bodies (refs #5603).
 ;; Slots are addressed by immediate operand and validated per session.

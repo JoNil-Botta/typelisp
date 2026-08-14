@@ -2610,8 +2610,10 @@
     [head : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "x"))]
     [colon : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Colon))]
     [typ : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "i64"))]
-    [dense-slots : (__tl_dyn-array cst.FormatCst) (make-array cst.FormatCst 3)]
-    [offset-slots : (__tl_dyn-array cst.FormatCst) (make-array cst.FormatCst 5)]
+    [dense-slots : (__tl_dyn-array cst.FormatCst)
+      (__tl_make-array cst.FormatCst 3)]
+    [offset-slots : (__tl_dyn-array cst.FormatCst)
+      (__tl_make-array cst.FormatCst 5)]
     (begin
       (set! (array-ref dense-slots 0) head)
       (set! (array-ref dense-slots 1) colon)

@@ -57,7 +57,7 @@
   (cond
     [(not
         (match (compiler-lzss-test-decode
-          (compiler-lzss-test-payload "6\n" (make-array 7 65 66 67 0 32))
+          (compiler-lzss-test-payload "6\n" (__tl_make-array 7 65 66 67 0 32))
           64)
           [(lzss.CompilerLzssBytes.Ok bytes)
             (and
@@ -69,68 +69,70 @@
       1]
     [(not
         (match (compiler-lzss-test-decode
-          (compiler-lzss-test-payload "0\n" (make-array))
+          (compiler-lzss-test-payload "0\n" (__tl_make-array))
           0)
           [(lzss.CompilerLzssBytes.Ok bytes) (= (array-length bytes) 0)]
           [(lzss.CompilerLzssBytes.Err _) false]))
       2]
     [(not
         (compiler-lzss-test-rejects?
-          (make-array 0)
+          (__tl_make-array 0)
           64
           "compiler lzss: bad envelope prefix"))
       3]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "\n" (make-array))
+          (compiler-lzss-test-payload "\n" (__tl_make-array))
           64
           "compiler lzss: missing raw length"))
       4]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "1x" (make-array))
+          (compiler-lzss-test-payload "1x" (__tl_make-array))
           64
           "compiler lzss: malformed raw length"))
       5]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "9223372036854775808\n" (make-array))
+          (compiler-lzss-test-payload "9223372036854775808\n" (__tl_make-array))
           9223372036854775807
           "compiler lzss: raw length overflows i64"))
       6]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "65\n" (make-array 255 0 0 0 0 0 0 0 0))
+          (compiler-lzss-test-payload
+            "65\n"
+            (__tl_make-array 255 0 0 0 0 0 0 0 0))
           64
           "compiler lzss: raw length exceeds consumer limit"))
       7]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "100\n" (make-array 1 65))
+          (compiler-lzss-test-payload "100\n" (__tl_make-array 1 65))
           128
           "compiler lzss: impossible raw length"))
       8]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "1\n" (make-array 1))
+          (compiler-lzss-test-payload "1\n" (__tl_make-array 1))
           64
           "compiler lzss: truncated literal token"))
       9]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "3\n" (make-array 0 0))
+          (compiler-lzss-test-payload "3\n" (__tl_make-array 0 0))
           64
           "compiler lzss: truncated backreference token"))
       10]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "3\n" (make-array 0 0 32))
+          (compiler-lzss-test-payload "3\n" (__tl_make-array 0 0 32))
           64
           "compiler lzss: backreference before output"))
       11]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "3\n" (make-array 1 65 0 0))
+          (compiler-lzss-test-payload "3\n" (__tl_make-array 1 65 0 0))
           64
           "compiler lzss: token exceeds raw length"))
       12]
@@ -138,19 +140,19 @@
         (compiler-lzss-test-rejects?
           (compiler-lzss-test-payload
             "9\n"
-            (make-array 255 65 65 65 65 65 65 65 65))
+            (__tl_make-array 255 65 65 65 65 65 65 65 65))
           64
           "compiler lzss: truncated token stream"))
       13]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "1\n" (make-array 1 65 99))
+          (compiler-lzss-test-payload "1\n" (__tl_make-array 1 65 99))
           64
           "compiler lzss: trailing compressed bytes"))
       14]
     [(not
         (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "0\n" (make-array))
+          (compiler-lzss-test-payload "0\n" (__tl_make-array))
           -1
           "compiler lzss: invalid raw length limit"))
       15]

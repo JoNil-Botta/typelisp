@@ -10009,7 +10009,7 @@
   [min-capacity : i64]) : unit
   (begin
     (while (< (array-length stack.slots) min-capacity)
-      (array-push! stack.slots (tc-type-env-scoped-empty-slot)))
+      (__tl_array-push! stack.slots (tc-type-env-scoped-empty-slot)))
     unit))
 
 (define (tc-type-env-scoped-stack-reserve-marks!
@@ -10017,7 +10017,7 @@
   [min-capacity : i64]) : unit
   (begin
     (while (< (array-length stack.marks) min-capacity)
-      (array-push! stack.marks (tc-type-env-scoped-empty-mark)))
+      (__tl_array-push! stack.marks (tc-type-env-scoped-empty-mark)))
     unit))
 
 (define (tc-type-env-scoped-stack-push-slot!
@@ -84165,7 +84165,7 @@
     (ctfe_support.compiler-ctfe-macro-state-new)
     false
     (csym.compiler-symbols-empty)
-    (make-array (csym.compiler-registries-empty))
+    (__tl_make-array (csym.compiler-registries-empty))
     false
     false
     true
@@ -97840,7 +97840,7 @@
       (if found
         (MacroFlatImportTargetList slots len)
         (begin
-          (array-push! slots target-id)
+          (__tl_array-push! slots target-id)
           (MacroFlatImportTargetList slots (+ len 1)))))))
 
 (define (macro-flat-import-targets-from-list

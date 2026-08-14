@@ -3086,7 +3086,7 @@
       "producer-full-blocker-test"
       (cfg windows true false)
       (tlci.tlci-empty-bytes)
-      (make-array "package.multi/multi")
+      (__tl_make-array "package.multi/multi")
       captures)
       [(compiler_tlci_native_producer.ResultProducerBytes.Err _)
         (begin
@@ -3153,7 +3153,7 @@
       "producer-full-blocker-test"
       (cfg windows true false)
       (tlci.tlci-empty-bytes)
-      (make-array "package.multi/multi")
+      (__tl_make-array "package.multi/multi")
       captures)
       [(compiler_tlci_native_producer.ResultProducerBytes.Err _) false]
       [(compiler_tlci_native_producer.ResultProducerBytes.Ok default-bytes)
@@ -3543,7 +3543,7 @@
               (producer-test-add-decls-capture! (&mut names) (&mut captures))
               (let
                 [name-count : i64 (producer_test_svec.len (& names))]
-                [name-array (make-array String name-count)]
+                [name-array (__tl_make-array String name-count)]
                 [name-index : i64 0]
                 [_copy-names : unit
                   (while (< name-index name-count)

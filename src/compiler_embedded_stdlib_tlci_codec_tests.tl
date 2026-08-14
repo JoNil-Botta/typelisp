@@ -174,7 +174,7 @@
       2]
     [(not
         (tlci-codec-test-rejects?
-          (make-array 0)
+          (__tl_make-array 0)
           64
           "embedded stdlib tlci envelope: bad prefix or version"))
       3]

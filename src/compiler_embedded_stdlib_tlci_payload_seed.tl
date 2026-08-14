@@ -5,7 +5,7 @@
 ;; variant carries no compressed framing: `compiler_embedded_stdlib_tlci` reads
 ;; a zero-length payload as unavailable before it looks for a header.
 (define embedded-stdlib-tlci-bytes : (__tl_dyn-array u8)
-  (make-array u8 0))
+  (__tl_make-array u8 0))
 (define embedded-stdlib-tlci-source-hash : String
   "")
 

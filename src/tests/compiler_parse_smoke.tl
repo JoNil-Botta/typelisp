@@ -288,7 +288,7 @@
   [second : diagnostic.CompilerDiagnosticTextEdit]) : diagnostic.CompilerDiagnosticTextEditSeq
   (let
     [slots : (__tl_dyn-array diagnostic.CompilerDiagnosticTextEdit)
-      (make-array diagnostic.CompilerDiagnosticTextEdit 2)]
+      (__tl_make-array diagnostic.CompilerDiagnosticTextEdit 2)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)

@@ -2417,7 +2417,7 @@
   [path : String]) : BuildPackagePathSeq
   (let
     [count : i64 paths.len]
-    [slots : (__tl_dyn-array String) (make-array String (+ count 1))]
+    [slots : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -2465,7 +2465,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (BuildPackageGraphNodeVec (make-array BuildPackageGraphNode cap) 0)))
+    (BuildPackageGraphNodeVec (__tl_make-array BuildPackageGraphNode cap) 0)))
 
 (define (build-package-graph-node-vec-new) : BuildPackageGraphNodeVec
   (build-package-graph-node-vec-with-capacity 4))
@@ -2490,7 +2490,7 @@
   (let
     [count : i64 (build-package-graph-node-vec-len v)]
     [bigger : (__tl_dyn-array BuildPackageGraphNode)
-      (make-array
+      (__tl_make-array
         BuildPackageGraphNode
         (* (build-package-graph-node-vec-capacity v) 2))]
     (begin
@@ -2648,7 +2648,7 @@
         (build-package-graph-node-vec-new))]
     [stack : BuildPackagePathSeq
       (build-package-path-seq-push
-        (BuildPackagePathSeq (make-array String 0) 0)
+        (BuildPackagePathSeq (__tl_make-array String 0) 0)
         root-path)]
     (match (build-package-graph-add-deps
       root-dir
@@ -3884,7 +3884,7 @@
   [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures]) : BuildPackageTlciMacroCollector
   (let
     [count : i64 (cli_svec.len names)]
-    [catalog (make-array String count)]
+    [catalog (__tl_make-array String count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -4567,8 +4567,8 @@
               (str_cat.str-cat context ": " (io.error-message error)))]
           [(io.OkIoFile handle)
             (let
-              [first : (__tl_dyn-array u8) (make-array u8 0)]
-              [last : (__tl_dyn-array u8) (make-array u8 0)]
+              [first : (__tl_dyn-array u8) (__tl_make-array u8 0)]
+              [last : (__tl_dyn-array u8) (__tl_make-array u8 0)]
               [ok : bool true]
               [error-message : String ""]
               (begin
@@ -5173,7 +5173,7 @@
     unit))
 
 (define (build-package-commit-plan-new) : BuildPackageCommitPlan
-  (BuildPackageCommitPlan (make-array BuildPackageCommitFile 5) 0))
+  (BuildPackageCommitPlan (__tl_make-array BuildPackageCommitFile 5) 0))
 
 (define (build-package-commit-plan-add
   [plan : BuildPackageCommitPlan]
@@ -6913,7 +6913,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (BuildPackageGraphWorkerVec (make-array BuildPackageGraphWorker cap) 0)))
+    (BuildPackageGraphWorkerVec (__tl_make-array BuildPackageGraphWorker cap) 0)))
 
 (define (build-package-graph-worker-vec-new) : BuildPackageGraphWorkerVec
   (build-package-graph-worker-vec-with-capacity 4))
@@ -6938,7 +6938,7 @@
   (let
     [count : i64 (build-package-graph-worker-vec-len v)]
     [bigger : (__tl_dyn-array BuildPackageGraphWorker)
-      (make-array
+      (__tl_make-array
         BuildPackageGraphWorker
         (* (build-package-graph-worker-vec-capacity v) 2))]
     (begin

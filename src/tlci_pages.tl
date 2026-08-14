@@ -147,7 +147,7 @@
   windows
   (define (tlci-pages-windows-protect [region : TlciPageRegion] [protect : i32]) : bool
     (let
-      [old : (__tl_dyn-array i32) (make-array i32 1)]
+      [old : (__tl_dyn-array i32) (__tl_make-array i32 1)]
       [ok : i32
         (tlci-pages-win-virtual-protect
           region.addr
@@ -278,7 +278,7 @@
     (ptr-read (ptr-offset (tlci-pages-addr->ptr-u8 region.addr) offset))))
 
 (define (tlci-pages-test-bytes [a : u8] [b : u8] [c : u8]) : (__tl_dyn-array u8)
-  (make-array a b c))
+  (__tl_make-array a b c))
 
 (define (tlci-pages-test-release-ok? [region : TlciPageRegion]) : bool
   (match (tlci-pages-release region)

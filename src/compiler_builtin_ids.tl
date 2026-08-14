@@ -792,7 +792,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (make-array i64 285))
+  (__tl_make-array i64 285))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -802,9 +802,9 @@
 
 (define (state-new) : CompilerBuiltinIdsState
   (let
-    [metadata : (__tl_dyn-array i64) (make-array i64 4)]
-    [ids : (__tl_dyn-array i64) (make-array i64 318)]
-    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 285)]
+    [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 318)]
+    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 285)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)

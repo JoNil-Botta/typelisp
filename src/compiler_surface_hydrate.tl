@@ -135,8 +135,8 @@
       [_reset : unit (ci.intern-reset!)]
       [decl-id : i64 (ci.intern "decl")]
       [root-id : i64 (ci.intern "root")]
-      [package-modules : (__tl_dyn-array String) (make-array String 1)]
-      [source-names : (__tl_dyn-array String) (make-array String 2)]
+      [package-modules : (__tl_dyn-array String) (__tl_make-array String 1)]
+      [source-names : (__tl_dyn-array String) (__tl_make-array String 2)]
       [key : surface_identity.SurfaceIdentityKey
         (begin
           (set! (array-ref package-modules 0) "pkg/main.tl")
@@ -152,7 +152,7 @@
         (surface_identity.SurfaceIdentityPayload
           key
           source-names
-          (make-array surface_identity.SurfaceGeneratedIdentity 0))]
+          (__tl_make-array surface_identity.SurfaceGeneratedIdentity 0))]
       [source-pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 1 1)]
       [decls : ast.AstDeclList (ast.ast-decl-list-new)]
@@ -165,9 +165,9 @@
           3
           5
           7
-          (make-array decl-id)
-          (make-array root-id)
-          (make-array 0))]
+          (__tl_make-array decl-id)
+          (__tl_make-array root-id)
+          (__tl_make-array 0))]
       [second : surface_facts.SurfaceTypecheckFacts
         (surface_facts.SurfaceTypecheckFacts
           11
@@ -175,9 +175,9 @@
           17
           19
           23
-          (make-array decl-id)
-          (make-array root-id)
-          (make-array 0))]
+          (__tl_make-array decl-id)
+          (__tl_make-array root-id)
+          (__tl_make-array 0))]
       (match (surface_identity.surface-identity-encode identity-payload)
         [(surface_identity.ResultSurfaceIdentityBytes.Err message)
           (ResultCompilerSurfaceHydrateTestPayloads.Err message)]
@@ -267,7 +267,7 @@
             (match (compiler-surface-hydrate-payloads
               payloads.identity-bytes
               payloads.ast-bytes
-              (make-array u8 0)
+              (__tl_make-array u8 0)
               payloads.key
               pools)
               [(ResultCompilerSurfaceHydration.Err _) unit]
@@ -305,12 +305,12 @@
                             composite)
                           (if (surface_facts.surface-typecheck-facts-i64-array-eq?
                             composite.clone-call-indices
-                            (make-array 0 1))
+                            (__tl_make-array 0 1))
                             unit
                             (set! ok false))]))])]
               [_ (set! ok false)])
             (match (compiler-surface-hydrate
-              (make-array u8 0)
+              (__tl_make-array u8 0)
               payloads.key
               pools)
               [(ResultCompilerSurfaceHydration.Missing) unit]

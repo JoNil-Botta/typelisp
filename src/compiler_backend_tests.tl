@@ -8930,6 +8930,24 @@
 
 (define (compiler-backend-object-runtime-state-encoding-ok?) : bool
   (and
+    ;; C7 /0 is compact but sign-extends imm32. The direct-object path must use
+    ;; B8+r for wider values; native TLCI literal callbacks depend on all 64
+    ;; bits surviving into their mapped entry.
+    (string.eq
+      (compiler_backend.compiler-backend-object-mov-i64-reg-bytes 42 "%rdx")
+      (object_target.compiler-backend-object-bytes-from-hex "48c7c22a000000"))
+    (string.eq
+      (compiler_backend.compiler-backend-object-mov-i64-reg-bytes
+        6364136223846793005
+        "%rax")
+      (object_target.compiler-backend-object-bytes-from-hex
+        "48b82d7f954c2df45158"))
+    (string.eq
+      (compiler_backend.compiler-backend-object-mov-i64-reg-bytes
+        -2147483649
+        "%r9")
+      (object_target.compiler-backend-object-bytes-from-hex
+        "49b9ffffff7fffffffff"))
     (string.eq
       (compiler_backend.compiler-backend-object-lea-rbp-disp-bytes -64 "%rax")
       (object_target.compiler-backend-object-bytes-from-hex "488d45c0"))

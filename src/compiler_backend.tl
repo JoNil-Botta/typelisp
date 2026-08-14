@@ -72754,6 +72754,13 @@
     (compiler-backend-object-push-u8! out (shr value 16))
     (compiler-backend-object-push-u8! out (shr value 24))))
 
+(define (compiler-backend-object-push-u64!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
+  (begin
+    (compiler-backend-object-push-u32! out value)
+    (compiler-backend-object-push-u32! out (shr value 32))))
+
 (define (compiler-backend-object-bytes-finish
   [out : (& out byte_buf_core.ByteBufBuilder)]) : String
   (byte_buf_core.byte-buf-builder-finish-string out))
@@ -72882,6 +72889,28 @@
       (compiler-backend-object-push-u8! (&mut out) (+ 0xc0 reg-code))
       (compiler-backend-object-push-u32! (&mut out) value)
       (compiler-backend-object-bytes-finish (& out)))))
+
+;; `REX.W + C7 /0` sign-extends its imm32 payload. Keep that compact encoding
+;; only for values it can represent; wide literals need `REX.W + B8+r imm64`.
+;; Native TLCI entries pass source integer literals through this path, so
+;; truncating one here changes the AST produced by the next bootstrap stage.
+(define (compiler-backend-object-mov-i64-reg-bytes [value : i64] [reg : String]) : String
+  (if (compiler-backend-imm32? value)
+    (compiler-backend-object-mov-imm32-reg-bytes value reg)
+    (let
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
+      [rex : i64
+        (+
+          0x48
+          (if (compiler-backend-object-reg-high? reg)
+            1
+            0))]
+      (begin
+        (compiler-backend-object-push-u8! (&mut out) rex)
+        (compiler-backend-object-push-u8! (&mut out) (+ 0xb8 reg-code))
+        (compiler-backend-object-push-u64! (&mut out) value)
+        (compiler-backend-object-bytes-finish (& out))))))
 
 (define (compiler-backend-object-mov-reg-reg-bytes
   [src : String]
@@ -73106,7 +73135,7 @@
     [(compiler_ir_types.CompilerIrValue.I64 n)
       (compiler-backend-object-add-nonempty-bytes
         parts
-        (compiler-backend-object-mov-imm32-reg-bytes n reg))]
+        (compiler-backend-object-mov-i64-reg-bytes n reg))]
     [(compiler_ir_types.CompilerIrValue.Bool b)
       (compiler-backend-object-add-nonempty-bytes
         parts

@@ -727,6 +727,9 @@
   ;; unsafe-context flag is consumed by later raw-pointer ops).
   (Unsafe AstExprList)
   (Set i64 i64)
+  ;; Move-safe replacement of an initialized mutable place. The place remains
+  ;; an expression so lowering can evaluate every projection exactly once.
+  (Replace i64 i64)
   (Ann i64 i64)
   (Cast i64 i64)
   (Borrow bool i64 i64)
@@ -5573,6 +5576,9 @@
 (define (ast-expr-fixed-array-take [target : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.FixedArrayTake target index)))
 
+(define (ast-expr-replace [place : i64] [replacement : i64]) : i64
+  (ast-node-push (AstExpr.Replace place replacement)))
+
 (define (ast-expr-array-push [target : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.ArrayPush target value)))
 
@@ -6007,6 +6013,12 @@
   [target : i64]
   [index : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.FixedArrayTake target index)))
+
+(define (ast-expr-replace-with-pools
+  [pools : AstNodePoolContext]
+  [place : i64]
+  [replacement : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.Replace place replacement)))
 
 (define (ast-expr-array-push-with-pools
   [pools : AstNodePoolContext]
@@ -8316,6 +8328,10 @@
       (AstExpr.FixedArrayTake
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap index))]
+    [(AstExpr.Replace place replacement)
+      (AstExpr.Replace
+        (ast-compaction-remap-expr-id remap place)
+        (ast-compaction-remap-expr-id remap replacement))]
     [(AstExpr.ArrayPush target value)
       (AstExpr.ArrayPush
         (ast-compaction-remap-expr-id remap target)
@@ -8990,6 +9006,7 @@
     [(AstExpr.ForOwnedState _) 77]
     [(AstExpr.ForOwnedStep _) 78]
     [(AstExpr.MacroExpansion _ _ _) 79]
+    [(AstExpr.Replace _ _) 80]
     [(AstExpr.Begin _) 18]
     [(AstExpr.Unsafe _) 32]
     [(AstExpr.Set _ _) 19]

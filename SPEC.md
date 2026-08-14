@@ -148,7 +148,8 @@ A symbol is a run of alphanumerics and these punctuation characters:
 ```
 
 Punctuation may appear **at the start** of a symbol as well as inside it, so
-`&mut`, `->`, `<=`, `%`, `!`, and `set!` are all single `Sym` tokens. `.` is a
+`&mut`, `->`, `<=`, `%`, `!`, `set!`, and `replace!` are all single `Sym`
+tokens. `.` is a
 symbol character rather than a token, which is why a dotted member access such as
 `string.eq` lexes as one symbol and is split later by name resolution.
 
@@ -756,7 +757,9 @@ syntax. `expr-struct-get` builds a field access whose
 field token is computed during macro CTFE, `expr-tuple-ref` builds a tuple
 element access whose index is computed during macro CTFE, and
 `expr-struct-set` builds the matching field assignment expression.
-`expr-mut-borrow` builds an inferred-lifetime `(&mut place)` expression;
+`expr-borrow` and `expr-mut-borrow` build inferred-lifetime shared and mutable
+borrow expressions, `expr-array-ref` builds a checked element projection, and
+`expr-replace` builds the dedicated `(replace! place replacement)` expression;
 `expr-list-empty` and `expr-list-cons` build ordered argument lists; and
 `expr-call` builds an ordinary call from a callee expression and that list.
 `expr-mut-call0`, `expr-mut-call1`, and `expr-mut-call2` are compact
@@ -1819,6 +1822,14 @@ borrow of an overlapping path, moving or mutating the owner, and any shared
 borrow that is returned, stored, or otherwise live across activation. The rule
 is intentionally scoped to typed call argument evaluation; it is not general
 non-lexical lifetime inference or delayed activation outside call arguments.
+
+`replace!` uses the same two-phase reservation around its replacement operand.
+The place, including projection/index evaluation and bounds checks, is reserved
+first. While computing the replacement, non-mutating reads and non-escaping
+shared borrows of the reserved place are accepted, but overlapping moves,
+mutations, mutable borrows, and shared borrows that remain live at activation
+are rejected. Tracked sibling fields remain independent; runtime indexes from
+the same root are conservatively overlapping.
 
 ```lisp test=ignore name=auto-borrow-reject-temporary reason="negative example for immutable call-site auto-borrowing"
 (define (takes-ref [n : (& value i64)]) : i64
@@ -3647,6 +3658,16 @@ move-only values and as copies for copyable values:
   mutable reference to one, `T` must be `init`-eligible, and active or explicit
   cleanup ownership is rejected. The ordinary non-Copy global-source rule also
   applies: resetting a global slot does not permit moving its old owner out.
+- `replace!` initialized places. `(replace! place replacement)` atomically with
+  respect to source initialization transfers the old value to the expression
+  result and installs the caller-supplied replacement. Copyable old values are
+  copied; move-only old values transfer exactly once. The destination remains
+  initialized, a replaced tracked projection is reinitialized without erasing
+  disjoint sibling move facts, and a moved projection or partially moved whole
+  root rejects. This is not an atomic-memory operation and performs no cleanup,
+  destructor, deep clone, or implicit allocation. Non-Copy globals and active
+  or nested cleanup-owning places reject; Copy globals follow ordinary safe
+  whole-place mutation rules.
 - `match` scrutinees. Matching a move-only enum by value consumes the whole
   enum value. Payload bindings then own the active payload values for that
   arm. Matching `(& place)` when the borrowed referent is an enum is the
@@ -3689,8 +3710,9 @@ cleanup-owning element. Without a Drop system, overwriting another live
 move-only element may leave its old arena-owned storage unreachable until the
 arena is reclaimed; overwriting a cleanup owner must not silently lose its
 cleanup obligation. Fixed-array destructuring is available through
-`(array p1 ... pn)`, #6235 supplied the checked `array-take!` operation
-described above, and #6241 owns general caller-supplied replacement.
+`(array p1 ... pn)`, the checked `array-take!` operation described above, and
+general caller-supplied `replace!` are available. Uniform structural movement
+outside these explicitly checked operations remains tracked by #6215.
 
 **Concrete closure calls.** Lambda literals and their direct local bindings
 retain the checker-only shared, mutable, or consuming capability described in
@@ -4177,6 +4199,38 @@ guards.
   `(&mut r bytes)` view. Immutable `(& r bytes)`, `(& r str)`, and `String`
   views are read-only.
 
+#### 5.10.1 `(replace! place replacement)` — move-safe replacement
+
+- `place` must be initialized writable owned storage or storage reached through
+  a live mutable reference. Supported places are locals, parameters, ordinary
+  Copy globals, composed dotted fields, literal tuple slots, fixed-array or
+  borrowed-Slice elements with literal/runtime indexes, and explicit `deref`
+  projections through `Box` or `&mut`.
+- Shared references, temporaries/rvalues, raw pointers, moved fields, partially
+  moved whole roots, non-Copy globals, extern storage, and cleanup-owning or
+  active explicit-cleanup places reject. A selected initialized field may be
+  replaced while a disjoint sibling remains moved.
+- `replacement` has the place value type after expected-type, region, and
+  lifetime coercion. The result has that same type and is the independent old
+  value. For move-only values ownership transfers once from the place to the
+  result and once from the replacement operand into the place.
+- Evaluation is ordered: evaluate and reserve the place exactly once, including
+  every projection expression and bounds check; evaluate the replacement once
+  under a two-phase mutable reservation; then snapshot the old representation
+  independently and commit the replacement. An invalid index traps before the
+  replacement runs, and no fallible source operation occurs between snapshot
+  and store.
+- Non-mutating RHS inspection is permitted under section 3.10's two-phase
+  rules. Self/whole-subpath moves, conservatively overlapping runtime indexes,
+  a second mutation or mutable borrow, and escaping shared borrows reject.
+- CTFE supports mutable local scalar storage with the same returned-old-value
+  behavior. Unsupported CTFE storage rejects explicitly. Macro code may build
+  the same node with `comptime.expr-replace`; generated and parsed forms receive
+  identical checks.
+- The form is side-effecting and ownership-transferring. It is rejected in
+  `foreach`, masked SPMD control flow, reductions/scans, and other
+  purity-restricted contexts.
+
 ### 5.11 `(ann expr : type)` — type annotation
 
 - Forces `expr` to have the given type.
@@ -4242,6 +4296,8 @@ The fixed-array `(array-take! items index)` operation uses these same
 eligibility and construction rules for its immediate replacement value. It
 rejects an element type for which `(init : T)` is unavailable rather than
 leaving a moved or uninitialized slot.
+`replace!` does not require `init` eligibility because its caller supplies a
+fully typed replacement; unlike `array-take!`, it never synthesizes one.
 
 ```lisp test=ignore name=init-expression-examples reason="illustrates source surface"
 (defstruct Point (x i64) (y i64))
@@ -4393,6 +4449,8 @@ Semantics:
   `end` are uniform `i64` expressions evaluated once before the loop; if
   `end <= start`, the loop has zero logical iterations.
 - `body` must have type `unit`; the `foreach` expression has type `unit`.
+- `replace!` is rejected in every SPMD expression context; no lane-wise
+  replacement or silent scalarization is defined.
 - Early exits are not part of the SPMD surface: `(return expr)`, recoverable
   `(try expr)` propagation, `(break)`, and `(continue)` are rejected inside
   `foreach` bodies. Per-lane early exit is expressed with varying `while`
@@ -6045,6 +6103,7 @@ borrowed Slice reference forms described in section 3.2:
 | `array-ref` | `(Array T N) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read through an owned array, an immutable or mutable array reference, or a borrowed Slice receiver |
 | `array-set!` | `(Array T N) i64 T → unit` / `(&mut r (Slice T)) i64 T → unit` | Bounds-checked write through an owned array, mutable array reference, or mutable Slice receiver; shared Slice writes are rejected |
 | `array-take!` | `(Array T N) i64 → T` / `(&mut r (Array T N)) i64 → T` | Bounds-check, return the old fixed-array element, and immediately replace its slot with `(init : T)`; requires an owned storage place or mutable reference and an `init`-eligible, non-cleanup-owning `T` |
+| `replace!` | `place T → T` | Evaluate and reserve initialized writable storage once, return its old value by copy/move, and commit a caller-supplied `T` without an uninitialized interval |
 | `slice-view` | `source i64 i64 → (& r (Slice T))` | Checked, allocation-free view over a fixed array, compatibility dynamic array, suitable reference, or borrowed Slice; source and indices evaluate once left-to-right |
 | `slice-mut-view` | `source i64 i64 → (&mut r (Slice T))` | Checked, allocation-free exclusive view over a mutable fixed/dynamic array, suitable mutable reference, or mutable Slice; no shared-to-mutable strengthening |
 | `slice-split-at` | `(& r (Slice T)) i64 → (Tuple (& r (Slice T)) (& r (Slice T)))` | Checked, allocation-free shared split into `[0, mid)` and `[mid, len)`; a mutable Slice input may be shared for this operation |
@@ -6069,7 +6128,8 @@ Owned `String` arguments place an auto-borrow at typed call sites. Per the
 section 3.11 contract, non-consuming text inputs take `(& lifetime str)`
 while allocating operations return owned `String`.
 
-**Bounds checks and traps.** `array-ref`, `array-set!`, `array-take!`, the imported
+**Bounds checks and traps.** `array-ref`, `array-set!`, `array-take!`, indexed
+`replace!`, the imported
 `string-ref`, and `substring` / `string-slice` / `substring-view` perform
 runtime bounds checks. An out-of-bounds access calls the `tl_oob_abort`
 runtime trap, which writes to stderr and exits with code 134. Slice views also
@@ -7911,7 +7971,8 @@ expr          ::= literal
                 | "(" "break" ")"
                 | "(" "continue" ")"
                 | "(" "begin" expr+ ")"
-                | "(" "set!" ident expr ")"
+                | "(" "set!" borrow-place expr ")"
+                | "(" "replace!" borrow-place expr ")"
                 | "(" "ann" expr ":" type ")"
                 | "(" "cast" expr ":" type ")"
                 | "(" "match" expr match-arm+ ")"

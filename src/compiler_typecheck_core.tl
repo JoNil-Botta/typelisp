@@ -46001,6 +46001,8 @@
     [(ast.AstExpr.FixedArrayTake _ _)
       (ResultTcSpmdExprInfo.Err
         "typecheck: array-take! is not supported in SPMD")]
+    [(ast.AstExpr.Replace _ _)
+      (ResultTcSpmdExprInfo.Err "typecheck: replace! is not supported in SPMD")]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr
@@ -47151,6 +47153,18 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)
           name
           bound))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (or
+        (tc-expr-uses-free-name?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases place-box)
+          name
+          bound)
+        (tc-expr-uses-free-name?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases replacement-box)
+          name
+          bound))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr
@@ -48128,6 +48142,20 @@
           target-1
           target-2
           bound))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (or
+        (tc-expr-uses-free-source-id?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases place-box)
+          target-1
+          target-2
+          bound)
+        (tc-expr-uses-free-source-id?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases replacement-box)
+          target-1
+          target-2
+          bound))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr
@@ -49022,6 +49050,23 @@
           (tc-expr-sets-free-name? expr-bases array name bound)
           (tc-expr-sets-free-name? expr-bases index name bound)
           (tc-expr-sets-free-name? expr-bases value name bound)))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases place-box)]
+        [replacement : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
+        [sets-target : bool
+          (match (tc-move-root-projection-var-id expr-bases place)
+            [(TcMaybeNameId.Some root-id)
+              (and
+                (string.eq (tc-env-key-name-text root-id) name)
+                (not (tc-string-list-contains bound name)))]
+            [(TcMaybeNameId.No) false])]
+        (or
+          sets-target
+          (tc-expr-sets-free-name? expr-bases place name bound)
+          (tc-expr-sets-free-name? expr-bases replacement name bound)))]
     [(ast.AstExpr.ArrayTake array-box live-box index-box)
       (let
         [array : ast.AstExpr
@@ -53507,7 +53552,10 @@
         (match (tc-expr ctx env box-expr)
           [(ResultTcType.Ok box-ty)
             (match (tc-box-set-inner-type ctx box-ty)
-              [(ResultTcType.Ok _) (tc-store-place-lifetime ctx env box-expr)]
+              [(ResultTcType.Ok _)
+                (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+                  [(ast.AstType.MutRef lifetime _) (ResultTcNameId.Ok lifetime)]
+                  [_ (tc-store-place-lifetime ctx env box-expr)])]
               [(ResultTcType.Err message) (ResultTcNameId.Err message)])]
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [(ast.AstExpr.BoxTake receiver-box)
@@ -53516,7 +53564,10 @@
         (match (tc-expr ctx env receiver)
           [(ResultTcType.Ok receiver-ty)
             (match (tc-box-set-inner-type ctx receiver-ty)
-              [(ResultTcType.Ok _) (tc-store-place-lifetime ctx env receiver)]
+              [(ResultTcType.Ok _)
+                (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+                  [(ast.AstType.MutRef lifetime _) (ResultTcNameId.Ok lifetime)]
+                  [_ (tc-store-place-lifetime ctx env receiver)])]
               [(ResultTcType.Err message) (ResultTcNameId.Err message)])]
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [_ (ResultTcNameId.Err "typecheck: expression is not a storage place")]))
@@ -58551,6 +58602,140 @@
       (ResultTcType.Err
         "typecheck: array-take! receiver must be a fixed-array storage place")]))
 
+(define (tc-replace-place-value-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place : ast.AstExpr]) : ResultTcType
+  (match (ast.ast-expr-unspan place)
+    [(ast.AstExpr.Var name)
+      (if (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check name)
+          [(ResultTcExprId.Ok virtual-id)
+            (tc-replace-place-value-type
+              ctx
+              env
+              (ast.ast-expr-segment-bases-get
+                (tc-context-expr-bases ctx)
+                virtual-id))]
+          [(ResultTcExprId.Err message) (ResultTcType.Err message)])
+        (match (tc-lookup-visible-id ctx env name)
+          [(ResultTcType.Ok ty)
+            (match (tc-type-strip-region (tc-resolve-type ctx ty))
+              [(ast.AstType.MutRef _ referent-id)
+                (ResultTcType.Ok (tc-context-type-get ctx referent-id))]
+              [(ast.AstType.Ref _ _)
+                (ResultTcType.Err
+                  "typecheck: replace! requires mutable place access")]
+              [_ (ResultTcType.Ok (tc-resolve-type ctx ty))])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+    [(ast.AstExpr.StructGet receiver-box field)
+      (match (tc-replace-place-value-type
+        ctx
+        env
+        (ast.ast-expr-segment-bases-get
+          (tc-context-expr-bases ctx)
+          receiver-box))
+        [(ResultTcType.Ok receiver-ty)
+          (tc-struct-set-field-type-id ctx receiver-ty field)]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ast.AstExpr.TupleRef receiver-box index)
+      (match (tc-replace-place-value-type
+        ctx
+        env
+        (ast.ast-expr-segment-bases-get
+          (tc-context-expr-bases ctx)
+          receiver-box))
+        [(ResultTcType.Ok receiver-ty)
+          (tc-tuple-set-element-type ctx receiver-ty index)]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ast.AstExpr.ArrayRef array-box index-box)
+      (match (tc-expr-with-expected-or-actual-id
+        ctx
+        env
+        index-box
+        (ast.AstType.I64))
+        [(ResultTcType.Ok index-ty)
+          (if (tc-integer-type? index-ty)
+            (match (tc-expr-id ctx env array-box)
+              [(ResultTcType.Ok array-ty)
+                (match (tc-array-set-receiver ctx array-ty)
+                  [(ResultTcArrayReceiver.Ok receiver)
+                    (match receiver
+                      [(TcArrayReceiver _ elem-ty) (ResultTcType.Ok elem-ty)])]
+                  [(ResultTcArrayReceiver.Err message)
+                    (ResultTcType.Err message)])]
+              [(ResultTcType.Err message) (ResultTcType.Err message)])
+            (ResultTcType.Err "typecheck: replace! array index must be integer"))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ast.AstExpr.BoxGet receiver-box)
+      (match (tc-expr-id ctx env receiver-box)
+        [(ResultTcType.Ok receiver-ty) (tc-box-set-inner-type ctx receiver-ty)]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (match (tc-expr-id ctx env receiver-box)
+        [(ResultTcType.Ok receiver-ty) (tc-box-set-inner-type ctx receiver-ty)]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [_ (ResultTcType.Err "typecheck: replace! target must be a mutable place")]))
+
+(define (tc-replace-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place : ast.AstExpr]
+  [replacement-id : i64]) : ResultTcType
+  (match (tc-store-place-lifetime ctx env place)
+    [(ResultTcNameId.Ok _)
+      (if (tc-fixed-array-take-active-cleanup-owner-place? ctx env place)
+        (ResultTcType.Err
+          "typecheck: replace! cannot replace an active cleanup owner")
+        (match (tc-replace-place-value-type ctx env place)
+          [(ResultTcType.Ok place-ty)
+            (if (tc-cleanup-owning-aggregate-type? ctx place-ty)
+              (ResultTcType.Err
+                "typecheck: replace! does not support cleanup-owning places")
+              (let
+                [replacement : ast.AstExpr (ast.ast-node-get replacement-id)]
+                (match (tc-expr-with-expected-or-actual-id
+                  ctx
+                  env
+                  replacement-id
+                  place-ty)
+                  [(ResultTcType.Ok replacement-ty)
+                    (match (tc-expect-in-context
+                      ctx
+                      env
+                      replacement-ty
+                      place-ty
+                      "typecheck: replace! replacement type mismatch")
+                      [(ResultTcUnit.Ok)
+                        (match (tc-ensure-cleanup-resource-not-stored-expr
+                          env
+                          replacement)
+                          [(ResultTcUnit.Ok)
+                            (match (tc-ensure-region-value-can-flow-into
+                              env
+                              place-ty
+                              replacement-ty
+                              "replace! destination")
+                              [(ResultTcUnit.Ok)
+                                (match (tc-ensure-reference-value-can-store-in-place
+                                  ctx
+                                  env
+                                  place
+                                  replacement-ty
+                                  "replace! destination")
+                                  [(ResultTcUnit.Ok) (ResultTcType.Ok place-ty)]
+                                  [(ResultTcUnit.Err message)
+                                    (ResultTcType.Err message)])]
+                              [(ResultTcUnit.Err message)
+                                (ResultTcType.Err message)])]
+                          [(ResultTcUnit.Err message)
+                            (ResultTcType.Err message)])]
+                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                  [(ResultTcType.Err message) (ResultTcType.Err message)])))]
+          [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+    [(ResultTcNameId.Err _)
+      (ResultTcType.Err "typecheck: replace! target must be a storage place")]))
+
 (define (tc-array-push-receiver [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcArrayReceiver
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(ast.AstType.DynArray elem-ty)
@@ -59286,6 +59471,8 @@
         (ast.ast-node-get array-box)
         array-box
         index-box)]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (tc-replace-type ctx env (ast.ast-node-get place-box) replacement-box)]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr (ast.ast-node-get array-box)]
@@ -60818,6 +61005,16 @@
         template?
         array
         index)]
+    [(ast.AstExpr.Replace place replacement)
+      (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        place
+        replacement)]
     [(ast.AstExpr.ArrayPush array value)
       (tc-comptime-purity-node2-mode
         ctx
@@ -68397,6 +68594,71 @@
         [(TcMaybeNameId.No) moved])]
     [(TcMaybeMovePath.No) moved]))
 
+(define (tc-move-reinitialize-place-path
+  [expr-bases : i64]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [place : ast.AstExpr]) : TcMovedSet
+  (match (tc-move-direct-root-base-path expr-bases place)
+    [(TcMaybeMovePath.Some path)
+      (if (tc-moved-contains? locals path.root)
+        (if (= path.segments.len 0)
+          (tc-moved-remove-root-state moved path.root)
+          (tc-moved-remove-exact-path moved path.root path))
+        moved)]
+    [(TcMaybeMovePath.No) moved]))
+
+;; replace! must snapshot an initialized old value. A whole root conflicts with
+;; every outstanding partial move, a tracked projection conflicts with moved
+;; ancestors/descendants, and a runtime-indexed place conservatively conflicts
+;; with any moved path under the same root.
+(define (tc-move-check-replace-place-initialized
+  [expr-bases : i64]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [place : ast.AstExpr]) : TcMoveResult
+  (match (tc-move-direct-root-base-path expr-bases place)
+    [(TcMaybeMovePath.Some path)
+      (if (tc-moved-contains? locals path.root)
+        (match (tc-moved-path-conflict moved path)
+          [(TcMoveConflict.Some key origin-id)
+            (tc-move-rich-use-conflict-result
+              expr-bases
+              (TcMoveConflict.Some key origin-id)
+              (tc-move-path-render path)
+              place
+              (tc-move-path-render path))]
+          [TcMoveConflict.No
+            (if (and
+              (= path.segments.len 0)
+              (or
+                (tc-moved-contains? moved path.root)
+                (tc-moved-partial? moved path.root)))
+              (tc-move-rich-use-conflict-result
+                expr-bases
+                (tc-moved-root-conflict moved path.root)
+                (tc-move-path-render path)
+                place
+                (tc-move-path-render path))
+              (TcMoveResult.Ok moved))])
+        (TcMoveResult.Ok moved))]
+    [(TcMaybeMovePath.No)
+      (match (tc-move-root-projection-var-id expr-bases place)
+        [(TcMaybeNameId.Some root-id)
+          (if (and
+            (tc-moved-contains? locals root-id)
+            (or
+              (tc-moved-contains? moved root-id)
+              (tc-moved-partial? moved root-id)))
+            (tc-move-rich-use-conflict-result
+              expr-bases
+              (tc-moved-root-conflict moved root-id)
+              (tc-hygiene-name-text-id root-id)
+              place
+              (tc-hygiene-name-text-id root-id))
+            (TcMoveResult.Ok moved))]
+        [(TcMaybeNameId.No) (TcMoveResult.Ok moved)])]))
+
 (define (tc-move-projection-path [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMovePath
   (match (tc-move-struct-field-path expr-bases expr)
     [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
@@ -68873,6 +69135,25 @@
                 array
                 (tc-type-move-only? ctx (tc-resolve-type ctx elem-ty)))])]
         [(ResultTcArrayReceiver.Err _) (TcMoveResult.Ok moved)])]
+    [(ResultTcType.Err _) (TcMoveResult.Ok moved)]))
+
+(define (tc-move-check-replace-global-source
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [place : ast.AstExpr]) : TcMoveResult
+  (match (tc-replace-place-value-type ctx env place)
+    [(ResultTcType.Ok place-ty)
+      (tc-move-check-global-source
+        ctx
+        expr-bases
+        env
+        locals
+        moved
+        place
+        (tc-type-move-only? ctx (tc-resolve-type ctx place-ty)))]
     [(ResultTcType.Err _) (TcMoveResult.Ok moved)]))
 
 (define (tc-move-after-consuming-projection
@@ -73125,6 +73406,80 @@
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases place-box)]
+        [replacement : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
+        (match (tc-param-storage-check-write
+          ctx
+          expr-bases
+          env
+          moved
+          place
+          "replace")
+          [(ResultTcUnit.Ok)
+            (match (tc-move-check-replace-global-source
+              ctx
+              expr-bases
+              env
+              locals
+              moved
+              place)
+              [(TcMoveResult.Ok moved0)
+                (match (tc-move-check-replace-place-initialized
+                  expr-bases
+                  locals
+                  moved0
+                  place)
+                  [(TcMoveResult.Ok initialized)
+                    (match (tc-move-check-borrow-place
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      loop-carried
+                      initialized
+                      place)
+                      [(TcMoveResult.Ok moved1)
+                        (match (tc-move-check-expr-id
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          loop-carried
+                          moved1
+                          replacement-box)
+                          [(TcMoveResult.Ok moved2)
+                            (match (tc-replace-place-value-type ctx env place)
+                              [(ResultTcType.Ok place-ty)
+                                (match (tc-move-after-move-only-value
+                                  ctx
+                                  expr-bases
+                                  env
+                                  locals
+                                  loop-carried
+                                  moved2
+                                  replacement
+                                  place-ty)
+                                  [(TcMoveResult.Ok moved3)
+                                    (TcMoveResult.Ok
+                                      (tc-move-reinitialize-place-path
+                                        expr-bases
+                                        locals
+                                        moved3
+                                        place))]
+                                  [(TcMoveResult.Err message)
+                                    (TcMoveResult.Err message)])]
+                              [(ResultTcType.Err message)
+                                (TcMoveResult.Err message)])]
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)])]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr
@@ -76891,6 +77246,18 @@
         [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
     [(TcMaybeMovePath.No) (TcBorrowCheckResult.Ok borrowed)]))
 
+(define (tc-borrow-check-remove-two-phase-mut-place
+  [expr-bases : i64]
+  [borrowed : TcMovedSet]
+  [place : ast.AstExpr]) : TcMovedSet
+  (match (tc-borrow-check-place-path expr-bases place)
+    [(TcMaybeMovePath.Some path)
+      (tc-moved-remove-path-kind
+        borrowed
+        path
+        (TcMovedPathKind.BorrowTwoPhaseMut))]
+    [(TcMaybeMovePath.No) borrowed]))
+
 (define (tc-borrow-check-move-conflict
   [expr-bases : i64]
   [borrowed : TcMovedSet]
@@ -79105,6 +79472,14 @@
         env
         (ast.ast-expr-segment-bases-get expr-bases array-box)
         lifetime)]
+    [(ast.AstExpr.Replace place-box _)
+      (match (tc-replace-place-value-type
+        ctx
+        env
+        (ast.ast-expr-segment-bases-get expr-bases place-box))
+        [(ResultTcType.Ok place-ty)
+          (tc-borrow-check-type-contains-lifetime? ctx place-ty lifetime)]
+        [(ResultTcType.Err _) false])]
     [(ast.AstExpr.ArrayPush array-box _)
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
@@ -81814,6 +82189,67 @@
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (let
+        [place : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases place-box)]
+        [replacement : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
+        (match (tc-borrow-check-reserve-two-phase-mut-call-arg
+          ctx
+          expr-bases
+          env
+          locals
+          borrowed
+          expr
+          place)
+          [(TcBorrowCheckResult.Ok reserved)
+            (match (tc-borrow-check-expr-id
+              ctx
+              expr-bases
+              env
+              locals
+              reserved
+              replacement-box)
+              [(TcBorrowCheckResult.Ok rhs-borrowed)
+                (match (tc-replace-place-value-type ctx env place)
+                  [(ResultTcType.Ok place-ty)
+                    (match (tc-borrow-check-after-move-only-value
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      rhs-borrowed
+                      replacement
+                      place-ty)
+                      [(TcBorrowCheckResult.Ok consumed-borrowed)
+                        (let
+                          [pruned : TcMovedSet
+                            (tc-borrow-check-prune-value-temporaries
+                              ctx
+                              expr-bases
+                              env
+                              reserved
+                              consumed-borrowed
+                              replacement)]
+                          (match (tc-borrow-check-activate-two-phase-mut-borrows
+                            expr-bases
+                            pruned
+                            expr)
+                            [(TcBorrowCheckResult.Ok activated)
+                              (TcBorrowCheckResult.Ok
+                                (tc-borrow-check-remove-two-phase-mut-place
+                                  expr-bases
+                                  activated
+                                  place))]
+                            [(TcBorrowCheckResult.Err message)
+                              (TcBorrowCheckResult.Err message)]))]
+                      [(TcBorrowCheckResult.Err message)
+                        (TcBorrowCheckResult.Err message)])]
+                  [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr
@@ -82945,6 +83381,7 @@
           ctx
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases index-box)))]
+    [(ast.AstExpr.Replace _ _) true]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (or
         (tc-borrow-gate-expr-relevant?

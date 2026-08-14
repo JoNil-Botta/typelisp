@@ -792,7 +792,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (make-array i64 284))
+  (make-array i64 285))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -804,7 +804,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (make-array i64 4)]
     [ids : (__tl_dyn-array i64) (make-array i64 318)]
-    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 284)]
+    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 285)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
@@ -816,7 +816,7 @@
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 284)
+      (while (< i 285)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -889,7 +889,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 284)
+    (while (< i 285)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -897,7 +897,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 284)
+    (while (< i 285)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -2077,7 +2077,8 @@
     (compiler-builtin-load-ctfe-id! insert-missing 280 "__tl_dyn-array")
     (compiler-builtin-load-ctfe-id! insert-missing 281 "slice")
     (compiler-builtin-load-ctfe-id! insert-missing 282 "expr-borrow")
-    (compiler-builtin-load-ctfe-id! insert-missing 283 "expr-array-ref")))
+    (compiler-builtin-load-ctfe-id! insert-missing 283 "expr-array-ref")
+    (compiler-builtin-load-ctfe-id! insert-missing 284 "expr-replace")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -3282,6 +3283,9 @@
       (=
         (compiler-builtin-ctfe-ref 283)
         (ci.intern-source-slice "expr-array-ref" 0 14))
+      (=
+        (compiler-builtin-ctfe-ref 284)
+        (ci.intern-source-slice "expr-replace" 0 12))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3335,6 +3339,7 @@
           (compiler-builtin-ctfe-set! 281 -1)
           (compiler-builtin-ctfe-set! 282 -1)
           (compiler-builtin-ctfe-set! 283 -1)
+          (compiler-builtin-ctfe-set! 284 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

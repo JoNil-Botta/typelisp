@@ -917,6 +917,58 @@
         (compiler_driver_core.compiler-driver-state-surface-arena state-a)
         (compiler_driver_core.compiler-driver-state-surface-arena state-b)))))
 
+;; Driver construction owns two nested allocation targets: retained
+;; typecheck/lower/backend state in the surface arena, and checked-lowering
+;; wrapper cells plus storage in a fresh pool arena. Both constructors must
+;; restore their caller, and the latter's returned context must stay readable
+;; until its explicit error-path cleanup.
+(define (compiler-driver-construction-arena-scope-ok?) : bool
+  (let
+    ;; Driver state still stores its owners as raw handles. Wrap a raw test
+    ;; owner as the production bridge does, rather than claiming the returned
+    ;; state is region-polymorphic under a direct `arena.make` owner.
+    [caller-handle : i64 (arena.tl_arena_make)]
+    [caller : arena.Arena (arena.Arena caller-handle)]
+    [ok : bool
+      (in-arena
+        caller
+        (let
+          [state : compiler_driver_core.CompilerDriverState
+            (compiler_driver_core.compiler-driver-state-new-for-compile)]
+          [surface-arena : i64
+            (compiler_driver_core.compiler-driver-state-surface-arena state)]
+          [state-restored? : bool
+            (and
+              (= (arena.tl_arena_current) caller-handle)
+              (> surface-arena 0)
+              (not (= surface-arena caller-handle))
+              (=
+                (compiler_backend.compiler-backend-state-owner-arena
+                  (compiler_driver_core.compiler-driver-state-backend state))
+                surface-arena))]
+          [pools : compiler_ast_types.AstNodePoolContext
+            (compiler_driver_core.compiler-driver-state-new-checked-lower-pools)]
+          [pool-arena : i64
+            (compiler_ast_types.ast-node-pool-context-base-arena pools)]
+          [pools-restored? : bool
+            (and
+              (= (arena.tl_arena_current) caller-handle)
+              (> pool-arena 0)
+              (not (= pool-arena caller-handle))
+              (= (compiler_ast_types.ast-node-pool-context-expr-len pools) 0)
+              (= (compiler_ast_types.ast-node-pool-context-type-len pools) 0))]
+          (begin
+            (compiler_driver_core.compiler-driver-state-destroy-uncommitted-pools!
+              pools)
+            (and
+              state-restored?
+              pools-restored?
+              (= (arena.tl_arena_current) caller-handle)))))]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy caller-handle))
+      ok)))
+
 (define (compiler-driver-reader-context-smoke-prepare-state!
   [state : compiler_driver_core.CompilerDriverState]) : unit
   (begin
@@ -1011,6 +1063,7 @@
   (begin
     (cbi.compiler-builtin-reset!)
     (cbi.compiler-builtin-initialize-for-parse!)
+    (unless (compiler-driver-construction-arena-scope-ok?) (return 2))
     (if (compiler-driver-reader-context-smoke-ok?)
       42
       1)))

@@ -1732,8 +1732,19 @@
     index
     (compiler-builtin-resolve-name insert-missing name)))
 
+(define (compiler-builtin-clear-ctfe-ids!) : unit
+  (let
+    [index : i64 0]
+    (while (< index 285)
+      (begin
+        (compiler-builtin-ctfe-set! index -1)
+        (set! index (+ index 1))))))
+
 (define (compiler-builtin-load-ctfe-ids! [insert-missing : bool]) : unit
   (begin
+    ;; Clear unassigned and retired slots as well as populated ones. This keeps
+    ;; catalog holes from retaining zero or an id loaded by an older snapshot.
+    (compiler-builtin-clear-ctfe-ids!)
     (compiler-builtin-load-ctfe-id! insert-missing 0 "size-of")
     (compiler-builtin-load-ctfe-id! insert-missing 1 "align-of")
     (compiler-builtin-load-ctfe-id! insert-missing 2 "offset-of")
@@ -1784,15 +1795,9 @@
     (compiler-builtin-load-ctfe-id! insert-missing 47 "module-name")
     (compiler-builtin-load-ctfe-id! insert-missing 48 "module-export-macro?")
     (compiler-builtin-load-ctfe-id! insert-missing 49 "module-hook")
-    (compiler-builtin-load-ctfe-id! insert-missing 50 "expr-list-empty?")
     (compiler-builtin-load-ctfe-id! insert-missing 51 "expr-list-length")
-    (compiler-builtin-load-ctfe-id! insert-missing 52 "expr-list-head")
-    (compiler-builtin-load-ctfe-id! insert-missing 53 "expr-list-tail")
     (compiler-builtin-load-ctfe-id! insert-missing 54 "expr-list-nth")
-    (compiler-builtin-load-ctfe-id! insert-missing 55 "expr-clause-list-empty?")
     (compiler-builtin-load-ctfe-id! insert-missing 56 "expr-clause-list-length")
-    (compiler-builtin-load-ctfe-id! insert-missing 57 "expr-clause-list-head")
-    (compiler-builtin-load-ctfe-id! insert-missing 58 "expr-clause-list-tail")
     (compiler-builtin-load-ctfe-id! insert-missing 59 "expr-clause-list-nth")
     (compiler-builtin-load-ctfe-id!
       insert-missing
@@ -1816,20 +1821,8 @@
       "expr-binding-clause-init")
     (compiler-builtin-load-ctfe-id!
       insert-missing
-      65
-      "expr-binding-clause-list-empty?")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
       66
       "expr-binding-clause-list-length")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      67
-      "expr-binding-clause-list-head")
-    (compiler-builtin-load-ctfe-id!
-      insert-missing
-      68
-      "expr-binding-clause-list-tail")
     (compiler-builtin-load-ctfe-id!
       insert-missing
       69
@@ -3119,6 +3112,30 @@
     (if (compiler-builtin-comptime-structural-fields-reset-ok?)
       unit
       (io.panic "compiler builtin comptime structural field IDs failed"))))
+
+(cfg
+  test
+  (define (compiler-builtin-comptime-private-cons-slots-empty?) : bool
+    (begin
+      (compiler-builtin-initialize-for-parse!)
+      (and
+        (= (compiler-builtin-ctfe-ref 50) -1)
+        (= (compiler-builtin-ctfe-ref 52) -1)
+        (= (compiler-builtin-ctfe-ref 53) -1)
+        (= (compiler-builtin-ctfe-ref 55) -1)
+        (= (compiler-builtin-ctfe-ref 57) -1)
+        (= (compiler-builtin-ctfe-ref 58) -1)
+        (= (compiler-builtin-ctfe-ref 65) -1)
+        (= (compiler-builtin-ctfe-ref 67) -1)
+        (= (compiler-builtin-ctfe-ref 68) -1)))))
+
+(cfg
+  test
+  (test
+    compiler-builtin-comptime-private-cons-slots
+    (if (compiler-builtin-comptime-private-cons-slots-empty?)
+      unit
+      (io.panic "private comptime cons helpers leaked into the builtin catalog"))))
 
 (cfg
   test

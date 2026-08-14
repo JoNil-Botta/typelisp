@@ -60493,7 +60493,7 @@
       [(ctfe_support.ctfe-string-to-int-helper-name-id? lookup-name lookup-id)
         true]
       [(ctfe_support.ctfe-builtin-int-to-string-id? call-id) true]
-      [(ctfe_support.ctfe-builtin-source-helper-id? call-id) true]
+      [(ctfe_support.ctfe-builtin-direct-inspector-id? call-id) true]
       [(ctfe_support.ctfe-builtin-expr-clause-list-inspector-id? call-id) true]
       [(ctfe_support.ctfe-builtin-expr-binding-clause-list-inspector-id?
           call-id)

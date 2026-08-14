@@ -690,6 +690,7 @@ if ! "$COMPILER" compile src/main.tl \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
     --cfg tlci-native-route-stress \
+    --cfg dependency-tlci-verification \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI compile failed"
@@ -1598,10 +1599,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # on the rebased tree measured 24,485 used nodes against 24,576 capacity,
     # leaving 91 nodes, 0.37% of one segment, below the 25-segment line. Expect
     # the next series that introduces macro-expanded type structure to cross it.
-    # #6556's native vector module generator added the predicted type structure
-    # and crossed that line by three nodes: the authoritative Windows probe
-    # measured 24,579 used nodes, 25,600 capacity, and 614,400 physical payload
+    # #2778's dependency-catalog observation row is that next structure: the
+    # authoritative Windows probe measured 24,577 used nodes, crossing the
+    # boundary to 25 segments, 25,600 capacity, and 614,400 physical payload
     # bytes.
+    # #6556's native vector module generator then added two more nodes, reaching
+    # 24,579 used nodes without crossing another segment boundary.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 25 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

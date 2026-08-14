@@ -10,6 +10,8 @@
 (import compiler_load as load)
 (import package_source_core as package_source)
 (import tlci_core as tlci)
+(cfg dependency-tlci-verification (import stdlib.env as verification_env))
+(cfg test (import stdlib.fs))
 (cfg embedded-stdlib-tlci (import tlci_loader as loader))
 (cfg
   embedded-stdlib-tlci
@@ -17,6 +19,69 @@
 
 (define (compiler-dependency-tlci-own-text [text : String]) : String
   (string.substring (& text) 0 (string.string-length text)))
+
+(cfg
+  dependency-tlci-verification
+  (define (compiler-dependency-tlci-verification-env? [name : String]) : bool
+    (match (verification_env.get (& name))
+      [(verification_env.EnvSomeString value) (string.eq value "1")]
+      [(verification_env.EnvNoString) false])))
+
+(cfg
+  dependency-tlci-verification
+  (define (compiler-dependency-tlci-verification-requested?) : bool
+    (compiler-dependency-tlci-verification-env?
+      "TYPELISP_DEPENDENCY_TLCI_VERIFY")))
+
+(cfg
+  dependency-tlci-verification
+  (define (compiler-dependency-tlci-verification-force-source?) : bool
+    (compiler-dependency-tlci-verification-env?
+      "TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE")))
+
+(cfg
+  dependency-tlci-verification
+  (define (compiler-dependency-tlci-verification-record!
+    [state : load.CompilerLoadSessionState]
+    [phase : String]
+    [requests : i64]) : unit
+    (if (not (compiler-dependency-tlci-verification-requested?))
+      unit
+      (let
+        [observed : load.CompilerLoadDependencyCatalogObservation
+          (load.compiler-load-dependency-catalog-observe state)]
+        (io.print-error
+          (str_cat.str-cat
+            "dependency-tlci-verification|phase="
+            phase
+            "|requests="
+            (string.int->string requests)
+            "|entries="
+            (string.int->string observed.entries)
+            "|generation="
+            (string.int->string observed.generation)
+            "|unavailable="
+            (string.int->string observed.unavailable)
+            "|metadata="
+            (string.int->string observed.metadata-only)
+            "|code="
+            (string.int->string observed.trusted-code)
+            "|code-bytes="
+            (string.int->string observed.code-bytes)
+            "|fixup-bytes="
+            (string.int->string observed.fixup-bytes)
+            "|entry-bytes="
+            (string.int->string observed.entry-bytes)
+            "|import-bytes="
+            (string.int->string observed.import-bytes)
+            "\n"))))))
+
+(define (compiler-dependency-tlci-verification-finish!
+  [_state : load.CompilerLoadSessionState]) : unit
+  (cfg
+    dependency-tlci-verification
+    (compiler-dependency-tlci-verification-record! _state "finished" -1)
+    unit))
 
 (define (compiler-dependency-tlci-key
   [canonical-root : String]
@@ -251,7 +316,10 @@
           (load.CompilerLoadDependencyCatalogFailure.Malformed
             (compiler-dependency-tlci-own-text message)))]
       [(package_source.ResultPackageSourceDigest.Ok source-digest)
-        (if (not (io.file-exists? artifact-path))
+        (if (cfg
+          dependency-tlci-verification
+          (compiler-dependency-tlci-verification-force-source?)
+          false)
           (compiler-dependency-tlci-record-unavailable!
             state
             (compiler-dependency-tlci-base-key
@@ -259,39 +327,49 @@
               artifact-path
               source-digest)
             (load.CompilerLoadDependencyCatalogFailure.Missing
-              (compiler-dependency-tlci-own-text artifact-path)))
-          (match (io.try-read-file (& artifact-path))
-            [(io.ErrIoBytes error)
-              (compiler-dependency-tlci-record-unavailable!
-                state
-                (compiler-dependency-tlci-base-key
-                  source-set
-                  artifact-path
-                  source-digest)
-                (load.CompilerLoadDependencyCatalogFailure.Malformed
-                  (compiler-dependency-tlci-own-text (io.error-message error))))]
-            [(io.OkIoBytes contents)
-              (let
-                [bytes : (__tl_dyn-array u8) (byte_buf.to-array contents)]
-                (match (tlci.tlci-parse-image bytes)
-                  [(tlci.ResultTlciImage.Err message)
-                    (compiler-dependency-tlci-record-unavailable!
-                      state
-                      (compiler-dependency-tlci-base-key
+              "dependency tlci disabled by verification source control"))
+          (if (not (io.file-exists? artifact-path))
+            (compiler-dependency-tlci-record-unavailable!
+              state
+              (compiler-dependency-tlci-base-key
+                source-set
+                artifact-path
+                source-digest)
+              (load.CompilerLoadDependencyCatalogFailure.Missing
+                (compiler-dependency-tlci-own-text artifact-path)))
+            (match (io.try-read-file (& artifact-path))
+              [(io.ErrIoBytes error)
+                (compiler-dependency-tlci-record-unavailable!
+                  state
+                  (compiler-dependency-tlci-base-key
+                    source-set
+                    artifact-path
+                    source-digest)
+                  (load.CompilerLoadDependencyCatalogFailure.Malformed
+                    (compiler-dependency-tlci-own-text (io.error-message error))))]
+              [(io.OkIoBytes contents)
+                (let
+                  [bytes : (__tl_dyn-array u8) (byte_buf.to-array contents)]
+                  (match (tlci.tlci-parse-image bytes)
+                    [(tlci.ResultTlciImage.Err message)
+                      (compiler-dependency-tlci-record-unavailable!
+                        state
+                        (compiler-dependency-tlci-base-key
+                          source-set
+                          artifact-path
+                          source-digest)
+                        (load.CompilerLoadDependencyCatalogFailure.Malformed
+                          (compiler-dependency-tlci-own-text message)))]
+                    [(tlci.ResultTlciImage.Ok image)
+                      (compiler-dependency-tlci-admit-parsed!
+                        state
+                        (load.compiler-load-dependency-catalog-owner-arena
+                          state)
                         source-set
                         artifact-path
-                        source-digest)
-                      (load.CompilerLoadDependencyCatalogFailure.Malformed
-                        (compiler-dependency-tlci-own-text message)))]
-                  [(tlci.ResultTlciImage.Ok image)
-                    (compiler-dependency-tlci-admit-parsed!
-                      state
-                      (load.compiler-load-dependency-catalog-owner-arena state)
-                      source-set
-                      artifact-path
-                      source-digest
-                      bytes
-                      image)]))]))])))
+                        source-digest
+                        bytes
+                        image)]))])))])))
 
 (define (compiler-dependency-tlci-prepare-source-set!
   [state : load.CompilerLoadSessionState]
@@ -363,8 +441,424 @@
   [state : load.CompilerLoadSessionState]
   [manifest-dir : String]
   [deps : load.CompilerPkgDeps]) : unit
-  (compiler-dependency-tlci-prepare-deps-from!
-    state
-    manifest-dir
-    (load.compiler-pkg-deps-list deps)
-    0))
+  (let
+    [items : load.CompilerPkgDepList (load.compiler-pkg-deps-list deps)]
+    (begin
+      (compiler-dependency-tlci-prepare-deps-from! state manifest-dir items 0)
+      (cfg
+        dependency-tlci-verification
+        (compiler-dependency-tlci-verification-record!
+          state
+          "prepared"
+          (load.compiler-pkg-dep-list-count items))
+        unit))))
+
+(cfg
+  test
+  (define compiler-dependency-tlci-test-root : String
+    (str_cat.str-cat
+      "target/compiler_dependency_tlci_fixture/"
+      (string.int->string (fs.process-id)))))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-path [suffix : String]) : String
+    (load.compiler-load-join-root-path
+      (string.copy (& compiler-dependency-tlci-test-root))
+      suffix)))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-mkdir [path : String]) : bool
+    (match (fs.try-mkdir-if-missing (& path))
+      [(io.OkIoUnit) true]
+      [(io.ErrIoUnit _) false])))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-write-text
+    [path : String]
+    [contents : String]) : bool
+    (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
+      [(io.OkIoUnit) true]
+      [(io.ErrIoUnit _) false])))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-write-bytes
+    [path : String]
+    [contents : (__tl_dyn-array u8)]) : bool
+    (let
+      [buffer : byte_buf.ByteBuf (byte_buf.from-array contents)]
+      (match (io.try-write-file (& path) (byte_buf.as-bytes (& buffer)))
+        [(io.OkIoUnit) true]
+        [(io.ErrIoUnit _) false]))))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-setup!) : bool
+    (and
+      (compiler-dependency-tlci-test-mkdir "target")
+      (compiler-dependency-tlci-test-mkdir
+        "target/compiler_dependency_tlci_fixture")
+      (compiler-dependency-tlci-test-mkdir
+        (string.copy (& compiler-dependency-tlci-test-root)))
+      (compiler-dependency-tlci-test-mkdir
+        (compiler-dependency-tlci-test-path "src"))
+      (compiler-dependency-tlci-test-mkdir
+        (compiler-dependency-tlci-test-path "target"))
+      (compiler-dependency-tlci-test-mkdir
+        (compiler-dependency-tlci-test-path "target/release"))
+      (compiler-dependency-tlci-test-write-text
+        (compiler-dependency-tlci-test-path "typelisp.pkg")
+        "(package\n  (name \"metadata_dep\")\n  (version \"1.0.0\")\n  (kind \"staticlib\")\n  (entry \"src/lib.tl\"))\n")
+      (compiler-dependency-tlci-test-write-text
+        (compiler-dependency-tlci-test-path "src/lib.tl")
+        "(module metadata_dep)\n(define (answer) : i64 42)\n"))))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-source-set) : package_source.PackageSourceSet
+    (match (package_source.package-source-discover-for
+      "dependency tlci test"
+      (compiler-dependency-tlci-test-path "typelisp.pkg")
+      true)
+      [(package_source.ResultPackageSourceSet.Ok source-set) source-set]
+      [(package_source.ResultPackageSourceSet.Err message) (io.panic message)])))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-digest
+    [source-set : package_source.PackageSourceSet]) : i64
+    (match (package_source.package-source-set-digest source-set)
+      [(package_source.ResultPackageSourceDigest.Ok digest) digest]
+      [(package_source.ResultPackageSourceDigest.Err message)
+        (io.panic message)])))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-rodata
+    [schema : i64]
+    [digest : i64]
+    [payload-len : i64]) : (__tl_dyn-array u8)
+    (let
+      [payload : (__tl_dyn-array u8) (__tl_make-array u8 payload-len)]
+      [sections : (__tl_dyn-array tlci.TlciAuxSection)
+        (__tl_make-array tlci.TlciAuxSection 1)]
+      (begin
+        (if (>= payload-len 8)
+          (tlci.tlci-set-u64! payload 0 digest)
+          unit)
+        (set!
+          (array-ref sections 0)
+          (tlci.TlciAuxSection
+            tlci.tlci-aux-kind-package-source-binding
+            schema
+            payload))
+        (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+          [(tlci.ResultTlciAuxBytes.Ok packed) packed]
+          [(tlci.ResultTlciAuxBytes.Err message) (io.panic message)])))))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-image
+    [name : String]
+    [platform : i64]
+    [rodata : (__tl_dyn-array u8)]) : tlci.TlciImage
+    (tlci.tlci-make-image
+      platform
+      tlci.tlci-callback-abi-version
+      "0000000000000000000000000000000000000000"
+      (tlci.tlci-make-metadata-v2 name "1.0.0" (tlci.tlci-spmd-callables-empty))
+      rodata
+      (tlci.tlci-empty-bytes)
+      (tlci.tlci-empty-bytes)
+      (tlci.tlci-empty-bytes)
+      (tlci.tlci-empty-bytes)
+      (tlci.tlci-empty-bytes))))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-emit [image : tlci.TlciImage]) : (__tl_dyn-array
+      u8)
+    (match (tlci.tlci-emit-image image)
+      [(tlci.ResultTlciBytes.Ok bytes) bytes]
+      [(tlci.ResultTlciBytes.Err message) (io.panic message)])))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-release!
+    [state : load.CompilerLoadSessionState]) : unit
+    (match (load.compiler-load-session-state-dependency-catalog-release! state)
+      [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) unit]
+      [(load.ResultCompilerLoadDependencyCatalogUnit.Err message)
+        (io.panic message)])))
+
+(cfg
+  test
+  (define (compiler-dependency-tlci-test-opposite-platform) : i64
+    (if (= (tlci.tlci-build-host-platform) tlci.tlci-host-platform-x86-64-linux)
+      tlci.tlci-host-platform-x86-64-windows
+      tlci.tlci-host-platform-x86-64-linux)))
+
+(cfg
+  test
+  (test
+    compiler-dependency-tlci-metadata-only-admission
+    (if (not (compiler-dependency-tlci-test-setup!))
+      (io.panic "dependency tlci: unable to create metadata fixture")
+      (let
+        [source-set : package_source.PackageSourceSet
+          (compiler-dependency-tlci-test-source-set)]
+        [digest : i64 (compiler-dependency-tlci-test-digest source-set)]
+        [wrong-digest : i64
+          (if (= digest 2147483646)
+            0
+            (+ digest 1))]
+        [artifact : String
+          (load.compiler-load-package-tlci-path
+            source-set.manifest-dir
+            source-set.manifest.name)]
+        [good-image : tlci.TlciImage
+          (compiler-dependency-tlci-test-image
+            "metadata_dep"
+            (tlci.tlci-build-host-platform)
+            (compiler-dependency-tlci-test-rodata
+              tlci.tlci-package-source-binding-schema-version
+              digest
+              8))]
+        [good-bytes : (__tl_dyn-array u8)
+          (compiler-dependency-tlci-test-emit good-image)]
+        [state : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        [opposite-state : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        [stale-state : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        [mismatch-state : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        [unsupported-state : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        [malformed-state : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        [missing-state : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        [parse-state : load.CompilerLoadSessionState
+          (load.compiler-load-session-state-new)]
+        (begin
+          (unless
+            (compiler-dependency-tlci-test-write-bytes artifact good-bytes)
+            (return (io.panic "dependency tlci: unable to write trusted image")))
+          (let
+            [first : i64
+              (compiler-dependency-tlci-prepare-source-set! state source-set)]
+            [second : i64
+              (compiler-dependency-tlci-prepare-source-set! state source-set)]
+            [observed : load.CompilerLoadDependencyCatalogObservation
+              (load.compiler-load-dependency-catalog-observe state)]
+            (unless
+              (and
+                (= first 0)
+                (= second first)
+                (= observed.entries 1)
+                (= observed.generation 1)
+                (= observed.unavailable 0)
+                (= observed.metadata-only 1)
+                (= observed.trusted-code 0)
+                (= observed.code-bytes 0)
+                (= observed.fixup-bytes 0)
+                (= observed.entry-bytes 0)
+                (= observed.import-bytes 0)
+                (match (load.compiler-load-dependency-catalog-lookup-macro
+                  state
+                  first
+                  "metadata_dep/missing")
+                  [(load.CompilerLoadDependencyCatalogLookup.MetadataOnly) true]
+                  [_ false]))
+              (return
+                (io.panic
+                  "dependency tlci: trusted metadata observation mismatch"))))
+          (unless
+            (compiler-dependency-tlci-test-write-bytes
+              artifact
+              (compiler-dependency-tlci-test-emit
+                (compiler-dependency-tlci-test-image
+                  "metadata_dep"
+                  (compiler-dependency-tlci-test-opposite-platform)
+                  (compiler-dependency-tlci-test-rodata
+                    tlci.tlci-package-source-binding-schema-version
+                    digest
+                    8))))
+            (return
+              (io.panic "dependency tlci: unable to write cross-host image")))
+          (unless
+            (match (load.compiler-load-dependency-catalog-admitted-image
+              opposite-state
+              (compiler-dependency-tlci-prepare-source-set!
+                opposite-state
+                source-set))
+              [(load.CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
+                  image)
+                (and
+                  (=
+                    image.host-platform
+                    (compiler-dependency-tlci-test-opposite-platform))
+                  (= (array-length image.code) 0))]
+              [_ false])
+            (return
+              (io.panic
+                "dependency tlci: cross-host metadata image was not admitted")))
+          (unless
+            (compiler-dependency-tlci-test-write-bytes
+              artifact
+              (compiler-dependency-tlci-test-emit
+                (compiler-dependency-tlci-test-image
+                  "metadata_dep"
+                  (tlci.tlci-build-host-platform)
+                  (compiler-dependency-tlci-test-rodata
+                    tlci.tlci-package-source-binding-schema-version
+                    wrong-digest
+                    8))))
+            (return (io.panic "dependency tlci: unable to write stale image")))
+          (unless
+            (match (load.compiler-load-dependency-catalog-admitted-image
+              stale-state
+              (compiler-dependency-tlci-prepare-source-set!
+                stale-state
+                source-set))
+              [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
+                  (load.CompilerLoadDependencyCatalogFailure.StaleSource
+                    expected
+                    actual))
+                (and (= expected digest) (= actual wrong-digest))]
+              [_ false])
+            (return
+              (io.panic "dependency tlci: stale image was not classified")))
+          (unless
+            (compiler-dependency-tlci-test-write-bytes
+              artifact
+              (compiler-dependency-tlci-test-emit
+                (compiler-dependency-tlci-test-image
+                  "wrong_dep"
+                  (tlci.tlci-build-host-platform)
+                  (compiler-dependency-tlci-test-rodata
+                    tlci.tlci-package-source-binding-schema-version
+                    digest
+                    8))))
+            (return
+              (io.panic "dependency tlci: unable to write identity mismatch")))
+          (unless
+            (match (load.compiler-load-dependency-catalog-admitted-image
+              mismatch-state
+              (compiler-dependency-tlci-prepare-source-set!
+                mismatch-state
+                source-set))
+              [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
+                  (load.CompilerLoadDependencyCatalogFailure.PackageMismatch
+                    expected-name
+                    _
+                    actual-name
+                    _))
+                (and
+                  (string.eq expected-name "metadata_dep")
+                  (string.eq actual-name "wrong_dep"))]
+              [_ false])
+            (return
+              (io.panic "dependency tlci: identity mismatch was not classified")))
+          (unless
+            (compiler-dependency-tlci-test-write-bytes
+              artifact
+              (compiler-dependency-tlci-test-emit
+                (compiler-dependency-tlci-test-image
+                  "metadata_dep"
+                  (tlci.tlci-build-host-platform)
+                  (compiler-dependency-tlci-test-rodata 2 digest 8))))
+            (return
+              (io.panic "dependency tlci: unable to write unsupported schema")))
+          (unless
+            (match (load.compiler-load-dependency-catalog-admitted-image
+              unsupported-state
+              (compiler-dependency-tlci-prepare-source-set!
+                unsupported-state
+                source-set))
+              [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
+                  (load.CompilerLoadDependencyCatalogFailure.Unsupported _))
+                true]
+              [_ false])
+            (return
+              (io.panic
+                "dependency tlci: unsupported schema was not classified")))
+          (unless
+            (compiler-dependency-tlci-test-write-bytes
+              artifact
+              (compiler-dependency-tlci-test-emit
+                (compiler-dependency-tlci-test-image
+                  "metadata_dep"
+                  (tlci.tlci-build-host-platform)
+                  (compiler-dependency-tlci-test-rodata
+                    tlci.tlci-package-source-binding-schema-version
+                    digest
+                    7))))
+            (return
+              (io.panic "dependency tlci: unable to write malformed schema")))
+          (unless
+            (match (load.compiler-load-dependency-catalog-admitted-image
+              malformed-state
+              (compiler-dependency-tlci-prepare-source-set!
+                malformed-state
+                source-set))
+              [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
+                  (load.CompilerLoadDependencyCatalogFailure.Malformed _))
+                true]
+              [_ false])
+            (return
+              (io.panic "dependency tlci: malformed schema was not classified")))
+          (match (fs.try-remove-file (& artifact))
+            [(io.OkIoUnit) unit]
+            [(io.ErrIoUnit error) (return (io.panic (io.error-message error)))])
+          (unless
+            (match (load.compiler-load-dependency-catalog-admitted-image
+              missing-state
+              (compiler-dependency-tlci-prepare-source-set!
+                missing-state
+                source-set))
+              [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
+                  (load.CompilerLoadDependencyCatalogFailure.Missing path))
+                (string.eq path artifact)]
+              [_ false])
+            (return
+              (io.panic "dependency tlci: missing image was not classified")))
+          (unless
+            (compiler-dependency-tlci-test-write-text artifact "not a tlci")
+            (return (io.panic "dependency tlci: unable to write parse failure")))
+          (unless
+            (match (load.compiler-load-dependency-catalog-admitted-image
+              parse-state
+              (compiler-dependency-tlci-prepare-source-set!
+                parse-state
+                source-set))
+              [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable
+                  (load.CompilerLoadDependencyCatalogFailure.Malformed _))
+                true]
+              [_ false])
+            (return
+              (io.panic "dependency tlci: malformed image was not classified")))
+          (compiler-dependency-tlci-test-release! state)
+          (unless
+            (and
+              (=
+                (load.compiler-load-dependency-catalog-observe state).entries
+                0)
+              (=
+                (load.compiler-load-dependency-catalog-observe opposite-state).entries
+                1))
+            (return (io.panic "dependency tlci: session release leaked state")))
+          (compiler-dependency-tlci-test-release! opposite-state)
+          (compiler-dependency-tlci-test-release! stale-state)
+          (compiler-dependency-tlci-test-release! mismatch-state)
+          (compiler-dependency-tlci-test-release! unsupported-state)
+          (compiler-dependency-tlci-test-release! malformed-state)
+          (compiler-dependency-tlci-test-release! missing-state)
+          (compiler-dependency-tlci-test-release! parse-state)
+          (compiler-dependency-tlci-test-write-bytes artifact good-bytes)
+          unit)))))

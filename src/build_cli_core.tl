@@ -6475,18 +6475,24 @@
           inline-test-status)))))
 
 (define (build-package-dependency-catalog-finish [status : i64]) : i64
-  (match (load.compiler-load-session-state-dependency-catalog-release!
-    (load.compiler-load-serial-test-session-state))
-    [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) status]
-    [(load.ResultCompilerLoadDependencyCatalogUnit.Err message)
-      (begin
-        (io.print-error
-          (str_cat.str-cat
-            "build: failed to release dependency catalog mapping: "
-            message))
-        (if (= status 0)
-          1
-          status))]))
+  (let
+    [state : load.CompilerLoadSessionState
+      (load.compiler-load-serial-test-session-state)]
+    (begin
+      (compiler_dependency_tlci.compiler-dependency-tlci-verification-finish!
+        state)
+      (match (load.compiler-load-session-state-dependency-catalog-release!
+        state)
+        [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) status]
+        [(load.ResultCompilerLoadDependencyCatalogUnit.Err message)
+          (begin
+            (io.print-error
+              (str_cat.str-cat
+                "build: failed to release dependency catalog mapping: "
+                message))
+            (if (= status 0)
+              1
+              status))]))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and

@@ -526,6 +526,21 @@
   (TrustedMetadataOnly tlci.TlciImage)
   (TrustedCode tlci.TlciImage tlci_loader_support.TlciLoadedImage))
 
+;; Stable verification summary for a job-owned dependency catalog. Besides
+;; keeping package gates independent of registry storage, the executable
+;; section totals make the metadata-only no-map boundary non-vacuous: every
+;; admitted metadata image must contribute zero code/fixup/entry/import bytes.
+(defstruct CompilerLoadDependencyCatalogObservation
+  (entries i64)
+  (generation i64)
+  (unavailable i64)
+  (metadata-only i64)
+  (trusted-code i64)
+  (code-bytes i64)
+  (fixup-bytes i64)
+  (entry-bytes i64)
+  (import-bytes i64))
+
 (defenum ResultCompilerLoadDependencyCatalogUnit
   (Ok)
   (Err String))
@@ -1036,6 +1051,58 @@
                 (CompilerLoadDependencyCatalogAdmittedImage.Unavailable
                   (CompilerLoadDependencyCatalogFailure.Malformed
                     "dependency catalog: trusted code entry has no image"))])])))))
+
+(define (compiler-load-dependency-catalog-observe
+  [state : CompilerLoadSessionState]) : CompilerLoadDependencyCatalogObservation
+  (let
+    [registry : CompilerLoadDependencyCatalogRegistry
+      (compiler-load-session-state-dependency-catalog state)]
+    [items : CompilerLoadDependencyCatalogList (array-ref registry.entries 0)]
+    [index : i64 0]
+    [unavailable : i64 0]
+    [metadata-only : i64 0]
+    [trusted-code : i64 0]
+    [code-bytes : i64 0]
+    [fixup-bytes : i64 0]
+    [entry-bytes : i64 0]
+    [import-bytes : i64 0]
+    (begin
+      (while (< index items.len)
+        (begin
+          (match (compiler-load-dependency-catalog-admitted-image state index)
+            [(CompilerLoadDependencyCatalogAdmittedImage.NoCatalog) unit]
+            [(CompilerLoadDependencyCatalogAdmittedImage.Unavailable _)
+              (set! unavailable (+ unavailable 1))]
+            [(CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
+                image)
+              (begin
+                (set! metadata-only (+ metadata-only 1))
+                (set! code-bytes (+ code-bytes (array-length image.code)))
+                (set! fixup-bytes (+ fixup-bytes (array-length image.fixups)))
+                (set! entry-bytes (+ entry-bytes (array-length image.entries)))
+                (set!
+                  import-bytes
+                  (+ import-bytes (array-length image.imports))))]
+            [(CompilerLoadDependencyCatalogAdmittedImage.TrustedCode image _)
+              (begin
+                (set! trusted-code (+ trusted-code 1))
+                (set! code-bytes (+ code-bytes (array-length image.code)))
+                (set! fixup-bytes (+ fixup-bytes (array-length image.fixups)))
+                (set! entry-bytes (+ entry-bytes (array-length image.entries)))
+                (set!
+                  import-bytes
+                  (+ import-bytes (array-length image.imports))))])
+          (set! index (+ index 1))))
+      (CompilerLoadDependencyCatalogObservation
+        items.len
+        (array-ref registry.generation 0)
+        unavailable
+        metadata-only
+        trusted-code
+        code-bytes
+        fixup-bytes
+        entry-bytes
+        import-bytes))))
 
 (define compiler-load-default-session-state : (__tl_dyn-array
     CompilerLoadSessionState)
@@ -17176,6 +17243,8 @@
                 "__dependency_catalog_test"))]
           [nested-root : String
             (compiler-load-join-root-path outer-root "nested")]
+          [metadata-root : String
+            (compiler-load-join-root-path outer-root "metadata")]
           [outer-key : CompilerLoadDependencyCatalogKey
             (CompilerLoadDependencyCatalogKey
               outer-root
@@ -17198,6 +17267,34 @@
               23
               24
               "compiler-b")]
+          [metadata-key : CompilerLoadDependencyCatalogKey
+            (CompilerLoadDependencyCatalogKey
+              metadata-root
+              "metadata"
+              "3.0.0"
+              (compiler-load-join-root-path
+                metadata-root
+                "target/metadata.tlci")
+              31
+              32
+              (tlci.tlci-build-host-platform)
+              tlci.tlci-callback-abi-version
+              "compiler-c")]
+          [metadata-image : tlci.TlciImage
+            (tlci.tlci-make-image
+              (tlci.tlci-build-host-platform)
+              tlci.tlci-callback-abi-version
+              "compiler-c"
+              (tlci.tlci-make-metadata-v2
+                "metadata"
+                "3.0.0"
+                (tlci.tlci-spmd-callables-empty))
+              (tlci.tlci-empty-bytes)
+              (tlci.tlci-empty-bytes)
+              (tlci.tlci-empty-bytes)
+              (tlci.tlci-empty-bytes)
+              (tlci.tlci-empty-bytes)
+              (tlci.tlci-empty-bytes))]
           [outer-entry : CompilerLoadDependencyCatalogEntry
             (CompilerLoadDependencyCatalogEntry
               outer-key
@@ -17210,10 +17307,19 @@
               CompilerLoadDependencyCatalogImage.None
               (CompilerLoadDependencyCatalogStatus.Unavailable
                 (CompilerLoadDependencyCatalogFailure.Missing "nested missing")))]
+          [metadata-entry : CompilerLoadDependencyCatalogEntry
+            (CompilerLoadDependencyCatalogEntry
+              metadata-key
+              (CompilerLoadDependencyCatalogImage.Some metadata-image)
+              CompilerLoadDependencyCatalogStatus.TrustedMetadataOnly)]
           [outer-slot : i64
             (compiler-load-dependency-catalog-record-owned! state outer-entry)]
           [nested-slot : i64
             (compiler-load-dependency-catalog-record-owned! state nested-entry)]
+          [metadata-slot : i64
+            (compiler-load-dependency-catalog-record-owned!
+              state
+              metadata-entry)]
           [nested-provenance : i64
             (ci.intern (compiler-load-join-root-path nested-root "src/lib.tl"))]
           [outer-provenance : i64
@@ -17225,11 +17331,14 @@
                 "__dependency_catalog_test-other/src/lib.tl"))]
           [same-slot : i64
             (compiler-load-dependency-catalog-record-owned! state nested-entry)]
+          [observation : CompilerLoadDependencyCatalogObservation
+            (compiler-load-dependency-catalog-observe state)]
           (set!
             (array-ref checks 0)
             (and
               (= outer-slot 0)
               (= nested-slot 1)
+              (= metadata-slot 2)
               (= same-slot nested-slot)
               (=
                 (compiler-load-dependency-catalog-find-key-slot
@@ -17258,13 +17367,38 @@
                 -1)
               (match (compiler-load-dependency-catalog-lookup-macro
                 state
+                metadata-slot
+                "metadata/macro")
+                [(CompilerLoadDependencyCatalogLookup.MetadataOnly) true]
+                [_ false])
+              (match (compiler-load-dependency-catalog-admitted-image
+                state
+                metadata-slot)
+                [(CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
+                    image)
+                  (and
+                    (= (array-length image.code) 0)
+                    (= (array-length image.fixups) 0)
+                    (= (array-length image.entries) 0)
+                    (= (array-length image.imports) 0))]
+                [_ false])
+              (match (compiler-load-dependency-catalog-lookup-macro
+                state
                 nested-slot
                 "nested/macro")
                 [(CompilerLoadDependencyCatalogLookup.Unavailable
                     (CompilerLoadDependencyCatalogFailure.Missing message))
                   (string.eq message "nested missing")]
                 [_ false])
-              (= (array-ref state.dependency-catalog.entries 0).len 2)))))
+              (= observation.entries 3)
+              (= observation.generation 3)
+              (= observation.unavailable 2)
+              (= observation.metadata-only 1)
+              (= observation.trusted-code 0)
+              (= observation.code-bytes 0)
+              (= observation.fixup-bytes 0)
+              (= observation.entry-bytes 0)
+              (= observation.import-bytes 0)))))
       (let
         [release-ok : bool
           (match (compiler-load-session-state-dependency-catalog-release! state)

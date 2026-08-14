@@ -381,15 +381,6 @@
         (LspLengthParse.Err "lsp: invalid Content-Length")))
     LspLengthParse.Ignore))
 
-(define (lsp-string-vec-push-copy
-  [items : lsp_svec.Vec (:consume)]
-  [value : String]) : lsp_svec.Vec
-  (let
-    [next-items : lsp_svec.Vec items]
-    (begin
-      (lsp_svec.push (&mut next-items) value)
-      next-items)))
-
 (define (lsp-string-vec-push-copy!
   [items : (&mut items lsp_svec.Vec)]
   [value : String]) : unit
@@ -1129,32 +1120,6 @@
         (& doc.semantic.index)
         (& doc.path)
         byte-position)]
-    [_ -1]))
-
-(define (lsp-document-semantic-find-symbol-role
-  [doc : (& doc lsp_vector_families.LspDocument)]
-  [record-index : i64]
-  [role : compiler_semantic_index.CompilerSemanticRecordRole]) : i64
-  (match (lsp-document-semantic-snapshot-status doc)
-    [(LspSemanticSnapshotStatus.Current _ _)
-      (let
-        [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          doc.semantic.index]
-        (if (or
-          (< record-index 0)
-          (>=
-            record-index
-            (compiler_semantic_index.compiler-semantic-source-index-len
-              (& index))))
-          -1
-          (compiler_semantic_index.compiler-semantic-source-index-find-symbol-role
-            (& index)
-            (__tl-project-field
-              (compiler_semantic_index.compiler-semantic-source-index-get
-                (& index)
-                record-index)
-              symbol)
-            role)))]
     [_ -1]))
 
 (define (lsp-semantic-record-exact-editable?

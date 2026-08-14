@@ -25706,6 +25706,12 @@
         (ast.ast-expr-segment-bases-get expr-bases array-box)
         (ast.ast-expr-segment-bases-get expr-bases index-box)
         allow)]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (tc-source-expr-pair-spmd-broadcast-scope-ok
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases place-box)
+        (ast.ast-expr-segment-bases-get expr-bases replacement-box)
+        allow)]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr
@@ -26255,6 +26261,12 @@
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases array-box)
         (ast.ast-expr-segment-bases-get expr-bases index-box))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (tc-source-expr-pair-policy-ok
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases place-box)
+        (ast.ast-expr-segment-bases-get expr-bases replacement-box))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr
@@ -41712,6 +41724,18 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)
           name
           bound))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (and
+        (tc-ref-closure-local-uses-ok?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases place-box)
+          name
+          bound)
+        (tc-ref-closure-local-uses-ok?
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases replacement-box)
+          name
+          bound))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr
@@ -44075,6 +44099,9 @@
     [(ast.AstExpr.FixedArrayTake _ _)
       (ResultTcUnit.Err
         "typecheck: array-take! is not supported in masked spmd control flow")]
+    [(ast.AstExpr.Replace _ _)
+      (ResultTcUnit.Err
+        "typecheck: replace! is not supported in masked spmd control flow")]
     [(ast.AstExpr.StructSet receiver-box _ value-box)
       (let
         [receiver : ast.AstExpr
@@ -44799,6 +44826,11 @@
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases array-box)
         (ast.ast-expr-segment-bases-get expr-bases index-box))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (tc-spmd-scan-body-no-nested-pair
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases place-box)
+        (ast.ast-expr-segment-bases-get expr-bases replacement-box))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (tc-spmd-scan-body-no-nested-pair
         expr-bases
@@ -56888,6 +56920,9 @@
     [(ast.AstExpr.FixedArrayTake _ _)
       (ResultTcUnit.Err
         "`array-take!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+    [(ast.AstExpr.Replace _ _)
+      (ResultTcUnit.Err
+        "`replace!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(ast.AstExpr.StructSet _ _ _)
       (ResultTcUnit.Err
         "struct field assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
@@ -66023,6 +66058,14 @@
           (tc-generated-expr-dependent-construct?
             ctx
             (tc-context-expr-get ctx index-id)))]
+      [(ast.AstExpr.Replace place-id replacement-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx place-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx replacement-id)))]
       [(ast.AstExpr.ArrayPush array-id value-id)
         (or
           (tc-generated-expr-dependent-construct?
@@ -91048,6 +91091,19 @@
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ast.AstExpr.Replace place-id replacement-id)
+      (match (macro-child-to-spanned-sexpr place-id span origin)
+        [(ResultMacroSexpr.Ok splace)
+          (match (macro-child-to-spanned-sexpr replacement-id span origin)
+            [(ResultMacroSexpr.Ok sreplacement)
+              (ResultMacroSexpr.Ok
+                (macro-form2-id
+                  (cbi.compiler-builtin-ctfe-ref 284)
+                  splace
+                  sreplacement
+                  span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayPush array-id value-id)
       (match (macro-child-to-spanned-sexpr array-id span origin)
         [(ResultMacroSexpr.Ok sarray)
@@ -93836,6 +93892,18 @@
           expr-bases
           index-box
           shared-path?))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (begin
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          place-box
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          produced
+          expr-bases
+          replacement-box
+          shared-path?))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (begin
         (macro-hygiene-produced-note-id!
@@ -95244,6 +95312,11 @@
         env.pools
         (macro-hygiene-expr expr-bases array-box env macro-name depth)
         (macro-hygiene-expr expr-bases index-box env macro-name depth))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (ast.ast-expr-replace-with-pools
+        env.pools
+        (macro-hygiene-expr expr-bases place-box env macro-name depth)
+        (macro-hygiene-expr expr-bases replacement-box env macro-name depth))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : i64 array-box]
@@ -104150,6 +104223,14 @@
               (ResultMacroExpr.Ok (ast.ast-expr-fixed-array-take narray nindex))]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (match (macro-expand-node ctx env decls depth place-box)
+        [(ResultMacroExpr.Ok nplace)
+          (match (macro-expand-node ctx env decls depth replacement-box)
+            [(ResultMacroExpr.Ok nreplacement)
+              (ResultMacroExpr.Ok (ast.ast-expr-replace nplace nreplacement))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
@@ -106633,6 +106714,10 @@
       (or
         (macro-node-uses-macro? ctx decls a)
         (macro-node-uses-macro? ctx decls i))]
+    [(ast.AstExpr.Replace place replacement)
+      (or
+        (macro-node-uses-macro? ctx decls place)
+        (macro-node-uses-macro? ctx decls replacement))]
     [(ast.AstExpr.ArrayPush a v)
       (or
         (macro-node-uses-macro? ctx decls a)
@@ -107058,6 +107143,16 @@
           state
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases index-box)))]
+    [(ast.AstExpr.Replace place-box replacement-box)
+      (or
+        (macro-expr-might-fire?
+          state
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases place-box))
+        (macro-expr-might-fire?
+          state
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases replacement-box)))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr
@@ -107620,6 +107715,10 @@
       (ctfe-reflection-prescan-or
         (ctfe-node-has-type-literal? state a)
         (ctfe-node-has-type-literal? state i))]
+    [(ast.AstExpr.Replace place replacement)
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? state place)
+        (ctfe-node-has-type-literal? state replacement))]
     [(ast.AstExpr.ArrayPush a v)
       (ctfe-reflection-prescan-or
         (ctfe-node-has-type-literal? state a)

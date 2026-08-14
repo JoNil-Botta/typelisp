@@ -805,7 +805,7 @@
 
 (define (ctfe-name-value [name-id : i64]) : CompilerCtfeValue
   (CompilerCtfeValue.Name
-    (ci.intern-str (ci.intern-macro-global-source-name-id-or name-id name-id))
+    (ci.intern-syntax-name-text-or name-id "<structural-name>")
     name-id))
 
 (define (ctfe-generated-string-value [text : String]) : CompilerCtfeValue
@@ -2319,7 +2319,9 @@
     [(ast.AstStructCleanup.No) CtfeReflectCleanup.No]
     [(ast.AstStructCleanup.Fn name)
       (CtfeReflectCleanup.Fn
-        (ctfe-symbol-module-key module (ci.intern-str name))
+        (ctfe-symbol-module-key
+          module
+          (ci.intern-syntax-name-text-or name "<structural-name>"))
         (if (= (string.string-length module) 0)
           name
           (ctfe-qualified-name-key-id module-id name)))]))
@@ -2332,7 +2334,9 @@
     [(ast.AstEnumCleanup.No) CtfeReflectCleanup.No]
     [(ast.AstEnumCleanup.Fn name)
       (CtfeReflectCleanup.Fn
-        (ctfe-symbol-module-key module (ci.intern-str name))
+        (ctfe-symbol-module-key
+          module
+          (ci.intern-syntax-name-text-or name "<structural-name>"))
         (if (= (string.string-length module) 0)
           name
           (ctfe-qualified-name-key-id module-id name)))]))
@@ -2359,7 +2363,7 @@
   [cleanup : ast.AstStructCleanup]
   [fields : ast.AstFieldDefList]) : CtfeReflectInfoList
   (let
-    [name-str : String (ci.intern-str name)]
+    [name-str : String (ci.intern-syntax-name-text-or name "<structural-name>")]
     [key : String
       (if (= (string.string-length module) 0)
         name-str
@@ -2386,7 +2390,7 @@
   [cleanup : ast.AstEnumCleanup]
   [variants : ast.AstVariantDefList]) : CtfeReflectInfoList
   (let
-    [name-str : String (ci.intern-str name)]
+    [name-str : String (ci.intern-syntax-name-text-or name "<structural-name>")]
     [key : String
       (if (= (string.string-length module) 0)
         name-str
@@ -2429,7 +2433,11 @@
           (match (array-ref decl-slots (+ decl-offset index))
             [(ast.AstDecl.Module next-module)
               (begin
-                (set! current-module (ci.intern-str next-module))
+                (set!
+                  current-module
+                  (ci.intern-syntax-name-text-or
+                    next-module
+                    "<structural-module>"))
                 (set! current-module-id next-module))]
             [(ast.AstDecl.DefStruct decl-meta name _ cleanup fields)
               (set!

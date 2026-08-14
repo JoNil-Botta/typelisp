@@ -1012,7 +1012,11 @@
                       has-generated
                       targets
                       (&mut modules))
-                    (set! current-module (ci.intern-str next-module))
+                    (set!
+                      current-module
+                      (ci.intern-syntax-name-text-or
+                        next-module
+                        "<structural-module>"))
                     (set! items (doc_item_vec.new))
                     (set! has-generated false))]
                 [_

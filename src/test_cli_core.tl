@@ -775,7 +775,7 @@
     private-id
     (ci.intern-generated-canonical-qualified-name
       (tc_core.tc-hygiene-global-context-name
-        (ci.intern-str module-id)
+        (ci.intern-syntax-name-text-or module-id "<structural-module>")
         (ci.intern-str private-id))
       module-id
       private-id)))

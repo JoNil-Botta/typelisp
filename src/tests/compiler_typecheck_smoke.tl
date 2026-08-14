@@ -5408,6 +5408,46 @@
       (= direct-local-id surface-local-id)
       (not (= direct-local-id other-macro-local-id)))))
 
+(define (compiler-typecheck-smoke-structural-name-rendering-ok?) : bool
+  (let
+    [source-name-id : i64 (ci.intern "generated.module")]
+    [owner-module-id : i64 (ci.intern "macro.owner")]
+    [item-name-id : i64 (ci.intern "Item")]
+    [structural-module-id : i64
+      (tc_core.macro-hygiene-global-id
+        owner-module-id
+        source-name-id
+        false)]
+    [qualified-item-id : i64
+      (ci.intern-composite-pair-id structural-module-id item-name-id)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (compiler_symbols.compiler-symbols-empty)
+        (compiler_symbols.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (ast.ast-node-pool-context-capture-active))]
+    (and
+      (string.eq
+        (tc_core.tc-env-key-name-text structural-module-id)
+        "generated.module")
+      (string.eq
+        (ast.ast-nominal-name-id-display qualified-item-id)
+        "generated.module/Item")
+      (=
+        (tc_core.tc-source-name-id-or ctx structural-module-id -1)
+        source-name-id)
+      (tc_core.tc-module-identity-id-eq?
+        structural-module-id
+        source-name-id))))
+
+(test
+  compiler-typecheck-structural-name-rendering
+  (unless
+    (compiler-typecheck-smoke-structural-name-rendering-ok?)
+    (io.panic "typecheck: structural name rendering smoke failed")))
+
 (define (compiler-typecheck-smoke-macro-change-signal-source-ok?
   [source : String]
   [expected-change : bool]) : bool
@@ -6224,6 +6264,9 @@
     (unless
       (compiler-typecheck-smoke-hygiene-structural-ids-ok?)
       (io.panic "typecheck: hygiene structural id smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-structural-name-rendering-ok?)
+      (io.panic "typecheck: structural name rendering smoke failed"))
     (unless
       (compiler-typecheck-smoke-macro-no-change-signal-ok?)
       (io.panic "typecheck: unchanged macro walk signal smoke failed"))

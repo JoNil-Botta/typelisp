@@ -4469,7 +4469,9 @@
                         "compiler-load: import expected module "
                         (ci.intern-str expected-id)
                         " but loaded "
-                        (ci.intern-str module-id)))))))]
+                        (ci.intern-syntax-name-text-or
+                          module-id
+                          "<structural-module>")))))))]
           [(ast.AstMaybeModuleName.No) unit])
         (if (match expected-module
           [(ast.AstMaybeModuleName.Some expected-id) (= module-id expected-id)]
@@ -8114,7 +8116,10 @@
         (match decl
           [(ast.AstDecl.ModuleBody target-module-id body-box)
             (let
-              [target-module : String (ci.intern-str target-module-id)]
+              [target-module : String
+                (ci.intern-syntax-name-text-or
+                  target-module-id
+                  "<structural-module>")]
               [body : ast.AstDeclList (__tl-box-place body-box)]
               (if (or
                 (compiler-load-decl-list-has-module-id? body target-module-id)

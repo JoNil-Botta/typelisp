@@ -21,9 +21,9 @@
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
 #
-# Issue #6552 moves stdlib.clone/synthesize-helpers off its fallback shell by
-# adding captured TypeLiteral projection, computed string extraction, boxed
-# element reflection, and continuation lowering. Native coverage rises from
-# 100 to 101 of 107 entries without adding interpreted arms.
-native-entries-min 101
+# Issues #6554/#6555 move stdlib.serialize/serialize and stdlib.sort/vec off
+# their fallback shells by lowering ordered String-literal matches to scalar
+# data locals. Native coverage rises from 101 to 103 of 107 entries without
+# adding interpreted arms.
+native-entries-min 103
 interpreted-arms-max 0

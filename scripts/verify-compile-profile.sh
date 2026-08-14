@@ -1536,12 +1536,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # (walk_hygiene_nodes_copied 233,130 here). Do not reconstruct this
     # boundary by adding published deltas; it is close enough to a step that
     # only a direct Windows measurement decides it. This bank's optimizer,
-    # backend and regalloc series retains 42 segments: the authoritative Windows
-    # probe on the rebased tree measured 2,745,111 used nodes, 2,752,512
-    # capacity and 88,080,384 physical payload bytes -- 7,401 nodes, 11% of one
-    # segment, below the 43-segment line.
+    # backend and regalloc series initially retained 42 segments. The planned
+    # bounds-preservation regression helper then crossed the next boundary: the
+    # authoritative Windows probe measured 2,759,962 used nodes, 2,818,048
+    # capacity and 90,177,536 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

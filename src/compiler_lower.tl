@@ -20,6 +20,9 @@
 (import compiler_ctfe as ctfe)
 (import compiler_float as cfloat)
 (import compiler_intern as ci)
+(cfg
+  embedded-stdlib-tlci
+  (import compiler_package_surface_producer as package_surface))
 (import stdlib.hashmap)
 (import stdlib.hash)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
@@ -67371,7 +67374,7 @@
         source-names
         intern-state)
         [(tc_core.ResultCompilerTypecheckChecked.Ok
-            _
+            summary
             source-ctx
             source-top-env
             _)
@@ -67382,6 +67385,17 @@
               (match program
                 [(ast.AstProgram.Program decls-box)
                   (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
+            [_finish-package-surface : unit
+              (cfg
+                embedded-stdlib-tlci
+                (match summary
+                  [(tc_core.CompilerTypecheckSummary values functions externs)
+                    (package_surface.package-surface-capture-finish!
+                      source-decl-count
+                      values
+                      functions
+                      externs)])
+                unit)]
             [checked-keep-plan : LowerDeclKeepPlan
               (lower-decl-keep-plan-add-clone-roots
                 keep-plan
@@ -67547,12 +67561,22 @@
         [(tc_core.ResultCompilerTypecheckChecked.Partial diag _ _ _)
           (begin
             (tc_core.tc-clone-root-collection-abort!)
+            (cfg
+              embedded-stdlib-tlci
+              (package_surface.package-surface-capture-abort!
+                "package surface: checked compilation was partial")
+              unit)
             (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
             (ResultCompilerLower.Err
               (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
         [(tc_core.ResultCompilerTypecheckChecked.Err diag)
           (begin
             (tc_core.tc-clone-root-collection-abort!)
+            (cfg
+              embedded-stdlib-tlci
+              (package_surface.package-surface-capture-abort!
+                "package surface: checked compilation failed")
+              unit)
             (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
             (ResultCompilerLower.Err
               (box (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))))])]
@@ -67641,6 +67665,10 @@
   [source-names : ci.InternSourceNameSessionHandle]
   [intern-state : ci.InternCompatState]) : ResultCompilerLower
   (begin
+    (cfg
+      embedded-stdlib-tlci
+      (package_surface.package-surface-capture-expanded! program paths pools)
+      unit)
     (cfg compile-profile (compiler-lower-profile-name-reset))
     (spec.spec-profile-reset!)
     (cfg compile-profile (compiler-lower-profile-start))
@@ -67796,6 +67824,11 @@
                           intern-state)))])))]
           [(spec.ResultSpecProgramWithPaths.Err diag)
             (begin
+              (cfg
+                embedded-stdlib-tlci
+                (package_surface.package-surface-capture-abort!
+                  "package surface: specialization failed")
+                unit)
               (cfg compile-profile (compiler-lower-profile-finish "specialize"))
               (cfg
                 compile-profile

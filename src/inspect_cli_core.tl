@@ -147,6 +147,45 @@ Summary:
         message
         "\n")]))
 
+(define (tlci-inspect-surface-section
+  [name : String]
+  [rodata : (__tl_dyn-array u8)]
+  [kind : i64]) : String
+  (match (tlci_core.tlci-aux-find rodata kind)
+    [(tlci_core.ResultTlciAuxLookup.Missing)
+      (str_cat.str-cat name ": missing\n")]
+    [(tlci_core.ResultTlciAuxLookup.Err message)
+      (str_cat.str-cat name ": malformed\n" name "-error: " message "\n")]
+    [(tlci_core.ResultTlciAuxLookup.Ok schema payload)
+      (str_cat.str-cat
+        name
+        ": present schema-version="
+        (string.int->string schema)
+        " bytes="
+        (string.int->string (array-length payload))
+        "\n")]))
+
+(define (tlci-inspect-surface
+  [rodata : (__tl_dyn-array u8)]
+  [producer-identity : String]) : String
+  (str_cat.str-cat
+    (tlci-inspect-surface-section
+      "surface-package-identity"
+      rodata
+      tlci_core.tlci-aux-kind-package-identity)
+    (tlci-inspect-surface-section
+      "surface-frontend-ast"
+      rodata
+      tlci_core.tlci-aux-kind-frontend-ast)
+    (tlci-inspect-surface-section
+      "surface-frontend-facts"
+      rodata
+      tlci_core.tlci-aux-kind-frontend-facts)
+    "surface-trust-producer-identity: "
+    producer-identity
+    "\n"
+    "surface-trust-policy: exact-producer-and-source-binding-required\n"))
+
 (define (tlci-inspect-render
   [bytes : (__tl_dyn-array u8)]
   [image : tlci_core.TlciImage]) : String
@@ -176,6 +215,7 @@ Summary:
       image.compiler-build-hash
       "\n"
       (tlci-inspect-source-binding image.rodata)
+      (tlci-inspect-surface image.rodata image.compiler-build-hash)
       "content-hash: "
       (string.int->string
         (tlci_core.tlci-read-u64 bytes tlci_core.tlci-hash-field-offset))
@@ -353,6 +393,59 @@ Summary:
             (string.contains (& malformed) (& malformed-schema)))
             unit
             (io.panic "inspect source binding rendering failed")))))))
+
+(cfg
+  test
+  (test
+    tlci-inspect-surface-shapes
+    (let
+      [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
+        (make-array tlci_core.TlciAuxSection 3)]
+      (begin
+        (set!
+          (array-ref sections 0)
+          (tlci_core.TlciAuxSection
+            tlci_core.tlci-aux-kind-package-identity
+            1
+            (tlci_core.tlci-string->bytes "identity")))
+        (set!
+          (array-ref sections 1)
+          (tlci_core.TlciAuxSection
+            tlci_core.tlci-aux-kind-frontend-ast
+            5
+            (tlci_core.tlci-empty-bytes)))
+        (set!
+          (array-ref sections 2)
+          (tlci_core.TlciAuxSection
+            tlci_core.tlci-aux-kind-frontend-facts
+            1
+            (tlci_core.tlci-string->bytes "facts")))
+        (match (tlci_core.tlci-aux-pack-rodata
+          (tlci_core.tlci-empty-bytes)
+          sections)
+          [(tlci_core.ResultTlciAuxBytes.Err _)
+            (io.panic "inspect surface fixture packing failed")]
+          [(tlci_core.ResultTlciAuxBytes.Ok rodata)
+            (let
+              [rendered : String
+                (tlci-inspect-surface
+                  rodata
+                  "0123456789abcdef0123456789abcdef01234567")]
+              [identity-line : String
+                "surface-package-identity: present schema-version=1 bytes=8\n"]
+              [ast-line : String
+                "surface-frontend-ast: present schema-version=5 bytes=0\n"]
+              [facts-line : String
+                "surface-frontend-facts: present schema-version=1 bytes=5\n"]
+              [trust-line : String
+                "surface-trust-policy: exact-producer-and-source-binding-required\n"]
+              (unless
+                (and
+                  (string.contains (& rendered) (& identity-line))
+                  (string.contains (& rendered) (& ast-line))
+                  (string.contains (& rendered) (& facts-line))
+                  (string.contains (& rendered) (& trust-line)))
+                (io.panic "inspect surface rendering failed")))])))))
 
 (cfg
   test

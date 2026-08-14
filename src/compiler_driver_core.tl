@@ -58,6 +58,11 @@
   (Unavailable String)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
+(defenum ResultCompilerDriverPackageRuntime
+  (Object cobj.CompilerObjectImage String)
+  (Assembly String String)
+  (Err (Box compiler_diagnostic.CompilerDiagnostic)))
+
 (defenum ResultCompilerDriverLowered
   (Ok
     compiler_ir_types.CompilerIrProgram
@@ -2052,6 +2057,173 @@
       profile-state
       backend-state)))
 
+(define (compiler-driver-emit-lowered-package-runtime-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [input-path : String]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [target : compiler_backend.CompilerBackendTarget]
+  [mode : compiler_backend.CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]
+  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverPackageRuntime
+  (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
+    (ResultCompilerDriverPackageRuntime.Err
+      (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
+    (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-retire-frontend-arena!)
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
+      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
+        pools
+        program
+        spans
+        opt-level
+        profile-state)
+        [(compiler_optimize.CompilerOptimizedProgram.Program
+            optimized
+            optimized-spans)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
+            (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
+              (begin
+                (compiler-driver-release-lowered-ir! opt-level)
+                (ResultCompilerDriverPackageRuntime.Err
+                  (box
+                    (compiler-driver-ty-node-pool-exhausted-diagnostic
+                      input-path))))
+              (begin
+                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
+                  (>= opt-level 2))
+                (match (compiler_backend.compiler-backend-object-program-eligibility
+                  backend-state
+                  optimized)
+                  [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
+                      category)
+                    (begin
+                      (compiler-driver-release-lowered-ir! opt-level)
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-start-phase profile-state))
+                      (match (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                        backend-state
+                        pools
+                        optimized
+                        target
+                        mode
+                        optimized-spans
+                        emit-entry
+                        crt-entry
+                        profile-state)
+                        [(compiler_backend.ResultCompilerBackend.Ok asm)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-driver-profile-finish-phase
+                                profile-state
+                                "backend"))
+                            (ResultCompilerDriverPackageRuntime.Assembly
+                              asm
+                              category))]
+                        [(compiler_backend.ResultCompilerBackend.Err diag)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-driver-profile-finish-phase
+                                profile-state
+                                "backend"))
+                            (ResultCompilerDriverPackageRuntime.Err
+                              (box
+                                (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+                                  (__tl-box-place diag)
+                                  input-path))))]))]
+                  [(compiler_backend.CompilerBackendObjectEligibility.Eligible)
+                    (begin
+                      (compiler-driver-release-lowered-ir! opt-level)
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-start-phase profile-state))
+                      (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                        backend-state
+                        pools
+                        optimized
+                        target
+                        mode
+                        optimized-spans
+                        emit-entry
+                        crt-entry
+                        profile-state)
+                        [(compiler_backend.ResultCompilerBackendObject.Ok image)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-driver-profile-finish-phase
+                                profile-state
+                                "backend.object-image"))
+                            (let
+                              [side-backend-state : compiler_backend.CompilerBackendState
+                                (compiler_backend.compiler-backend-state-new
+                                  (ci.intern-compat-state-capture-active))]
+                              (begin
+                                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                                  side-backend-state
+                                  (>= opt-level 2))
+                                (cfg
+                                  compile-profile
+                                  (compiler-driver-profile-start-phase
+                                    profile-state))
+                                (match (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                                  side-backend-state
+                                  pools
+                                  optimized
+                                  target
+                                  mode
+                                  optimized-spans
+                                  emit-entry
+                                  crt-entry
+                                  profile-state)
+                                  [(compiler_backend.ResultCompilerBackend.Ok
+                                      asm)
+                                    (begin
+                                      (cfg
+                                        compile-profile
+                                        (compiler-driver-profile-finish-phase
+                                          profile-state
+                                          "backend.side-assembly"))
+                                      (ResultCompilerDriverPackageRuntime.Object
+                                        image
+                                        asm))]
+                                  [(compiler_backend.ResultCompilerBackend.Err
+                                      diag)
+                                    (begin
+                                      (cfg
+                                        compile-profile
+                                        (compiler-driver-profile-finish-phase
+                                          profile-state
+                                          "backend.side-assembly"))
+                                      (ResultCompilerDriverPackageRuntime.Err
+                                        (box
+                                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+                                            (__tl-box-place diag)
+                                            input-path))))]))))]
+                        [(compiler_backend.ResultCompilerBackendObject.Err diag)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-driver-profile-finish-phase
+                                profile-state
+                                "backend"))
+                            (ResultCompilerDriverPackageRuntime.Err
+                              (box
+                                (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+                                  (__tl-box-place diag)
+                                  input-path))))]))]))))]))))
+
 (define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
@@ -2485,6 +2657,60 @@
       (begin
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverObject.Err diag))]))
+
+(define (compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
+  [input-path : String]
+  [lowered : ResultCompilerDriverLowered]
+  [target : compiler_backend.CompilerBackendTarget]
+  [mode : compiler_backend.CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriverPackageRuntime
+  (match lowered
+    [(ResultCompilerDriverLowered.Ok
+        program
+        spans
+        pools
+        profile-state
+        backend-state)
+      (let
+        [emit-program : compiler_ir_types.CompilerIrProgram
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            program)]
+        [emit-spans : compiler_ir_types.CompilerSourceSpans
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (clone spans)
+            spans)]
+        [out : ResultCompilerDriverPackageRuntime
+          (begin
+            (compiler_ast_types.ast-node-pool-reader-use! pools)
+            (if (>= opt-level 1)
+              (compiler-driver-retire-lowered-source-arena!)
+              unit)
+            (compiler-driver-emit-lowered-package-runtime-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+              pools
+              input-path
+              emit-program
+              emit-spans
+              target
+              mode
+              opt-level
+              emit-entry
+              crt-entry
+              profile-state
+              backend-state))]
+        (begin
+          (if (= opt-level 0)
+            (compiler-driver-retire-lowered-source-arena!)
+            unit)
+          (compiler_ast_types.ast-node-pool-reader-clear!)
+          (compiler-driver-restore-frontend-return-arena!)
+          out))]
+    [(ResultCompilerDriverLowered.Err diag)
+      (begin
+        (compiler-driver-restore-frontend-return-arena!)
+        (ResultCompilerDriverPackageRuntime.Err diag))]))
 
 (define (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
   [input-path : String]
@@ -4128,6 +4354,24 @@
     (compiler-driver-lower-package-loaded input-path target mode decls paths)
     target
     has-target
+    mode
+    opt-level
+    emit-entry
+    crt-entry))
+
+(define (compiler-driver-emit-package-loaded-runtime
+  [input-path : String]
+  [target : compiler_backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : compiler_backend.CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : compiler_ast_types.AstDeclList]
+  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverPackageRuntime
+  (compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
+    input-path
+    (compiler-driver-lower-package-loaded input-path target mode decls paths)
+    target
     mode
     opt-level
     emit-entry

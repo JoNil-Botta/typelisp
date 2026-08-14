@@ -3148,6 +3148,16 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     if ! printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$'; then
         fail "compiler reported malformed producer identity: $PRODUCER_IDENTITY"
     fi
+    assert_package_surface_inspect() {
+        assert_contains "$out" "surface-package-identity: present schema-version=1 bytes="
+        assert_contains "$out" "surface-frontend-ast: present schema-version=5 bytes="
+        assert_contains "$out" "surface-frontend-facts: present schema-version=1 bytes="
+        assert_not_contains "$out" "surface-package-identity: present schema-version=1 bytes=0"
+        assert_not_contains "$out" "surface-frontend-ast: present schema-version=5 bytes=0"
+        assert_not_contains "$out" "surface-frontend-facts: present schema-version=1 bytes=0"
+        assert_contains "$out" "surface-trust-producer-identity: $PRODUCER_IDENTITY"
+        assert_contains "$out" "surface-trust-policy: exact-producer-and-source-binding-required"
+    }
     [ -s "$PKG_TLCI" ] || fail "package build did not write tlci image"
     [ -s "$MATH_TLCI" ] || fail "package build did not write dependency tlci image"
     # cli-gate-case package-inspect-tlci wrapper run_cmd
@@ -3161,6 +3171,9 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "source-set-binding-schema: 1"
     assert_not_contains "$out" "source-set-digest: unavailable"
+    if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+        assert_package_surface_inspect
+    fi
     assert_contains "$out" "metadata-version: v1"
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
@@ -3175,6 +3188,9 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "source-set-binding-schema: 1"
     assert_not_contains "$out" "source-set-digest: unavailable"
+    if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+        assert_package_surface_inspect
+    fi
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
     BAD_TLCI="$WORKDIR/bad.tlci"
@@ -3287,6 +3303,9 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "source-set-binding-schema: 1"
     assert_not_contains "$out" "source-set-digest: unavailable"
+    if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+        assert_package_surface_inspect
+    fi
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
     # cli-gate-case package-host-target-split-native-verify wrapper run_cmd
@@ -3310,6 +3329,9 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "package-name: split_math"
     assert_contains "$out" "source-set-binding-schema: 1"
     assert_not_contains "$out" "source-set-digest: unavailable"
+    if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+        assert_package_surface_inspect
+    fi
     assert_contains "$out" "code: offset=0 bytes=0"
 fi
 

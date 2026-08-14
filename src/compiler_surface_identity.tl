@@ -13,7 +13,7 @@
 (import compiler_intern as ci)
 (import compiler_surface_binary as binary)
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 
 (defstruct SurfaceIdentityKey
@@ -70,7 +70,7 @@
   1048576)
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
     (make-array u8 0)))
 
@@ -169,7 +169,7 @@
     (surface-identity-string-eq? left.configuration right.configuration)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-identity-local-ref [id : i64] [source-count : i64]) : i64
     (cond
       [(and (>= id 0) (< id source-count)) id]
@@ -177,12 +177,13 @@
         (+ source-count (- (- (ci.intern-capacity) 1) id))]
       [else -2])))
 
-;; Nominal ids can be either one intern id or a compiler structural pair/triple
-;; packed with the active interner capacity. Repack the same shape with the
-;; image identity count as its stride. This keeps every component relocatable
-;; while preserving one-word AST name fields in the frontend section.
+;; Nominal ids can be one intern id or a session-owned structural pair/triple.
+;; Repack table-backed composites, plus the legacy capacity-packed form, with
+;; the image identity count as their portable stride. Hydration reconstructs
+;; the current canonical composite-table identity while preserving one-word AST
+;; name fields in the frontend section.
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-identity-portable-id
     [id : i64]
     [source-count : i64]
@@ -193,6 +194,42 @@
       [session-triple-offset : i64 (+ session-stride session-stride2)]
       [image-stride2 : i64 (* identity-count identity-count)]
       (cond
+        [(ci.intern-composite-triple-id? id)
+          (let
+            [left-ref : i64
+              (surface-identity-local-ref
+                (ci.intern-composite-left-id-unchecked id)
+                source-count)]
+            [middle-ref : i64
+              (surface-identity-local-ref
+                (ci.intern-composite-middle-id-unchecked id)
+                source-count)]
+            [right-ref : i64
+              (surface-identity-local-ref
+                (ci.intern-composite-right-id-unchecked id)
+                source-count)]
+            (if (or (< left-ref 0) (< middle-ref 0) (< right-ref 0))
+              -2
+              (+
+                identity-count
+                (+
+                  image-stride2
+                  (+
+                    (* left-ref image-stride2)
+                    (+ (* middle-ref identity-count) right-ref))))))]
+        [(ci.intern-composite-pair-id? id)
+          (let
+            [left-ref : i64
+              (surface-identity-local-ref
+                (ci.intern-composite-left-id-unchecked id)
+                source-count)]
+            [right-ref : i64
+              (surface-identity-local-ref
+                (ci.intern-composite-right-id-unchecked id)
+                source-count)]
+            (if (or (< left-ref 0) (< right-ref 0))
+              -2
+              (+ identity-count (+ (* left-ref identity-count) right-ref))))]
         [(and
             (>= id session-triple-offset)
             (< id (+ session-triple-offset (* session-stride2 session-stride))))
@@ -234,8 +271,6 @@
     [image-stride : i64 (array-length remap)]
     [image-stride2 : i64 (* image-stride image-stride)]
     [image-triple-offset : i64 (+ image-stride image-stride2)]
-    [session-stride : i64 (ci.intern-capacity)]
-    [session-stride2 : i64 (* session-stride session-stride)]
     (cond
       [(and
           (>= id image-triple-offset)
@@ -245,23 +280,16 @@
           [module-ref : i64 (/ raw image-stride2)]
           [enum-ref : i64 (% (/ raw image-stride) image-stride)]
           [variant-ref : i64 (% raw image-stride)]
-          (+
-            session-stride
-            (+
-              session-stride2
-              (+
-                (* (array-ref remap module-ref) session-stride2)
-                (+
-                  (* (array-ref remap enum-ref) session-stride)
-                  (array-ref remap variant-ref))))))]
+          (ci.intern-composite-triple-id
+            (array-ref remap module-ref)
+            (array-ref remap enum-ref)
+            (array-ref remap variant-ref)))]
       [(and (>= id image-stride) (< id (+ image-stride image-stride2)))
         (let
           [raw : i64 (- id image-stride)]
-          (+
-            session-stride
-            (+
-              (* (array-ref remap (/ raw image-stride)) session-stride)
-              (array-ref remap (% raw image-stride)))))]
+          (ci.intern-composite-pair-id
+            (array-ref remap (/ raw image-stride))
+            (array-ref remap (% raw image-stride))))]
       [(and (>= id 0) (< id image-stride)) (array-ref remap id)]
       [else -1])))
 
@@ -529,13 +557,13 @@
       (surface-identity-hydrate-payload payload expected-key)]))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (defenum ResultSurfaceIdentityBytes
     (Ok (__tl_dyn-array u8))
     (Err String)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-identity-push-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
@@ -546,7 +574,7 @@
       (binary.surface-binary-push-string! out text))))
 
 (cfg
-  compiler-surface-producer
+  (any compiler-surface-producer embedded-stdlib-tlci)
   (define (surface-identity-generated-record [id : i64] [source-count : i64]) : SurfaceGeneratedIdentity
     (let
       [qualified : bool (ci.intern-qualified? id)]
@@ -595,7 +623,7 @@
           ref2)))))
 
 (cfg
-  compiler-surface-producer
+  (any compiler-surface-producer embedded-stdlib-tlci)
   (define (surface-identity-capture [key : SurfaceIdentityKey]) : SurfaceIdentityPayload
     (let
       [source-count : i64 (ci.intern-pool-len)]
@@ -621,7 +649,7 @@
         (SurfaceIdentityPayload key source-names generated)))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-identity-encode [payload : SurfaceIdentityPayload]) : ResultSurfaceIdentityBytes
     (if (not (surface-identity-payload-valid? payload))
       (ResultSurfaceIdentityBytes.Err
@@ -744,17 +772,8 @@
       [payload : SurfaceIdentityPayload (surface-identity-capture key)]
       [source-count : i64 (array-length payload.source-names)]
       [identity-count : i64 (+ source-count (array-length payload.generated))]
-      [session-stride : i64 (ci.intern-capacity)]
-      [pair-id : i64
-        (+ session-stride (+ (* module-id session-stride) base-id))]
-      [triple-id : i64
-        (+
-          session-stride
-          (+
-            (* session-stride session-stride)
-            (+
-              (* module-id (* session-stride session-stride))
-              (+ (* base-id session-stride) alpha))))]
+      [pair-id : i64 (ci.intern-composite-pair-id module-id base-id)]
+      [triple-id : i64 (ci.intern-composite-triple-id module-id base-id alpha)]
       [portable-pair : i64
         (surface-identity-portable-id pair-id source-count identity-count)]
       [portable-triple : i64
@@ -789,24 +808,17 @@
                             (surface-identity-resolve-portable-id
                               portable-pair
                               remap)
-                            (+
-                              session-stride
-                              (+ (* mapped-module session-stride) mapped-base)))
+                            (ci.intern-composite-pair-id
+                              mapped-module
+                              mapped-base))
                           (=
                             (surface-identity-resolve-portable-id
                               portable-triple
                               remap)
-                            (+
-                              session-stride
-                              (+
-                                (* session-stride session-stride)
-                                (+
-                                  (*
-                                    mapped-module
-                                    (* session-stride session-stride))
-                                  (+
-                                    (* mapped-base session-stride)
-                                    mapped-alpha)))))
+                            (ci.intern-composite-triple-id
+                              mapped-module
+                              mapped-base
+                              mapped-alpha))
                           (match (surface-identity-decode copy)
                             [(ResultSurfaceIdentityPayload.Err _) false]
                             [(ResultSurfaceIdentityPayload.Ok decoded)

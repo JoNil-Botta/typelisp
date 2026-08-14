@@ -8,11 +8,11 @@
 (import compiler_surface_identity as identity)
 (import compiler_surface_binary as binary)
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (defstruct SurfaceAstWriteContext
     (valid (__tl_dyn-array bool))
     (source-identity-count i64)
@@ -29,7 +29,7 @@
   8388608)
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-context-new
     [source-identity-count : i64]
     [identity-count : i64]) : SurfaceAstWriteContext
@@ -40,24 +40,24 @@
         (SurfaceAstWriteContext valid source-identity-count identity-count)))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-valid? [context : SurfaceAstWriteContext]) : bool
     (array-ref context.valid 0)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-fail! [context : SurfaceAstWriteContext]) : unit
     (set! (array-ref context.valid 0) false)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-i64!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [value : i64]) : unit
     (binary.surface-binary-push-u64! out value)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-bool!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [value : bool]) : unit
@@ -68,7 +68,7 @@
         0))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
@@ -77,7 +77,7 @@
       (binary.surface-binary-push-string! out text))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-name!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : SurfaceAstWriteContext]
@@ -95,7 +95,7 @@
         (surface-ast-write-i64! out portable)))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-span!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [span : ast.AstSourceSpan]) : unit
@@ -215,7 +215,7 @@
     (surface-ast-read-i64! reader)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-name-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : SurfaceAstWriteContext]
@@ -231,7 +231,7 @@
             (set! index (+ index 1))))))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-lifetime-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : SurfaceAstWriteContext]
@@ -251,7 +251,7 @@
       (ast.AstLifetimeList slots count))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-type-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [types : ast.AstTypeList]) : unit
@@ -278,7 +278,7 @@
       (ast.AstTypeList slots count))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-type!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : SurfaceAstWriteContext]
@@ -465,7 +465,7 @@
           ast.AstType.Unit)])))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-maybe-type!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : SurfaceAstWriteContext]
@@ -491,7 +491,7 @@
           ast.AstMaybeType.No)])))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-literal!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : SurfaceAstWriteContext]
@@ -540,7 +540,7 @@
           ast.AstLiteral.Unit)])))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-borrow-lifetime!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : SurfaceAstWriteContext]
@@ -566,7 +566,7 @@
           ast.AstBorrowLifetime.Inferred)])))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-bin-op!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [op : ast.AstBinOp]) : unit
@@ -622,7 +622,7 @@
           ast.AstBinOp.Add)])))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-un-op!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [op : ast.AstUnOp]) : unit
@@ -648,7 +648,7 @@
           ast.AstUnOp.Neg)])))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-reduce-op!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [op : ast.AstReduceOp]) : unit

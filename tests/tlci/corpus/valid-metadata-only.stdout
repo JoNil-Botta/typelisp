@@ -6,6 +6,11 @@ callback-abi-version: 2
 producer-compiler-identity: tlci-v2-corpus
 source-set-binding-schema: missing-or-legacy
 source-set-digest: unavailable
+surface-package-identity: missing
+surface-frontend-ast: missing
+surface-frontend-facts: missing
+surface-trust-producer-identity: tlci-v2-corpus
+surface-trust-policy: exact-producer-and-source-binding-required
 content-hash: 2142539760
 file-size: 286
 metadata-version: v1

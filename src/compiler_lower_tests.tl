@@ -13517,6 +13517,9 @@
           (string.eq resolved split-logical)]
         [(compiler_typecheck_core.TcMaybeString.No) false]))))
 
+(define (compiler-lower-module-phase-cache-storage-ok?) : bool
+  (compiler_lower.compiler-lower-module-phase-cache-storage-ok?))
+
 (define (compiler-lower-type-cache-i64-keys-ok?) : bool
   (let
     [lower-state : compiler_lower.CompilerLowerState
@@ -14440,6 +14443,12 @@
     (compiler-lower-masked-load-cache-tests-ok?)
     "masked loads reuse only through dominating masks and memory epochs"))
 
+(test
+  compiler-lower-module-phase-cache-storage
+  (test.assert-true
+    (compiler-lower-module-phase-cache-storage-ok?)
+    "module phase caches use sparse indexes, unique dense slots, and job-local reset"))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -14508,6 +14517,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-name-cache-intern-id-dotted-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-module-phase-cache-storage-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-type-cache-i64-keys-ok?)

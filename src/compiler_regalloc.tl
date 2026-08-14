@@ -469,7 +469,10 @@
   (piece-end (__tl_dyn-array i64))
   (piece-reg (__tl_dyn-array i64))
   (piece-writeback (__tl_dyn-array i64))
-  (occupant-split (__tl_dyn-array CompilerRegOccupantSplit)))
+  (occupant-split (__tl_dyn-array CompilerRegOccupantSplit))
+  ;; Late scratch planning must distinguish a value carried across a segmented
+  ;; coalescing gap from unrelated values that merely reuse one register.
+  (coalesce-parents (__tl_dyn-array i64)))
 
 (defenum CompilerRegPlan
   (Plan
@@ -1554,6 +1557,18 @@
   (if (compiler-reg-scalar-type? ty)
     true
     (compiler-reg-handle-type? ty)))
+
+(define (compiler-reg-narrow-scalar-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I32) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.I8) true]
+    [(ast.AstType.U32) true]
+    [(ast.AstType.U16) true]
+    [(ast.AstType.U8) true]
+    [(ast.AstType.Bool) true]
+    [(ast.AstType.Char) true]
+    [_ false]))
 
 (define (compiler-reg-var-types-empty) : CompilerRegVarTypes
   (CompilerRegVarTypes
@@ -21436,6 +21451,18 @@
     [(cabi.CompilerRegTargetAbi.Linux) true]
     [(cabi.CompilerRegTargetAbi.Windows) false]))
 
+(define (compiler-reg-inline-fast-alloc-call?
+  [_name : i64]
+  [args : ir.CompilerIrCallArgs]) : bool
+  ;; Regalloc runs across reset-sensitive intern generations and intentionally
+  ;; does not identify builtin symbols here. Conservatively reserve the second
+  ;; GP ordinal for the only direct-call shape the backend can inline as a
+  ;; fast allocation. Non-tl_alloc calls of this shape simply leave it unused.
+  (match args
+    [(ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 size))
+      (and (> size 0) (<= size 64))]
+    [_ false]))
+
 (define (compiler-reg-c-memory-marker-array-from?
   [values : (__tl_dyn-array ir.CompilerIrValue)]
   [index : i64]) : bool
@@ -21974,7 +22001,18 @@
     (array.make-array i64 0)
     (array.make-array i64 0)
     (array.make-array i64 0)
-    (array.make-array CompilerRegOccupantSplit 0)))
+    (array.make-array CompilerRegOccupantSplit 0)
+    (array.make-array i64 0)))
+
+(define (compiler-reg-split-plan-with-coalesce [parents : (__tl_dyn-array i64)]) : CompilerRegSplitPlan
+  (CompilerRegSplitPlan
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array CompilerRegOccupantSplit 0)
+    parents))
 
 ;; The spill-weight eviction scores a candidate by its use count,
 ;; but a merged class root carries only its OWN var's weight -- which can be the
@@ -26490,9 +26528,11 @@
           shift-points
           low-xmm-clobber-points)
         unit)]
-    ;; Only scalar opt2 builds the targeted five-pseudo model. When the exact
-    ;; literal SafeDiv/SafeMod shape is absent, the builder returns the original
-    ;; index/types/table by identity and does not grow the worklist.
+    ;; Literal SafeDiv/SafeMod used to grow the ordinary coloring worklist with
+    ;; five speculative pseudos. The complete late planner now handles those
+    ;; fixed homes with the same bounded preservation used by every other
+    ;; lowering family, after final IR and slot coloring. Keep ordinary coloring
+    ;; independent of synthetic scratch demand.
     [early-scratch-model : CompilerRegEarlyScratchModel
       (compiler-reg-early-scratch-model
         type-segment-bases
@@ -26501,7 +26541,7 @@
         eff-index
         type-info
         assignment-table
-        allow-caller-saved-zero-call)]
+        false)]
     [allocation-index : CompilerRegIntervalIndex
       early-scratch-model.interval-index]
     [early-scratch-base : i64 early-scratch-model.scratch-base]
@@ -26778,6 +26818,15 @@
         (compiler-reg-assignment-table-prefix
           integer-scratch-assignments
           early-scratch-base))]
+    [early-scratch-moved-real? : bool
+      (and
+        (> early-scratch-count 0)
+        (not
+          (compiler-reg-assignment-table-prefix-eq?
+            base-integer-assignments
+            integer-assignments
+            early-scratch-base
+            0)))]
     ;; Step B: the caller-saved-overflow pass is gone -- the unified greedy already
     ;; allocates the caller-saved zero-call prefix itself, so retrying the same
     ;; registers here was redundant. The call-spanning save/restore rescue (a
@@ -26786,7 +26835,13 @@
     [integer-with-call-save-state : CompilerRegCallSaveAssignState
       (if (and
         allow-caller-saved-zero-call
-        (compiler-reg-assignment-table-has-spill? integer-assignments))
+        (compiler-reg-assignment-table-has-spill? integer-assignments)
+        ;; The scratch worklist may have deliberately spilled/requeued an
+        ;; ordinary fused operand. The later call-save rescue does not carry
+        ;; synthetic scratch occupancy and could put it straight back into the
+        ;; vacated home, recreating the impossible group. Keep that one bounded
+        ;; allocation decision authoritative when it changed a real value.
+        (not early-scratch-moved-real?))
         (compiler-reg-assign-caller-saved-call-spanning
           type-segment-bases
           target-abi
@@ -26940,9 +26995,10 @@
     [assignments : CompilerRegAssignmentTable
       (match mask-state
         [(CompilerRegAssignState.State _ found) found])]
-    ;; SplitKit removed: CompilerRegPlan still carries an (empty) split-plan
-    ;; field, but nothing populates or consumes it.
-    [split-plan : CompilerRegSplitPlan (compiler-reg-split-plan-empty)]
+    ;; SplitKit remains removed; retain only the coalescing parents needed by
+    ;; late scratch preservation in its otherwise-empty metadata carrier.
+    [split-plan : CompilerRegSplitPlan
+      (compiler-reg-split-plan-with-coalesce coalesce.parents)]
     ;; The passes above assigned class ROOTS; expand so every member
     ;; inherits its root's location (realising the coalesce). SIMD/AVX has no
     ;; coalesce map, so this is the identity there.
@@ -31597,6 +31653,11 @@
     [(CompilerRegPlan.Plan _ _ _ _ split _)
       (compiler-reg-call-split-evictions split)]))
 
+(define (compiler-reg-plan-coalesce-parents [plan : CompilerRegPlan]) : (__tl_dyn-array
+    i64)
+  (match plan
+    [(CompilerRegPlan.Plan _ _ _ _ _ split-plan) split-plan.coalesce-parents]))
+
 (define (compiler-reg-assignment-table-merge
   [extra : CompilerRegAssignmentTable]
   [base : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
@@ -31870,6 +31931,12 @@
 
 (defstruct CompilerRegScratchAssignment
   (requirement CompilerRegScratchRequirement)
+  ;; True when this planned home deliberately overlaps an ordinary live-through
+  ;; value and emission must preserve that physical register around the group.
+  (preserve bool)
+  ;; True when an impossible register cycle is explicitly assigned the
+  ;; reserved phi frame temporary instead of silently falling back in emission.
+  (frame bool)
   (register i64))
 
 ;; `first[instruction-index]` plus the slot ordinal is an O(1) item lookup.
@@ -31922,6 +31989,109 @@
                 item.register
                 cabi.compiler-reg-id-invalid))))))))
 
+(define (compiler-reg-scratch-plan-preserve?
+  [plan : CompilerRegScratchPlan]
+  [point : i64]
+  [ordinal : i64]) : bool
+  (if (or (< point 0) (not (= (% point 2) 0)) (< ordinal 0))
+    false
+    (let
+      [instruction : i64 (/ point 2)]
+      (if (or
+        (>= instruction (array-length plan.first))
+        (>= instruction (array-length plan.slots))
+        (>= ordinal (array-ref plan.slots instruction)))
+        false
+        (let
+          [index : i64 (+ (array-ref plan.first instruction) ordinal)]
+          (if (or (< index 0) (>= index (array-length plan.items)))
+            false
+            (let
+              [item : CompilerRegScratchAssignment (array-ref plan.items index)]
+              [requirement : CompilerRegScratchRequirement item.requirement]
+              (and
+                (= requirement.point point)
+                (= requirement.ordinal ordinal)
+                item.preserve))))))))
+
+(define (compiler-reg-scratch-plan-local-preserve?
+  [plan : CompilerRegScratchPlan]
+  [point : i64]
+  [ordinal : i64]) : bool
+  (if (or (< point 0) (not (= (% point 2) 0)) (< ordinal 0))
+    false
+    (let
+      [instruction : i64 (/ point 2)]
+      (if (or
+        (>= instruction (array-length plan.first))
+        (>= instruction (array-length plan.slots))
+        (>= ordinal (array-ref plan.slots instruction)))
+        false
+        (let
+          [index : i64 (+ (array-ref plan.first instruction) ordinal)]
+          (if (or (< index 0) (>= index (array-length plan.items)))
+            false
+            (let
+              [item : CompilerRegScratchAssignment (array-ref plan.items index)]
+              [requirement : CompilerRegScratchRequirement item.requirement]
+              (and
+                (= requirement.point point)
+                (= requirement.ordinal ordinal)
+                item.preserve
+                (compiler-reg-id-seq-contains?
+                  requirement.constraint.excluded
+                  item.register)
+                (match requirement.role
+                  [(CompilerRegScratchRole.PhiStage) true]
+                  [_ false])))))))))
+
+(define (compiler-reg-scratch-plan-frame?
+  [plan : CompilerRegScratchPlan]
+  [point : i64]
+  [ordinal : i64]) : bool
+  (if (or (< point 0) (not (= (% point 2) 0)) (< ordinal 0))
+    false
+    (let
+      [instruction : i64 (/ point 2)]
+      (if (or
+        (>= instruction (array-length plan.first))
+        (>= instruction (array-length plan.slots))
+        (>= ordinal (array-ref plan.slots instruction)))
+        false
+        (let
+          [index : i64 (+ (array-ref plan.first instruction) ordinal)]
+          (if (or (< index 0) (>= index (array-length plan.items)))
+            false
+            (let
+              [item : CompilerRegScratchAssignment (array-ref plan.items index)]
+              [requirement : CompilerRegScratchRequirement item.requirement]
+              (and
+                (= requirement.point point)
+                (= requirement.ordinal ordinal)
+                item.frame))))))))
+
+(define (compiler-reg-scratch-plan-has-slot?
+  [plan : CompilerRegScratchPlan]
+  [point : i64]
+  [ordinal : i64]) : bool
+  (if (or (< point 0) (not (= (% point 2) 0)) (< ordinal 0))
+    false
+    (let
+      [instruction : i64 (/ point 2)]
+      (and
+        (< instruction (array-length plan.first))
+        (< instruction (array-length plan.slots))
+        (< ordinal (array-ref plan.slots instruction))
+        (let
+          [index : i64 (+ (array-ref plan.first instruction) ordinal)]
+          (and
+            (>= index 0)
+            (< index (array-length plan.items))
+            (let
+              [requirement : CompilerRegScratchRequirement
+                (__tl-project-field (array-ref plan.items index) requirement)]
+              (and (= requirement.point point) (= requirement.ordinal ordinal)))))))))
+
 (define (compiler-reg-scratch-var-register-homed?
   [assignments : CompilerRegAssignmentTable]
   [var : i64]) : bool
@@ -31953,12 +32123,79 @@
     [(ir.CompilerIrValue.Char _) true]
     [_ false]))
 
+(define (compiler-reg-scratch-value-encodable-immediate?
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 n) (and (>= n -2147483648) (<= n 2147483647))]
+    [(ir.CompilerIrValue.Bool _) true]
+    [(ir.CompilerIrValue.Char _) true]
+    [(ir.CompilerIrValue.Unit) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-value-scalar-source-direct?
+  [assignments : CompilerRegAssignmentTable]
+  [value : ir.CompilerIrValue]) : bool
+  (if (compiler-reg-scratch-value-encodable-immediate? value)
+    true
+    (match value
+      [(ir.CompilerIrValue.Var var)
+        (match (compiler-reg-assignment-lookup assignments var)
+          [(CompilerRegMaybeLocation.Some location)
+            (match location
+              [(CompilerRegLocation.Register _) true]
+              [(CompilerRegLocation.Spill _) true]
+              [_ false])]
+          [(CompilerRegMaybeLocation.No) true])]
+      [_ false])))
+
 (define (compiler-reg-scratch-value-register-homed?
   [assignments : CompilerRegAssignmentTable]
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var var)
       (compiler-reg-scratch-var-register-homed? assignments var)]
+    [_ false]))
+
+(define (compiler-reg-scratch-value-scalar-register-homed?
+  [assignments : CompilerRegAssignmentTable]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (compiler-reg-assignment-lookup assignments var)
+        [(CompilerRegMaybeLocation.Some location)
+          (match location
+            [(CompilerRegLocation.Register _) true]
+            [_ false])]
+        [(CompilerRegMaybeLocation.No) false])]
+    [_ false]))
+
+;; Whether the scalar compare emitter can use `lhs` as the x86 compare
+;; destination without first staging it. This is deliberately narrower than
+;; `compiler-reg-scratch-value-direct?`: a RegisterPair is an aggregate and the
+;; scalar emitter stages its selected word, while a spill/no-assignment value is
+;; directly addressable memory. Integer literals are only direct on the left
+;; when the right side has a scalar register home and emission swaps the compare.
+;; Keep this predicate shared with the fused compare/branch consumer so both
+;; sides agree whether ordinal 0 belongs to the lhs or rhs stage.
+(define (compiler-reg-scratch-compare-lhs-direct?
+  [assignments : CompilerRegAssignmentTable]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : bool
+  (match lhs
+    [(ir.CompilerIrValue.Var var)
+      (match (compiler-reg-assignment-lookup assignments var)
+        [(CompilerRegMaybeLocation.Some location)
+          (match location
+            [(CompilerRegLocation.Register _) true]
+            [(CompilerRegLocation.Spill _) true]
+            [_ false])]
+        [(CompilerRegMaybeLocation.No) true])]
+    [(ir.CompilerIrValue.I64 _)
+      (compiler-reg-scratch-value-scalar-register-homed? assignments rhs)]
+    [(ir.CompilerIrValue.Bool _)
+      (compiler-reg-scratch-value-scalar-register-homed? assignments rhs)]
+    [(ir.CompilerIrValue.Char _)
+      (compiler-reg-scratch-value-scalar-register-homed? assignments rhs)]
     [_ false]))
 
 (define (compiler-reg-scratch-value-same-home?
@@ -32266,11 +32503,77 @@
           [_ false])]
       [_ false])))
 
-(define (compiler-reg-scratch-vreg-slots
+(define (compiler-reg-scratch-var-group?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [var : i64]) : bool
+  (match (compiler-reg-var-types-lookup types var)
+    [(CompilerRegMaybeType.Some ty)
+      (compiler-reg-type-register-group? type-segment-bases ty)]
+    [(CompilerRegMaybeType.No) false]))
+
+(define (compiler-reg-scratch-value-group?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (compiler-reg-scratch-var-group? type-segment-bases types var)]
+    [_ false]))
+
+(define (compiler-reg-scratch-mov-group?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [dst : i64]
+  [src : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (or
+    (compiler-reg-type-register-group? type-segment-bases ty)
+    (compiler-reg-scratch-var-group? type-segment-bases types dst)
+    (compiler-reg-scratch-value-group? type-segment-bases types src)))
+
+(define (compiler-reg-scratch-var-group-word-sse?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [var : i64]
+  [word : i64]) : bool
+  (match (compiler-reg-var-types-lookup types var)
+    [(CompilerRegMaybeType.Some ty)
+      (and
+        (compiler-reg-type-register-group? type-segment-bases ty)
+        (compiler-reg-type-register-group-word-sse? type-segment-bases ty word))]
+    [(CompilerRegMaybeType.No) false]))
+
+(define (compiler-reg-scratch-mov-group-word-sse?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [dst : i64]
+  [src : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [word : i64]) : bool
+  (if (compiler-reg-type-register-group? type-segment-bases ty)
+    (compiler-reg-type-register-group-word-sse? type-segment-bases ty word)
+    (if (compiler-reg-scratch-var-group? type-segment-bases types dst)
+      (compiler-reg-scratch-var-group-word-sse?
+        type-segment-bases
+        types
+        dst
+        word)
+      (match src
+        [(ir.CompilerIrValue.Var var)
+          (compiler-reg-scratch-var-group-word-sse?
+            type-segment-bases
+            types
+            var
+            word)]
+        [_ false]))))
+
+(define (compiler-reg-scratch-vreg-slots-with-groups
   [_type-segment-bases : i64]
   [_abi : cabi.CompilerRegTargetAbi]
   [_assignments : CompilerRegAssignmentTable]
   [_types : CompilerRegVarTypes]
+  [_group-vars : live.CompilerLiveI64Set]
   [_instr : ir.CompilerIrInstr]
   [_phi-targets : CompilerRegLabelSeq]
   [_phi-xmm-targets : CompilerRegLabelSeq]
@@ -32279,12 +32582,14 @@
     scratch-vreg
     (match _instr
       ;; Fixed-width ordinals keep the map independent of assignment failure.
-      [(ir.CompilerIrInstr.Call _ name _ _)
-        (if (and
-          (compiler-reg-linux-abi? _abi)
-          (compiler-reg-c-memory-call-name? name))
+      [(ir.CompilerIrInstr.Call _ name args _)
+        (if (compiler-reg-inline-fast-alloc-call? name args)
           2
-          1)]
+          (if (and
+            (compiler-reg-linux-abi? _abi)
+            (compiler-reg-c-memory-call-name? name))
+            2
+            1))]
       [(ir.CompilerIrInstr.CallIndirect _ _ args _)
         (if (and
           (compiler-reg-linux-abi? _abi)
@@ -32352,11 +32657,12 @@
             0
             1))]
       [(ir.CompilerIrInstr.TotalEnumBranch condition true-label false-label)
-        (compiler-reg-scratch-vreg-slots
+        (compiler-reg-scratch-vreg-slots-with-groups
           _type-segment-bases
           _abi
           _assignments
           _types
+          _group-vars
           (ir.CompilerIrInstr.Branch condition true-label false-label)
           _phi-targets
           _phi-xmm-targets
@@ -32392,12 +32698,28 @@
               2
               (if (ir.compiler-ir-binop-compare? op)
                 ;; Fused comparisons keep two distinct operand homes live
-                ;; through the following Branch.
-                (if (or
-                  (compiler-reg-scratch-value-direct? _assignments lhs)
-                  (compiler-reg-scratch-value-direct? _assignments rhs))
-                  0
-                  2)
+                ;; through the following Branch. A materialized spilled result
+                ;; still needs its setcc staging home even when either operand
+                ;; is directly addressable; the old zero here was the largest
+                ;; consumer/inventory mismatch under pressure.
+                (if (compiler-reg-scratch-var-register-homed? _assignments dst)
+                  (if (or
+                    (compiler-reg-scratch-compare-lhs-direct?
+                      _assignments
+                      lhs
+                      rhs)
+                    (compiler-reg-scratch-value-scalar-source-direct?
+                      _assignments
+                      rhs))
+                    1
+                    2)
+                  (+
+                    1
+                    (if (compiler-reg-scratch-value-scalar-source-direct?
+                      _assignments
+                      rhs)
+                      0
+                      1)))
                 (match op
                   ;; Constant shifts accumulate directly in a register-homed
                   ;; destination; a spill needs one result staging home.
@@ -32415,35 +32737,39 @@
                       1)]
                   [_
                     (if _binop-return
-                      (match rhs
-                        [(ir.CompilerIrValue.Var _) 1]
-                        [_ 0])
-                      (match rhs
-                        [(ir.CompilerIrValue.Var _)
-                          (if (compiler-reg-scratch-var-register-homed?
-                            _assignments
-                            dst)
+                      ;; The return fusion can accumulate directly in %rax, but
+                      ;; it is deliberately allowed to decline. Keep the normal
+                      ;; spilled-result staging slot modeled for that fallback.
+                      1
+                      (if (not
+                        (compiler-reg-scratch-var-register-homed?
+                          _assignments
+                          dst))
+                        ;; A spilled result always needs the primary staging
+                        ;; home. A non-immediate rhs can also need an independent
+                        ;; staging home when constant hoisting occupies the
+                        ;; selected result register.
+                        (if (compiler-reg-scratch-value-encodable-immediate?
+                          rhs)
+                          1
+                          2)
+                        (match rhs
+                          [(ir.CompilerIrValue.Var _)
                             (if (compiler-reg-scratch-value-same-home?
                               _assignments
                               dst
                               rhs)
-                              (if (and
-                                (compiler-reg-scratch-value-direct?
-                                  _assignments
-                                  lhs)
-                                (match op
-                                  [(ir.CompilerIrBinOp.Add) true]
-                                  [(ir.CompilerIrBinOp.And) true]
-                                  [(ir.CompilerIrBinOp.Or) true]
-                                  [(ir.CompilerIrBinOp.BitAnd) true]
-                                  [(ir.CompilerIrBinOp.BitOr) true]
-                                  [(ir.CompilerIrBinOp.BitXor) true]
-                                  [_ false]))
-                                0
-                                1)
-                              0)
-                            0)]
-                        [_ 0]))])))))]
+                              ;; The backend may forward an apparent register
+                              ;; operand as an address, making it unavailable as
+                              ;; the commuted source. Preserve rhs before its
+                              ;; coalesced destination home is overwritten.
+                              1
+                              0)]
+                          [_
+                            (if (compiler-reg-scratch-value-encodable-immediate?
+                              rhs)
+                              0
+                              1)])))])))))]
       [(ir.CompilerIrInstr.UnOp dst _ _ _)
         (if (compiler-reg-scratch-var-register-homed? _assignments dst)
           0
@@ -32451,11 +32777,12 @@
       [(ir.CompilerIrInstr.CpuId _ _ _ _) 1]
       [(ir.CompilerIrInstr.Switch _ _ _ _) 2]
       [(ir.CompilerIrInstr.TotalEnumSwitch index base cases default-label _)
-        (compiler-reg-scratch-vreg-slots
+        (compiler-reg-scratch-vreg-slots-with-groups
           _type-segment-bases
           _abi
           _assignments
           _types
+          _group-vars
           (ir.CompilerIrInstr.Switch index base cases default-label)
           _phi-targets
           _phi-xmm-targets
@@ -32473,34 +32800,29 @@
           (compiler-reg-scratch-var-register-homed? _assignments dst)
           (compiler-reg-scratch-value-direct? _assignments base)
           (compiler-reg-scratch-value-integer-immediate? offset))
-          0
+          ;; Address forwarding can suppress an apparent register home after
+          ;; allocation; keep the base staging slot modeled for that backend
+          ;; shape even though the ordinary direct path consumes none.
+          1
           2)]
       [(ir.CompilerIrInstr.Load dst src ty)
         (let
-          [address? : bool
-            (not (compiler-reg-scratch-value-direct? _assignments src))]
           [value? : bool
             (and
-              (compiler-reg-scalar-type? ty)
+              (compiler-reg-register-eligible-type? ty)
               (not (compiler-reg-scratch-var-register-homed? _assignments dst)))]
           (if value?
             2
-            (if address?
-              1
-              0)))]
+            ;; A direct allocator home may become a forwarded address at
+            ;; emission time, so the address ordinal remains shape-stable.
+            1))]
       [(ir.CompilerIrInstr.StorePtr dst src ty)
-        (let
-          [address? : bool
-            (not (compiler-reg-scratch-value-direct? _assignments dst))]
-          [value? : bool
-            (and
-              (compiler-reg-scalar-type? ty)
-              (not (compiler-reg-scratch-value-direct? _assignments src)))]
-          (if value?
-            2
-            (if address?
-              1
-              0)))]
+        ;; A value home can be invalidated by address forwarding before the
+        ;; fused Gep+StorePtr emitter runs. Reserve its staging ordinal even
+        ;; when the allocation-time view currently looks direct.
+        (if (compiler-reg-register-eligible-type? ty)
+          2
+          1)]
       [(ir.CompilerIrInstr.CopyBytes _ _ size)
         (if (<= size 0)
           0
@@ -32510,9 +32832,7 @@
               4)
             3))]
       [(ir.CompilerIrInstr.Store _ value ty)
-        (if (and
-          (compiler-reg-scalar-type? ty)
-          (not (compiler-reg-scratch-value-direct? _assignments value)))
+        (if (compiler-reg-register-eligible-type? ty)
           1
           0)]
       [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
@@ -32531,12 +32851,29 @@
           from-ty
           to-ty)]
       [(ir.CompilerIrInstr.Mov dst src ty)
-        (if (and
-          (compiler-reg-float-type? ty)
-          (not (compiler-reg-scratch-value-same-home? _assignments dst src))
-          (not (compiler-reg-scratch-var-register-homed? _assignments dst)))
-          1
-          0)]
+        (if (or
+          (live.compiler-live-set-contains? _group-vars dst)
+          (match src
+            [(ir.CompilerIrValue.Var var)
+              (live.compiler-live-set-contains? _group-vars var)]
+            [_ false])
+          (compiler-reg-scratch-mov-group?
+            _type-segment-bases
+            _types
+            dst
+            src
+            ty))
+          2
+          (if (and
+            (or
+              (not (compiler-reg-scratch-var-register-homed? _assignments dst))
+              (and
+                (compiler-reg-narrow-scalar-type? ty)
+                (match src
+                  [(ir.CompilerIrValue.Var _) false]
+                  [_ true]))))
+            1
+            0))]
       ;; A non-memory splat stages integer lanes through GP+XMM and float lanes
       ;; through XMM. Keep the two fixed ordinals so emission lookup remains
       ;; stable regardless of the source home and selected element type.
@@ -32603,11 +32940,32 @@
       [_ 0])
     0))
 
+(define (compiler-reg-scratch-vreg-slots
+  [type-segment-bases : i64]
+  [abi : cabi.CompilerRegTargetAbi]
+  [assignments : CompilerRegAssignmentTable]
+  [types : CompilerRegVarTypes]
+  [instr : ir.CompilerIrInstr]
+  [phi-targets : CompilerRegLabelSeq]
+  [phi-xmm-targets : CompilerRegLabelSeq]
+  [binop-return : bool]) : i64
+  (compiler-reg-scratch-vreg-slots-with-groups
+    type-segment-bases
+    abi
+    assignments
+    types
+    (live.compiler-live-set-empty)
+    instr
+    phi-targets
+    phi-xmm-targets
+    binop-return))
+
 (define (compiler-reg-scratch-vreg-count-seq
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [assignments : CompilerRegAssignmentTable]
   [types : CompilerRegVarTypes]
+  [group-vars : live.CompilerLiveI64Set]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-targets : CompilerRegLabelSeq]
   [phi-xmm-targets : CompilerRegLabelSeq]
@@ -32624,11 +32982,12 @@
             out
             (+
               out
-              (compiler-reg-scratch-vreg-slots
+              (compiler-reg-scratch-vreg-slots-with-groups
                 type-segment-bases
                 target-abi
                 assignments
                 types
+                group-vars
                 (array-ref slots i)
                 phi-targets
                 phi-xmm-targets
@@ -32641,6 +33000,7 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [assignments : CompilerRegAssignmentTable]
   [types : CompilerRegVarTypes]
+  [group-vars : live.CompilerLiveI64Set]
   [blocks : ir.CompilerIrBlockList]
   [phi-targets : CompilerRegLabelSeq]
   [phi-xmm-targets : CompilerRegLabelSeq]
@@ -32655,6 +33015,7 @@
             target-abi
             assignments
             types
+            group-vars
             (__tl-box-place rest)
             phi-targets
             phi-xmm-targets
@@ -32663,6 +33024,7 @@
               target-abi
               assignments
               types
+              group-vars
               instrs
               phi-targets
               phi-xmm-targets
@@ -32684,6 +33046,7 @@
                       target-abi
                       assignments
                       types
+                      group-vars
                       instrs
                       phi-targets
                       phi-xmm-targets
@@ -32789,7 +33152,8 @@
   (call-allowed CompilerRegIdSeq)
   (tail-call-allowed CompilerRegIdSeq)
   (gp-allowed CompilerRegIdSeq)
-  (phi-excluded CompilerRegIdSeq))
+  (phi-excluded CompilerRegIdSeq)
+  (blocks ir.CompilerIrBlockSeq))
 
 (define (compiler-reg-scratch-call-target-excluded) : CompilerRegIdSeq
   (compiler-reg-id-seq-prepend
@@ -32830,25 +33194,23 @@
 
 (define (compiler-reg-scratch-call-target-allowed
   [target-abi : cabi.CompilerRegTargetAbi]
-  [assignments : CompilerRegAssignmentTable]
+  [_assignments : CompilerRegAssignmentTable]
   [tail? : bool]) : CompilerRegIdSeq
-  ;; %r10 is the legacy preferred target scratch.  A non-tail call may also use
-  ;; a callee-saved register already present in the function plan (and therefore
-  ;; already preserved by the prologue); never introduce a save solely for a
-  ;; scratch slot.  Tail jumps restore those homes before jumping, so they are
-  ;; restricted to %r10.
+  ;; %r10 is the preferred target scratch. A non-tail call may also introduce a
+  ;; callee-saved scratch home: the compact scratch assignment published into the
+  ;; plan makes the prologue preserve it. Tail jumps restore those homes before
+  ;; jumping, so they remain restricted to %r10.
   (compiler-reg-id-seq-prepend
     cabi.compiler-reg-id-r10
     (if tail?
       (compiler-reg-id-seq-empty)
-      (compiler-reg-scratch-used-registers
-        assignments
-        (compiler-reg-callee-saved-integer-registers-for-abi target-abi)))))
+      (compiler-reg-callee-saved-integer-registers-for-abi target-abi))))
 
 (define (compiler-reg-scratch-policy
   [target-abi : cabi.CompilerRegTargetAbi]
   [assignments : CompilerRegAssignmentTable]
-  [phi-excluded : CompilerRegIdSeq]) : CompilerRegScratchPolicy
+  [phi-excluded : CompilerRegIdSeq]
+  [blocks : ir.CompilerIrBlockSeq]) : CompilerRegScratchPolicy
   (CompilerRegScratchPolicy
     (compiler-reg-scratch-call-target-allowed target-abi assignments false)
     (compiler-reg-scratch-call-target-allowed target-abi assignments true)
@@ -32860,10 +33222,9 @@
           cabi.compiler-reg-id-r10
           (compiler-reg-id-seq-prepend
             cabi.compiler-reg-id-r11
-            (compiler-reg-scratch-used-registers
-              assignments
-              (compiler-reg-callee-saved-integer-registers-for-abi target-abi))))))
-    phi-excluded))
+            (compiler-reg-callee-saved-integer-registers-for-abi target-abi)))))
+    phi-excluded
+    blocks))
 
 (define (compiler-reg-scratch-call-target-constraint
   [allowed : CompilerRegIdSeq]) : CompilerRegScratchConstraint
@@ -32912,10 +33273,97 @@
       (compiler-reg-scratch-location-registers assignments var)]
     [_ (compiler-reg-id-seq-empty)]))
 
+(define (compiler-reg-id-seq-without-from
+  [items : CompilerRegIdSeq]
+  [removed : CompilerRegIdSeq]
+  [index : i64]
+  [out : CompilerRegIdSeq]) : CompilerRegIdSeq
+  (if (>= index (compiler-reg-id-seq-count items))
+    out
+    (let
+      [reg : i64 (compiler-reg-id-seq-ref items index)]
+      (compiler-reg-id-seq-without-from
+        items
+        removed
+        (+ index 1)
+        (if (compiler-reg-id-seq-contains? removed reg)
+          out
+          (compiler-reg-id-seq-push out reg))))))
+
+(define (compiler-reg-id-seq-without
+  [items : CompilerRegIdSeq]
+  [removed : CompilerRegIdSeq]) : CompilerRegIdSeq
+  (compiler-reg-id-seq-without-from items removed 0 (compiler-reg-id-seq-empty)))
+
+(define (compiler-reg-scratch-call-target-registers
+  [assignments : CompilerRegAssignmentTable]
+  [instr : ir.CompilerIrInstr]) : CompilerRegIdSeq
+  (match instr
+    [(ir.CompilerIrInstr.CallIndirect _ callee _ _)
+      (compiler-reg-scratch-value-registers assignments callee)]
+    [(ir.CompilerIrInstr.CallIndirectC _ callee _ _)
+      (compiler-reg-scratch-value-registers assignments callee)]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (compiler-reg-scratch-value-registers
+        assignments
+        (__tl-project-field (__tl-box-place payload-box) callee))]
+    [(ir.CompilerIrInstr.TailCallIndirect callee _ _)
+      (compiler-reg-scratch-value-registers assignments callee)]
+    [_ (compiler-reg-id-seq-empty)]))
+
+(define (compiler-reg-scratch-call-target-reuse-register
+  [constraint : CompilerRegScratchConstraint]
+  [target-registers : CompilerRegIdSeq]) : i64
+  (let
+    [index : i64 0]
+    [result : i64 cabi.compiler-reg-id-invalid]
+    (begin
+      (while (and
+        (< index (compiler-reg-id-seq-count target-registers))
+        (= result cabi.compiler-reg-id-invalid))
+        (let
+          [reg : i64 (compiler-reg-id-seq-ref target-registers index)]
+          (begin
+            (if (and
+              (compiler-reg-scratch-constraint-allows-register? constraint reg)
+              (not (compiler-reg-id-seq-contains? constraint.excluded reg)))
+              (set! result reg)
+              unit)
+            (set! index (+ index 1)))))
+      result)))
+
 (define (compiler-reg-scratch-instr-registers
   [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]) : CompilerRegIdSeq
   (match instr
+    ;; A call result becomes live at the end of the instruction. A preserved
+    ;; scratch home may overlap ordinary live-through inputs, but restoring it
+    ;; over the just-written result would silently discard the call result.
+    ;; Keep result homes hard-excluded. Indirect callees are also consumed
+    ;; throughout argument staging; the CallTarget role explicitly removes the
+    ;; exact callee home when that self-reuse is valid.
+    [(ir.CompilerIrInstr.Call dst _ _ _)
+      (compiler-reg-scratch-location-registers assignments dst)]
+    [(ir.CompilerIrInstr.CallIndirect dst callee _ _)
+      (compiler-reg-id-seq-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments callee))]
+    [(ir.CompilerIrInstr.CallIndirectC dst callee _ _)
+      (compiler-reg-id-seq-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments callee))]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [payload (__tl-box-place payload-box)]
+        (compiler-reg-id-seq-append
+          (compiler-reg-scratch-value-registers assignments payload.base)
+          (compiler-reg-scratch-value-registers assignments payload.callee)))]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (compiler-reg-scratch-value-registers
+        assignments
+        (__tl-project-field (__tl-box-place payload-box) base))]
+    [(ir.CompilerIrInstr.TailCallIndirect callee _ _)
+      (compiler-reg-scratch-value-registers assignments callee)]
     [(ir.CompilerIrInstr.AddrOf dst src)
       (compiler-reg-id-seq-append
         (compiler-reg-scratch-location-registers assignments dst)
@@ -33160,19 +33608,25 @@
         (ir.compiler-ir-value-seq-to-list seq))]))
 
 (define (compiler-reg-scratch-phi-constraint
-  [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
+  [_policy : CompilerRegScratchPolicy]
+  [excluded : CompilerRegIdSeq]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
     (CompilerRegScratchClass.Gp)
-    policy.gp-allowed
-    policy.phi-excluded
+    ;; Phi copies execute after the terminator has transferred control to an
+    ;; edge block and cross no call. Every GP in the allocator pool is therefore
+    ;; eligible; the edge-specific destination/source exclusions carry the
+    ;; actual semantic restrictions.
+    (compiler-reg-id-seq-empty)
+    excluded
     cabi.compiler-reg-id-invalid))
 
 (define (compiler-reg-scratch-phi-xmm-constraint
-  [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
+  [_policy : CompilerRegScratchPolicy]
+  [excluded : CompilerRegIdSeq]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
     (CompilerRegScratchClass.Xmm)
     (compiler-reg-id-seq-empty)
-    policy.phi-excluded
+    excluded
     cabi.compiler-reg-id-invalid))
 
 (define (compiler-reg-scratch-switch-constraint
@@ -33373,6 +33827,100 @@
     (live.compiler-live-ir-block-list-to-seq blocks)
     0))
 
+(define (compiler-reg-scratch-phi-dst-registers-label-from
+  [assignments : CompilerRegAssignmentTable]
+  [blocks : ir.CompilerIrBlockSeq]
+  [label : i64]
+  [index : i64]) : CompilerRegIdSeq
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    (compiler-reg-id-seq-empty)
+    (match (ir.compiler-ir-block-seq-ref blocks index)
+      [(ir.CompilerIrBlock.Block block-label instrs)
+        (if (= block-label label)
+          (compiler-reg-scratch-phi-dst-registers-seq-from assignments instrs 0)
+          (compiler-reg-scratch-phi-dst-registers-label-from
+            assignments
+            blocks
+            label
+            (+ index 1)))])))
+
+(define (compiler-reg-scratch-phi-dst-registers-label
+  [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentTable]
+  [label : i64]) : CompilerRegIdSeq
+  (compiler-reg-scratch-phi-dst-registers-label-from
+    assignments
+    policy.blocks
+    label
+    0))
+
+(define (compiler-reg-scratch-switch-phi-registers-seq-from
+  [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentTable]
+  [cases : ir.CompilerIrSwitchCaseSeq]
+  [index : i64]
+  [out0 : CompilerRegIdSeq]) : CompilerRegIdSeq
+  (let
+    [at : i64 index]
+    [out : CompilerRegIdSeq out0]
+    (begin
+      (while (< at cases.len)
+        (begin
+          (match (array-ref cases.slots at)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (set!
+                out
+                (compiler-reg-id-seq-push-all
+                  out
+                  (compiler-reg-scratch-phi-dst-registers-label
+                    policy
+                    assignments
+                    label)))])
+          (set! at (+ at 1))))
+      out)))
+
+(define (compiler-reg-scratch-switch-phi-registers
+  [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentTable]
+  [cases : ir.CompilerIrSwitchCaseList]
+  [default-label : i64]) : CompilerRegIdSeq
+  (compiler-reg-id-seq-push-all
+    (compiler-reg-scratch-switch-phi-registers-seq-from
+      policy
+      assignments
+      (ir.compiler-ir-switch-case-seq-from-list cases)
+      0
+      (compiler-reg-id-seq-empty))
+    (compiler-reg-scratch-phi-dst-registers-label
+      policy
+      assignments
+      default-label)))
+
+(define (compiler-reg-scratch-phi-registers-for-instr
+  [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentTable]
+  [instr : ir.CompilerIrInstr]) : CompilerRegIdSeq
+  (match instr
+    [(ir.CompilerIrInstr.Jump label)
+      (compiler-reg-scratch-phi-dst-registers-label policy assignments label)]
+    [(ir.CompilerIrInstr.Branch _ true-label false-label)
+      (compiler-reg-id-seq-push-all
+        (compiler-reg-scratch-phi-dst-registers-label
+          policy
+          assignments
+          true-label)
+        (compiler-reg-scratch-phi-dst-registers-label
+          policy
+          assignments
+          false-label))]
+    [(ir.CompilerIrInstr.Switch _ _ cases default-label)
+      (compiler-reg-scratch-switch-phi-registers
+        policy
+        assignments
+        cases
+        default-label)]
+    [_ policy.phi-excluded]))
+
 (define (compiler-reg-scratch-requirement-local
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -33385,19 +33933,23 @@
   [var : i64]
   [binop-return : bool]) : CompilerRegScratchRequirement
   (match instr
-    [(ir.CompilerIrInstr.Call _ _ _ _)
-      (CompilerRegScratchRequirement
-        point
-        ordinal
-        (if (= ordinal 0)
-          (CompilerRegScratchRole.CallStage)
-          (CompilerRegScratchRole.CallMemoryXmm))
-        (if (= ordinal 0)
-          (compiler-reg-scratch-call-stage-constraint policy)
-          (compiler-reg-scratch-xmm-constraint assignments instr))
-        point
-        (+ point 1)
-        var)]
+    [(ir.CompilerIrInstr.Call _ name args _)
+      (let
+        [fast-alloc? : bool (compiler-reg-inline-fast-alloc-call? name args)]
+        (CompilerRegScratchRequirement
+          point
+          ordinal
+          (if (or (= ordinal 0) fast-alloc?)
+            (if (= ordinal 0)
+              (CompilerRegScratchRole.CallStage)
+              (CompilerRegScratchRole.ScalarSecondary))
+            (CompilerRegScratchRole.CallMemoryXmm))
+          (if (or (= ordinal 0) fast-alloc?)
+            (compiler-reg-scratch-call-stage-constraint policy)
+            (compiler-reg-scratch-xmm-constraint assignments instr))
+          point
+          (+ point 1)
+          var))]
     [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
       (CompilerRegScratchRequirement
         point
@@ -33519,8 +34071,18 @@
           [(= ordinal 1) (CompilerRegScratchRole.PhiStage)]
           [else (CompilerRegScratchRole.PhiCycleXmm)])
         (if (= ordinal 2)
-          (compiler-reg-scratch-phi-xmm-constraint policy)
-          (compiler-reg-scratch-phi-constraint policy))
+          (compiler-reg-scratch-phi-xmm-constraint
+            policy
+            (compiler-reg-scratch-phi-registers-for-instr
+              policy
+              assignments
+              instr))
+          (compiler-reg-scratch-phi-constraint
+            policy
+            (compiler-reg-scratch-phi-registers-for-instr
+              policy
+              assignments
+              instr)))
         point
         (+ point 1)
         var)]
@@ -33631,6 +34193,14 @@
                       (compiler-reg-id-seq-prepend
                         cabi.compiler-reg-id-rcx
                         (compiler-reg-id-seq-empty))]
+                    ;; Return fusion fixes the result in %rax. Its single
+                    ;; modeled scalar slot is the RHS preservation/staging
+                    ;; home, so it must never be allocated to the accumulator
+                    ;; it is protecting.
+                    [binop-return
+                      (compiler-reg-id-seq-prepend
+                        cabi.compiler-reg-id-rax
+                        (compiler-reg-id-seq-empty))]
                     [else (compiler-reg-id-seq-empty)]))])]
           (CompilerRegScratchRequirement
             point
@@ -33690,8 +34260,20 @@
               assignments
               instr
               (compiler-reg-id-seq-empty))]
-          [(= ordinal 3) (compiler-reg-scratch-phi-xmm-constraint policy)]
-          [else (compiler-reg-scratch-phi-constraint policy)])
+          [(= ordinal 3)
+            (compiler-reg-scratch-phi-xmm-constraint
+              policy
+              (compiler-reg-scratch-phi-registers-for-instr
+                policy
+                assignments
+                instr))]
+          [else
+            (compiler-reg-scratch-phi-constraint
+              policy
+              (compiler-reg-scratch-phi-registers-for-instr
+                policy
+                assignments
+                instr))])
         point
         (+ point 1)
         var)]
@@ -33883,12 +34465,43 @@
           point
           (+ point 1)
           var))]
-    [(ir.CompilerIrInstr.Mov _ _ _)
+    [(ir.CompilerIrInstr.Mov dst src ty)
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.FloatMoveValueXmm)
-        (compiler-reg-scratch-xmm-constraint assignments instr)
+        (if (compiler-reg-scratch-mov-group?
+          type-segment-bases
+          var-types
+          dst
+          src
+          ty)
+          (CompilerRegScratchRole.AggregateWord)
+          (if (compiler-reg-float-type? ty)
+            (CompilerRegScratchRole.FloatMoveValueXmm)
+            (CompilerRegScratchRole.ScalarPrimary)))
+        (if (compiler-reg-scratch-mov-group?
+          type-segment-bases
+          var-types
+          dst
+          src
+          ty)
+          (compiler-reg-scratch-aggregate-constraint
+            policy
+            assignments
+            instr
+            (compiler-reg-scratch-mov-group-word-sse?
+              type-segment-bases
+              var-types
+              dst
+              src
+              ty
+              ordinal))
+          (if (compiler-reg-float-type? ty)
+            (compiler-reg-scratch-xmm-constraint assignments instr)
+            (compiler-reg-scratch-scalar-constraint
+              assignments
+              instr
+              (compiler-reg-id-seq-empty))))
         point
         (+ point 1)
         var)]
@@ -34044,12 +34657,24 @@
 ;; reservation interval and the union of every consumed instruction's homes.
 ;; This keeps a later sibling result home from aliasing an earlier planned
 ;; scratch register even when ordinary IR liveness ends at the sibling point.
+(define (compiler-reg-scratch-mov-group-in-set?
+  [group-vars : live.CompilerLiveI64Set]
+  [dst : i64]
+  [src : ir.CompilerIrValue]) : bool
+  (or
+    (live.compiler-live-set-contains? group-vars dst)
+    (match src
+      [(ir.CompilerIrValue.Var var)
+        (live.compiler-live-set-contains? group-vars var)]
+      [_ false])))
+
 (define (compiler-reg-scratch-requirement
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
+  [group-vars : live.CompilerLiveI64Set]
   [instr : ir.CompilerIrInstr]
   [point : i64]
   [ordinal : i64]
@@ -34057,9 +34682,10 @@
   [binop-return : bool]
   [group-lo : i64]
   [group-hi : i64]
-  [group-excluded : CompilerRegIdSeq]) : CompilerRegScratchRequirement
+  [group-excluded : CompilerRegIdSeq]
+  [memory-address-excluded : CompilerRegIdSeq]) : CompilerRegScratchRequirement
   (let
-    [local : CompilerRegScratchRequirement
+    [base-local : CompilerRegScratchRequirement
       (compiler-reg-scratch-requirement-local
         type-segment-bases
         target-abi
@@ -34071,19 +34697,88 @@
         ordinal
         var
         binop-return)]
+    [local : CompilerRegScratchRequirement
+      (match instr
+        [(ir.CompilerIrInstr.Mov dst src ty)
+          (if (compiler-reg-scratch-mov-group-in-set? group-vars dst src)
+            (CompilerRegScratchRequirement
+              point
+              ordinal
+              (CompilerRegScratchRole.AggregateWord)
+              (compiler-reg-scratch-aggregate-constraint
+                policy
+                assignments
+                instr
+                (compiler-reg-scratch-mov-group-word-sse?
+                  type-segment-bases
+                  var-types
+                  dst
+                  src
+                  ty
+                  ordinal))
+              point
+              (+ point 1)
+              var)
+            base-local)]
+        [_ base-local])]
     [constraint : CompilerRegScratchConstraint local.constraint]
+    [target-registers : CompilerRegIdSeq
+      (compiler-reg-scratch-call-target-registers assignments instr)]
+    [target-reuse : i64
+      (match local.role
+        [(CompilerRegScratchRole.CallTarget)
+          (compiler-reg-scratch-call-target-reuse-register
+            constraint
+            target-registers)]
+        [_ cabi.compiler-reg-id-invalid])]
+    [effective-constraint : CompilerRegScratchConstraint
+      (if (= target-reuse cabi.compiler-reg-id-invalid)
+        constraint
+        (CompilerRegScratchConstraint
+          constraint.register-class
+          constraint.allowed
+          constraint.excluded
+          target-reuse))]
+    [effective-group-excluded : CompilerRegIdSeq
+      (match local.role
+        [(CompilerRegScratchRole.CallTarget)
+          ;; The indirect target is already in its final-consumer register at
+          ;; this point. Reusing that exact allowed home is a self-move, not a
+          ;; collision; other call operands remain excluded from the group.
+          (compiler-reg-id-seq-without group-excluded target-registers)]
+        [_ group-excluded])]
     (CompilerRegScratchRequirement
       local.point
       local.ordinal
       local.role
       (CompilerRegScratchConstraint
-        constraint.register-class
-        constraint.allowed
+        effective-constraint.register-class
+        effective-constraint.allowed
         (match local.role
-          [(CompilerRegScratchRole.FloatReturnResultXmm) constraint.excluded]
-          [(CompilerRegScratchRole.FloatReturnResultGp) constraint.excluded]
-          [_ (compiler-reg-id-seq-append group-excluded constraint.excluded)])
-        constraint.fixed)
+          [(CompilerRegScratchRole.FloatReturnResultXmm)
+            effective-constraint.excluded]
+          [(CompilerRegScratchRole.FloatReturnResultGp)
+            effective-constraint.excluded]
+          ;; A staged memory value is consumed after its fused address has been
+          ;; formed. Keep its own operands and the nearest fused GEP address
+          ;; operands hard, plus every result home defined by the fused group:
+          ;; the group's single save/restore wrapper must never restore over a
+          ;; value produced later in that same group. Planned address/index
+          ;; siblings remain distinct through the scratch-assignment overlap
+          ;; check; unrelated input homes are intentionally not retained.
+          [(CompilerRegScratchRole.MemoryValue)
+            (compiler-reg-id-seq-append
+              memory-address-excluded
+              effective-constraint.excluded)]
+          [(CompilerRegScratchRole.FloatMemoryValueXmm)
+            (compiler-reg-id-seq-append
+              memory-address-excluded
+              effective-constraint.excluded)]
+          [_
+            (compiler-reg-id-seq-append
+              effective-group-excluded
+              effective-constraint.excluded)])
+        effective-constraint.fixed)
       group-lo
       group-hi
       local.var)))
@@ -34179,40 +34874,28 @@
         (set! (array-ref lasts i) i)
         (set! i (+ i 1))))))
 
-;; Candidate fusion regions are discovered left-to-right.  Existing regions
-;; may overlap the new candidate, so merge their complete bounds and publish
-;; the resulting common span to every member.
+;; Candidate fusion regions are discovered left-to-right. Record each member's
+;; direct union of candidate windows, but do not take the transitive closure of
+;; merely adjacent alternatives. For A/B/C and C/D/E, either window can emit as
+;; one unit, yet A's scratch is never simultaneously live with E's. Turning the
+;; overlap graph into one A..E clique makes long unrolled Gep/StorePtr chains
+;; require more physical registers than exist.
 (define (compiler-reg-scratch-group-merge!
   [firsts : (__tl_dyn-array i64)]
   [lasts : (__tl_dyn-array i64)]
   [start : i64]
   [end : i64]) : unit
   (let
-    [lo : i64
-      (if (< start (array-ref firsts start))
-        start
-        (array-ref firsts start))]
-    [hi : i64
-      (if (> end (array-ref lasts end))
-        end
-        (array-ref lasts end))]
-    [i : i64 lo]
-    (begin
-      (while (<= i hi)
-        (begin
-          (if (< (array-ref firsts i) lo)
-            (set! lo (array-ref firsts i))
-            unit)
-          (if (> (array-ref lasts i) hi)
-            (set! hi (array-ref lasts i))
-            unit)
-          (set! i (+ i 1))))
-      (set! i lo)
-      (while (<= i hi)
-        (begin
-          (set! (array-ref firsts i) lo)
-          (set! (array-ref lasts i) hi)
-          (set! i (+ i 1)))))))
+    [i : i64 start]
+    (while (<= i end)
+      (begin
+        (if (< start (array-ref firsts i))
+          (set! (array-ref firsts i) start)
+          unit)
+        (if (> end (array-ref lasts i))
+          (set! (array-ref lasts i) end)
+          unit)
+        (set! i (+ i 1))))))
 
 (defenum CompilerRegScratchFusionKind
   (Gep)
@@ -34505,17 +35188,59 @@
         (+ index 1)
         last))))
 
+(define (compiler-reg-scratch-nearest-gep-registers
+  [assignments : CompilerRegAssignmentTable]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [first : i64]) : CompilerRegIdSeq
+  (if (< index first)
+    (compiler-reg-id-seq-empty)
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(ir.CompilerIrInstr.Gep _ _ _ _)
+          (compiler-reg-scratch-instr-registers assignments instr)]
+        [_
+          (compiler-reg-scratch-nearest-gep-registers
+            assignments
+            instrs
+            (- index 1)
+            first)]))))
+
+(define (compiler-reg-scratch-group-result-registers-from
+  [assignments : CompilerRegAssignmentTable]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : CompilerRegIdSeq
+  (if (> index last)
+    (compiler-reg-id-seq-empty)
+    (let
+      [dst : i64
+        (live.compiler-live-instr-def-var
+          (ir.compiler-ir-instr-seq-ref instrs index))]
+      (compiler-reg-id-seq-append
+        (if (< dst 0)
+          (compiler-reg-id-seq-empty)
+          (compiler-reg-scratch-location-registers assignments dst))
+        (compiler-reg-scratch-group-result-registers-from
+          assignments
+          instrs
+          (+ index 1)
+          last)))))
+
 (define (compiler-reg-scratch-fill-slots!
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
+  [group-vars : live.CompilerLiveI64Set]
   [instr : ir.CompilerIrInstr]
   [point : i64]
   [group-lo : i64]
   [group-hi : i64]
   [group-excluded : CompilerRegIdSeq]
+  [memory-address-excluded : CompilerRegIdSeq]
   [scratch-base : i64]
   [item-start : i64]
   [slot : i64]
@@ -34538,6 +35263,7 @@
           policy
           assignments
           var-types
+          group-vars
           instr
           point
           slot
@@ -34545,12 +35271,15 @@
           binop-return
           group-lo
           group-hi
-          group-excluded)]
+          group-excluded
+          memory-address-excluded)]
       (begin
         (set!
           (array-ref items item-index)
           (CompilerRegScratchAssignment
             requirement
+            false
+            false
             cabi.compiler-reg-id-invalid))
         (compiler-reg-scratch-mark-requirement!
           starts
@@ -34565,11 +35294,13 @@
           policy
           assignments
           var-types
+          group-vars
           instr
           point
           group-lo
           group-hi
           group-excluded
+          memory-address-excluded
           scratch-base
           item-start
           (+ slot 1)
@@ -34588,6 +35319,7 @@
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
+  [group-vars : live.CompilerLiveI64Set]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-targets : CompilerRegLabelSeq]
   [phi-xmm-targets : CompilerRegLabelSeq]
@@ -34623,12 +35355,25 @@
               instrs
               group-first
               group-last)]
+          [memory-address-excluded : CompilerRegIdSeq
+            (compiler-reg-id-seq-append
+              (compiler-reg-scratch-nearest-gep-registers
+                assignments
+                instrs
+                (- i 1)
+                group-first)
+              (compiler-reg-scratch-group-result-registers-from
+                assignments
+                instrs
+                group-first
+                group-last))]
           [n : i64
-            (compiler-reg-scratch-vreg-slots
+            (compiler-reg-scratch-vreg-slots-with-groups
               type-segment-bases
               target-abi
               assignments
               var-types
+              group-vars
               instr
               phi-targets
               phi-xmm-targets
@@ -34642,11 +35387,13 @@
               policy
               assignments
               var-types
+              group-vars
               instr
               (* 2 instruction)
               (* 2 (+ instruction-start group-first))
               (+ (* 2 (+ instruction-start group-last)) 1)
               group-excluded
+              memory-address-excluded
               scratch-base
               item
               0
@@ -34669,6 +35416,7 @@
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
+  [group-vars : live.CompilerLiveI64Set]
   [blocks : ir.CompilerIrBlockList]
   [phi-targets : CompilerRegLabelSeq]
   [phi-xmm-targets : CompilerRegLabelSeq]
@@ -34695,6 +35443,7 @@
             policy
             assignments
             var-types
+            group-vars
             instrs
             phi-targets
             phi-xmm-targets
@@ -34716,6 +35465,7 @@
                 policy
                 assignments
                 var-types
+                group-vars
                 (__tl-box-place rest)
                 phi-targets
                 phi-xmm-targets
@@ -34747,6 +35497,7 @@
                     policy
                     assignments
                     var-types
+                    group-vars
                     instrs
                     phi-targets
                     phi-xmm-targets
@@ -34770,10 +35521,12 @@
               (set! i (+ i 1))))
           (CompilerRegScratchFillState.State instruction item)))]))
 
-;; Cycle 14's early model is deliberately narrower than the generic late
-;; scratch planner: only scalar SafeDiv/SafeMod with an integer literal divisor
-;; contributes worklist entries. BoundsCheck, Switch, variable divmod, ordinary
-;; Div/Mod, and float operations remain late-only.
+;; The bounded early model contains scratch demands that may require an ordinary
+;; value to move or spill. Most scratch remains late-only because preserving a
+;; non-operand live-through home is sufficient. Literal safe div/mod needs five
+;; simultaneous fixed/general homes. Memory staging remains late: the bounded
+;; preservation choice can borrow any non-operand home without perturbing the
+;; ordinary allocation of store-heavy loops.
 (define (compiler-reg-early-scratch-literal? [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.I64 _) true]
@@ -34793,6 +35546,27 @@
         (compiler-reg-early-scratch-literal? rhs))]
     [_ false]))
 
+(define (compiler-reg-early-scratch-slot-count [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ op _ rhs ty)
+      (if (and
+        (not (compiler-reg-float-type? ty))
+        (match op
+          [(ir.CompilerIrBinOp.SafeDiv) true]
+          [(ir.CompilerIrBinOp.SafeMod) true]
+          [_ false])
+        (compiler-reg-early-scratch-literal? rhs))
+        5
+        0)]
+    [_ 0]))
+
+(define (compiler-reg-early-scratch-ordinal
+  [instr : ir.CompilerIrInstr]
+  [index : i64]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.StorePtr _ _ _) 1]
+    [_ index]))
+
 (define (compiler-reg-early-scratch-count-seq [instrs : ir.CompilerIrInstrSeq]) : i64
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
@@ -34802,11 +35576,11 @@
     (begin
       (while (< i len)
         (begin
-          (if (compiler-reg-early-scratch-target? (array-ref slots i))
-            ;; Reuse the generic divmod model's fixed width: rax, rdx, and
-            ;; three simultaneous GP temporaries.
-            (set! count (+ count 5))
-            unit)
+          (set!
+            count
+            (+
+              count
+              (compiler-reg-early-scratch-slot-count (array-ref slots i))))
           (set! i (+ i 1))))
       count)))
 
@@ -34865,6 +35639,10 @@
   [ordinal : i64]
   [var : i64]
   [binop-return : bool]
+  [group-lo : i64]
+  [group-hi : i64]
+  [group-excluded : CompilerRegIdSeq]
+  [memory-address-excluded : CompilerRegIdSeq]
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
@@ -34873,18 +35651,51 @@
   [scratch-excluded : (__tl_dyn-array CompilerRegIdSeq)]) : unit
   (let
     [requirement : CompilerRegScratchRequirement
-      (compiler-reg-early-scratch-expansion-requirement
-        (compiler-reg-scratch-requirement-local
-          type-segment-bases
-          target-abi
-          policy
-          assignment-view
-          var-types
-          instr
-          point
-          ordinal
-          var
-          binop-return))]
+      (match instr
+        [(ir.CompilerIrInstr.StorePtr _ _ _)
+          (let
+            [base : CompilerRegScratchRequirement
+              (compiler-reg-scratch-requirement
+                type-segment-bases
+                target-abi
+                policy
+                assignment-view
+                var-types
+                (live.compiler-live-set-empty)
+                instr
+                point
+                ordinal
+                var
+                binop-return
+                group-lo
+                group-hi
+                group-excluded
+                memory-address-excluded)]
+            ;; Ordinary intervals end at their final-use point. Start one tick
+            ;; before the fused group so address/value operands cannot donate
+            ;; their home to the StorePtr value scratch that is consumed by the
+            ;; same machine store.
+            (CompilerRegScratchRequirement
+              base.point
+              base.ordinal
+              base.role
+              base.constraint
+              (compiler-reg-max 0 (- group-lo 1))
+              base.hi
+              base.var))]
+        [_
+          (compiler-reg-early-scratch-expansion-requirement
+            (compiler-reg-scratch-requirement-local
+              type-segment-bases
+              target-abi
+              policy
+              assignment-view
+              var-types
+              instr
+              point
+              ordinal
+              var
+              binop-return))])]
     [fixed : i64 requirement.constraint.fixed]
     (begin
       (compiler-reg-scratch-mark-requirement!
@@ -34894,7 +35705,15 @@
         present
         types
         requirement)
-      (set! (array-ref scratch-excluded var) requirement.constraint.excluded)
+      (set!
+        (array-ref scratch-excluded var)
+        (match instr
+          ;; The widened synthetic interval already interferes with every
+          ;; ordinary operand/result in the fused group. Do not freeze their
+          ;; current physical homes as exclusions: the purpose of this early
+          ;; worklist is precisely to let the greedy move or spill one of them.
+          [(ir.CompilerIrInstr.StorePtr _ _ _) (compiler-reg-id-seq-empty)]
+          [_ requirement.constraint.excluded]))
       (if (= fixed cabi.compiler-reg-id-invalid)
         unit
         (begin
@@ -34926,19 +35745,43 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 instrs.len]
+    [group-firsts : (__tl_dyn-array i64) (array.make-array i64 len)]
+    [group-lasts : (__tl_dyn-array i64) (array.make-array i64 len)]
     [i : i64 0]
     [instruction : i64 instruction-start]
     [scratch : i64 scratch-start]
     (begin
+      (compiler-reg-scratch-fusion-groups! instrs group-firsts group-lasts)
       (while (< i len)
         (let
           [instr : ir.CompilerIrInstr (array-ref slots i)]
+          [group-first : i64 (array-ref group-firsts i)]
+          [group-last : i64 (array-ref group-lasts i)]
+          [group-excluded : CompilerRegIdSeq
+            (compiler-reg-scratch-group-registers-from
+              assignment-view
+              instrs
+              group-first
+              group-last)]
+          [memory-address-excluded : CompilerRegIdSeq
+            (compiler-reg-id-seq-append
+              (compiler-reg-scratch-nearest-gep-registers
+                assignment-view
+                instrs
+                (- i 1)
+                group-first)
+              (compiler-reg-scratch-group-result-registers-from
+                assignment-view
+                instrs
+                group-first
+                group-last))]
+          [slot-count : i64 (compiler-reg-early-scratch-slot-count instr)]
           (begin
-            (if (compiler-reg-early-scratch-target? instr)
+            (if (> slot-count 0)
               (let
                 [ordinal : i64 0]
                 (begin
-                  (while (< ordinal 5)
+                  (while (< ordinal slot-count)
                     (begin
                       (compiler-reg-early-scratch-mark-one!
                         type-segment-bases
@@ -34949,9 +35792,13 @@
                         var-types
                         instr
                         (* 2 instruction)
-                        ordinal
+                        (compiler-reg-early-scratch-ordinal instr ordinal)
                         (+ scratch-base scratch ordinal)
                         (compiler-reg-scratch-binop-return-next? instrs i)
+                        (* 2 (+ instruction-start group-first))
+                        (+ (* 2 (+ instruction-start group-last)) 1)
+                        group-excluded
+                        memory-address-excluded
                         starts
                         ends
                         segments
@@ -34962,11 +35809,14 @@
                       ;; occurrence at the expansion's loop depth.
                       (set!
                         (array-ref scratch-weights (+ scratch ordinal))
-                        (if (>= ordinal 2)
-                          block-weight
-                          0))
+                        (match instr
+                          [(ir.CompilerIrInstr.StorePtr _ _ _) block-weight]
+                          [_
+                            (if (>= ordinal 2)
+                              block-weight
+                              0)]))
                       (set! ordinal (+ ordinal 1))))
-                  (set! scratch (+ scratch 5))))
+                  (set! scratch (+ scratch slot-count))))
               unit)
             (set! instruction (+ instruction 1))
             (set! i (+ i 1)))))
@@ -35127,7 +35977,8 @@
               (compiler-reg-scratch-policy
                 target-abi
                 assignment-view
-                (compiler-reg-id-seq-empty))]
+                (compiler-reg-id-seq-empty)
+                (live.compiler-live-ir-block-list-to-seq blocks))]
             (begin
               (compiler-reg-fill-i64-array starts -1)
               (compiler-reg-fill-i64-array ends -1)
@@ -35197,8 +36048,9 @@
         ;; place it costs a save+restore pair, while evicting the equally cold
         ;; occupant pays one honest spill/reload home. The ordinary greedy keeps
         ;; its strict-lower eviction rule; only these targeted pseudos receive the
-        ;; preservation-cost tie-break. An unprofitable requirement remains
-        ;; unassigned and the retained late planner/scavenger supplies fallback.
+        ;; preservation-cost tie-break. A zero-weight slot is inert. A demand
+        ;; that remains unassigned is completed by the bounded preservation
+        ;; planner below instead of perturbing a hotter ordinary allocation.
         (while (< v vars)
           (let
             [scratch-index : i64 (- v scratch-base)]
@@ -35328,19 +36180,173 @@
       (compiler-reg-xmm-registers-for-abi target-abi)]))
 
 (define (compiler-reg-scratch-constraint-pool
-  [target-abi : cabi.CompilerRegTargetAbi]
+  [gp-pool : CompilerRegIdSeq]
+  [xmm-pool : CompilerRegIdSeq]
   [constraint : CompilerRegScratchConstraint]) : CompilerRegIdSeq
+  ;; Candidate order depends only on the register class. Fixed/allowed
+  ;; restrictions are filtered by constraint-allows-register? at the choice
+  ;; site, so every requirement in a function can share these two pools.
+  (match constraint.register-class
+    [(CompilerRegScratchClass.Gp) gp-pool]
+    [(CompilerRegScratchClass.Xmm) xmm-pool]))
+
+(define (compiler-reg-scratch-constraint-allows-register?
+  [constraint : CompilerRegScratchConstraint]
+  [reg : i64]) : bool
   (let
     [fixed : i64 constraint.fixed]
     (if (not (= fixed cabi.compiler-reg-id-invalid))
-      (compiler-reg-id-seq-prepend fixed (compiler-reg-id-seq-empty))
-      (let
-        [allowed : CompilerRegIdSeq constraint.allowed]
-        (if (compiler-reg-id-seq-empty? allowed)
-          (compiler-reg-scratch-default-pool
-            target-abi
-            constraint.register-class)
-          allowed)))))
+      (= reg fixed)
+      (or
+        (compiler-reg-id-seq-empty? constraint.allowed)
+        (compiler-reg-id-seq-contains? constraint.allowed reg)))))
+
+(define (compiler-reg-scratch-print-role-family!
+  [role : CompilerRegScratchRole]) : unit
+  (match role
+    [(CompilerRegScratchRole.CallTarget) (io.print-error "call-target")]
+    [(CompilerRegScratchRole.CallStage) (io.print-error "call-stage")]
+    [(CompilerRegScratchRole.CallMemoryXmm) (io.print-error "call-memory-xmm")]
+    [(CompilerRegScratchRole.AggregateWord) (io.print-error "aggregate")]
+    [(CompilerRegScratchRole.PhiCycle) (io.print-error "phi")]
+    [(CompilerRegScratchRole.PhiCycleXmm) (io.print-error "phi-xmm")]
+    [(CompilerRegScratchRole.PhiStage) (io.print-error "phi-stage")]
+    [(CompilerRegScratchRole.SwitchIndex) (io.print-error "switch")]
+    [(CompilerRegScratchRole.SwitchTable) (io.print-error "switch")]
+    [(CompilerRegScratchRole.BoundsLength) (io.print-error "bounds")]
+    [(CompilerRegScratchRole.BoundsIndex) (io.print-error "bounds")]
+    [(CompilerRegScratchRole.ShuffleActive) (io.print-error "shuffle")]
+    [(CompilerRegScratchRole.ShuffleSelector) (io.print-error "shuffle")]
+    [(CompilerRegScratchRole.MemoryAddress) (io.print-error "memory-address")]
+    [(CompilerRegScratchRole.MemoryIndex) (io.print-error "memory-index")]
+    [(CompilerRegScratchRole.MemoryValue) (io.print-error "memory-value")]
+    [(CompilerRegScratchRole.CopyDst) (io.print-error "copy")]
+    [(CompilerRegScratchRole.CopySrc) (io.print-error "copy")]
+    [(CompilerRegScratchRole.CopyValue) (io.print-error "copy")]
+    [(CompilerRegScratchRole.CopyValueXmm) (io.print-error "copy-xmm")]
+    [(CompilerRegScratchRole.SplatValueGp) (io.print-error "splat")]
+    [(CompilerRegScratchRole.SplatValueXmm) (io.print-error "splat-xmm")]
+    [(CompilerRegScratchRole.SimdAddressBase) (io.print-error "simd-address")]
+    [(CompilerRegScratchRole.SimdAddressIndex) (io.print-error "simd-address")]
+    [(CompilerRegScratchRole.TailMaskCount) (io.print-error "tail-mask")]
+    [(CompilerRegScratchRole.TailMaskIndex) (io.print-error "tail-mask")]
+    [(CompilerRegScratchRole.TailMaskBits) (io.print-error "tail-mask")]
+    [(CompilerRegScratchRole.VectorPrefixCarry)
+      (io.print-error "vector-prefix")]
+    [(CompilerRegScratchRole.VectorPrefixBits) (io.print-error "vector-prefix")]
+    [(CompilerRegScratchRole.VectorPrefixValue)
+      (io.print-error "vector-prefix")]
+    [(CompilerRegScratchRole.VectorPrefixWork0)
+      (io.print-error "vector-prefix")]
+    [(CompilerRegScratchRole.VectorPrefixWork1)
+      (io.print-error "vector-prefix")]
+    [(CompilerRegScratchRole.VectorReduceAccumulator)
+      (io.print-error "vector-reduce")]
+    [(CompilerRegScratchRole.VectorReduceScratch)
+      (io.print-error "vector-reduce")]
+    [(CompilerRegScratchRole.FloatCastValueXmm) (io.print-error "float-cast")]
+    [(CompilerRegScratchRole.FloatCastValueGp) (io.print-error "float-cast")]
+    [(CompilerRegScratchRole.FloatCastScratchGp) (io.print-error "float-cast")]
+    [(CompilerRegScratchRole.FloatBitcastValueXmm)
+      (io.print-error "float-bitcast")]
+    [(CompilerRegScratchRole.FloatBitcastValueGp)
+      (io.print-error "float-bitcast")]
+    [(CompilerRegScratchRole.FloatMoveValueXmm) (io.print-error "float-move")]
+    [(CompilerRegScratchRole.FloatMemoryValueXmm)
+      (io.print-error "float-memory")]
+    [(CompilerRegScratchRole.FloatArithmeticResultXmm)
+      (io.print-error "float-arithmetic")]
+    [(CompilerRegScratchRole.FloatArithmeticRhsXmm)
+      (io.print-error "float-arithmetic")]
+    [(CompilerRegScratchRole.FloatCompareLhsXmm)
+      (io.print-error "float-compare")]
+    [(CompilerRegScratchRole.FloatCompareRhsXmm)
+      (io.print-error "float-compare")]
+    [(CompilerRegScratchRole.FloatCompareResultGp)
+      (io.print-error "float-compare")]
+    [(CompilerRegScratchRole.FloatUnaryResultXmm)
+      (io.print-error "float-unary")]
+    [(CompilerRegScratchRole.FloatReturnResultXmm)
+      (io.print-error "float-return")]
+    [(CompilerRegScratchRole.FloatReturnResultGp)
+      (io.print-error "float-return")]
+    [(CompilerRegScratchRole.ScalarPrimary) (io.print-error "scalar")]
+    [(CompilerRegScratchRole.ScalarSecondary) (io.print-error "scalar")]
+    [(CompilerRegScratchRole.ScalarTertiary) (io.print-error "scalar")]
+    [(CompilerRegScratchRole.FixedRax) (io.print-error "fixed-rax")]
+    [(CompilerRegScratchRole.FixedRdx) (io.print-error "fixed-rdx")]
+    [(CompilerRegScratchRole.FixedRcx) (io.print-error "fixed-rcx")]
+    [(CompilerRegScratchRole.BranchTest) (io.print-error "branch")]
+    [(CompilerRegScratchRole.CpuIdSave) (io.print-error "cpuid")]))
+
+(define (compiler-reg-scratch-require-complete!
+  [items : (__tl_dyn-array CompilerRegScratchAssignment)]
+  [function-name : i64]) : unit
+  (let
+    [index : i64 0]
+    [missing : i64 -1]
+    (begin
+      (while (and (< index (array-length items)) (< missing 0))
+        (begin
+          (if (and
+            (=
+              (__tl-project-field (array-ref items index) register)
+              cabi.compiler-reg-id-invalid)
+            (not (__tl-project-field (array-ref items index) frame)))
+            (set! missing index)
+            unit)
+          (set! index (+ index 1))))
+      (if (< missing 0)
+        unit
+        (let
+          [requirement : CompilerRegScratchRequirement
+            (__tl-project-field (array-ref items missing) requirement)]
+          [constraint : CompilerRegScratchConstraint requirement.constraint]
+          (begin
+            (io.print-error "regalloc: incomplete modeled scratch at point ")
+            (io.print-error (string.int->string requirement.point))
+            (io.print-error " slot ")
+            (io.print-error (string.int->string requirement.ordinal))
+            (io.print-error " function-id ")
+            (io.print-error (string.int->string function-name))
+            (io.print-error " role ")
+            (compiler-reg-scratch-print-role-family! requirement.role)
+            (io.print-error " class ")
+            (match constraint.register-class
+              [(CompilerRegScratchClass.Gp) (io.print-error "gp")]
+              [(CompilerRegScratchClass.Xmm) (io.print-error "xmm")])
+            (io.print-error " allowed ")
+            (io.print-error
+              (string.int->string
+                (compiler-reg-id-seq-count constraint.allowed)))
+            (io.print-error " excluded ")
+            (io.print-error
+              (string.int->string
+                (compiler-reg-id-seq-count constraint.excluded)))
+            (io.print-error " interval ")
+            (io.print-error (string.int->string requirement.lo))
+            (io.print-error "..")
+            (io.print-error (string.int->string requirement.hi))
+            (io.print-error "\n")
+            (io.panic "regalloc: unable to assign modeled scratch group")))))))
+
+(define (compiler-reg-scratch-items-complete?
+  [items : (__tl_dyn-array CompilerRegScratchAssignment)]) : bool
+  (let
+    [index : i64 0]
+    [complete : bool true]
+    (begin
+      (while (and complete (< index (array-length items)))
+        (begin
+          (if (and
+            (=
+              (__tl-project-field (array-ref items index) register)
+              cabi.compiler-reg-id-invalid)
+            (not (__tl-project-field (array-ref items index) frame)))
+            (set! complete false)
+            unit)
+          (set! index (+ index 1))))
+      complete)))
 
 (define (compiler-reg-scratch-register-array
   [target-abi : cabi.CompilerRegTargetAbi]) : (__tl_dyn-array i64)
@@ -35397,14 +36403,346 @@
           (+ index 1)
           vars)))))
 
-(define (compiler-reg-scratch-pick-register
+;; A segmented interval or expanded coalesced class can leave a point gap even
+;; though its physical home still carries a value needed after the lowering
+;; group. Reject that one register only for scratch demands inside the exact
+;; carried gap. Unrelated values that merely reuse a home remain eligible,
+;; preserving normal hole-aware allocation and avoiding function-wide
+;; coarse-interval spill inflation.
+(defstruct CompilerRegScratchCoalescedHulls
+  ;; Per-register slices sorted by hull start. Each end is the prefix maximum
+  ;; within its slice, so a binary search answers the exact carried-gap query.
+  (items (__tl_dyn-array CompilerRegInterval))
+  (offsets (__tl_dyn-array i64))
+  (register-count i64))
+
+(define (compiler-reg-scratch-hull-sift-down
+  [items : (__tl_dyn-array CompilerRegInterval)]
+  [base : i64]
+  [root : i64]
+  [count : i64]) : unit
+  (let
+    [node : i64 root]
+    [done : bool false]
+    (while (not done)
+      (let
+        [left : i64 (+ (* node 2) 1)]
+        [right : i64 (+ (* node 2) 2)]
+        [largest : i64
+          (let
+            [pick : i64 node]
+            (begin
+              (if (and
+                (< left count)
+                (compiler-reg-color-interval-before?
+                  (array-ref items (+ base pick))
+                  (array-ref items (+ base left))))
+                (set! pick left)
+                unit)
+              (if (and
+                (< right count)
+                (compiler-reg-color-interval-before?
+                  (array-ref items (+ base pick))
+                  (array-ref items (+ base right))))
+                (set! pick right)
+                unit)
+              pick))]
+        (if (= largest node)
+          (set! done true)
+          (let
+            [node-item : CompilerRegInterval
+              (compiler-reg-color-interval-copy (array-ref items (+ base node)))]
+            [largest-item : CompilerRegInterval
+              (compiler-reg-color-interval-copy
+                (array-ref items (+ base largest)))]
+            (begin
+              (set! (array-ref items (+ base node)) largest-item)
+              (set! (array-ref items (+ base largest)) node-item)
+              (set! node largest))))))))
+
+(define (compiler-reg-scratch-hull-heapsort-range!
+  [items : (__tl_dyn-array CompilerRegInterval)]
+  [base : i64]
+  [count : i64]) : unit
+  (begin
+    (let
+      [index : i64 (- (/ count 2) 1)]
+      (while (>= index 0)
+        (begin
+          (compiler-reg-scratch-hull-sift-down items base index count)
+          (set! index (- index 1)))))
+    (let
+      [last : i64 (- count 1)]
+      (while (> last 0)
+        (let
+          [root-item : CompilerRegInterval
+            (compiler-reg-color-interval-copy (array-ref items base))]
+          [last-item : CompilerRegInterval
+            (compiler-reg-color-interval-copy (array-ref items (+ base last)))]
+          (begin
+            (set! (array-ref items base) last-item)
+            (set! (array-ref items (+ base last)) root-item)
+            (compiler-reg-scratch-hull-sift-down items base 0 last)
+            (set! last (- last 1))))))))
+
+(define (compiler-reg-scratch-coalesced-hull-record!
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [pool-index : (__tl_dyn-array i64)]
+  [interval-index : CompilerRegIntervalIndex]
+  [root : i64]
+  [var : i64]
+  [reg : i64]
+  [register-count : i64]) : unit
+  (let
+    [ownership : i64 (cabi.compiler-abi-register-ownership-id reg)]
+    [register-index : i64
+      (if (and (>= ownership 0) (< ownership (array-length pool-index)))
+        (array-ref pool-index ownership)
+        -1)]
+    (if (and
+      (>= root 0)
+      (< root (/ (array-length starts) register-count))
+      (>= register-index 0)
+      (< register-index register-count)
+      (< var (array-length interval-index.starts))
+      (< var (array-length interval-index.ends))
+      (>= (array-ref interval-index.starts var) 0))
+      (let
+        [flat : i64 (+ (* root register-count) register-index)]
+        (begin
+          (if (or
+            (< (array-ref starts flat) 0)
+            (< (array-ref interval-index.starts var) (array-ref starts flat)))
+            (set! (array-ref starts flat) (array-ref interval-index.starts var))
+            unit)
+          (if (> (array-ref interval-index.ends var) (array-ref ends flat))
+            (set! (array-ref ends flat) (array-ref interval-index.ends var))
+            unit)))
+      unit)))
+
+(define (compiler-reg-scratch-coalesced-hulls
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [parents : (__tl_dyn-array i64)]
+  [pool-index : (__tl_dyn-array i64)]
+  [register-count : i64]
+  [vars : i64]) : CompilerRegScratchCoalescedHulls
+  (let
+    [starts : (__tl_dyn-array i64)
+      (array.make-array i64 (* vars register-count))]
+    [ends : (__tl_dyn-array i64) (array.make-array i64 (* vars register-count))]
+    [index : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array starts -1)
+      (compiler-reg-fill-i64-array ends -1)
+      (while (< index vars)
+        (let
+          [root : i64
+            (if (< index (array-length parents))
+              (array-ref parents index)
+              index)]
+          (begin
+            (if (and
+              (< index (array-length assignments.present))
+              (= (array-ref assignments.present index) 1))
+              (match (array-ref assignments.items index)
+                [(CompilerRegLocation.Register reg)
+                  (compiler-reg-scratch-coalesced-hull-record!
+                    starts
+                    ends
+                    pool-index
+                    interval-index
+                    root
+                    index
+                    reg
+                    register-count)]
+                [(CompilerRegLocation.RegisterPair first second)
+                  (begin
+                    (compiler-reg-scratch-coalesced-hull-record!
+                      starts
+                      ends
+                      pool-index
+                      interval-index
+                      root
+                      index
+                      first
+                      register-count)
+                    (compiler-reg-scratch-coalesced-hull-record!
+                      starts
+                      ends
+                      pool-index
+                      interval-index
+                      root
+                      index
+                      second
+                      register-count))]
+                [(CompilerRegLocation.Spill _) unit]
+                [(CompilerRegLocation.Remat _) unit])
+              unit)
+            (set! index (+ index 1)))))
+      (let
+        [counts : (__tl_dyn-array i64) (array.make-array i64 register-count)]
+        [offsets : (__tl_dyn-array i64)
+          (array.make-array i64 (+ register-count 1))]
+        [root : i64 0]
+        (begin
+          ;; Count the actual root/register hulls; empty cells in the dense
+          ;; aggregation never enter the searchable representation.
+          (while (< root vars)
+            (let
+              [register-index : i64 0]
+              (begin
+                (while (< register-index register-count)
+                  (let
+                    [hull : i64 (+ (* root register-count) register-index)]
+                    (begin
+                      (if (>= (array-ref starts hull) 0)
+                        (set!
+                          (array-ref counts register-index)
+                          (+ (array-ref counts register-index) 1))
+                        unit)
+                      (set! register-index (+ register-index 1)))))
+                (set! root (+ root 1)))))
+          (let
+            [register-index : i64 0]
+            [total : i64 0]
+            (begin
+              (while (< register-index register-count)
+                (begin
+                  (set! (array-ref offsets register-index) total)
+                  (set! total (+ total (array-ref counts register-index)))
+                  (set! register-index (+ register-index 1))))
+              (set! (array-ref offsets register-count) total)
+              (let
+                [items : (__tl_dyn-array CompilerRegInterval)
+                  (array.make-array CompilerRegInterval total)]
+                [cursors : (__tl_dyn-array i64)
+                  (array.make-array i64 register-count)]
+                (begin
+                  (compiler-reg-copy-i64-array! cursors offsets 0)
+                  (set! root 0)
+                  (while (< root vars)
+                    (let
+                      [reg-index : i64 0]
+                      (begin
+                        (while (< reg-index register-count)
+                          (let
+                            [hull : i64 (+ (* root register-count) reg-index)]
+                            [start : i64 (array-ref starts hull)]
+                            (begin
+                              (if (>= start 0)
+                                (let
+                                  [at : i64 (array-ref cursors reg-index)]
+                                  (begin
+                                    (set!
+                                      (array-ref items at)
+                                      (CompilerRegInterval
+                                        root
+                                        start
+                                        (array-ref ends hull)))
+                                    (set!
+                                      (array-ref cursors reg-index)
+                                      (+ at 1))))
+                                unit)
+                              (set! reg-index (+ reg-index 1)))))
+                        (set! root (+ root 1)))))
+                  (set! register-index 0)
+                  (while (< register-index register-count)
+                    (let
+                      [first : i64 (array-ref offsets register-index)]
+                      [last : i64 (array-ref offsets (+ register-index 1))]
+                      (begin
+                        (compiler-reg-scratch-hull-heapsort-range!
+                          items
+                          first
+                          (- last first))
+                        ;; Prefix maxima retain the greatest end among every
+                        ;; hull whose sorted start is no later than this entry.
+                        (let
+                          [at : i64 (+ first 1)]
+                          (while (< at last)
+                            (let
+                              [current : CompilerRegInterval
+                                (array-ref items at)]
+                              [previous-end : i64
+                                (array-ref items (- at 1)).end]
+                              (begin
+                                (if (> previous-end current.end)
+                                  (set!
+                                    (array-ref items at)
+                                    (CompilerRegInterval
+                                      current.var
+                                      current.start
+                                      previous-end))
+                                  unit)
+                                (set! at (+ at 1))))))
+                        (set! register-index (+ register-index 1)))))
+                  (CompilerRegScratchCoalescedHulls
+                    items
+                    offsets
+                    register-count))))))))))
+
+(define (compiler-reg-scratch-register-coalesced-hulls-from?
+  [hulls : CompilerRegScratchCoalescedHulls]
+  [requirement : CompilerRegScratchRequirement]
+  [register-index : i64]) : bool
+  (if (or (< register-index 0) (>= register-index hulls.register-count))
+    false
+    (let
+      [first : i64 (array-ref hulls.offsets register-index)]
+      [last : i64 (array-ref hulls.offsets (+ register-index 1))]
+      [lo : i64 first]
+      [hi : i64 last]
+      (begin
+        ;; Upper bound for `start < requirement.lo`.
+        (while (< lo hi)
+          (let
+            [mid : i64 (+ lo (/ (- hi lo) 2))]
+            (if (< (array-ref hulls.items mid).start requirement.lo)
+              (set! lo (+ mid 1))
+              (set! hi mid))))
+        (let
+          [candidate : i64 (- lo 1)]
+          (and
+            (>= candidate first)
+            (> (array-ref hulls.items candidate).end requirement.hi)))))))
+
+(define (compiler-reg-scratch-register-coalesced-gap-from?
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [parents : (__tl_dyn-array i64)]
+  [requirement : CompilerRegScratchRequirement]
+  [reg : i64]
+  [_index : i64]
+  [vars : i64]) : bool
+  (let
+    [registers : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [_init : unit (set! (array-ref registers 0) reg)]
+    (compiler-reg-scratch-register-coalesced-hulls-from?
+      (compiler-reg-scratch-coalesced-hulls
+        assignments
+        interval-index
+        parents
+        (compiler-reg-greedy-pool-index-build registers 1)
+        1
+        vars)
+      requirement
+      0)))
+
+(define (compiler-reg-scratch-pick-register-with-siblings
   [assignments : CompilerRegAssignmentTable]
   [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
+  [coalesce-parents : (__tl_dyn-array i64)]
+  [coalesced-hulls : CompilerRegScratchCoalescedHulls]
   [ref-counts : (__tl_dyn-array i64)]
+  [items : (__tl_dyn-array CompilerRegScratchAssignment)]
+  [current : i64]
   [var : i64]
   [vars : i64]
   [candidates : CompilerRegIdSeq]
+  [constraint : CompilerRegScratchConstraint]
   [excluded : CompilerRegIdSeq]) : i64
   (let
     [index : i64 0]
@@ -35418,7 +36756,33 @@
           [reg-index : i64 (compiler-reg-greedy-pool-index occupancy reg)]
           (begin
             (if (and
+              (compiler-reg-scratch-constraint-allows-register? constraint reg)
               (not (compiler-reg-id-seq-contains? excluded reg))
+              (or
+                (= (array-length items) 0)
+                (not
+                  (compiler-reg-scratch-sibling-reserves-register-from?
+                    items
+                    current
+                    (array-ref items current).requirement
+                    reg
+                    0)))
+              (or
+                (= (array-length items) 0)
+                (not
+                  (if (>= reg-index 0)
+                    (compiler-reg-scratch-register-coalesced-hulls-from?
+                      coalesced-hulls
+                      (array-ref items current).requirement
+                      reg-index)
+                    (compiler-reg-scratch-register-coalesced-gap-from?
+                      assignments
+                      interval-index
+                      coalesce-parents
+                      (array-ref items current).requirement
+                      reg
+                      0
+                      (- vars (array-length items))))))
               (if (>= reg-index 0)
                 (compiler-reg-greedy-reg-free?
                   occupancy
@@ -35438,11 +36802,58 @@
             (set! index (+ index 1)))))
       result)))
 
+;; Public/test ingress for an isolated candidate. Production item assignment
+;; uses the sibling-aware route below so simultaneous modeled slots cannot
+;; alias even if the occupancy cache takes a conservative fast path.
+(define (compiler-reg-scratch-pick-register
+  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (__tl_dyn-array i64)]
+  [var : i64]
+  [vars : i64]
+  [candidates : CompilerRegIdSeq]
+  [excluded : CompilerRegIdSeq]) : i64
+  (compiler-reg-scratch-pick-register-with-siblings
+    assignments
+    occupancy
+    interval-index
+    (array.make-array i64 0)
+    (CompilerRegScratchCoalescedHulls
+      (array.make-array CompilerRegInterval 0)
+      (array.make-array i64 1)
+      0)
+    ref-counts
+    (array.make-array CompilerRegScratchAssignment 0)
+    -1
+    var
+    vars
+    candidates
+    (CompilerRegScratchConstraint
+      (CompilerRegScratchClass.Gp)
+      candidates
+      excluded
+      cabi.compiler-reg-id-invalid)
+    excluded))
+
 (define (compiler-reg-scratch-return-fixed-role?
   [role : CompilerRegScratchRole]) : bool
   (match role
     [(CompilerRegScratchRole.FloatReturnResultXmm) true]
     [(CompilerRegScratchRole.FloatReturnResultGp) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-call-target-role? [role : CompilerRegScratchRole]) : bool
+  (match role
+    [(CompilerRegScratchRole.CallTarget) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-architectural-fixed-role?
+  [role : CompilerRegScratchRole]) : bool
+  (match role
+    [(CompilerRegScratchRole.FixedRax) true]
+    [(CompilerRegScratchRole.FixedRdx) true]
+    [(CompilerRegScratchRole.FixedRcx) true]
     [_ false]))
 
 (define (compiler-reg-scratch-tail-mask-count-role?
@@ -35451,16 +36862,20 @@
     [(CompilerRegScratchRole.TailMaskCount) true]
     [_ false]))
 
-(define (compiler-reg-scratch-assign-items!
+(define (compiler-reg-scratch-assign-items-with-hulls!
   [target-abi : cabi.CompilerRegTargetAbi]
   [items : (__tl_dyn-array CompilerRegScratchAssignment)]
   [index : i64]
   [assignments : CompilerRegAssignmentTable]
   [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
+  [coalesce-parents : (__tl_dyn-array i64)]
+  [coalesced-hulls : CompilerRegScratchCoalescedHulls]
   [ref-counts : (__tl_dyn-array i64)]
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]
+  [gp-pool : CompilerRegIdSeq]
+  [xmm-pool : CompilerRegIdSeq]
   [vars : i64]) : unit
   (if (>= index (array-length items))
     unit
@@ -35468,6 +36883,16 @@
       [item : CompilerRegScratchAssignment (array-ref items index)]
       [requirement : CompilerRegScratchRequirement item.requirement]
       [constraint : CompilerRegScratchConstraint requirement.constraint]
+      [direct-fixed : bool
+        (or
+          (and
+            (compiler-reg-scratch-tail-mask-count-role? requirement.role)
+            (compiler-reg-id-seq-contains? constraint.excluded constraint.fixed))
+          (compiler-reg-scratch-return-fixed-role? requirement.role)
+          (compiler-reg-scratch-architectural-fixed-role? requirement.role)
+          (and
+            (compiler-reg-scratch-call-target-role? requirement.role)
+            (not (= constraint.fixed cabi.compiler-reg-id-invalid))))]
       [reg
         : i64
         ;; The tail-mask index is copied to ordinal 1 before the end value is
@@ -35480,100 +36905,262 @@
             constraint.excluded
             constraint.fixed)
             constraint.fixed
-            (compiler-reg-scratch-pick-register
+            (compiler-reg-scratch-pick-register-with-siblings
               assignments
               occupancy
               interval-index
+              coalesce-parents
+              coalesced-hulls
               ref-counts
+              items
+              index
               requirement.var
               vars
-              (compiler-reg-scratch-constraint-pool target-abi constraint)
+              (compiler-reg-scratch-constraint-pool gp-pool xmm-pool constraint)
+              constraint
               constraint.excluded))
           ;; A return result is the final consumer of its operand homes. Its
           ;; fixed ABI register may therefore overlap an input; a simultaneously
           ;; live RHS preservation requirement is assigned afterward and sees
           ;; this synthetic fixed home, so it must choose a distinct register.
-          (if (compiler-reg-scratch-return-fixed-role? requirement.role)
+          (if (or
+            (compiler-reg-scratch-return-fixed-role? requirement.role)
+            (compiler-reg-scratch-architectural-fixed-role? requirement.role)
+            (and
+              (compiler-reg-scratch-call-target-role? requirement.role)
+              (not (= constraint.fixed cabi.compiler-reg-id-invalid))))
             constraint.fixed
-            (compiler-reg-scratch-pick-register
+            (compiler-reg-scratch-pick-register-with-siblings
               assignments
               occupancy
               interval-index
+              coalesce-parents
+              coalesced-hulls
               ref-counts
+              items
+              index
               requirement.var
               vars
-              (compiler-reg-scratch-constraint-pool target-abi constraint)
+              (compiler-reg-scratch-constraint-pool gp-pool xmm-pool constraint)
+              constraint
               constraint.excluded)))]
+      [preserve : bool
+        (and
+          direct-fixed
+          (not (= reg cabi.compiler-reg-id-invalid))
+          (not (compiler-reg-id-seq-contains? constraint.excluded reg))
+          (not
+            (compiler-reg-scratch-register-free-from?
+              assignments
+              interval-index
+              requirement.var
+              reg
+              0
+              (- vars (array-length items)))))]
       (begin
         (if (= reg cabi.compiler-reg-id-invalid)
           unit
-          (begin
-            (compiler-reg-assignment-table-insert
-              assignments
-              requirement.var
-              (CompilerRegLocation.Register reg))
-            (compiler-reg-greedy-occupancy-record-location!
-              occupancy
-              requirement.var
-              (CompilerRegLocation.Register reg))
-            (set!
-              (array-ref items index)
-              (CompilerRegScratchAssignment requirement reg))))
-        (compiler-reg-scratch-assign-items!
+          ;; Synthetic scratch ids stay outside the assignment table and the
+          ;; ordinary occupancy storage. Earlier/later scratch siblings are
+          ;; checked directly through `items`, while occupancy continues to
+          ;; describe only real value homes.
+          (set!
+            (array-ref items index)
+            (CompilerRegScratchAssignment requirement preserve false reg)))
+        (compiler-reg-scratch-assign-items-with-hulls!
           target-abi
           items
           (+ index 1)
           assignments
           occupancy
           interval-index
+          coalesce-parents
+          coalesced-hulls
           ref-counts
           reg-arr
           rcount
+          gp-pool
+          xmm-pool
           vars)))))
 
-(define (compiler-reg-scratch-clear-group-from!
+(define (compiler-reg-scratch-assign-items!
+  [target-abi : cabi.CompilerRegTargetAbi]
   [items : (__tl_dyn-array CompilerRegScratchAssignment)]
   [index : i64]
-  [lo : i64]
-  [hi : i64]) : unit
-  (if (>= index (array-length items))
-    unit
-    (let
-      [item : CompilerRegScratchAssignment (array-ref items index)]
-      [requirement : CompilerRegScratchRequirement item.requirement]
-      (begin
-        (if (and (= requirement.lo lo) (= requirement.hi hi))
-          (set!
-            (array-ref items index)
-            (CompilerRegScratchAssignment
-              requirement
-              cabi.compiler-reg-id-invalid))
-          unit)
-        (compiler-reg-scratch-clear-group-from! items (+ index 1) lo hi)))))
+  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
+  [interval-index : CompilerRegIntervalIndex]
+  [coalesce-parents : (__tl_dyn-array i64)]
+  [ref-counts : (__tl_dyn-array i64)]
+  [reg-arr : (__tl_dyn-array i64)]
+  [rcount : i64]
+  [gp-pool : CompilerRegIdSeq]
+  [xmm-pool : CompilerRegIdSeq]
+  [vars : i64]) : unit
+  (compiler-reg-scratch-assign-items-with-hulls!
+    target-abi
+    items
+    index
+    assignments
+    occupancy
+    interval-index
+    coalesce-parents
+    (compiler-reg-scratch-coalesced-hulls
+      assignments
+      interval-index
+      coalesce-parents
+      occupancy.pool-index
+      rcount
+      (- vars (array-length items)))
+    ref-counts
+    reg-arr
+    rcount
+    gp-pool
+    xmm-pool
+    vars))
 
-;; A fused emitter must never mix a partially allocated planned group with
-;; independent scavenger choices.  If any slot in a common reservation span
-;; failed, clear every sibling slot so planned-or-scavenge handles the complete
-;; group through the legacy sound fallback.
-(define (compiler-reg-scratch-clear-incomplete-groups!
+(define (compiler-reg-scratch-sibling-conflicts?
+  [requirement : CompilerRegScratchRequirement]
+  [other : CompilerRegScratchRequirement]) : bool
+  (and
+    (< requirement.lo other.hi)
+    (< other.lo requirement.hi)
+    ;; Memory-value staging is sequential within every supported fused window.
+    ;; It may reuse another value/result scratch home after that fragment
+    ;; completes, but must remain distinct from address/index scratch still
+    ;; consumed by the final memory operand.
+    (match requirement.role
+      [(CompilerRegScratchRole.MemoryValue)
+        (match other.role
+          [(CompilerRegScratchRole.MemoryAddress) true]
+          [(CompilerRegScratchRole.MemoryIndex) true]
+          [_ false])]
+      [(CompilerRegScratchRole.FloatMemoryValueXmm) false]
+      [_ true])
+    (not
+      (or
+        (and
+          (match requirement.role
+            [(CompilerRegScratchRole.BranchTest) true]
+            [_ false])
+          (match other.role
+            [(CompilerRegScratchRole.PhiCycle) true]
+            [(CompilerRegScratchRole.PhiStage) true]
+            [_ false]))
+        (and
+          (match other.role
+            [(CompilerRegScratchRole.BranchTest) true]
+            [_ false])
+          (match requirement.role
+            [(CompilerRegScratchRole.PhiCycle) true]
+            [(CompilerRegScratchRole.PhiStage) true]
+            [_ false]))))))
+
+;; Requirements are appended in instruction order and fused groups share one
+;; monotone [lo,hi) window. Search only the adjacent overlapping window instead
+;; of rescanning every requirement in the function for every register choice.
+;; Earlier assigned siblings and later fixed siblings are both visible.
+(define (compiler-reg-scratch-sibling-reserves-register-from?
   [items : (__tl_dyn-array CompilerRegScratchAssignment)]
-  [index : i64]) : unit
-  (if (>= index (array-length items))
-    unit
-    (let
-      [item : CompilerRegScratchAssignment (array-ref items index)]
-      [requirement : CompilerRegScratchRequirement item.requirement]
-      (begin
-        (if (and
-          (> (- requirement.hi requirement.lo) 1)
-          (= item.register cabi.compiler-reg-id-invalid))
-          (compiler-reg-scratch-clear-group-from!
-            items
-            0
-            requirement.lo
-            requirement.hi)
-          unit)
-        (compiler-reg-scratch-clear-incomplete-groups! items (+ index 1))))))
+  [current : i64]
+  [requirement : CompilerRegScratchRequirement]
+  [reg : i64]
+  [_index : i64]) : bool
+  (let
+    [len : i64 (array-length items)]
+    [index : i64 (- current 1)]
+    [reserved : bool false]
+    (begin
+      (while (and
+        (not reserved)
+        (>= index 0)
+        (> (array-ref items index).requirement.hi requirement.lo))
+        (let
+          [item : CompilerRegScratchAssignment (array-ref items index)]
+          (begin
+            (if (and
+              (compiler-reg-scratch-sibling-conflicts?
+                requirement
+                item.requirement)
+              (or
+                (= item.register reg)
+                (= item.requirement.constraint.fixed reg)))
+              (set! reserved true)
+              unit)
+            (set! index (- index 1)))))
+      (set! index (+ current 1))
+      (while (and
+        (not reserved)
+        (< index len)
+        (< (array-ref items index).requirement.lo requirement.hi))
+        (let
+          [item : CompilerRegScratchAssignment (array-ref items index)]
+          (begin
+            (if (and
+              (compiler-reg-scratch-sibling-conflicts?
+                requirement
+                item.requirement)
+              (or
+                (= item.register reg)
+                (= item.requirement.constraint.fixed reg)))
+              (set! reserved true)
+              unit)
+            (set! index (+ index 1)))))
+      reserved)))
+
+(define (compiler-reg-scratch-items-monotone?
+  [items : (__tl_dyn-array CompilerRegScratchAssignment)]) : bool
+  (let
+    [index : i64 1]
+    [ordered : bool true]
+    (begin
+      (while (and ordered (< index (array-length items)))
+        (let
+          [previous : CompilerRegScratchRequirement
+            (array-ref items (- index 1)).requirement]
+          [current : CompilerRegScratchRequirement
+            (array-ref items index).requirement]
+          (begin
+            (if (and (>= current.lo previous.lo) (>= current.hi previous.hi))
+              unit
+              (set! ordered false))
+            (set! index (+ index 1)))))
+      ordered)))
+
+(define (compiler-reg-scratch-pick-preserved-register
+  [gp-pool : CompilerRegIdSeq]
+  [xmm-pool : CompilerRegIdSeq]
+  [items : (__tl_dyn-array CompilerRegScratchAssignment)]
+  [index : i64]) : i64
+  (let
+    [item : CompilerRegScratchAssignment (array-ref items index)]
+    [requirement : CompilerRegScratchRequirement item.requirement]
+    [constraint : CompilerRegScratchConstraint requirement.constraint]
+    [candidates : CompilerRegIdSeq
+      (compiler-reg-scratch-constraint-pool gp-pool xmm-pool constraint)]
+    [candidate-index : i64 0]
+    [result : i64 cabi.compiler-reg-id-invalid]
+    (begin
+      (while (and
+        (< candidate-index (compiler-reg-id-seq-count candidates))
+        (= result cabi.compiler-reg-id-invalid))
+        (let
+          [reg : i64 (compiler-reg-id-seq-ref candidates candidate-index)]
+          (begin
+            (if (and
+              (compiler-reg-scratch-constraint-allows-register? constraint reg)
+              (not (compiler-reg-id-seq-contains? constraint.excluded reg))
+              (not
+                (compiler-reg-scratch-sibling-reserves-register-from?
+                  items
+                  index
+                  requirement
+                  reg
+                  0)))
+              (set! result reg)
+              unit)
+            (set! candidate-index (+ candidate-index 1)))))
+      result)))
 
 (define (compiler-reg-scratch-callee-saved-register?
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -35591,54 +37178,143 @@
             (compiler-reg-xmm-callee-registers-for-abi target-abi)
             reg))])))
 
-(define (compiler-reg-scratch-compact-assignments-from
-  [target-abi : cabi.CompilerRegTargetAbi]
+;; Phi staging is consumed one load/store at a time. Unlike the cycle register,
+;; it does not carry a value across the parallel-copy sequence, so emission can
+;; save and restore a destination/source home locally around each memory-memory
+;; copy. This is the bounded last resort for edges whose phi destinations cover
+;; the complete GP pool (a real Win64 self-host shape).
+(define (compiler-reg-scratch-pick-phi-stage-preserved-register
+  [gp-pool : CompilerRegIdSeq]
+  [xmm-pool : CompilerRegIdSeq]
   [items : (__tl_dyn-array CompilerRegScratchAssignment)]
-  [index : i64]
-  [success : i64]
-  [vars : i64]
-  [seen : CompilerRegIdSeq]
-  [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
+  [index : i64]) : i64
+  (let
+    [item : CompilerRegScratchAssignment (array-ref items index)]
+    [requirement : CompilerRegScratchRequirement item.requirement]
+    [constraint : CompilerRegScratchConstraint requirement.constraint]
+    [candidates : CompilerRegIdSeq
+      (compiler-reg-scratch-constraint-pool gp-pool xmm-pool constraint)]
+    [candidate-index : i64 0]
+    [result : i64 cabi.compiler-reg-id-invalid]
+    (begin
+      (while (and
+        (< candidate-index (compiler-reg-id-seq-count candidates))
+        (= result cabi.compiler-reg-id-invalid))
+        (let
+          [reg : i64 (compiler-reg-id-seq-ref candidates candidate-index)]
+          (begin
+            (if (and
+              (compiler-reg-scratch-constraint-allows-register? constraint reg)
+              (not
+                (compiler-reg-scratch-sibling-reserves-register-from?
+                  items
+                  index
+                  requirement
+                  reg
+                  0)))
+              (set! result reg)
+              unit)
+            (set! candidate-index (+ candidate-index 1)))))
+      result)))
+
+;; The ordinary coloring remains shape-stable. When no free constrained home
+;; exists, make one bounded terminal choice from the same physical pool and
+;; model the conflicting live-through value as a local save/restore split. The
+;; backend recognizes this occupied planned home and never enters the general
+;; scavenger. Operand/result homes remain hard exclusions, and sibling/fixed
+;; requirements participate in the same decision.
+(define (compiler-reg-scratch-phi-cycle-role? [role : CompilerRegScratchRole]) : bool
+  (match role
+    [(CompilerRegScratchRole.PhiCycle) true]
+    [(CompilerRegScratchRole.PhiCycleXmm) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-assign-preserved-items!
+  [gp-pool : CompilerRegIdSeq]
+  [xmm-pool : CompilerRegIdSeq]
+  [items : (__tl_dyn-array CompilerRegScratchAssignment)]
+  [index : i64]) : unit
   (if (>= index (array-length items))
-    assignments
+    unit
     (let
       [item : CompilerRegScratchAssignment (array-ref items index)]
-      [reg : i64 item.register]
-      (if (or
-        (= reg cabi.compiler-reg-id-invalid)
-        (not (compiler-reg-scratch-callee-saved-register? target-abi reg))
-        (compiler-reg-id-seq-contains? seen reg))
-        (compiler-reg-scratch-compact-assignments-from
-          target-abi
+      [requirement : CompilerRegScratchRequirement item.requirement]
+      [frame : bool
+        (and
+          (= item.register cabi.compiler-reg-id-invalid)
+          (compiler-reg-scratch-phi-cycle-role? requirement.role))]
+      [reg : i64
+        (if frame
+          cabi.compiler-reg-id-invalid
+          (if (= item.register cabi.compiler-reg-id-invalid)
+            (let
+              [preserved : i64
+                (compiler-reg-scratch-pick-preserved-register
+                  gp-pool
+                  xmm-pool
+                  items
+                  index)]
+              (if (and
+                (= preserved cabi.compiler-reg-id-invalid)
+                (match requirement.role
+                  [(CompilerRegScratchRole.PhiStage) true]
+                  [_ false]))
+                (compiler-reg-scratch-pick-phi-stage-preserved-register
+                  gp-pool
+                  xmm-pool
+                  items
+                  index)
+                preserved))
+            item.register))]
+      (begin
+        (if (= item.register cabi.compiler-reg-id-invalid)
+          (set!
+            (array-ref items index)
+            (CompilerRegScratchAssignment requirement (not frame) frame reg))
+          unit)
+        (compiler-reg-scratch-assign-preserved-items!
+          gp-pool
+          xmm-pool
           items
-          (+ index 1)
-          success
-          vars
-          seen
-          assignments)
-        (compiler-reg-assignments-prepend
-          (CompilerRegAssignment
-            (+ vars success)
-            (CompilerRegLocation.Register reg))
-          (compiler-reg-scratch-compact-assignments-from
-            target-abi
-            items
-            (+ index 1)
-            (+ success 1)
-            vars
-            (compiler-reg-id-seq-prepend reg seen)
-            assignments))))))
+          (+ index 1))))))
 
-(define (compiler-reg-plan-with-scratch-vreg-result
+;; Scratch pseudos deliberately stay outside the ordinary assignment table, so
+;; the backend cannot discover their nonvolatile homes through its normal plan
+;; scan. Publish the complete physical-home mask separately: the prologue uses
+;; it for ABI preservation while `CompilerRegScratchAssignment.preserve` remains
+;; reserved for an ordinary live-through overlap at the scratch interval.
+(define (compiler-reg-scratch-plan-register-mask
+  [plan : CompilerRegScratchPlan]) : i64
+  (let
+    [items : (__tl_dyn-array CompilerRegScratchAssignment) plan.items]
+    [index : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< index (array-length items))
+        (let
+          [reg : i64 (array-ref items index).register]
+          [ownership : i64
+            (if (and (>= reg 0) (< reg 64))
+              reg
+              (cabi.compiler-abi-register-ownership-id reg))]
+          (begin
+            (if (and (>= ownership 0) (< ownership 64))
+              (set! mask (bit-or mask (shl 1 ownership)))
+              unit)
+            (set! index (+ index 1)))))
+      mask)))
+
+(define (compiler-reg-plan-with-scratch-vreg-result-with-groups
   [_type-segment-bases : i64]
   [_abi : cabi.CompilerRegTargetAbi]
   [_func : ir.CompilerIrFunction]
+  [_group-vars : live.CompilerLiveI64Set]
   [plan : CompilerRegPlan]
   [_vars : i64]) : CompilerRegScratchPlanResult
   (cfg
     scratch-vreg
     (match _func
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      [(ir.CompilerIrFunction.Function function-name _ _ _ blocks)
         (let
           [phi-targets : CompilerRegLabelSeq
             (compiler-reg-scratch-phi-targets-blocks blocks)]
@@ -35650,6 +37326,7 @@
               _abi
               (compiler-reg-plan-assignments plan)
               (compiler-reg-plan-types plan)
+              _group-vars
               blocks
               phi-targets
               phi-xmm-targets
@@ -35671,7 +37348,8 @@
                   (compiler-reg-plan-assignments plan)
                   (compiler-reg-scratch-phi-dst-registers-blocks
                     (compiler-reg-plan-assignments plan)
-                    blocks))]
+                    blocks)
+                  (live.compiler-live-ir-block-list-to-seq blocks))]
               [base-type-info : CompilerRegVarTypes
                 (compiler-reg-plan-types plan)]
               [liveness-handle : CompilerRegLivenessHandle
@@ -35725,6 +37403,7 @@
                         scratch-policy
                         (compiler-reg-plan-assignments plan)
                         (compiler-reg-plan-types plan)
+                        _group-vars
                         blocks
                         phi-targets
                         phi-xmm-targets
@@ -35739,6 +37418,10 @@
                         segments
                         present
                         types)
+                      (if (compiler-reg-scratch-items-monotone? items)
+                        unit
+                        (io.panic
+                          "regalloc: modeled scratch requirements are out of order"))
                       (let
                         [type-info : CompilerRegVarTypes
                           (CompilerRegVarTypes present types)]
@@ -35752,10 +37435,13 @@
                             (compiler-reg-interval-seq-empty))]
                         [plan-assignments : CompilerRegAssignmentTable
                           (compiler-reg-plan-assignments plan)]
+                        ;; The late planner reads ordinary homes but never
+                        ;; publishes synthetic ids into the assignment table.
+                        ;; Avoid cloning and default-filling an out-vars table
+                        ;; for every function; sibling scratch homes live in
+                        ;; the plan items themselves.
                         [assignments : CompilerRegAssignmentTable
-                          (compiler-reg-assignment-table-copy-with-capacity
-                            plan-assignments
-                            out-vars)]
+                          plan-assignments]
                         [scratch-registers : (__tl_dyn-array i64)
                           (compiler-reg-scratch-register-array _abi)]
                         [scratch-register-count : i64
@@ -35767,12 +37453,20 @@
                             scratch-registers
                             scratch-register-count)]
                         [scratch-ref-counts : (__tl_dyn-array i64)
-                          (array.make-array i64 out-vars)]
+                          (array.make-array i64 _vars)]
+                        [gp-pool : CompilerRegIdSeq
+                          (compiler-reg-scratch-default-pool
+                            _abi
+                            (CompilerRegScratchClass.Gp))]
+                        [xmm-pool : CompilerRegIdSeq
+                          (compiler-reg-scratch-default-pool
+                            _abi
+                            (CompilerRegScratchClass.Xmm))]
                         (begin
-                          ;; Constraint-aware, non-evicting assignment: every
-                          ;; synthetic interval and all previously assigned homes
-                          ;; are visible before a register is selected.  Failure
-                          ;; leaves the item register empty for safe fallback.
+                          ;; Keep deterministic free-register choices first.
+                          ;; Genuine pressure failures then receive one bounded
+                          ;; modeled local-preservation choice; no retry loop can
+                          ;; perturb the published ordinary coloring.
                           (compiler-reg-scratch-assign-items!
                             _abi
                             items
@@ -35780,13 +37474,21 @@
                             assignments
                             scratch-occupancy
                             interval-index
+                            (compiler-reg-plan-coalesce-parents plan)
                             scratch-ref-counts
                             scratch-registers
                             scratch-register-count
+                            gp-pool
+                            xmm-pool
                             out-vars)
-                          (compiler-reg-scratch-clear-incomplete-groups!
+                          (compiler-reg-scratch-assign-preserved-items!
+                            gp-pool
+                            xmm-pool
                             items
                             0)
+                          (compiler-reg-scratch-require-complete!
+                            items
+                            function-name)
                           (CompilerRegScratchPlanResult.Result
                             (match plan
                               [(CompilerRegPlan.Plan
@@ -35798,22 +37500,10 @@
                                   split-plan)
                                 (CompilerRegPlan.Plan
                                   ;; Scratch requirements are not IR values and
-                                  ;; never need stack slots. Publish each
-                                  ;; successful callee-saved home only once,
-                                  ;; densely after the real vars, so prologue
-                                  ;; accounting sees it without making
-                                  ;; caller-saved temporaries inflate every
-                                  ;; var-sized backend table.
-                                  (compiler-reg-assignment-table-merge
-                                    (compiler-reg-scratch-compact-assignments-from
-                                      _abi
-                                      items
-                                      0
-                                      0
-                                      _vars
-                                      (compiler-reg-id-seq-empty)
-                                      (compiler-reg-assignment-table-empty))
-                                    base-assignments)
+                                  ;; must never enter the real assignment/slot
+                                  ;; domain. Callee-saved scratch homes carry a
+                                  ;; local-preservation marker instead.
+                                  base-assignments
                                   ineligible
                                   base-intervals
                                   base-types
@@ -35821,6 +37511,23 @@
                                   split-plan)])
                             (CompilerRegScratchPlan items firsts slot-counts))))))]))))])
     (CompilerRegScratchPlanResult.Result plan (compiler-reg-scratch-plan-empty))))
+
+(define (compiler-reg-plan-with-scratch-vreg-result
+  [type-segment-bases : i64]
+  [abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [plan : CompilerRegPlan]
+  [vars : i64]) : CompilerRegScratchPlanResult
+  (compiler-reg-plan-with-scratch-vreg-result-with-groups
+    type-segment-bases
+    abi
+    func
+    (compiler-reg-function-group-vars
+      type-segment-bases
+      func
+      (compiler-reg-plan-types plan))
+    plan
+    vars))
 
 (define (compiler-reg-caller-save-remap-fill!
   [remap : (__tl_dyn-array i64)]

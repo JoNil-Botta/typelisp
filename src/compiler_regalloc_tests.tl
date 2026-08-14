@@ -8554,6 +8554,153 @@
         (cabi.CompilerRegTargetAbi.Windows)
         (cabi.compiler-abi-xmm-register-id 5)))))
 
+(define (compiler-reg-scratch-call-result-exclusions-ok?) : bool
+  (let
+    [assignments : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignments-prepend
+        (reg.CompilerRegAssignment
+          0
+          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rbx))
+        (reg.compiler-reg-assignments-prepend
+          (reg.CompilerRegAssignment
+            1
+            (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r10))
+          (reg.compiler-reg-assignment-table-empty)))]
+    [direct : reg.CompilerRegIdSeq
+      (reg.compiler-reg-scratch-instr-registers
+        assignments
+        (ir.CompilerIrInstr.Call
+          0
+          0
+          (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 64))
+          (ast.AstType.U64)))]
+    [indirect : reg.CompilerRegIdSeq
+      (reg.compiler-reg-scratch-instr-registers
+        assignments
+        (ir.CompilerIrInstr.CallIndirect
+          0
+          (ir.CompilerIrValue.Var 1)
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.U64)))]
+    (and
+      (reg.compiler-reg-id-seq-contains? direct cabi.compiler-reg-id-rbx)
+      (reg.compiler-reg-id-seq-contains? indirect cabi.compiler-reg-id-rbx)
+      (reg.compiler-reg-id-seq-contains? indirect cabi.compiler-reg-id-r10))))
+
+(define (compiler-reg-scratch-coalesced-home-hull-preserve-ok?) : bool
+  (let
+    [intervals : reg.CompilerRegIntervalSeq
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 0 0 2)
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 1 8 10)
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 2 4 5)
+            (reg.compiler-reg-interval-seq-empty))))]
+    [index : reg.CompilerRegIntervalIndex
+      (reg.compiler-reg-interval-index-build intervals 3)]
+    [segmented-starts : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [segmented-ends : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [segmented-segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
+      (array.make-array reg.CompilerRegIntervalSeq 3)]
+    [_segmented-init : unit
+      (begin
+        (set! (array-ref segmented-starts 0) 0)
+        (set! (array-ref segmented-starts 1) -1)
+        (set! (array-ref segmented-starts 2) 4)
+        (set! (array-ref segmented-ends 0) 10)
+        (set! (array-ref segmented-ends 1) -1)
+        (set! (array-ref segmented-ends 2) 5)
+        (set!
+          (array-ref segmented-segments 0)
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 0 0 2)
+            (reg.compiler-reg-interval-seq-prepend
+              (reg.CompilerRegInterval 0 8 10)
+              (reg.compiler-reg-interval-seq-empty))))
+        (set!
+          (array-ref segmented-segments 1)
+          (reg.compiler-reg-interval-seq-empty))
+        (set!
+          (array-ref segmented-segments 2)
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 2 4 5)
+            (reg.compiler-reg-interval-seq-empty))))]
+    [segmented-index : reg.CompilerRegIntervalIndex
+      (reg.CompilerRegIntervalIndex
+        segmented-starts
+        segmented-ends
+        segmented-segments)]
+    [assignments : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-table-insert
+        (reg.compiler-reg-assignment-table-insert
+          (reg.compiler-reg-assignment-table-make 3)
+          0
+          (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rdi))
+        1
+        (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rdi))]
+    [coalesced : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [independent : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [requirement : reg.CompilerRegScratchRequirement
+      (reg.CompilerRegScratchRequirement
+        4
+        0
+        (reg.CompilerRegScratchRole.MemoryAddress)
+        (reg.CompilerRegScratchConstraint
+          (reg.CompilerRegScratchClass.Gp)
+          (reg.compiler-reg-id-seq-empty)
+          (reg.compiler-reg-id-seq-empty)
+          cabi.compiler-reg-id-invalid)
+        4
+        5
+        2)]
+    [_parents-init : unit
+      (begin
+        (set! (array-ref coalesced 0) 0)
+        (set! (array-ref coalesced 1) 0)
+        (set! (array-ref coalesced 2) 2)
+        (set! (array-ref independent 0) 0)
+        (set! (array-ref independent 1) 1)
+        (set! (array-ref independent 2) 2))]
+    (and
+      ;; Neither expanded member overlaps the scratch point by itself.
+      (reg.compiler-reg-scratch-register-free-from?
+        assignments
+        index
+        2
+        cabi.compiler-reg-id-rdi
+        0
+        3)
+      ;; The exact coalesced class gap excludes its shared physical home.
+      (reg.compiler-reg-scratch-register-coalesced-gap-from?
+        assignments
+        index
+        coalesced
+        requirement
+        cabi.compiler-reg-id-rdi
+        0
+        2)
+      ;; One segmented vreg can likewise carry its value across a modeled
+      ;; lowering group even when its precise segments leave the point free.
+      (reg.compiler-reg-scratch-register-coalesced-gap-from?
+        assignments
+        segmented-index
+        independent
+        requirement
+        cabi.compiler-reg-id-rdi
+        0
+        2)
+      ;; Unrelated values with the same physical home keep their precise gaps.
+      (not
+        (reg.compiler-reg-scratch-register-coalesced-gap-from?
+          assignments
+          index
+          independent
+          requirement
+          cabi.compiler-reg-id-rdi
+          0
+          2)))))
+
 (define (compiler-reg-early-scratch-never-spills-ok?) : bool
   (let
     [intervals : reg.CompilerRegIntervalSeq
@@ -13707,6 +13854,12 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-scratch-callee-saved-registers-ok?"
       (compiler-reg-scratch-callee-saved-registers-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-scratch-call-result-exclusions-ok?"
+      (compiler-reg-scratch-call-result-exclusions-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-scratch-coalesced-home-hull-preserve-ok?"
+      (compiler-reg-scratch-coalesced-home-hull-preserve-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-early-scratch-never-spills-ok?"
       (compiler-reg-early-scratch-never-spills-ok?))

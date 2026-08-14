@@ -2051,8 +2051,16 @@
   10)
 (define compiler-backend-scratch-i64-current-instr-reserved-mask : i64
   11)
-(define compiler-backend-scratch-i64-count : i64
+(define compiler-backend-scratch-i64-current-planned-preserve-count : i64
   12)
+(define compiler-backend-scratch-i64-current-planned-local-preserve-count : i64
+  13)
+(define compiler-backend-scratch-i64-current-source-function : i64
+  14)
+(define compiler-backend-scratch-i64-planned-scratch-reg-mask : i64
+  15)
+(define compiler-backend-scratch-i64-count : i64
+  16)
 (define compiler-backend-scratch-bool-emergency-pending : i64
   0)
 (define compiler-backend-scratch-bool-emergency-used : i64
@@ -2083,8 +2091,12 @@
   7)
 (define compiler-backend-scratch-i64-array-scavenge-scratch-masks : i64
   8)
-(define compiler-backend-scratch-i64-array-count : i64
+(define compiler-backend-scratch-i64-array-current-planned-preserve-regs : i64
   9)
+(define compiler-backend-scratch-i64-array-current-planned-local-preserve-regs : i64
+  10)
+(define compiler-backend-scratch-i64-array-count : i64
+  11)
 (define compiler-backend-scratch-bool-array-const-hoist-site-wide : i64
   0)
 (define compiler-backend-scratch-bool-array-const-hoist-site-frame : i64
@@ -4455,11 +4467,10 @@
 ;; query is an O(1) array read. `active` gates the function-state view; callers
 ;; of emit helpers outside whole-function emission (unit tests, closure-entry
 ;; adapters) read the same authoritative table from their context. The rax
-;; override mirrors the single-entry delta that
-;; compiler-backend-rax-call-arg-assignments inserts for call-result
-;; forwarding: while that copied override table flows through the call-arg emitters,
-;; `rax-override-var` names the one var whose home the insert pins to %rax
-;; (the tables agree on every other var, so the shared view stays exact).
+;; override is the single-entry call-result-forwarding delta: during call-arg
+;; emission, `rax-override-var` names the one var whose home is pinned to %rax.
+;; It applies to both the dense view and the context-table fallback, avoiding an
+;; otherwise linear assignment-table copy for every forwarded call.
 ;; Short, emission-local home overrides used by the adjacent constant-divmod
 ;; folds.  They never alter the allocator plan: a producer and the divmod it
 ;; feeds may temporarily agree on the divmod SRC, and a single-use result may
@@ -4521,16 +4532,16 @@
             (compiler-backend-function-state-i64
               function-state
               compiler-backend-function-i64-home-override1-reg)))]
+      [(and (>= rax-override-var 0) (= var rax-override-var))
+        (compiler_regalloc.CompilerRegMaybeLocation.Some
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))]
       [(compiler-backend-function-state-bool?
           function-state
           compiler-backend-function-bool-emit-assignment-index-active)
-        (if (and (>= rax-override-var 0) (= var rax-override-var))
-          (compiler_regalloc.CompilerRegMaybeLocation.Some
-            (compiler_regalloc.CompilerRegLocation.Register
-              compiler_abi.compiler-reg-id-rax))
-          (compiler_regalloc.compiler-reg-assignment-table-lookup
-            assignment-index
-            var))]
+        (compiler_regalloc.compiler-reg-assignment-table-lookup
+          assignment-index
+          var)]
       [else (compiler_regalloc.compiler-reg-assignment-lookup assignments var)])))
 
 (define (compiler-backend-function-state-rax-forward-pending-var
@@ -15159,7 +15170,15 @@
     (compiler-backend-plan-uses-reg? backend-state assignments reg)
     (compiler-backend-const-hoist-uses-reg?
       (compiler-backend-state-function-state backend-state)
-      reg)))
+      reg)
+    (not
+      (=
+        (bit-and
+          (compiler-backend-function-scratch-i64
+            (compiler-backend-state-function-state backend-state)
+            compiler-backend-scratch-i64-planned-scratch-reg-mask)
+          (compiler-backend-plan-reg-id-bit reg))
+        0))))
 
 (define (compiler-backend-emit-save-callee-reg
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -18888,19 +18907,27 @@
     (ResultCompilerBackend.Ok
       (compiler-backend-emit-group-word-move src dst sse?))
     (let
+      ;; Incoming parameter materialization runs before the emitted body. The
+      ;; body's cursor is nevertheless left at its final instruction by the
+      ;; time this text is assembled, so an ordinary `*-here` query observes
+      ;; unrelated end-of-body pressure. Parameter homes are already excluded
+      ;; by the caller; choose the remaining staging register against the true
+      ;; pre-body occupancy (zero), as scalar stack parameters do.
       [scratch : String
         (if sse?
-          (compiler-backend-scavenge-xmm-reg
-            -1
+          (compiler-backend-scavenge-pick-from-mask
+            (compiler-backend-state-function-state backend-state)
+            0
             exclude
             exclude-n
             "%xmm2"
-            backend-state)
-          (compiler-backend-scavenge-reg-here
+            compiler-backend-scavenge-xmm-candidate-pool)
+          (compiler-backend-scavenge-pick-with-mask
+            (compiler-backend-state-function-state backend-state)
+            0
             exclude
             exclude-n
-            "%r8"
-            backend-state))]
+            "%r8"))]
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
           (compiler-backend-emit-group-word-move src scratch sse?)
@@ -19684,13 +19711,31 @@
   [dst0 : String]
   [dst1 : String]
   [sibling : String]
+  [planned : String]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
   ;; Aggregate word copies are internal compiler sequences, not ABI returns.
   ;; Select their SSE staging registers through the interval-aware scavenger so
   ;; allocator-owned XMM0/XMM1 homes cannot be silently clobbered.
-  (compiler-backend-scavenge-xmm-reg
+  (compiler-backend-planned-or-scavenge-xmm-reg
+    planned
     dst
+    (make-array src0 src1 dst0 dst1 sibling)
+    5
+    fallback
+    backend-state))
+
+(define (compiler-backend-group-copy-gp-scratch
+  [src0 : String]
+  [src1 : String]
+  [dst0 : String]
+  [dst1 : String]
+  [sibling : String]
+  [planned : String]
+  [fallback : String]
+  [backend-state : CompilerBackendState]) : String
+  (compiler-backend-planned-or-scavenge-reg-here
+    planned
     (make-array src0 src1 dst0 dst1 sibling)
     5
     fallback
@@ -19700,7 +19745,7 @@
 ;; Preserve the historical split-register sequence when its second register is
 ;; free. A true cross-word alias loads both words before either store; the
 ;; sequential case remains correct when scavenging must choose another register.
-(define (compiler-backend-emit-group-copy
+(define (compiler-backend-emit-group-copy-with-plan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -19708,6 +19753,8 @@
   [vars : i64]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
+  [planned0 : String]
+  [planned1 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match src
     [(compiler_ir_types.CompilerIrValue.Var src-var)
@@ -19761,9 +19808,18 @@
                               dst0
                               dst1
                               ""
+                              planned0
                               "%xmm0"
                               backend-state)
-                            "%rax")]
+                            (compiler-backend-group-copy-gp-scratch
+                              src0
+                              src1
+                              dst0
+                              dst1
+                              ""
+                              planned0
+                              "%rax"
+                              backend-state))]
                         [reg1 : String
                           (if sse1?
                             (compiler-backend-group-copy-xmm-scratch
@@ -19773,15 +19829,24 @@
                               dst0
                               dst1
                               reg0
+                              planned1
                               (if sse0?
                                 "%xmm1"
                                 "%xmm0")
                               backend-state)
-                            (compiler-backend-group-copy-reg1
-                              type-segment-bases
-                              program-index
-                              ty
-                              reg0))]
+                            (compiler-backend-group-copy-gp-scratch
+                              src0
+                              src1
+                              dst0
+                              dst1
+                              reg0
+                              planned1
+                              (compiler-backend-group-return-reg
+                                type-segment-bases
+                                program-index
+                                ty
+                                1)
+                              backend-state))]
                         (ResultCompilerBackend.Ok
                           (if (string.eq dst0 src1)
                             (str_cat.str-cat
@@ -19832,6 +19897,27 @@
           (compiler_diagnostic.compiler-diagnostic-at-start
             ""
             "backend: register-group load requires var operand")))]))
+
+(define (compiler-backend-emit-group-copy
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [vars : i64]
+  [ty : compiler_ast_types.AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (compiler-backend-emit-group-copy-with-plan
+    type-segment-bases
+    assignments
+    dst
+    src
+    vars
+    ty
+    program-index
+    ""
+    ""
+    backend-state))
 
 (define (compiler-backend-group-stack-exclude [operand : String]) : (__tl_dyn-array
     String)
@@ -22556,40 +22642,36 @@
   (match synth
     [(CompilerBackendConstHoistSynth n _ _ _) (+ vars n)]))
 
-(define (compiler-backend-const-hoist-extend-assignments-from
-  [regs : (__tl_dyn-array i64)]
-  [n : i64]
-  [i : i64]
-  [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
-  (if (>= i n)
-    assignments
-    (compiler_regalloc.compiler-reg-assignments-prepend
-      (compiler_regalloc.CompilerRegAssignment
-        (+ vars i)
-        (if (= (array-ref regs i) compiler_abi.compiler-reg-id-invalid)
-          (compiler_regalloc.CompilerRegLocation.Spill
-            (compiler_regalloc.compiler-reg-stack-slot-offset (+ vars i)))
-          (compiler_regalloc.CompilerRegLocation.Register (array-ref regs i))))
-      (compiler-backend-const-hoist-extend-assignments-from
-        regs
-        n
-        (+ i 1)
-        vars
-        assignments))))
-
 (define (compiler-backend-const-hoist-extend-assignments
   [synth : CompilerBackendConstHoistSynth]
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
   (match synth
     [(CompilerBackendConstHoistSynth n regs _ _)
-      (compiler-backend-const-hoist-extend-assignments-from
-        regs
-        n
-        0
-        vars
-        assignments)]))
+      (if (= n 0)
+        assignments
+        (let
+          [out : compiler_regalloc.CompilerRegAssignmentTable
+            (compiler_regalloc.compiler-reg-assignment-table-copy-with-capacity
+              (& assignments)
+              (+ vars n))]
+          [i : i64 0]
+          (begin
+            (while (< i n)
+              (begin
+                (compiler_regalloc.compiler-reg-assignment-table-insert
+                  out
+                  (+ vars i)
+                  (if (=
+                    (array-ref regs i)
+                    compiler_abi.compiler-reg-id-invalid)
+                    (compiler_regalloc.CompilerRegLocation.Spill
+                      (compiler_regalloc.compiler-reg-stack-slot-offset
+                        (+ vars i)))
+                    (compiler_regalloc.CompilerRegLocation.Register
+                      (array-ref regs i))))
+                (set! i (+ i 1))))
+            out)))]))
 
 (define (compiler-backend-const-hoist-extend-intervals-from
   [lo : (__tl_dyn-array i64)]
@@ -22711,46 +22793,40 @@
   [vars : i64]) : i64
   (+ vars (compiler-backend-scratch-plan-success-count plan)))
 
-(define (compiler-backend-scratch-plan-extend-assignments-from
-  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
-  [index : i64]
-  [success : i64]
-  [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
-  (if (>= index (array-length items))
-    assignments
-    (let
-      [item : compiler_regalloc.CompilerRegScratchAssignment
-        (array-ref items index)]
-      [reg : i64 item.register]
-      (if (= reg compiler_abi.compiler-reg-id-invalid)
-        (compiler-backend-scratch-plan-extend-assignments-from
-          items
-          (+ index 1)
-          success
-          vars
-          assignments)
-        (compiler_regalloc.compiler-reg-assignments-prepend
-          (compiler_regalloc.CompilerRegAssignment
-            (+ vars success)
-            (compiler_regalloc.CompilerRegLocation.Register reg))
-          (compiler-backend-scratch-plan-extend-assignments-from
-            items
-            (+ index 1)
-            (+ success 1)
-            vars
-            assignments))))))
-
 (define (compiler-backend-scratch-plan-extend-assignments
   [plan : compiler_regalloc.CompilerRegScratchPlan]
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
-  (compiler-backend-scratch-plan-extend-assignments-from
-    plan.items
-    0
-    0
-    vars
-    assignments))
+  (let
+    [count : i64 (compiler-backend-scratch-plan-success-count plan)]
+    (if (= count 0)
+      assignments
+      (let
+        [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+          plan.items]
+        [out : compiler_regalloc.CompilerRegAssignmentTable
+          (compiler_regalloc.compiler-reg-assignment-table-copy-with-capacity
+            (& assignments)
+            (+ vars count))]
+        [index : i64 0]
+        [success : i64 0]
+        (begin
+          (while (< index (array-length items))
+            (let
+              [item : compiler_regalloc.CompilerRegScratchAssignment
+                (array-ref items index)]
+              [reg : i64 item.register]
+              (begin
+                (if (= reg compiler_abi.compiler-reg-id-invalid)
+                  unit
+                  (begin
+                    (compiler_regalloc.compiler-reg-assignment-table-insert
+                      out
+                      (+ vars success)
+                      (compiler_regalloc.CompilerRegLocation.Register reg))
+                    (set! success (+ success 1))))
+                (set! index (+ index 1)))))
+          out)))))
 
 (define (compiler-backend-scratch-plan-extend-intervals-from
   [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
@@ -22798,17 +22874,154 @@
     vars
     intervals))
 
+(define (compiler-backend-current-planned-preserve-index
+  [function-state : CompilerBackendFunctionState]
+  [reg : i64]) : i64
+  (let
+    [regs : (__tl_dyn-array i64)
+      (compiler-backend-function-scratch-i64-array
+        function-state
+        compiler-backend-scratch-i64-array-current-planned-preserve-regs)]
+    [count : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-current-planned-preserve-count)]
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index count) (< found 0))
+        (begin
+          (if (= (array-ref regs index) reg)
+            (set! found index)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-backend-current-planned-preserve-add!
+  [function-state : CompilerBackendFunctionState]
+  [reg : i64]) : unit
+  (if (or
+    (= reg compiler_abi.compiler-reg-id-invalid)
+    (>= (compiler-backend-current-planned-preserve-index function-state reg) 0))
+    unit
+    (let
+      [count : i64
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-current-planned-preserve-count)]
+      [regs : (__tl_dyn-array i64)
+        (compiler-backend-emergency-regs-push
+          (compiler-backend-function-scratch-i64-array
+            function-state
+            compiler-backend-scratch-i64-array-current-planned-preserve-regs)
+          count
+          reg)]
+      (begin
+        (compiler-backend-function-scratch-set-i64-array!
+          function-state
+          compiler-backend-scratch-i64-array-current-planned-preserve-regs
+          regs)
+        (compiler-backend-function-scratch-set-i64!
+          function-state
+          compiler-backend-scratch-i64-current-planned-preserve-count
+          (+ count 1))))))
+
+(define (compiler-backend-current-planned-local-preserve-index
+  [function-state : CompilerBackendFunctionState]
+  [reg : i64]) : i64
+  (let
+    [regs : (__tl_dyn-array i64)
+      (compiler-backend-function-scratch-i64-array
+        function-state
+        compiler-backend-scratch-i64-array-current-planned-local-preserve-regs)]
+    [count : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-current-planned-local-preserve-count)]
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index count) (< found 0))
+        (begin
+          (if (= (array-ref regs index) reg)
+            (set! found index)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-backend-current-planned-local-preserve-add!
+  [function-state : CompilerBackendFunctionState]
+  [reg : i64]) : unit
+  (if (or
+    (= reg compiler_abi.compiler-reg-id-invalid)
+    (>=
+      (compiler-backend-current-planned-local-preserve-index function-state reg)
+      0))
+    unit
+    (let
+      [count : i64
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-current-planned-local-preserve-count)]
+      [regs : (__tl_dyn-array i64)
+        (compiler-backend-emergency-regs-push
+          (compiler-backend-function-scratch-i64-array
+            function-state
+            compiler-backend-scratch-i64-array-current-planned-local-preserve-regs)
+          count
+          reg)]
+      (begin
+        (compiler-backend-function-scratch-set-i64-array!
+          function-state
+          compiler-backend-scratch-i64-array-current-planned-local-preserve-regs
+          regs)
+        (compiler-backend-function-scratch-set-i64!
+          function-state
+          compiler-backend-scratch-i64-current-planned-local-preserve-count
+          (+ count 1))))))
+
+(define (compiler-backend-scratch-plan-register-at
+  [plan : compiler_regalloc.CompilerRegScratchPlan]
+  [point : i64]
+  [ordinal : i64]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [reg : i64
+      (compiler_regalloc.compiler-reg-scratch-plan-register plan point ordinal)]
+    (begin
+      (if (compiler_regalloc.compiler-reg-scratch-plan-preserve?
+        plan
+        point
+        ordinal)
+        (if (compiler_regalloc.compiler-reg-scratch-plan-local-preserve?
+          plan
+          point
+          ordinal)
+          (compiler-backend-current-planned-local-preserve-add!
+            (compiler-backend-state-function-state backend-state)
+            reg)
+          (compiler-backend-current-planned-preserve-add!
+            (compiler-backend-state-function-state backend-state)
+            reg))
+        unit)
+      (if (compiler_regalloc.compiler-reg-scratch-plan-frame?
+        plan
+        point
+        ordinal)
+        "@frame"
+        (compiler_abi.compiler-abi-register-spelling reg)))))
+
 (define (compiler-backend-scratch-plan-register-here
   [plan : compiler_regalloc.CompilerRegScratchPlan]
   [ordinal : i64]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-scratch-vreg-enabled?)
-    (compiler_abi.compiler-abi-register-spelling
-      (compiler_regalloc.compiler-reg-scratch-plan-register
-        plan
-        (compiler-backend-function-state-emission-point
-          (compiler-backend-state-function-state backend-state))
-        ordinal))
+    (compiler-backend-scratch-plan-register-at
+      plan
+      (compiler-backend-function-state-emission-point
+        (compiler-backend-state-function-state backend-state))
+      ordinal
+      backend-state)
     ""))
 
 (define (compiler-backend-scratch-plan-register-ahead
@@ -22817,19 +23030,82 @@
   [ordinal : i64]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-scratch-vreg-enabled?)
-    (compiler_abi.compiler-abi-register-spelling
-      (compiler_regalloc.compiler-reg-scratch-plan-register
-        plan
-        (+
-          (compiler-backend-function-state-emission-point
-            (compiler-backend-state-function-state backend-state))
-          (* 2 instruction-offset))
-        ordinal))
+    (compiler-backend-scratch-plan-register-at
+      plan
+      (+
+        (compiler-backend-function-state-emission-point
+          (compiler-backend-state-function-state backend-state))
+        (* 2 instruction-offset))
+      ordinal
+      backend-state)
     ""))
 
+(define (compiler-backend-missing-modeled-scratch!
+  [scratch-class : String]
+  [backend-state : CompilerBackendState]) : String
+  (io.panic
+    (str_cat.str-cat
+      "backend: consumed missing modeled scratch in "
+      (str_cat.str-cat
+        (compiler-backend-state-user-symbol-id
+          backend-state
+          (compiler-backend-function-scratch-i64
+            (compiler-backend-state-function-state backend-state)
+            compiler-backend-scratch-i64-current-source-function))
+        (str_cat.str-cat
+          " at point "
+          (str_cat.str-cat
+            (string.int->string
+              (compiler-backend-function-state-emission-point
+                (compiler-backend-state-function-state backend-state)))
+            (str_cat.str-cat
+              " site "
+              (str_cat.str-cat
+                (string.int->string
+                  (compiler-backend-function-state-emit-current-site
+                    (compiler-backend-state-function-state backend-state)))
+                (str_cat.str-cat
+                  " post-base "
+                  (str_cat.str-cat
+                    (string.int->string
+                      (compiler-backend-function-state-emit-instr-post-base
+                        (compiler-backend-state-function-state backend-state)))
+                    (str_cat.str-cat
+                      " remaining "
+                      (str_cat.str-cat
+                        (string.int->string
+                          (compiler-backend-function-state-emit-current-count
+                            (compiler-backend-state-function-state
+                              backend-state)))
+                        (str_cat.str-cat " class " scratch-class)))))))))))))
+
+;; The allocator explicitly marks planned homes that overlap an ordinary
+;; live-through value. Plan lookup records those homes for the current fused
+;; step; actual consumption arms the path-local save/restore wrapper.
+(define (compiler-backend-preserve-planned-register!
+  [planned : String]
+  [backend-state : CompilerBackendState]) : unit
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [reg : i64 (compiler_abi.compiler-abi-register-id-from-spelling planned)]
+    [index : i64
+      (compiler-backend-current-planned-preserve-index function-state reg)]
+    (if (>= index 0)
+      (begin
+        (set!
+          (array-ref
+            (compiler-backend-function-scratch-i64-array
+              function-state
+              compiler-backend-scratch-i64-array-current-planned-preserve-regs)
+            index)
+          compiler_abi.compiler-reg-id-invalid)
+        (compiler-backend-emergency-add-id! function-state reg))
+      unit)))
+
 ;; Planned scratch is authoritative when constrained allocation succeeded. An
-;; empty home is the explicit cfg-off/allocation-failure path and retains the
-;; sound legacy scavenger, including its emergency save/restore accounting.
+;; empty home exists only when scratch-vreg is compiled out; cfg-on production
+;; planning fails closed before emission.
 (define (compiler-backend-planned-or-scavenge-reg
   [planned : String]
   [dst : i64]
@@ -22838,8 +23114,63 @@
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq planned "")
-    (compiler-backend-scavenge-reg dst exclude exclude-n fallback backend-state)
-    planned))
+    (if (compiler-backend-scratch-vreg-enabled?)
+      (compiler-backend-missing-modeled-scratch! "gp" backend-state)
+      (compiler-backend-scavenge-reg
+        dst
+        exclude
+        exclude-n
+        fallback
+        backend-state))
+    (begin
+      (compiler-backend-preserve-planned-register! planned backend-state)
+      planned)))
+
+(define (compiler-backend-planned-register-preserve?
+  [planned : String]
+  [backend-state : CompilerBackendState]) : bool
+  (and
+    (not (string.eq planned ""))
+    (>=
+      (compiler-backend-current-planned-preserve-index
+        (compiler-backend-state-function-state backend-state)
+        (compiler_abi.compiler-abi-register-id-from-spelling planned))
+      0)))
+
+(define (compiler-backend-planned-register-local-preserve?
+  [planned : String]
+  [backend-state : CompilerBackendState]) : bool
+  (and
+    (not (string.eq planned ""))
+    (>=
+      (compiler-backend-current-planned-local-preserve-index
+        (compiler-backend-state-function-state backend-state)
+        (compiler_abi.compiler-abi-register-id-from-spelling planned))
+      0)))
+
+;; Both preservation classes must be local for phi staging. LOCAL means the
+;; planner borrowed a phi source/destination home; REGULAR means it borrowed an
+;; unrelated value live through the terminator. Restoring either after a Jump is
+;; unreachable, and restoring a phi home after the complete edge can overwrite
+;; a destination value already placed by the parallel-copy schedule.
+(define (compiler-backend-planned-register-phi-preserve?
+  [planned : String]
+  [backend-state : CompilerBackendState]) : bool
+  (or
+    (compiler-backend-planned-register-preserve? planned backend-state)
+    (compiler-backend-planned-register-local-preserve? planned backend-state)))
+
+(define (compiler-backend-phi-local-preserve-asm
+  [planned : String]
+  [asm : String]
+  [backend-state : CompilerBackendState]) : String
+  (if (compiler-backend-planned-register-phi-preserve? planned backend-state)
+    (begin
+      (compiler-backend-emergency-add-id!
+        (compiler-backend-state-function-state backend-state)
+        (compiler_abi.compiler-abi-register-id-from-spelling planned))
+      (compiler-backend-emergency-wrap asm backend-state))
+    asm))
 
 (define (compiler-backend-planned-or-scavenge-reg-here
   [planned : String]
@@ -22848,12 +23179,16 @@
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq planned "")
-    (compiler-backend-scavenge-reg-here
-      exclude
-      exclude-n
-      fallback
-      backend-state)
-    planned))
+    (if (compiler-backend-scratch-vreg-enabled?)
+      (compiler-backend-missing-modeled-scratch! "gp-here" backend-state)
+      (compiler-backend-scavenge-reg-here
+        exclude
+        exclude-n
+        fallback
+        backend-state))
+    (begin
+      (compiler-backend-preserve-planned-register! planned backend-state)
+      planned)))
 
 (define (compiler-backend-planned-or-scavenge-xmm-reg
   [planned : String]
@@ -22863,13 +23198,17 @@
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq planned "")
-    (compiler-backend-scavenge-xmm-reg
-      dst
-      exclude
-      exclude-n
-      fallback
-      backend-state)
-    planned))
+    (if (compiler-backend-scratch-vreg-enabled?)
+      (compiler-backend-missing-modeled-scratch! "xmm" backend-state)
+      (compiler-backend-scavenge-xmm-reg
+        dst
+        exclude
+        exclude-n
+        fallback
+        backend-state))
+    (begin
+      (compiler-backend-preserve-planned-register! planned backend-state)
+      planned)))
 
 (define (compiler-backend-scavenge-divmod-src-reg
   [dst : i64]
@@ -22932,12 +23271,16 @@
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq planned "")
-    (compiler-backend-scavenge-divmod-src-reg
-      dst
-      exclude
-      exclude-n
-      backend-state)
-    planned))
+    (if (compiler-backend-scratch-vreg-enabled?)
+      (compiler-backend-missing-modeled-scratch! "divmod-src" backend-state)
+      (compiler-backend-scavenge-divmod-src-reg
+        dst
+        exclude
+        exclude-n
+        backend-state))
+    (begin
+      (compiler-backend-preserve-planned-register! planned backend-state)
+      planned)))
 
 (define (compiler-backend-planned-or-scavenge-divmod-src-reg-here
   [planned : String]
@@ -22945,11 +23288,17 @@
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq planned "")
-    (compiler-backend-scavenge-divmod-src-reg-here
-      exclude
-      exclude-n
-      backend-state)
-    planned))
+    (if (compiler-backend-scratch-vreg-enabled?)
+      (compiler-backend-missing-modeled-scratch!
+        "divmod-src-here"
+        backend-state)
+      (compiler-backend-scavenge-divmod-src-reg-here
+        exclude
+        exclude-n
+        backend-state))
+    (begin
+      (compiler-backend-preserve-planned-register! planned backend-state)
+      planned)))
 
 (define (compiler-backend-divmod-shift-rax [mnemonic : String] [shift : i64]) : String
   (if (= shift 0)
@@ -23925,61 +24274,63 @@
             (CompilerBackendMaybeAsm.Some
               (str_cat.str-cat "    movq %rax, " src "\n" asm))]
           [(CompilerBackendMaybeAsm.No) (CompilerBackendMaybeAsm.No)]))
-      (let
-        [op-excl : (__tl_dyn-array String)
-          (compiler-backend-binop-scavenge-exclude-for-op op)]
-        [magic : String
-          (compiler-backend-planned-or-scavenge-reg
-            planned-magic
-            dst
-            (if (string.eq hoist-reg "")
-              op-excl
-              (compiler-backend-scavenge-exclude-append op-excl 5 hoist-reg))
-            (if (string.eq hoist-reg "")
-              5
-              6)
-            "%r8"
-            backend-state)]
-        [dividend-excl : (__tl_dyn-array String)
-          (compiler-backend-divmod-dividend-exclude magic)]
-        [dividend : String
-          (compiler-backend-planned-or-scavenge-reg
-            planned-dividend
-            dst
-            (if (string.eq hoist-reg "")
-              dividend-excl
-              (compiler-backend-scavenge-exclude-append
-                dividend-excl
+      (if (compiler-backend-divmod-op? op)
+        (let
+          [op-excl : (__tl_dyn-array String)
+            (compiler-backend-binop-scavenge-exclude-for-op op)]
+          [magic : String
+            (compiler-backend-planned-or-scavenge-reg
+              planned-magic
+              dst
+              (if (string.eq hoist-reg "")
+                op-excl
+                (compiler-backend-scavenge-exclude-append op-excl 5 hoist-reg))
+              (if (string.eq hoist-reg "")
                 5
-                hoist-reg))
-            (if (string.eq hoist-reg "")
-              5
-              6)
-            "%r10"
-            backend-state)]
-        [mask-excl : (__tl_dyn-array String)
-          (compiler-backend-divmod-mask-exclude magic dividend)]
-        [mask : String
-          (compiler-backend-planned-or-scavenge-reg
-            planned-mask
-            dst
-            (if (string.eq hoist-reg "")
-              mask-excl
-              (compiler-backend-scavenge-exclude-append mask-excl 6 hoist-reg))
-            (if (string.eq hoist-reg "")
-              6
-              7)
-            "%r9"
-            backend-state)]
-        (compiler-backend-binop-literal-divmod-asm
-          type-segment-bases
-          op
-          rhs
-          ty
-          magic
-          dividend
-          mask
-          hoist)))))
+                6)
+              "%r8"
+              backend-state)]
+          [dividend-excl : (__tl_dyn-array String)
+            (compiler-backend-divmod-dividend-exclude magic)]
+          [dividend : String
+            (compiler-backend-planned-or-scavenge-reg
+              planned-dividend
+              dst
+              (if (string.eq hoist-reg "")
+                dividend-excl
+                (compiler-backend-scavenge-exclude-append
+                  dividend-excl
+                  5
+                  hoist-reg))
+              (if (string.eq hoist-reg "")
+                5
+                6)
+              "%r10"
+              backend-state)]
+          [mask-excl : (__tl_dyn-array String)
+            (compiler-backend-divmod-mask-exclude magic dividend)]
+          [mask : String
+            (compiler-backend-planned-or-scavenge-reg
+              planned-mask
+              dst
+              (if (string.eq hoist-reg "")
+                mask-excl
+                (compiler-backend-scavenge-exclude-append mask-excl 6 hoist-reg))
+              (if (string.eq hoist-reg "")
+                6
+                7)
+              "%r9"
+              backend-state)]
+          (compiler-backend-binop-literal-divmod-asm
+            type-segment-bases
+            op
+            rhs
+            ty
+            magic
+            dividend
+            mask
+            hoist))
+        (CompilerBackendMaybeAsm.No)))))
 
 ;; Same, but at the current emit point (no dst -- tail-return position). The magic
 ;; register is scavenged at the return point, so a pooled %r8 live across the fused
@@ -24034,37 +24385,39 @@
             (CompilerBackendMaybeAsm.Some
               (str_cat.str-cat "    movq %rax, " src "\n" asm))]
           [(CompilerBackendMaybeAsm.No) (CompilerBackendMaybeAsm.No)]))
-      (let
-        [magic : String
-          (compiler-backend-planned-or-scavenge-reg-here
-            planned-magic
-            (compiler-backend-binop-scavenge-exclude-for-op op)
-            5
-            "%r8"
-            backend-state)]
-        [dividend : String
-          (compiler-backend-planned-or-scavenge-reg-here
-            planned-dividend
-            (compiler-backend-divmod-dividend-exclude magic)
-            5
-            "%r10"
-            backend-state)]
-        [mask : String
-          (compiler-backend-planned-or-scavenge-reg-here
-            planned-mask
-            (compiler-backend-divmod-mask-exclude magic dividend)
-            6
-            "%r9"
-            backend-state)]
-        (compiler-backend-binop-literal-divmod-asm
-          type-segment-bases
-          op
-          rhs
-          ty
-          magic
-          dividend
-          mask
-          hoist)))))
+      (if (compiler-backend-divmod-op? op)
+        (let
+          [magic : String
+            (compiler-backend-planned-or-scavenge-reg-here
+              planned-magic
+              (compiler-backend-binop-scavenge-exclude-for-op op)
+              5
+              "%r8"
+              backend-state)]
+          [dividend : String
+            (compiler-backend-planned-or-scavenge-reg-here
+              planned-dividend
+              (compiler-backend-divmod-dividend-exclude magic)
+              5
+              "%r10"
+              backend-state)]
+          [mask : String
+            (compiler-backend-planned-or-scavenge-reg-here
+              planned-mask
+              (compiler-backend-divmod-mask-exclude magic dividend)
+              6
+              "%r9"
+              backend-state)]
+          (compiler-backend-binop-literal-divmod-asm
+            type-segment-bases
+            op
+            rhs
+            ty
+            magic
+            dividend
+            mask
+            hoist))
+        (CompilerBackendMaybeAsm.No)))))
 
 (define (compiler-backend-shift-count-width
   [type-segment-bases : i64]
@@ -24619,27 +24972,20 @@
       (compiler-backend-value-stack-address assignments rhs backend-state)]
     [lhs-reg : String
       (compiler-backend-value-scalar-register backend-state assignments lhs)]
+    [rhs-load-needed : bool
+      (if (not (string.eq rhs-reg ""))
+        (string.eq rhs-reg dst-home)
+        (string.eq rhs-address ""))]
     [scav-rhs : String
-      (if (or
-        (string.eq planned-rhs dst-home)
-        (and (not (string.eq lhs-reg "")) (string.eq planned-rhs lhs-reg)))
-        (compiler-backend-scavenge-reg
-          dst
-          (compiler-backend-scavenge-exclude-regs2 dst-home lhs-reg)
-          7
-          "%r8"
-          backend-state)
+      (if rhs-load-needed
         (compiler-backend-planned-or-scavenge-reg
           planned-rhs
           dst
           (compiler-backend-scavenge-exclude-regs2 dst-home lhs-reg)
           7
           "%r8"
-          backend-state))]
-    [rhs-load-needed : bool
-      (if (not (string.eq rhs-reg ""))
-        (string.eq rhs-reg dst-home)
-        (string.eq rhs-address ""))]
+          backend-state)
+        "")]
     [rhs-operand : String
       (if (not (string.eq rhs-reg ""))
         (if (string.eq rhs-reg dst-home)
@@ -26796,6 +27142,13 @@
                         backend-state
                         assignments
                         lhs)]
+                    [lhs-operand : String
+                      (compiler-backend-binop-spill-source-operand
+                        type-segment-bases
+                        assignments
+                        lhs
+                        operand-ty
+                        backend-state)]
                     [rhs-operand : String
                       (if (string.eq rhs-hoist "")
                         (compiler-backend-binop-spill-source-operand
@@ -26810,30 +27163,26 @@
                           operand-ty))]
                     ;; lint-allow: nested-if-ladder
                     (if (and
-                      (or
-                        (string.eq mnem "and")
-                        (string.eq mnem "or")
-                        (string.eq mnem "xor"))
-                      (not (string.eq lhs-reg ""))
-                      (string.eq rhs-reg dst-home))
-                      ;; commutative shortcut: rhs-home == dst-home, so dst-home already
-                      ;; holds rhs; for and/or/xor emit "<op> lhs, dst" directly -- no
-                      ;; scav-rhs copy and no lhs->dst copy (dst = rhs <op> lhs = lhs <op>
-                      ;; rhs, commutative). Saves two movs + a scratch register vs the
-                      ;; scav path below.
-                      (ResultCompilerBackend.Ok
-                        (compiler-backend-binop-reg-asm
-                          type-segment-bases
-                          mnem
-                          operand-ty
-                          (compiler-backend-sized-reg
-                            type-segment-bases
-                            lhs-reg
-                            operand-ty)
-                          (compiler-backend-sized-reg
-                            type-segment-bases
-                            dst-home
-                            operand-ty)))
+                      (compiler-backend-commutative-binop? op)
+                      (string.eq rhs-reg dst-home)
+                      (not (string.eq lhs-operand "")))
+                      ;; rhs already occupies the destination. Commutativity lets
+                      ;; the directly addressable lhs become the source operand,
+                      ;; including a spill slot, without preserving rhs in scratch.
+                      (match (compiler-backend-binop-source-asm
+                        type-segment-bases
+                        op
+                        operand-ty
+                        lhs-operand
+                        dst-home)
+                        [(CompilerBackendMaybeAsm.Some op-asm)
+                          (ResultCompilerBackend.Ok op-asm)]
+                        [(CompilerBackendMaybeAsm.No)
+                          (ResultCompilerBackend.Err
+                            (box
+                              (compiler_diagnostic.compiler-diagnostic-at-start
+                                ""
+                                "backend: commutative direct binop shape unavailable")))])
                       (if (and
                         (string.eq mnem "add")
                         (not (string.eq lhs-reg ""))
@@ -27334,6 +27683,46 @@
       backend-state)
     ""))
 
+(define (compiler-backend-emit-binop-rax-rhs-staged
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [operand-ty : compiler_ast_types.AstType]
+  [store : String]
+  [planned-rhs : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [scratch : String
+      (compiler-backend-planned-or-scavenge-reg
+        planned-rhs
+        dst
+        (compiler-backend-binop-scavenge-exclude-for-op op)
+        5
+        "%r8"
+        backend-state)]
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      rhs
+      scratch
+      backend-state)
+      [(ResultCompilerBackend.Ok rhs-asm)
+        (ResultCompilerBackend.Ok
+          (str_cat.str-cat
+            rhs-asm
+            (compiler-backend-binop-asm-with-plan
+              type-segment-bases
+              op
+              operand-ty
+              scratch
+              "%rax"
+              ""
+              ""
+              backend-state)
+            store))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
 (define (compiler-backend-emit-binop-rax-rhs
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -27386,79 +27775,50 @@
           result-ty
           store-result
           backend-state)]
-      [scav-rhs : String
-        (compiler-backend-planned-or-scavenge-reg
-          planned-magic
-          dst
-          (compiler-backend-binop-scavenge-exclude-for-op op)
-          5
-          "%r8"
-          backend-state)]
-      [scav-dividend : String
-        (compiler-backend-planned-or-scavenge-reg
-          planned-dividend
-          dst
-          (compiler-backend-divmod-dividend-exclude scav-rhs)
-          5
-          "%r10"
-          backend-state)]
-      [scav-mask : String
-        (compiler-backend-planned-or-scavenge-reg
-          planned-mask
-          dst
-          (compiler-backend-divmod-mask-exclude scav-rhs scav-dividend)
-          6
-          "%r9"
-          backend-state)]
-      ;; Stack-only path (empty-assignments gate) -- const-hoist never plans
-      ;; sites here, so no magic home lookup.
-      (match (compiler-backend-binop-literal-divmod-asm
-        type-segment-bases
-        op
-        rhs
-        operand-ty
-        scav-rhs
-        scav-dividend
-        scav-mask
-        (CompilerBackendNoConstHoistHome))
-        [(CompilerBackendMaybeAsm.Some op-asm)
-          (ResultCompilerBackend.Ok (str_cat.str-cat op-asm store))]
-        [(CompilerBackendMaybeAsm.No)
-          (match (compiler-backend-immediate-operand backend-state rhs)
-            [(CompilerBackendMaybeImmediate.Some imm)
-              (match (compiler-backend-binop-immediate-asm
-                type-segment-bases
-                op
-                imm
-                operand-ty
-                "%rax"
-                "%rax"
-                (compiler-backend-value-integer-zero? rhs))
-                [(CompilerBackendMaybeAsm.Some op-asm)
-                  (ResultCompilerBackend.Ok (str_cat.str-cat op-asm store))]
-                [(CompilerBackendMaybeAsm.No)
-                  (match (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    rhs
-                    scav-rhs
-                    backend-state)
-                    [(ResultCompilerBackend.Ok rhs-asm)
-                      (ResultCompilerBackend.Ok
-                        (str_cat.str-cat
-                          rhs-asm
-                          (compiler-backend-binop-asm-with-plan
-                            type-segment-bases
-                            op
-                            operand-ty
-                            scav-rhs
-                            "%rax"
-                            planned-dividend
-                            planned-mask
-                            backend-state)
-                          store))]
-                    [(ResultCompilerBackend.Err message)
-                      (ResultCompilerBackend.Err message)])])]
-            [(CompilerBackendMaybeImmediate.No)
+      (if (compiler-backend-divmod-op? op)
+        (let
+          [scav-rhs : String
+            (compiler-backend-planned-or-scavenge-reg
+              planned-magic
+              dst
+              (compiler-backend-binop-scavenge-exclude-for-op op)
+              5
+              "%r8"
+              backend-state)]
+          [scav-dividend : String
+            (compiler-backend-planned-or-scavenge-reg
+              planned-dividend
+              dst
+              (compiler-backend-divmod-dividend-exclude scav-rhs)
+              5
+              "%r10"
+              backend-state)]
+          [scav-mask : String
+            (compiler-backend-planned-or-scavenge-reg
+              planned-mask
+              dst
+              (compiler-backend-divmod-mask-exclude scav-rhs scav-dividend)
+              6
+              "%r9"
+              backend-state)]
+          ;; Stack-only path (empty-assignments gate) -- const-hoist never
+          ;; plans sites here, so no magic home lookup.
+          (match (compiler-backend-binop-literal-divmod-asm
+            type-segment-bases
+            op
+            rhs
+            operand-ty
+            scav-rhs
+            scav-dividend
+            scav-mask
+            (CompilerBackendNoConstHoistHome))
+            [(CompilerBackendMaybeAsm.Some op-asm)
+              (ResultCompilerBackend.Ok (str_cat.str-cat op-asm store))]
+            [(CompilerBackendMaybeAsm.No)
+              ;; A variable or non-strength-reducible divisor uses the ordinary
+              ;; idiv/div lowering. The RAX-forwarded path already has the
+              ;; dividend in %rax, so stage only the divisor and reuse the two
+              ;; remaining modeled homes for signed overflow guards.
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
                 rhs
@@ -27468,18 +27828,53 @@
                   (ResultCompilerBackend.Ok
                     (str_cat.str-cat
                       rhs-asm
-                      (compiler-backend-binop-asm-with-plan
-                        type-segment-bases
-                        op
-                        operand-ty
-                        scav-rhs
-                        "%rax"
-                        planned-dividend
-                        planned-mask
-                        backend-state)
-                      store))]
+                      (str_cat.str-cat
+                        (compiler-backend-binop-asm-with-plan
+                          type-segment-bases
+                          op
+                          operand-ty
+                          scav-rhs
+                          "%rax"
+                          scav-dividend
+                          scav-mask
+                          backend-state)
+                        store)))]
                 [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)])])]))))
+                  (ResultCompilerBackend.Err message)])]))
+        (match (compiler-backend-immediate-operand backend-state rhs)
+          [(CompilerBackendMaybeImmediate.Some imm)
+            (match (compiler-backend-binop-immediate-asm
+              type-segment-bases
+              op
+              imm
+              operand-ty
+              "%rax"
+              "%rax"
+              (compiler-backend-value-integer-zero? rhs))
+              [(CompilerBackendMaybeAsm.Some op-asm)
+                (ResultCompilerBackend.Ok (str_cat.str-cat op-asm store))]
+              [(CompilerBackendMaybeAsm.No)
+                (compiler-backend-emit-binop-rax-rhs-staged
+                  type-segment-bases
+                  assignments
+                  dst
+                  op
+                  rhs
+                  operand-ty
+                  store
+                  planned-magic
+                  backend-state)])]
+          [(CompilerBackendMaybeImmediate.No)
+            (compiler-backend-emit-binop-rax-rhs-staged
+              type-segment-bases
+              assignments
+              dst
+              op
+              rhs
+              operand-ty
+              store
+              planned-magic
+              backend-state)])))))
 
 (define (compiler-backend-emit-binop-to-rax
   [type-segment-bases : i64]
@@ -27497,6 +27892,7 @@
   [planned2 : String]
   [planned3 : String]
   [planned4 : String]
+  [binop-return : bool]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-rax-forwardable-binop?
     types
@@ -27524,9 +27920,30 @@
             operand-ty
             ty
             store-result
-            planned2
-            planned3
-            planned4
+            (if (compiler-backend-divmod-op? op)
+              planned2
+              (if (or
+                binop-return
+                (compiler_regalloc.compiler-reg-clobber-binop-shift?
+                  op
+                  rhs
+                  operand-ty))
+                ;; Return fusion fixes the result in %rax, so its only scalar
+                ;; slot (0) is already the RHS staging home. A variable shift
+                ;; likewise consumes slot 0, its fixed %rcx count home; using
+                ;; ordinary slot 1 here can select %rax and overwrite the
+                ;; accumulator before the shift (the LZSS decoder's
+                ;; `(shl 1 bit)` is the bootstrap regression for this shape).
+                planned0
+                ;; Ordinary RAX forwarding eliminates the modeled spilled
+                ;; result home (slot 0); a staged RHS consumes slot 1.
+                planned1))
+            (if (compiler-backend-divmod-op? op)
+              planned3
+              "")
+            (if (compiler-backend-divmod-op? op)
+              planned4
+              "")
             backend-state)
             [(ResultCompilerBackend.Ok op-asm)
               (ResultCompilerBackend.Ok (str_cat.str-cat lhs-asm op-asm))]
@@ -27568,6 +27985,7 @@
   [planned2 : String]
   [planned3 : String]
   [planned4 : String]
+  [binop-return : bool]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-rax-forwardable-binop?
     types
@@ -27590,9 +28008,22 @@
           operand-ty
           ty
           store-result
-          planned2
-          planned3
-          planned4
+          (if (compiler-backend-divmod-op? op)
+            planned2
+            (if (or
+              binop-return
+              (compiler_regalloc.compiler-reg-clobber-binop-shift?
+                op
+                rhs
+                operand-ty))
+              planned0
+              planned1))
+          (if (compiler-backend-divmod-op? op)
+            planned3
+            "")
+          (if (compiler-backend-divmod-op? op)
+            planned4
+            "")
           backend-state)
         (if (and
           (compiler-backend-branch-uses-var? rhs rax-var)
@@ -27606,9 +28037,22 @@
             operand-ty
             ty
             store-result
-            planned2
-            planned3
-            planned4
+            (if (compiler-backend-divmod-op? op)
+              planned2
+              (if (or
+                binop-return
+                (compiler_regalloc.compiler-reg-clobber-binop-shift?
+                  op
+                  lhs
+                  operand-ty))
+                planned0
+                planned1))
+            (if (compiler-backend-divmod-op? op)
+              planned3
+              "")
+            (if (compiler-backend-divmod-op? op)
+              planned4
+              "")
             backend-state)
           (compiler-backend-emit-binop-with-plan
             type-segment-bases
@@ -27885,9 +28329,7 @@
           "%rax")
         6
         rhs-home)]
-    (if (or
-      (string.eq planned "%rax")
-      (and (not (string.eq rhs-home "")) (string.eq planned rhs-home)))
+    (if (string.eq planned "%rax")
       (compiler-backend-scavenge-reg-here exclude 7 "%r8" backend-state)
       (compiler-backend-planned-or-scavenge-reg-here
         planned
@@ -28249,50 +28691,62 @@
                 fallthrough
                 backend-state)))))]
     [_
-      (let
-        [test-reg : String
-          (compiler-backend-planned-or-scavenge-reg-here
+      (match (compiler-backend-value-as-i64 cond)
+        [(option_i64.Some value)
+          (compiler-backend-emit-branch-with-plan
+            assignments
+            function
+            (compiler_ir_types.CompilerIrValue.Bool (not (= value 0)))
+            true-label
+            false-label
+            fallthrough
             planned-test
-            (compiler-backend-binop-scavenge-exclude-build)
-            5
-            "%rax"
             backend-state)]
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          cond
-          test-reg
-          backend-state)
-          [(ResultCompilerBackend.Ok load)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                load
-                (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
-                (if (compiler-backend-jump-target-is-fallthrough?
-                  false-label
-                  fallthrough)
+        [(option_i64.None)
+          (let
+            [test-reg : String
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-test
+                (compiler-backend-binop-scavenge-exclude-build)
+                5
+                "%rax"
+                backend-state)]
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              cond
+              test-reg
+              backend-state)
+              [(ResultCompilerBackend.Ok load)
+                (ResultCompilerBackend.Ok
                   (str_cat.str-cat
-                    "    jne "
-                    (compiler-backend-asm-label function true-label)
-                    "\n"
-                    "")
-                  (if (compiler-backend-jump-target-is-fallthrough?
-                    true-label
-                    fallthrough)
-                    (str_cat.str-cat
-                      "    je "
-                      (compiler-backend-asm-label function false-label)
-                      "\n"
-                      "")
-                    (str_cat.str-cat
-                      "    jne "
-                      (compiler-backend-asm-label
-                        (string.copy function)
-                        true-label)
-                      "\n    jmp "
-                      (compiler-backend-asm-label function false-label)
-                      "\n")))))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)]))]))
+                    load
+                    (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
+                    (if (compiler-backend-jump-target-is-fallthrough?
+                      false-label
+                      fallthrough)
+                      (str_cat.str-cat
+                        "    jne "
+                        (compiler-backend-asm-label function true-label)
+                        "\n"
+                        "")
+                      (if (compiler-backend-jump-target-is-fallthrough?
+                        true-label
+                        fallthrough)
+                        (str_cat.str-cat
+                          "    je "
+                          (compiler-backend-asm-label function false-label)
+                          "\n"
+                          "")
+                        (str_cat.str-cat
+                          "    jne "
+                          (compiler-backend-asm-label
+                            (string.copy function)
+                            true-label)
+                          "\n    jmp "
+                          (compiler-backend-asm-label function false-label)
+                          "\n")))))]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)]))])]))
 
 (define (compiler-backend-emit-branch
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -28311,6 +28765,21 @@
     fallthrough
     ""
     backend-state))
+
+(define (compiler-backend-branch-value-direct?
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]
+  [backend-state : CompilerBackendState]) : bool
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Var id)
+      (not
+        (string.eq
+          (compiler-backend-branch-test-var-asm assignments id backend-state)
+          ""))]
+    [_
+      (match (compiler-backend-value-as-i64 value)
+        [(option_i64.Some _) true]
+        [(option_i64.None) false])]))
 
 (define (compiler-backend-compare-op? [op : compiler_ir_types.CompilerIrBinOp]) : bool
   (match op
@@ -28764,7 +29233,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [rhs-reg : String
-      (if (string.eq planned-rhs lhs-reg)
+      (if (and (not (string.eq planned-rhs "")) (string.eq planned-rhs lhs-reg))
         (compiler-backend-scavenge-reg-here
           (compiler-backend-compare-rhs-scavenge-exclude lhs-reg)
           (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
@@ -29067,13 +29536,21 @@
             ""
             "backend: unsupported load compare branch")))
       (let
+        [base-home : String
+          (compiler-backend-address-base-filter-direct
+            (compiler-backend-value-scalar-register
+              backend-state
+              assignments
+              ptr))]
         [scav-base : String
-          (compiler-backend-planned-or-scavenge-reg-here
-            planned-base
-            (compiler-backend-binop-scavenge-exclude-build)
-            5
-            "%r10"
-            backend-state)]
+          (if (string.eq base-home "")
+            (compiler-backend-planned-or-scavenge-reg-here
+              planned-base
+              (compiler-backend-binop-scavenge-exclude-build)
+              5
+              "%r10"
+              backend-state)
+            base-home)]
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           ptr
@@ -30082,14 +30559,13 @@
           [result-reg : String
             (if use-dst-home?
               dst-home
-              (if (string.eq planned-address "")
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-two-exclude avoid1 avoid2)
-                  2
-                  "%r10"
-                  backend-state)
-                planned-address))]
+              (compiler-backend-planned-or-scavenge-reg
+                planned-address
+                dst
+                (compiler-backend-two-exclude avoid1 avoid2)
+                2
+                "%r10"
+                backend-state))]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             base
@@ -30115,17 +30591,16 @@
                 [(CompilerBackendMaybeAsm.No)
                   (let
                     [scav-idx : String
-                      (if (string.eq planned-index "")
-                        (compiler-backend-scavenge-reg
-                          dst
-                          (compiler-backend-three-exclude
-                            result-reg
-                            avoid1
-                            avoid2)
-                          3
-                          "%r8"
-                          backend-state)
-                        planned-index)]
+                      (compiler-backend-planned-or-scavenge-reg
+                        planned-index
+                        dst
+                        (compiler-backend-three-exclude
+                          result-reg
+                          avoid1
+                          avoid2)
+                        3
+                        "%r8"
+                        backend-state)]
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       offset
@@ -30170,23 +30645,21 @@
           [result-reg : String
             (if use-dst-home?
               dst-home
-              (if (string.eq planned-address "")
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-three-exclude offset-home avoid1 avoid2)
-                  3
-                  "%r10"
-                  backend-state)
-                planned-address))]
-          [scav-idx : String
-            (if (string.eq planned-index "")
-              (compiler-backend-scavenge-reg
+              (compiler-backend-planned-or-scavenge-reg
+                planned-address
                 dst
-                (compiler-backend-three-exclude result-reg avoid1 avoid2)
+                (compiler-backend-three-exclude offset-home avoid1 avoid2)
                 3
-                "%r8"
-                backend-state)
-              planned-index)]
+                "%r10"
+                backend-state))]
+          [scav-idx : String
+            (compiler-backend-planned-or-scavenge-reg
+              planned-index
+              dst
+              (compiler-backend-three-exclude result-reg avoid1 avoid2)
+              3
+              "%r8"
+              backend-state)]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             base
@@ -30266,13 +30739,12 @@
     [src-home : String
       (compiler-backend-value-register-home backend-state assignments src)]
     [scav-base : String
-      (if (string.eq planned-address "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-one-exclude src-home)
-          1
-          "%r10"
-          backend-state)
-        planned-address)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-address
+        (compiler-backend-one-exclude src-home)
+        1
+        "%r10"
+        backend-state)]
     (match (compiler-backend-emit-address-base
       assignments
       src
@@ -30294,17 +30766,16 @@
                     dst)]
                 [load-reg : String
                   (if (string.eq dst-home "")
-                    (if (string.eq planned-value "")
-                      (let
-                        [no-exclude : (__tl_dyn-array String)
-                          (array.make-array String 0)]
-                        (compiler-backend-scavenge-xmm-reg
-                          dst
-                          no-exclude
-                          0
-                          "%xmm2"
-                          backend-state))
-                      planned-value)
+                    (let
+                      [no-exclude : (__tl_dyn-array String)
+                        (array.make-array String 0)]
+                      (compiler-backend-planned-or-scavenge-xmm-reg
+                        planned-value
+                        dst
+                        no-exclude
+                        0
+                        "%xmm2"
+                        backend-state))
                     dst-home)]
                 [store-asm : String
                   (if (string.eq dst-home "")
@@ -30344,18 +30815,21 @@
   (let
     [dst-home : String
       (compiler-backend-var-register-home backend-state assignments dst)]
+    [no-exclude : (__tl_dyn-array String) (make-array String 0)]
     [load-reg : String
       (if (string.eq dst-home "")
         (if (string.eq planned-value "")
-          (let
-            [no-exclude : (__tl_dyn-array String) (make-array String 0)]
-            (compiler-backend-scavenge-xmm-reg
-              dst
-              no-exclude
-              0
-              "%xmm2"
-              backend-state))
-          planned-value)
+          (compiler-backend-scavenge-xmm-reg
+            dst
+            no-exclude
+            0
+            "%xmm2"
+            backend-state)
+          (begin
+            (compiler-backend-preserve-planned-register!
+              planned-value
+              backend-state)
+            planned-value))
         dst-home)]
     (str_cat.str-cat
       (compiler-backend-emit-load-float-memory addr load-reg ty)
@@ -30392,13 +30866,20 @@
       (let
         [load-reg : String
           (if (string.eq planned-value "")
+            ;; Parameter materialization and other pre-body users have no IR
+            ;; scratch-plan point. Instruction callers provide a non-empty
+            ;; planned value slot and take the preservation arm below.
             (compiler-backend-scavenge-reg
               dst
               exclude
               exclude-n
               "%r8"
               backend-state)
-            planned-value)]
+            (begin
+              (compiler-backend-preserve-planned-register!
+                planned-value
+                backend-state)
+              planned-value))]
         [seq : CompilerBackendAsmBuf
           (compiler-backend-asm-buf-with-capacity
             compiler-backend-asm-seq-capacity)]
@@ -30636,16 +31117,15 @@
   [planned : String]
   [backend-state : CompilerBackendState]) : String
   (if (>= size 16)
-    (if (string.eq planned "")
-      (let
-        [no-exclude : (__tl_dyn-array String) (make-array String 0)]
-        (compiler-backend-scavenge-xmm-reg
-          -1
-          no-exclude
-          0
-          "%xmm2"
-          backend-state))
-      planned)
+    (let
+      [no-exclude : (__tl_dyn-array String) (make-array String 0)]
+      (compiler-backend-planned-or-scavenge-xmm-reg
+        planned
+        -1
+        no-exclude
+        0
+        "%xmm2"
+        backend-state))
     ""))
 
 (define (compiler-backend-copy-needs-gp-scratch?
@@ -30890,13 +31370,12 @@
           (compiler-backend-value-register-home backend-state assignments dst))]
       [dst-reg : String
         (if (string.eq dst-home "")
-          (if (string.eq planned-dst "")
-            (compiler-backend-scavenge-reg-here
-              protect
-              protect-n
-              "%r10"
-              backend-state)
-            planned-dst)
+          (compiler-backend-planned-or-scavenge-reg-here
+            planned-dst
+            protect
+            protect-n
+            "%r10"
+            backend-state)
           dst-home)]
       (match (if (string.eq dst-home "")
         (compiler-backend-emit-load-value-with-plan
@@ -30923,13 +31402,12 @@
                 protect-n)]
             [src-reg : String
               (if (string.eq src-home "")
-                (if (string.eq planned-src "")
-                  (compiler-backend-scavenge-reg-here
-                    src-exclude
-                    (+ 1 protect-n)
-                    "%r9"
-                    backend-state)
-                  planned-src)
+                (compiler-backend-planned-or-scavenge-reg-here
+                  planned-src
+                  src-exclude
+                  (+ 1 protect-n)
+                  "%r9"
+                  backend-state)
                 src-home)]
             [copy-xmm : String
               (compiler-backend-copy-xmm-scratch size planned-xmm backend-state)]
@@ -30943,13 +31421,12 @@
                 protect-n)]
             [copy-gp : String
               (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-                (if (string.eq planned-value "")
-                  (compiler-backend-scavenge-reg-here
-                    copy-gp-exclude
-                    (+ 2 protect-n)
-                    "%r8"
-                    backend-state)
-                  planned-value)
+                (compiler-backend-planned-or-scavenge-reg-here
+                  planned-value
+                  copy-gp-exclude
+                  (+ 2 protect-n)
+                  "%r8"
+                  backend-state)
                 "")]
             (match (if (string.eq src-home "")
               (compiler-backend-emit-load-value-with-plan
@@ -31286,17 +31763,16 @@
         (compiler-backend-value-scalar-register backend-state assignments src))]
     [dst-reg : String
       (if (string.eq base-home "")
-        (if (string.eq planned-dst "")
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-merge
-              (compiler-backend-one-exclude src-home)
-              1
-              protect
-              protect-n)
-            (+ 1 protect-n)
-            "%r10"
-            backend-state)
-          planned-dst)
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-dst
+          (compiler-backend-scavenge-exclude-merge
+            (compiler-backend-one-exclude src-home)
+            1
+            protect
+            protect-n)
+          (+ 1 protect-n)
+          "%r10"
+          backend-state)
         base-home)]
     (match (if (string.eq base-home "")
       (match (compiler-backend-emit-load-value-with-plan
@@ -31323,33 +31799,31 @@
         (let
           [src-reg : String
             (if (string.eq src-home "")
-              (if (string.eq planned-src "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-one-exclude dst-reg)
-                    1
-                    protect
-                    protect-n)
-                  (+ 1 protect-n)
-                  "%r9"
-                  backend-state)
-                planned-src)
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-src
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-one-exclude dst-reg)
+                  1
+                  protect
+                  protect-n)
+                (+ 1 protect-n)
+                "%r9"
+                backend-state)
               src-home)]
           [copy-xmm : String
             (compiler-backend-copy-xmm-scratch size planned-xmm backend-state)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-              (if (string.eq planned-value "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-two-exclude dst-reg src-reg)
-                    2
-                    protect
-                    protect-n)
-                  (+ 2 protect-n)
-                  "%r8"
-                  backend-state)
-                planned-value)
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-value
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-two-exclude dst-reg src-reg)
+                  2
+                  protect
+                  protect-n)
+                (+ 2 protect-n)
+                "%r8"
+                backend-state)
               "")]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-value-with-plan
@@ -31451,17 +31925,16 @@
       ;; not taken leaks a stray restore into the surrounding emission.
       (let
         [scav-base : String
-          (if (string.eq planned-dst "")
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-scavenge-exclude-merge
-                (compiler-backend-two-exclude src-home offset-home)
-                2
-                protect
-                protect-n)
-              (+ 2 protect-n)
-              "%r10"
-              backend-state)
-            planned-dst)]
+          (compiler-backend-planned-or-scavenge-reg-here
+            planned-dst
+            (compiler-backend-scavenge-exclude-merge
+              (compiler-backend-two-exclude src-home offset-home)
+              2
+              protect
+              protect-n)
+            (+ 2 protect-n)
+            "%r10"
+            backend-state)]
         (match (compiler-backend-emit-copy-gep-dyn-address
           assignments
           base
@@ -31480,17 +31953,16 @@
             (let
               [src-reg : String
                 (if (string.eq src-home "")
-                  (if (string.eq planned-src "")
-                    (compiler-backend-scavenge-reg-here
-                      (compiler-backend-scavenge-exclude-merge
-                        (compiler-backend-one-exclude scav-base)
-                        1
-                        protect
-                        protect-n)
-                      (+ 1 protect-n)
-                      "%r9"
-                      backend-state)
-                    planned-src)
+                  (compiler-backend-planned-or-scavenge-reg-here
+                    planned-src
+                    (compiler-backend-scavenge-exclude-merge
+                      (compiler-backend-one-exclude scav-base)
+                      1
+                      protect
+                      protect-n)
+                    (+ 1 protect-n)
+                    "%r9"
+                    backend-state)
                   src-home)]
               [copy-xmm : String
                 (compiler-backend-copy-xmm-scratch
@@ -31499,17 +31971,16 @@
                   backend-state)]
               [copy-gp : String
                 (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-                  (if (string.eq planned-value "")
-                    (compiler-backend-scavenge-reg-here
-                      (compiler-backend-scavenge-exclude-merge
-                        (compiler-backend-two-exclude scav-base src-reg)
-                        2
-                        protect
-                        protect-n)
-                      (+ 2 protect-n)
-                      "%r8"
-                      backend-state)
-                    planned-value)
+                  (compiler-backend-planned-or-scavenge-reg-here
+                    planned-value
+                    (compiler-backend-scavenge-exclude-merge
+                      (compiler-backend-two-exclude scav-base src-reg)
+                      2
+                      protect
+                      protect-n)
+                    (+ 2 protect-n)
+                    "%r8"
+                    backend-state)
                   "")]
               (match (if (string.eq src-home "")
                 (compiler-backend-emit-load-value-with-plan
@@ -31700,17 +32171,16 @@
         (compiler-backend-value-register-home backend-state assignments dst))]
     [dst-reg : String
       (if (string.eq dst-home "")
-        (if (string.eq planned-dst "")
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-merge
-              (compiler-backend-two-exclude operand-a operand-b)
-              2
-              protect
-              protect-n)
-            (+ 2 protect-n)
-            "%r10"
-            backend-state)
-          planned-dst)
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-dst
+          (compiler-backend-scavenge-exclude-merge
+            (compiler-backend-two-exclude operand-a operand-b)
+            2
+            protect
+            protect-n)
+          (+ 2 protect-n)
+          "%r10"
+          backend-state)
         dst-home)]
     (match (if (string.eq dst-home "")
       (compiler-backend-emit-load-value-with-plan
@@ -31725,17 +32195,16 @@
             (compiler-backend-copy-xmm-scratch size planned-xmm backend-state)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-              (if (string.eq planned-value "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-three-exclude dst-reg operand-a operand-b)
-                    3
-                    protect
-                    protect-n)
-                  (+ 3 protect-n)
-                  "%r8"
-                  backend-state)
-                planned-value)
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-value
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-three-exclude dst-reg operand-a operand-b)
+                  3
+                  protect
+                  protect-n)
+                (+ 3 protect-n)
+                "%r8"
+                backend-state)
               "")]
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
@@ -31783,17 +32252,16 @@
         (compiler-backend-value-scalar-register backend-state assignments src))]
     [src-reg : String
       (if (string.eq src-home "")
-        (if (string.eq planned-src "")
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-scavenge-exclude-merge
-              (compiler-backend-two-exclude operand-a operand-b)
-              2
-              protect
-              protect-n)
-            (+ 2 protect-n)
-            "%r9"
-            backend-state)
-          planned-src)
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-src
+          (compiler-backend-scavenge-exclude-merge
+            (compiler-backend-two-exclude operand-a operand-b)
+            2
+            protect
+            protect-n)
+          (+ 2 protect-n)
+          "%r9"
+          backend-state)
         src-home)]
     (match (if (string.eq src-home "")
       (compiler-backend-emit-load-value-with-plan
@@ -31808,17 +32276,16 @@
             (compiler-backend-copy-xmm-scratch size planned-xmm backend-state)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-              (if (string.eq planned-value "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-three-exclude src-reg operand-a operand-b)
-                    3
-                    protect
-                    protect-n)
-                  (+ 3 protect-n)
-                  "%r8"
-                  backend-state)
-                planned-value)
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-value
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-three-exclude src-reg operand-a operand-b)
+                  3
+                  protect
+                  protect-n)
+                (+ 3 protect-n)
+                "%r8"
+                backend-state)
               "")]
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
@@ -31889,17 +32356,16 @@
           ;; triggers an emergency spill.
           (let
             [scav-idx : String
-              (if (string.eq planned-index "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-two-exclude scav-base src-home)
-                    2
-                    protect
-                    protect-n)
-                  (+ 2 protect-n)
-                  "%r8"
-                  backend-state)
-                planned-index)]
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-index
+                (compiler-backend-scavenge-exclude-merge
+                  (compiler-backend-two-exclude scav-base src-home)
+                  2
+                  protect
+                  protect-n)
+                (+ 2 protect-n)
+                "%r8"
+                backend-state)]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
@@ -32020,14 +32486,13 @@
         [base-reg : String
           (if (string.eq base-reg-in "")
             (if (string.eq base-home "")
-              (if (string.eq planned-address "")
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-addr-scavenge-exclude)
-                  0
-                  "%r10"
-                  backend-state)
-                planned-address)
+              (compiler-backend-planned-or-scavenge-reg
+                planned-address
+                dst
+                (compiler-backend-addr-scavenge-exclude)
+                0
+                "%r10"
+                backend-state)
               base-home)
             base-reg-in)]
         [addr : String (compiler-backend-base-address disp base-reg)]
@@ -32095,14 +32560,13 @@
           (if (string.eq base-reg-in "")
             (if use-base-home?
               base-home
-              (if (string.eq planned-address "")
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-one-exclude offset-home)
-                  1
-                  "%r10"
-                  backend-state)
-                planned-address))
+              (compiler-backend-planned-or-scavenge-reg
+                planned-address
+                dst
+                (compiler-backend-one-exclude offset-home)
+                1
+                "%r10"
+                backend-state))
             base-reg-in)]
         [use-offset-home? : bool
           (and
@@ -32112,14 +32576,13 @@
         [index-reg : String
           (if use-offset-home?
             offset-home
-            (if (string.eq planned-index "")
-              (compiler-backend-scavenge-reg
-                dst
-                (compiler-backend-scavenge-exclude-regs2 base-reg offset-home)
-                7
-                "%r8"
-                backend-state)
-              planned-index))]
+            (compiler-backend-planned-or-scavenge-reg
+              planned-index
+              dst
+              (compiler-backend-scavenge-exclude-regs2 base-reg offset-home)
+              7
+              "%r8"
+              backend-state))]
         [addr : String
           (compiler-backend-gep-index-address-disp
             gep-disp
@@ -32563,14 +33026,13 @@
               src)]
           [store-reg : String
             (if (string.eq src-home "")
-              (if (string.eq planned-value "")
-                (compiler-backend-scavenge-xmm-reg
-                  -1
-                  exclude
-                  exclude-n
-                  "%xmm2"
-                  backend-state)
-                planned-value)
+              (compiler-backend-planned-or-scavenge-xmm-reg
+                planned-value
+                -1
+                exclude
+                exclude-n
+                "%xmm2"
+                backend-state)
               src-home)]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
@@ -32599,13 +33061,12 @@
               src)]
           [store-reg : String
             (if (string.eq src-home "")
-              (if (string.eq planned-value "")
-                (compiler-backend-scavenge-reg-here
-                  exclude
-                  exclude-n
-                  "%r8"
-                  backend-state)
-                planned-value)
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-value
+                exclude
+                exclude-n
+                "%r8"
+                backend-state)
               src-home)]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
@@ -32644,13 +33105,12 @@
     [src-home : String
       (compiler-backend-value-register-home backend-state assignments src)]
     [scav-base : String
-      (if (string.eq planned-address "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-two-exclude dst-home src-home)
-          2
-          "%r10"
-          backend-state)
-        planned-address)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-address
+        (compiler-backend-two-exclude dst-home src-home)
+        2
+        "%r10"
+        backend-state)]
     (match (compiler-backend-emit-address-base
       assignments
       dst
@@ -32710,13 +33170,12 @@
         [value-home : String
           (compiler-backend-value-register-home backend-state assignments value)]
         [scav-base : String
-          (if (string.eq planned-address "")
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-two-exclude base-home value-home)
-              2
-              "%r10"
-              backend-state)
-            planned-address)]
+          (compiler-backend-planned-or-scavenge-reg-here
+            planned-address
+            (compiler-backend-two-exclude base-home value-home)
+            2
+            "%r10"
+            backend-state)]
         (match (compiler-backend-emit-address-base
           assignments
           base
@@ -32840,32 +33299,30 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [scav-idx : String
-      (if (string.eq planned-index "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-ops2
-            backend-state
-            assignments
-            base
-            value)
-          7
-          "%r8"
-          backend-state)
-        planned-index)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-index
+        (compiler-backend-scavenge-exclude-ops2
+          backend-state
+          assignments
+          base
+          value)
+        7
+        "%r8"
+        backend-state)]
     ;; Fold-base scratch. For non-SIB scales the scaled index is folded into a
     ;; register, which must not clobber the base/value homes; it also serves as
     ;; the load fallback when the base is spilled. If that fallback aliases the
     ;; offset home, the offset copy is emitted before the base reload below.
     [scav-fold : String
-      (if (string.eq planned-address "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-append
-            (compiler-backend-scavenge-exclude-regs2 scav-idx base-home)
-            7
-            value-home)
-          8
-          "%r10"
-          backend-state)
-        planned-address)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-address
+        (compiler-backend-scavenge-exclude-append
+          (compiler-backend-scavenge-exclude-regs2 scav-idx base-home)
+          7
+          value-home)
+        8
+        "%r10"
+        backend-state)]
     (match (compiler-backend-emit-address-base-with-avoid
       assignments
       base
@@ -32966,13 +33423,12 @@
     [value1-home : String
       (compiler-backend-value-register-home backend-state assignments value1)]
     [scav-base : String
-      (if (string.eq planned-address "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-three-exclude ptr-home value0-home value1-home)
-          3
-          "%r10"
-          backend-state)
-        planned-address)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-address
+        (compiler-backend-three-exclude ptr-home value0-home value1-home)
+        3
+        "%r10"
+        backend-state)]
     (match (compiler-backend-emit-address-base
       assignments
       ptr
@@ -34021,6 +34477,8 @@
   [dst : i64]
   [size : i64]
   [profile : bool]
+  [planned-root : String]
+  [planned-head : String]
   [backend-state : CompilerBackendState]) : String
   (let
     [size-text : String (string.int->string size)]
@@ -34050,7 +34508,8 @@
         "64"
         "24")]
     [scav : String
-      (compiler-backend-scavenge-reg
+      (compiler-backend-planned-or-scavenge-reg
+        planned-root
         dst
         (compiler-backend-binop-scavenge-exclude-build)
         5
@@ -34067,7 +34526,13 @@
         1
         "%rax")]
     [head-reg : String
-      (compiler-backend-scavenge-reg dst head-exclude 2 "%r9" backend-state)]
+      (compiler-backend-planned-or-scavenge-reg
+        planned-head
+        dst
+        head-exclude
+        2
+        "%r9"
+        backend-state)]
     ;; The inline path advances the bump pointer with a plain store. Shared
     ;; arenas must use the runtime helper, whose atomic path reserves with CAS.
     (str_cat.str-cat
@@ -35436,6 +35901,88 @@
             unit)
           (set! index (+ index 1))))
       out)))
+
+;; Late IR rewrites can introduce copies after the allocator's group-var set
+;; was computed. Seed nominal two-word copies with the backend's canonical
+;; program-wide classification, then let the allocator's bidirectional
+;; Mov/Phi closure carry group provenance through the final emitted blocks.
+(define (compiler-backend-late-group-vars-instr
+  [type-segment-bases : i64]
+  [index : CompilerBackendProgramIndex]
+  [groups : compiler_liveness.CompilerLiveI64Set]
+  [instr : compiler_ir_types.CompilerIrInstr]) : compiler_liveness.CompilerLiveI64Set
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
+      (if (compiler-backend-group-type? type-segment-bases index ty)
+        (match src
+          [(compiler_ir_types.CompilerIrValue.Var src-var)
+            (compiler_liveness.compiler-live-set-insert
+              (compiler_liveness.compiler-live-set-insert groups dst)
+              src-var)]
+          [_ (compiler_liveness.compiler-live-set-insert groups dst)])
+        groups)]
+    [_ groups]))
+
+(define (compiler-backend-late-group-vars-seq
+  [type-segment-bases : i64]
+  [index : CompilerBackendProgramIndex]
+  [groups : compiler_liveness.CompilerLiveI64Set]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_liveness.CompilerLiveI64Set
+  (let
+    [i : i64 0]
+    [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+    [out : compiler_liveness.CompilerLiveI64Set groups]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (compiler-backend-late-group-vars-instr
+              type-segment-bases
+              index
+              out
+              (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)))
+          (set! i (+ i 1))))
+      out)))
+
+(define (compiler-backend-late-group-vars-blocks
+  [type-segment-bases : i64]
+  [index : CompilerBackendProgramIndex]
+  [groups : compiler_liveness.CompilerLiveI64Set]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_liveness.CompilerLiveI64Set
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) groups]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler-backend-late-group-vars-blocks
+            type-segment-bases
+            index
+            (compiler-backend-late-group-vars-seq
+              type-segment-bases
+              index
+              groups
+              instrs)
+            (__tl-box-place rest))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+        [out : compiler_liveness.CompilerLiveI64Set groups]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler_ir_types.compiler-ir-block-seq-ref seq i)
+                [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                  (set!
+                    out
+                    (compiler-backend-late-group-vars-seq
+                      type-segment-bases
+                      index
+                      out
+                      instrs))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (compiler-backend-group-word-class-mask
   [type-segment-bases : i64]
@@ -38970,13 +39517,10 @@
         (ResultCompilerBackend.Ok (compiler-backend-asm-buf-finish (& seq)))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-;; Call compiler-backend-emit-call-args with the dense-index rax override
-;; engaged for exactly the dynamic extent of the arg emission: the caller has
-;; established that its `assignments` argument is a copy of the per-function
-;; table with the single rax-forward override (or the unchanged table when
-;; `override-var` is -1), and the override makes the function-state view answer
-;; identically for that one pinned var. Reset on both result paths so the
-;; main emission spine always observes -1.
+;; Call compiler-backend-emit-call-args with the rax override engaged for
+;; exactly the dynamic extent of arg emission. The override is authoritative
+;; for both the dense per-function view and the context-table fallback. Reset
+;; on both result paths so the main emission spine always observes -1.
 (define (compiler-backend-emit-call-args-with-override-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
@@ -39110,25 +39654,6 @@
             0
             (compiler_ast_types.ast-type-id-fallback)))))
     true))
-
-(define (compiler-backend-rax-call-arg-assignments
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [program-index : CompilerBackendProgramIndex]
-  [rax-var : i64]
-  [rax-ty : compiler_ast_types.AstType]) : compiler_regalloc.CompilerRegAssignmentTable
-  (if (and
-    (>= rax-var 0)
-    (compiler-backend-rax-call-arg-eligible?
-      type-segment-bases
-      program-index
-      rax-ty))
-    (compiler_regalloc.compiler-reg-assignment-insert
-      assignments
-      rax-var
-      (compiler_regalloc.CompilerRegLocation.Register
-        compiler_abi.compiler-reg-id-rax))
-    assignments))
 
 (define (compiler-backend-tail-final-stack-slot
   [target : CompilerBackendTarget]
@@ -40006,18 +40531,21 @@
     (let
       [scratch : String (compiler-backend-phi-temp-gp-scratch backend-state)]
       (compiler-backend-emergency-wrap
-        (str_cat.str-cat
-          "    movq "
-          operand
-          ", "
+        (compiler-backend-phi-local-preserve-asm
           scratch
-          "\n    movq "
-          scratch
-          ", "
-          (compiler-backend-cycle-temp-slot-with-backend-state
-            backend-state
-            slot-index)
-          "\n")
+          (str_cat.str-cat
+            "    movq "
+            operand
+            ", "
+            scratch
+            "\n    movq "
+            scratch
+            ", "
+            (compiler-backend-cycle-temp-slot-with-backend-state
+              backend-state
+              slot-index)
+            "\n")
+          backend-state)
         backend-state))))
 
 (define (compiler-backend-emit-phi-temp-slot-restore-gp
@@ -40033,18 +40561,21 @@
     (let
       [scratch : String (compiler-backend-phi-temp-gp-scratch backend-state)]
       (compiler-backend-emergency-wrap
-        (str_cat.str-cat
-          "    movq "
-          (compiler-backend-cycle-temp-slot-with-backend-state
-            backend-state
-            slot-index)
-          ", "
+        (compiler-backend-phi-local-preserve-asm
           scratch
-          "\n    movq "
-          scratch
-          ", "
-          operand
-          "\n")
+          (str_cat.str-cat
+            "    movq "
+            (compiler-backend-cycle-temp-slot-with-backend-state
+              backend-state
+              slot-index)
+            ", "
+            scratch
+            "\n    movq "
+            scratch
+            ", "
+            operand
+            "\n")
+          backend-state)
         backend-state))))
 
 (define (compiler-backend-phi-float-temp-scratch
@@ -40426,7 +40957,9 @@
     [planned-cycle : String
       (compiler-backend-current-phi-planned-cycle backend-state)]
     (if (not (string.eq planned-cycle ""))
-      planned-cycle
+      (if (string.eq planned-cycle "@frame")
+        ""
+        planned-cycle)
       (let
         [point : i64
           (compiler-backend-function-state-emission-point function-state)]
@@ -40719,8 +41252,18 @@
               ;; (clobbering) loads keep the bracket for the reason above.
               (if (or
                 (string.eq load "")
-                (not (string.eq phi-planned-stage ""))
-                (compiler-backend-phi-staged-copy-proven? backend-state reg))
+                (and
+                  (not (string.eq phi-planned-stage ""))
+                  (not
+                    (compiler-backend-planned-register-phi-preserve?
+                      phi-planned-stage
+                      backend-state)))
+                (and
+                  (not
+                    (compiler-backend-planned-register-phi-preserve?
+                      phi-planned-stage
+                      backend-state))
+                  (compiler-backend-phi-staged-copy-proven? backend-state reg)))
                 (str_cat.str-cat
                   load
                   (compiler-backend-emit-store-typed-var-with-plan
@@ -40729,20 +41272,31 @@
                     reg
                     ty
                     backend-state))
-                (str_cat.str-cat
-                  "    pushq "
-                  reg
-                  "\n"
-                  load
-                  (compiler-backend-emit-store-typed-var-with-plan
-                    assignments
-                    dst
-                    reg
-                    ty
+                (let
+                  [copy : String
+                    (str_cat.str-cat
+                      load
+                      (compiler-backend-emit-store-typed-var-with-plan
+                        assignments
+                        dst
+                        reg
+                        ty
+                        backend-state))]
+                  (if (compiler-backend-planned-register-phi-preserve?
+                    phi-planned-stage
                     backend-state)
-                  "    popq "
-                  reg
-                  "\n")))
+                    (compiler-backend-phi-local-preserve-asm
+                      phi-planned-stage
+                      copy
+                      backend-state)
+                    (str_cat.str-cat
+                      "    pushq "
+                      reg
+                      "\n"
+                      copy
+                      "    popq "
+                      reg
+                      "\n")))))
             load))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
@@ -41012,7 +41566,7 @@
                 [(CompilerBackendMaybeAsm.Some asm)
                   (ResultCompilerBackend.Ok asm)]
                 [(CompilerBackendMaybeAsm.No)
-                  (compiler-backend-emit-group-copy
+                  (compiler-backend-emit-group-copy-with-plan
                     type-segment-bases
                     assignments
                     dst
@@ -41020,9 +41574,11 @@
                     vars
                     ty
                     program-index
+                    (compiler-backend-current-phi-planned-cycle backend-state)
+                    (compiler-backend-current-phi-planned-stage backend-state)
                     backend-state)])]
             [_
-              (compiler-backend-emit-group-copy
+              (compiler-backend-emit-group-copy-with-plan
                 type-segment-bases
                 assignments
                 dst
@@ -41030,6 +41586,8 @@
                 vars
                 ty
                 program-index
+                (compiler-backend-current-phi-planned-cycle backend-state)
+                (compiler-backend-current-phi-planned-stage backend-state)
                 backend-state)])
           (compiler-backend-emit-phi-source-scalar-to-var
             type-segment-bases
@@ -41181,7 +41739,8 @@
                 [xmm-reg : String
                   (if (and
                     xmm-candidate
-                    (not (string.eq phi-planned-xmm-cycle "")))
+                    (not (string.eq phi-planned-xmm-cycle ""))
+                    (not (string.eq phi-planned-xmm-cycle "@frame")))
                     (compiler-backend-global-shared-view phi-planned-xmm-cycle)
                     "")]
                 [reg : String
@@ -43346,7 +43905,7 @@
           [(compiler_regalloc.CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
 
-(define (compiler-backend-emit-mov
+(define (compiler-backend-emit-mov-with-plan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -43354,7 +43913,8 @@
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
-  [planned-xmm : String]
+  [planned0 : String]
+  [planned1 : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (cond
     ;; M-B: a group mov whose src and dst share a home (the coloring's
@@ -43372,7 +43932,7 @@
         (compiler-backend-value-same-home? backend-state assignments dst src))
       (ResultCompilerBackend.Ok "")]
     [(compiler-backend-copy-group? type-segment-bases program-index ty dst src)
-      (compiler-backend-emit-group-copy
+      (compiler-backend-emit-group-copy-with-plan
         type-segment-bases
         assignments
         dst
@@ -43380,6 +43940,8 @@
         vars
         ty
         program-index
+        planned0
+        planned1
         backend-state)]
     [(compiler-backend-value-same-home? backend-state assignments dst src)
       (ResultCompilerBackend.Ok "")]
@@ -43399,8 +43961,8 @@
             1)]
         [reg : String
           (if (string.eq dst-home "")
-            (if (> (string.string-length planned-xmm) 0)
-              planned-xmm
+            (if (> (string.string-length planned0) 0)
+              planned0
               (compiler-backend-scavenge-xmm-reg
                 dst
                 exclude
@@ -43477,7 +44039,8 @@
                     0
                     1)]
                 [reg : String
-                  (compiler-backend-scavenge-reg
+                  (compiler-backend-planned-or-scavenge-reg
+                    planned0
                     dst
                     exclude
                     exclude-n
@@ -43502,6 +44065,28 @@
                           backend-state)))]
                   [(ResultCompilerBackend.Err message)
                     (ResultCompilerBackend.Err message)]))))])]))
+
+(define (compiler-backend-emit-mov
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [planned0 : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (compiler-backend-emit-mov-with-plan
+    type-segment-bases
+    assignments
+    dst
+    src
+    ty
+    program-index
+    vars
+    planned0
+    ""
+    backend-state))
 
 ;; Dead result-store elision (M-B): a call must be emitted for its effects, but
 ;; when its dst var is slot-homed (no register/pair home) AND never read in the
@@ -44145,6 +44730,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-stage : String]
+  [planned-stage2 : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
@@ -44182,6 +44768,8 @@
                 (compiler-backend-plan-provides-id?
                   plan
                   cbi.compiler-builtin-id-tl-profile-alloc-total)
+                planned-stage
+                planned-stage2
                 backend-state)
               (str_cat.str-cat
                 "    call "
@@ -46974,7 +47562,7 @@
         (compiler-backend-current-instr-reserved-mask ctx.function-state))]
     (match instr
       [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
-        (match (compiler-backend-emit-mov
+        (match (compiler-backend-emit-mov-with-plan
           ctx.type-segment-bases
           ctx.assignments
           dst
@@ -46983,6 +47571,7 @@
           ctx.program-index
           ctx.vars
           planned-scratch0
+          planned-scratch1
           ctx.backend-state)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -47574,6 +48163,7 @@
           ctx.assignments
           ctx.assignments
           planned-scratch0
+          planned-scratch1
           ctx.types
           ctx.global-types
           ctx.plan
@@ -48942,17 +49532,9 @@
   [rax-var : i64]
   [rax-ty : compiler_ast_types.AstType]) : ResultCompilerBackend
   (let
-    [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler-backend-rax-call-arg-assignments
-        ctx.type-segment-bases
-        ctx.assignments
-        ctx.program-index
-        rax-var
-        rax-ty)]
-    ;; Mirror of the guard inside compiler-backend-rax-call-arg-assignments:
-    ;; the var whose home the insert pins to %rax, or -1 when arg-assignments
-    ;; is the unmodified list. Published to the dense-index override only for
-    ;; the dynamic extent of a call that actually consumes arg-assignments.
+    ;; The var whose call-argument home is pinned to %rax, or -1 when the
+    ;; forward is ineligible. Published only for the dynamic extent of a call
+    ;; that actually consumes the forwarded value.
     [rax-forward-pending : i64
       (if (and
         (>= rax-var 0)
@@ -48999,10 +49581,14 @@
                   args
                   ty
                   ctx.assignments
-                  arg-assignments
+                  ctx.assignments
                   (compiler-backend-scratch-plan-register-here
                     (compiler-backend-runtime-plan-scratch ctx.plan)
                     0
+                    ctx.backend-state)
+                  (compiler-backend-scratch-plan-register-here
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    1
                     ctx.backend-state)
                   ctx.types
                   ctx.global-types
@@ -49036,7 +49622,7 @@
                   args
                   ty
                   ctx.assignments
-                  arg-assignments
+                  ctx.assignments
                   (compiler-backend-scratch-plan-register-here
                     (compiler-backend-runtime-plan-scratch ctx.plan)
                     0
@@ -49229,6 +49815,20 @@
         instr))
     false))
 
+(define (compiler-backend-rest-starts-return-of-var?
+  [var : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (< index instrs.len)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Return maybe)
+        (match maybe
+          [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+            (compiler-backend-branch-uses-var? value var)]
+          [(compiler_ir_types.CompilerIrMaybeValue.No) false])]
+      [_ false])
+    false))
+
 (define (compiler-backend-emit-instrs-materialize-rax
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -49308,6 +49908,7 @@
                   0
                   4
                   ctx.backend-state)
+                (compiler-backend-rest-starts-return-of-var? dst instrs rest)
                 ctx.backend-state)
                 [(ResultCompilerBackend.Ok head)
                   (begin
@@ -49462,6 +50063,18 @@
         (compiler-backend-emit-instrs ctx fallthrough instrs index out)))
     (ResultCompilerBackend.Ok "")))
 
+(define (compiler-backend-publish-phi-planned-xmm-ahead!
+  [ctx : CompilerBackendEmissionContext]
+  [instruction-offset : i64]) : unit
+  (compiler-backend-function-state-set-string!
+    ctx.function-state
+    compiler-backend-function-string-current-phi-planned-xmm-cycle
+    (compiler-backend-scratch-plan-register-ahead
+      (compiler-backend-runtime-plan-scratch ctx.plan)
+      instruction-offset
+      3
+      ctx.backend-state)))
+
 (define (compiler-backend-emit-fused-compare-branch-rest
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -49475,58 +50088,75 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
-    ctx.type-segment-bases
-    ctx.assignments
-    ctx.function
-    ctx.blocks
-    ctx.current-label
-    op
-    lhs
-    rhs
-    (compiler-backend-binop-operand-ty ctx.types ctx.global-types op lhs rhs ty)
-    true-label
-    false-label
-    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
-    ctx.program-index
-    ctx.vars
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      0
-      0
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      0
-      1
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      1
-      1
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      1
-      2
-      ctx.backend-state))
-    [(ResultCompilerBackend.Ok head)
-      (begin
-        (compiler-backend-asm-append
-          out
-          (compiler-backend-emergency-wrap head ctx.backend-state))
-        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
-    [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (__tl-box-place message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
-              ctx.func-diag
-              ""))))]))
+  (begin
+    (compiler-backend-publish-phi-planned-xmm-ahead! ctx 1)
+    (match (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
+      ctx.type-segment-bases
+      ctx.assignments
+      ctx.function
+      ctx.blocks
+      ctx.current-label
+      op
+      lhs
+      rhs
+      (compiler-backend-binop-operand-ty
+        ctx.types
+        ctx.global-types
+        op
+        lhs
+        rhs
+        ty)
+      true-label
+      false-label
+      (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+      ctx.program-index
+      ctx.vars
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        0
+        ctx.backend-state)
+      (if (compiler_regalloc.compiler-reg-scratch-compare-lhs-direct?
+        ctx.assignments
+        lhs
+        rhs)
+        (compiler-backend-scratch-plan-register-ahead
+          (compiler-backend-runtime-plan-scratch ctx.plan)
+          0
+          0
+          ctx.backend-state)
+        (compiler-backend-scratch-plan-register-ahead
+          (compiler-backend-runtime-plan-scratch ctx.plan)
+          0
+          1
+          ctx.backend-state))
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        1
+        1
+        ctx.backend-state)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        1
+        2
+        ctx.backend-state))
+      [(ResultCompilerBackend.Ok head)
+        (begin
+          (compiler-backend-asm-append
+            out
+            (compiler-backend-emergency-wrap head ctx.backend-state))
+          (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (__tl-box-place message)
+              (compiler-backend-instr-diagnostic
+                ctx.spans
+                ctx.source-function
+                (compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
+                ctx.func-diag
+                ""))))])))
 
 (define (compiler-backend-emit-fused-load-compare-branch-rest
   [ctx : CompilerBackendEmissionContext]
@@ -49543,58 +50173,62 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
-    ctx.type-segment-bases
-    ctx.assignments
-    ctx.function
-    ctx.blocks
-    ctx.current-label
-    ptr
-    op
-    rhs
-    load-ty
-    true-label
-    false-label
-    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
-    ctx.program-index
-    ctx.vars
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      1
-      0
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      1
-      1
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      2
-      1
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      2
-      2
-      ctx.backend-state))
-    [(ResultCompilerBackend.Ok head)
-      (begin
-        (compiler-backend-asm-append
-          out
-          (compiler-backend-emergency-wrap head ctx.backend-state))
-        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
-    [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (__tl-box-place message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.Load load-dst ptr load-ty)
-              ctx.func-diag
-              ""))))]))
+  (begin
+    (compiler-backend-publish-phi-planned-xmm-ahead! ctx 2)
+    (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
+      ctx.type-segment-bases
+      ctx.assignments
+      ctx.function
+      ctx.blocks
+      ctx.current-label
+      ptr
+      op
+      rhs
+      load-ty
+      true-label
+      false-label
+      (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+      ctx.program-index
+      ctx.vars
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        0
+        ctx.backend-state)
+      ;; The comparison result is not materialized in this fusion, so its primary
+      ;; scalar slot is the RHS staging home regardless of the folded Load's home.
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        1
+        0
+        ctx.backend-state)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        2
+        1
+        ctx.backend-state)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        2
+        2
+        ctx.backend-state))
+      [(ResultCompilerBackend.Ok head)
+        (begin
+          (compiler-backend-asm-append
+            out
+            (compiler-backend-emergency-wrap head ctx.backend-state))
+          (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (__tl-box-place message)
+              (compiler-backend-instr-diagnostic
+                ctx.spans
+                ctx.source-function
+                (compiler_ir_types.CompilerIrInstr.Load load-dst ptr load-ty)
+                ctx.func-diag
+                ""))))])))
 
 (define (compiler-backend-emit-fused-not-branch-rest
   [ctx : CompilerBackendEmissionContext]
@@ -49610,56 +50244,58 @@
   ;; `not src` branches to its false successor when src is true. Emit the
   ;; source branch directly with reversed successors, including the matching
   ;; phi-edge copies, instead of materializing the inverted boolean.
-  (match (compiler-backend-emit-branch-with-phi-copies-with-plan
-    ctx.type-segment-bases
-    ctx.assignments
-    ctx.function
-    ctx.blocks
-    ctx.current-label
-    src
-    false-label
-    true-label
-    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
-    ctx.program-index
-    ctx.vars
-    ""
-    ""
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      1
-      0
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      1
-      1
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      1
-      2
-      ctx.backend-state))
-    [(ResultCompilerBackend.Ok head)
-      (begin
-        (compiler-backend-asm-append
-          out
-          (compiler-backend-emergency-wrap head ctx.backend-state))
-        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
-    [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (__tl-box-place message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.UnOp
-                dst
-                (compiler_ir_types.CompilerIrUnOp.Not)
-                src
-                ty)
-              ctx.func-diag
-              ""))))]))
+  (begin
+    (compiler-backend-publish-phi-planned-xmm-ahead! ctx 1)
+    (match (compiler-backend-emit-branch-with-phi-copies-with-plan
+      ctx.type-segment-bases
+      ctx.assignments
+      ctx.function
+      ctx.blocks
+      ctx.current-label
+      src
+      false-label
+      true-label
+      (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+      ctx.program-index
+      ctx.vars
+      ""
+      ""
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        1
+        0
+        ctx.backend-state)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        1
+        1
+        ctx.backend-state)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        1
+        2
+        ctx.backend-state))
+      [(ResultCompilerBackend.Ok head)
+        (begin
+          (compiler-backend-asm-append
+            out
+            (compiler-backend-emergency-wrap head ctx.backend-state))
+          (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (__tl-box-place message)
+              (compiler-backend-instr-diagnostic
+                ctx.spans
+                ctx.source-function
+                (compiler_ir_types.CompilerIrInstr.UnOp
+                  dst
+                  (compiler_ir_types.CompilerIrUnOp.Not)
+                  src
+                  ty)
+                ctx.func-diag
+                ""))))])))
 
 (define (compiler-backend-emit-fused-gep-load-compare-branch-rest
   [ctx : CompilerBackendEmissionContext]
@@ -49682,64 +50318,68 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
-    ctx.type-segment-bases
-    ctx.assignments
-    ctx.function
-    ctx.blocks
-    ctx.current-label
-    base
-    offset
-    elem-ty
-    op
-    rhs
-    load-ty
-    true-label
-    false-label
-    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
-    ctx.program-index
-    ctx.vars
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      2
-      0
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      2
-      1
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      3
-      1
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      3
-      2
-      ctx.backend-state))
-    [(ResultCompilerBackend.Ok head)
-      (begin
-        (compiler-backend-asm-append
-          out
-          (compiler-backend-emergency-wrap head ctx.backend-state))
-        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
-    [(ResultCompilerBackend.Err message)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-backend-apply-instr-diagnostic
-            (__tl-box-place message)
-            (compiler-backend-instr-diagnostic
-              ctx.spans
-              ctx.source-function
-              (compiler_ir_types.CompilerIrInstr.Gep
-                gep-dst
-                base
-                offset
-                elem-ty)
-              ctx.func-diag
-              ""))))]))
+  (begin
+    (compiler-backend-publish-phi-planned-xmm-ahead! ctx 3)
+    (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
+      ctx.type-segment-bases
+      ctx.assignments
+      ctx.function
+      ctx.blocks
+      ctx.current-label
+      base
+      offset
+      elem-ty
+      op
+      rhs
+      load-ty
+      true-label
+      false-label
+      (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+      ctx.program-index
+      ctx.vars
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        0
+        ctx.backend-state)
+      ;; The comparison result is not materialized in this fusion, so its primary
+      ;; scalar slot is the RHS staging home regardless of the folded Load's home.
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        2
+        0
+        ctx.backend-state)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        3
+        1
+        ctx.backend-state)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        3
+        2
+        ctx.backend-state))
+      [(ResultCompilerBackend.Ok head)
+        (begin
+          (compiler-backend-asm-append
+            out
+            (compiler-backend-emergency-wrap head ctx.backend-state))
+          (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (__tl-box-place message)
+              (compiler-backend-instr-diagnostic
+                ctx.spans
+                ctx.source-function
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  gep-dst
+                  base
+                  offset
+                  elem-ty)
+                ctx.func-diag
+                ""))))])))
 
 ;; GAP8: fold a single-use fused-load result straight into the consuming ALU
 ;; op's memory operand -- `movq (b,i,8), %t; addq %t, %acc` becomes
@@ -50123,6 +50763,13 @@
                 [continuation : i64 after-div]
                 [emitted : ResultCompilerBackend
                   (begin
+                    ;; The planned dividend register was selected speculatively
+                    ;; while probing this fusion. Admission has now committed,
+                    ;; so arm its live-through preservation around the complete
+                    ;; Gep/load/ALU/divmod bundle before the producer writes it.
+                    (compiler-backend-preserve-planned-register!
+                      src
+                      ctx.backend-state)
                     (compiler-backend-divmod-overrides-install-spellings!
                       ctx.function-state
                       alu-dst
@@ -50525,6 +51172,8 @@
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
   [gep-disp : i64]
+  [planned-base : String]
+  [planned-index : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-home : String
@@ -50546,7 +51195,8 @@
                 base))]
           [base-reg : String
             (if (string.eq base-home "")
-              (compiler-backend-scavenge-reg
+              (compiler-backend-planned-or-scavenge-reg
+                planned-base
                 alu-dst
                 (compiler-backend-one-exclude dst-home)
                 1
@@ -50595,7 +51245,8 @@
           [base-reg : String
             (if use-base-home?
               base-home
-              (compiler-backend-scavenge-reg
+              (compiler-backend-planned-or-scavenge-reg
+                planned-base
                 alu-dst
                 (compiler-backend-two-exclude offset-home dst-home)
                 2
@@ -50609,7 +51260,8 @@
           [index-reg : String
             (if use-offset-home?
               offset-home
-              (compiler-backend-scavenge-reg
+              (compiler-backend-planned-or-scavenge-reg
+                planned-index
                 alu-dst
                 (compiler-backend-gep-load-alu-index-exclude
                   base-reg
@@ -51995,6 +52647,16 @@
           offset
           elem-ty
           gep-fold-disp
+          (compiler-backend-scratch-plan-register-ahead
+            (compiler-backend-runtime-plan-scratch ctx.plan)
+            0
+            0
+            ctx.backend-state)
+          (compiler-backend-scratch-plan-register-ahead
+            (compiler-backend-runtime-plan-scratch ctx.plan)
+            0
+            1
+            ctx.backend-state)
           ctx.backend-state)
         instrs
         after-binop
@@ -52492,6 +53154,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [value : compiler_ir_types.CompilerIrValue]
   [store-ty : compiler_ast_types.AstType]
+  [store-instruction-offset : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
@@ -52517,7 +53180,7 @@
       ctx.backend-state)
     (compiler-backend-scratch-plan-register-ahead
       (compiler-backend-runtime-plan-scratch ctx.plan)
-      1
+      store-instruction-offset
       1
       ctx.backend-state)
     ctx.backend-state)
@@ -54364,6 +55027,10 @@
         compiler-backend-function-i64-home-override1-reg)]
     [result : ResultCompilerBackend
       (begin
+        ;; `src` can be the divmod instruction's preserved planned ordinal.
+        ;; The polish probe only peeks at it; consume it once the fused result
+        ;; store has committed so the wrapper owns the whole bundle.
+        (compiler-backend-preserve-planned-register! src ctx.backend-state)
         (compiler-backend-divmod-overrides-install-spellings!
           ctx.function-state
           div-dst
@@ -54458,6 +55125,10 @@
         compiler-backend-function-i64-home-override1-reg)]
     [result : ResultCompilerBackend
       (begin
+        ;; Producer steering writes `src` before the ordinary divmod emitter
+        ;; gets a chance to consume its planned ordinal. Arm preservation here
+        ;; and let the bundle wrapper restore the live-through resident.
+        (compiler-backend-preserve-planned-register! src ctx.backend-state)
         (compiler-backend-divmod-overrides-install-spellings!
           ctx.function-state
           producer-dst
@@ -54557,6 +55228,10 @@
         compiler-backend-function-i64-home-override1-reg)]
     [result : ResultCompilerBackend
       (begin
+        ;; As above, the steered producer is the first write to the planned
+        ;; dividend register. Preserve it across producer+divmod+store as one
+        ;; atomic fused region.
+        (compiler-backend-preserve-planned-register! src ctx.backend-state)
         (compiler-backend-divmod-overrides-install-spellings!
           ctx.function-state
           producer-dst
@@ -55541,7 +56216,7 @@
                     (compiler-backend-var-single-use? ctx.use-counts dst)
                     (compiler-backend-var-single-use? ctx.use-counts cast-dst)
                     (compiler-backend-divmod-safe-literal? src bin-ty))
-                    (match (compiler-backend-emit-binop
+                    (match (compiler-backend-emit-binop-with-plan
                       ctx.type-segment-bases
                       ctx.types
                       ctx.global-types
@@ -55551,6 +56226,31 @@
                       lhs
                       src
                       bin-ty
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        2
+                        0
+                        ctx.backend-state)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        2
+                        1
+                        ctx.backend-state)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        2
+                        2
+                        ctx.backend-state)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        2
+                        3
+                        ctx.backend-state)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        2
+                        4
+                        ctx.backend-state)
                       ctx.backend-state)
                       [(ResultCompilerBackend.Ok binop-asm)
                         (begin
@@ -55606,7 +56306,7 @@
                 ""
                 ctx.backend-state))
               [(ResultCompilerBackend.Ok prefix)
-                (match (compiler-backend-emit-binop
+                (match (compiler-backend-emit-binop-with-plan
                   ctx.type-segment-bases
                   ctx.types
                   ctx.global-types
@@ -55616,6 +56316,31 @@
                   lhs
                   src
                   bin-ty
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    1
+                    0
+                    ctx.backend-state)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    1
+                    1
+                    ctx.backend-state)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    1
+                    2
+                    ctx.backend-state)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    1
+                    3
+                    ctx.backend-state)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    1
+                    4
+                    ctx.backend-state)
                   ctx.backend-state)
                   [(ResultCompilerBackend.Ok binop-asm)
                     (begin
@@ -56144,6 +56869,7 @@
                     elem-ty
                     value
                     store-ty
+                    1
                     instrs
                     after-load
                     out)
@@ -56366,6 +57092,7 @@
                               elem-ty
                               value
                               store-ty
+                              2
                               instrs
                               after-store
                               out)
@@ -56440,6 +57167,7 @@
                     elem-ty
                     value
                     store-ty
+                    1
                     instrs
                     after-gep
                     out)
@@ -57074,38 +57802,40 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-branch-with-phi-copies-with-plan
-    ctx.type-segment-bases
-    ctx.assignments
-    ctx.function
-    ctx.blocks
-    ctx.current-label
-    cond
-    true-label
-    false-label
-    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
-    ctx.program-index
-    ctx.vars
-    true-jcc
-    false-jcc
-    ""
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      ahead
-      1
-      ctx.backend-state)
-    (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch ctx.plan)
-      ahead
-      2
-      ctx.backend-state))
-    [(ResultCompilerBackend.Ok head)
-      (begin
-        (compiler-backend-asm-append
-          out
-          (compiler-backend-emergency-wrap head ctx.backend-state))
-        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
-    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+  (begin
+    (compiler-backend-publish-phi-planned-xmm-ahead! ctx ahead)
+    (match (compiler-backend-emit-branch-with-phi-copies-with-plan
+      ctx.type-segment-bases
+      ctx.assignments
+      ctx.function
+      ctx.blocks
+      ctx.current-label
+      cond
+      true-label
+      false-label
+      (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+      ctx.program-index
+      ctx.vars
+      true-jcc
+      false-jcc
+      ""
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        ahead
+        1
+        ctx.backend-state)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        ahead
+        2
+        ctx.backend-state))
+      [(ResultCompilerBackend.Ok head)
+        (begin
+          (compiler-backend-asm-append
+            out
+            (compiler-backend-emergency-wrap head ctx.backend-state))
+          (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 ;; Flags reuse for a comparison that MUST materialize. The fused paths above
 ;; fire only when the boolean is never needed as a value; with a stored bool or
@@ -57273,6 +58003,7 @@
         0
         4
         ctx.backend-state)
+      (compiler-backend-rest-starts-return-of-var? dst instrs index)
       ctx.backend-state)
       [(ResultCompilerBackend.Ok head)
         (begin
@@ -57647,7 +58378,12 @@
                       cond
                       true-label
                       false-label)
-                    (if (compiler-backend-branch-uses-var? cond dst)
+                    (if (and
+                      (compiler-backend-branch-uses-var? cond dst)
+                      (compiler-backend-branch-value-direct?
+                        ctx.assignments
+                        src
+                        ctx.backend-state))
                       (compiler-backend-emit-fused-not-branch-rest
                         ctx
                         fallthrough
@@ -57742,6 +58478,9 @@
   [const-hoist-sites : i64]
   [backend-mode : CompilerBackendMode]) : bool
   (or
+    ;; Scratch-plan lookup is keyed by the exact global instruction point even
+    ;; when an opt0/opt1 function has no ordinary register homes (plan-mask 0).
+    (compiler-backend-scratch-vreg-enabled?)
     (not (= plan-mask 0))
     (not (= const-hoist-sites 0))
     ;; AVX2 predicated-store lane labels use the instruction point as their
@@ -57776,6 +58515,7 @@
         true)
       (while (not done)
         (let
+          [step-mark : i64 (compiler-backend-asm-buf-len out)]
           [step-result : ResultCompilerBackend
             (begin
               ;; The remaining-instruction count derives the
@@ -57847,6 +58587,14 @@
                 ctx.function-state
                 compiler-backend-function-bool-emit-instrs-continue-pending
                 false)
+              (compiler-backend-function-scratch-set-i64!
+                ctx.function-state
+                compiler-backend-scratch-i64-current-planned-preserve-count
+                0)
+              (compiler-backend-function-scratch-set-i64!
+                ctx.function-state
+                compiler-backend-scratch-i64-current-planned-local-preserve-count
+                0)
               ;; Fast and fused emitters can bypass compiler-backend-emit-instr.
               ;; Install the head instruction's source context at the shared
               ;; dispatch seam so every abort guard sees the correct site.
@@ -57888,28 +58636,33 @@
                     out)]))]
           (match step-result
             [(ResultCompilerBackend.Ok asm)
-              (if (compiler-backend-function-state-bool?
-                ctx.function-state
-                compiler-backend-function-bool-emit-instrs-continue-pending)
-                (begin
-                  (set!
-                    current-mode
-                    (compiler-backend-function-state-next-mode
-                      ctx.function-state))
-                  (set!
-                    current-instrs
-                    (compiler-backend-function-state-next-instrs
-                      ctx.function-state))
-                  (set!
-                    current-index
-                    (compiler-backend-function-state-i64
-                      ctx.function-state
-                      compiler-backend-function-i64-emit-instrs-next-index))
-                  (set! current-count current-instrs.len)
-                  unit)
-                (begin
-                  (set! asm-out asm)
-                  (set! done true)))]
+              (begin
+                (compiler-backend-emergency-wrap-appended
+                  out
+                  step-mark
+                  ctx.backend-state)
+                (if (compiler-backend-function-state-bool?
+                  ctx.function-state
+                  compiler-backend-function-bool-emit-instrs-continue-pending)
+                  (begin
+                    (set!
+                      current-mode
+                      (compiler-backend-function-state-next-mode
+                        ctx.function-state))
+                    (set!
+                      current-instrs
+                      (compiler-backend-function-state-next-instrs
+                        ctx.function-state))
+                    (set!
+                      current-index
+                      (compiler-backend-function-state-i64
+                        ctx.function-state
+                        compiler-backend-function-i64-emit-instrs-next-index))
+                    (set! current-count current-instrs.len)
+                    unit)
+                  (begin
+                    (set! asm-out asm)
+                    (set! done true))))]
             [(ResultCompilerBackend.Err message)
               (begin
                 (set! diag-out message)
@@ -58743,12 +59496,12 @@
             all-params
             assignments)]
         [scratch : String
-          (compiler-backend-scavenge-reg
-            var-id
+          (compiler-backend-scavenge-pick-with-mask
+            (compiler-backend-state-function-state backend-state)
+            0
             exclude
             exclude-n
-            "%r8"
-            backend-state)]
+            "%r8")]
         (str_cat.str-cat
           "    leaq "
           addr
@@ -59078,7 +59831,13 @@
                                 ty
                                 exclude
                                 exclude-n
-                                ""
+                                (compiler-backend-scavenge-pick-with-mask
+                                  (compiler-backend-state-function-state
+                                    backend-state)
+                                  0
+                                  exclude
+                                  exclude-n
+                                  "%r8")
                                 backend-state))
                             tail)))]
                     [(ResultCompilerBackend.Err message)
@@ -64893,6 +65652,11 @@
         [backend-state : CompilerBackendState program-index.backend-state]
         [function-state : CompilerBackendFunctionState
           (compiler-backend-state-function-state backend-state)]
+        [_current-source-function : unit
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-current-source-function
+            name)]
         [scalar-registers-enabled : bool
           (compiler-backend-state-scalar-registers-enabled? backend-state)]
         [_ra-grp : unit
@@ -65302,36 +66066,19 @@
                 alloc-reg-plan)
               unit)
             unit)]
-        [scratch-plan-result : compiler_regalloc.CompilerRegScratchPlanResult
-          (if call-save-enabled
-            (compiler_regalloc.compiler-reg-plan-with-scratch-vreg-result
-              type-segment-bases
-              fn-abi
-              (compiler_ir_types.CompilerIrFunction.Function
-                name
-                params
-                ret-ty
-                remat-vars
-                remat-blocks)
-              remat-reg-plan
-              remat-vars)
-            (compiler_regalloc.CompilerRegScratchPlanResult.Result
-              remat-reg-plan
-              (compiler_regalloc.compiler-reg-scratch-plan-empty)))]
-        [scratch-plan : compiler_regalloc.CompilerRegScratchPlan
-          (match scratch-plan-result
-            [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ out-plan)
-              out-plan])]
-        [scratch-reg-plan : compiler_regalloc.CompilerRegPlan
-          (match scratch-plan-result
-            [(compiler_regalloc.CompilerRegScratchPlanResult.Result out-plan _)
-              out-plan])]
+        ;; Scratch pseudos are no longer published as ordinary assignments.
+        ;; Keep storage coloring on the ordinary plan, then build the scratch
+        ;; plan below from the FINAL remapped IR and assignment table. Planning
+        ;; here used to attach point/ordinal requirements to pre-color var ids;
+        ;; after coloring reused those ids for different storage shapes, an
+        ;; apparent register result could become a spilled emitted result with
+        ;; no modeled slot (#5808).
         [scratch-vars : i64
           (compiler_regalloc.compiler-reg-plan-var-count
-            scratch-reg-plan
+            remat-reg-plan
             remat-vars)]
         [plan-types : compiler_regalloc.CompilerRegVarTypes
-          (compiler_regalloc.compiler-reg-plan-types scratch-reg-plan)]
+          (compiler_regalloc.compiler-reg-plan-types remat-reg-plan)]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
@@ -65354,7 +66101,7 @@
           (compiler-backend-gep-fusion-pinned-vars
             scratch-vars
             remat-blocks
-            (compiler_regalloc.compiler-reg-plan-assignments scratch-reg-plan))]
+            (compiler_regalloc.compiler-reg-plan-assignments remat-reg-plan))]
         ;; Compact the frame after regalloc by renumbering stack-resident
         ;; values into a dense slot prefix. Plans without intervals (the
         ;; stack-only opt0/opt1 path) pass through unchanged. Only real remat
@@ -65370,7 +66117,7 @@
           ;; preserving the old high raw ids that drove frame growth.
           (compiler_regalloc.compiler-reg-color-stack-slots
             type-segment-bases
-            scratch-reg-plan
+            remat-reg-plan
             fn-group-vars
             params
             remat-blocks
@@ -65380,13 +66127,12 @@
         [assignments : compiler_regalloc.CompilerRegAssignmentTable
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None)
-              (compiler_regalloc.compiler-reg-plan-assignments scratch-reg-plan)]
+              (compiler_regalloc.compiler-reg-plan-assignments remat-reg-plan)]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
                 remap
                 scratch-vars
-                (compiler_regalloc.compiler-reg-plan-assignments
-                  scratch-reg-plan))])]
+                (compiler_regalloc.compiler-reg-plan-assignments remat-reg-plan))])]
         [_regalloc-assignment-census : unit
           (cfg
             regalloc-census
@@ -65492,11 +66238,63 @@
                 remap
                 scratch-vars
                 plan-types)])]
-        [emit-group-vars : compiler_liveness.CompilerLiveI64Set
+        [scratch-base-plan : compiler_regalloc.CompilerRegPlan
+          (match remat-reg-plan
+            [(compiler_regalloc.CompilerRegPlan.Plan
+                _
+                ineligible
+                _
+                _
+                call-split
+                split-plan)
+              (compiler_regalloc.CompilerRegPlan.Plan
+                assignments
+                ineligible
+                scavenge-intervals
+                types
+                call-split
+                split-plan)])]
+        [emit-group-vars-base : compiler_liveness.CompilerLiveI64Set
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None) fn-group-vars]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler-backend-remap-group-vars fn-group-vars remap)])]
+        [emit-group-vars : compiler_liveness.CompilerLiveI64Set
+          (compiler_regalloc.compiler-reg-group-vars-fixpoint
+            (compiler-backend-late-group-vars-blocks
+              type-segment-bases
+              program-index
+              emit-group-vars-base
+              emit-blocks-list)
+            emit-blocks-list)]
+        [scratch-plan-result : compiler_regalloc.CompilerRegScratchPlanResult
+          (cfg
+            scratch-vreg
+            (compiler_regalloc.compiler-reg-plan-with-scratch-vreg-result-with-groups
+              type-segment-bases
+              fn-abi
+              (compiler_ir_types.CompilerIrFunction.Function
+                name
+                emit-params
+                ret-ty
+                scratch-vars
+                emit-blocks-list)
+              emit-group-vars
+              scratch-base-plan
+              scratch-vars)
+            (compiler_regalloc.CompilerRegScratchPlanResult.Result
+              scratch-base-plan
+              (compiler_regalloc.compiler-reg-scratch-plan-empty)))]
+        [scratch-plan : compiler_regalloc.CompilerRegScratchPlan
+          (match scratch-plan-result
+            [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ out-plan)
+              out-plan])]
+        [_emit-scratch-plan-mask : unit
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-planned-scratch-reg-mask
+            (compiler_regalloc.compiler-reg-scratch-plan-register-mask
+              scratch-plan))]
         [addressable-group-vars : compiler_liveness.CompilerLiveI64Set
           (if (> (compiler_liveness.compiler-live-set-count emit-group-vars) 0)
             (compiler-backend-addressable-group-vars-blocks
@@ -81027,6 +81825,33 @@
           function-b
           compiler-backend-function-bool-gep-fold-ready
           true))]
+    ;; Small functions use the context table directly. The emission-scoped rax
+    ;; override must be just as authoritative there as it is in the dense view.
+    [fallback-rax-override : bool
+      (begin
+        (compiler-backend-function-state-set-bool!
+          function-b
+          compiler-backend-function-bool-emit-assignment-index-active
+          false)
+        (compiler-backend-function-state-set-i64!
+          function-b
+          compiler-backend-function-i64-rax-override-var
+          0)
+        (let
+          [ok : bool
+            (compiler-backend-test-location-register?
+              (compiler-backend-emit-assignment-lookup state-b assignments-b 0)
+              compiler_abi.compiler-reg-id-rax)]
+          (begin
+            (compiler-backend-function-state-set-bool!
+              function-b
+              compiler-backend-function-bool-emit-assignment-index-active
+              true)
+            (compiler-backend-function-state-set-i64!
+              function-b
+              compiler-backend-function-i64-rax-override-var
+              -1)
+            ok)))]
     [a-c-xmm : String (compiler-backend-current-c-memory-planned-xmm state-a)]
     [b-c-xmm : String (compiler-backend-current-c-memory-planned-xmm state-b)]
     [a-gp-cycle : String (compiler-backend-current-phi-planned-cycle state-a)]
@@ -81056,6 +81881,7 @@
         (compiler_ir_types.CompilerIrValue.Var 8)
         (compiler_ast_types.AstType.I64))]
     (and
+      fallback-rax-override
       (compiler-backend-test-location-register?
         (compiler-backend-emit-assignment-lookup state-a assignments-a 0)
         compiler_abi.compiler-reg-id-rax)

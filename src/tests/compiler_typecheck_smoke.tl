@@ -5614,7 +5614,8 @@
         (ast.ast-node-pool-context-capture-active)
         (tc_core.tc-macro-state-source-names macro-a)
         body-a)]
-    [hygiene-a : tc_core.MacroHygieneEnv (tc_core.MacroHygieneEnv -1 macro-a)]
+    [hygiene-a : tc_core.MacroHygieneEnv
+      (tc_core.macro-hygiene-env-empty macro-a (tc_core.tc-context-pools ctx-a))]
     [macro-a-handle : ci.InternSourceNameSessionHandle
       (tc_core.tc-macro-state-source-names macro-a)]
     [macro-b-handle : ci.InternSourceNameSessionHandle

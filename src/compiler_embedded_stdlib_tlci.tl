@@ -427,10 +427,12 @@
 (define compiler-comptime-host-diagnostic : (__tl_dyn-array String)
   (__tl_make-array ""))
 
-;; Computed-body local slots for let-bound transformer bodies (refs #5603).
-;; Slots are addressed by immediate operand and validated per session.
+;; Computed-body local slots for let-bound transformer bodies. Slots are
+;; addressed by immediate operand and validated per session; the producer owns
+;; the matching upper bound. Vector's full module generator exceeds 32 locals.
+;; Refs #5603, #6556.
 (define compiler-comptime-host-locals-cap : i64
-  32)
+  64)
 (define compiler-comptime-host-locals : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
   (array.make-array

@@ -23,8 +23,10 @@
 #
 # Issue #6556 moves stdlib.vector/vector off its fallback shell by adding
 # tuple-type and consuming-array template lowering plus computed local
-# destructuring/conditions. The generalized Bool result support also removes
-# the stdlib.serialize/serialize and stdlib.sort/vec shells, raising native
-# coverage from 101 to 104 of 107 entries without interpreted arms.
-native-entries-min 104
+# destructuring/conditions and aligning the producer/host local budget with
+# large module generators. The generalized support also removes the
+# stdlib.hashmap/hashmap, stdlib.serialize/serialize, and stdlib.sort/vec
+# shells, raising native coverage from 101 to 105 of 107 entries without
+# interpreted arms.
+native-entries-min 105
 interpreted-arms-max 0

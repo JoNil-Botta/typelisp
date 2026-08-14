@@ -49,9 +49,11 @@
 ;; Compile-time let-local session slots for the body currently compiling
 ;; (let* scoping; the length is saved and restored around nested bodies).
 ;; Names are source spellings looked up newest-first so later bindings
-;; shadow earlier ones. Refs #5603.
+;; shadow earlier ones. Module generators can bind a broad public surface in
+;; one let (vector's full family currently exceeds 32), so keep this aligned
+;; with the host session's immediate-slot budget. Refs #5603, #6556.
 (define embedded-native-locals-cap : i64
-  32)
+  64)
 (define embedded-native-local-names : (__tl_dyn-array String)
   (array.make-array String embedded-native-locals-cap))
 (define embedded-native-local-bools : (__tl_dyn-array bool)

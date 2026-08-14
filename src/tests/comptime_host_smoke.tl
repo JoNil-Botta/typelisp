@@ -991,6 +991,75 @@
                       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
                       (and positive malformed-ok wrong-local-ok wrong-begin-ok))))))))))))
 
+;; Large module generators address locals by immediate slot. Pin the high end
+;; of vector's 64-slot producer/host budget and reject the first slot beyond it.
+(define (comptime-host-smoke-local-capacity-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        8
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [positive : bool
+          (and
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-set
+                63
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-get
+                63
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (comptime-host-smoke-commit-result!)
+            (comptime-host-smoke-result-bool? true))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+            pools
+            operands
+            1
+            8
+            comptime-host-smoke-cookie
+            (compiler_ctfe.ctfe-reflect-info-list-empty))
+          (let
+            [push-status : i64
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                0
+                0)]
+            [overflow-status : i64
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-local-set
+                64
+                0)]
+            (begin
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+              (and
+                positive
+                (= push-status tlci_core.tlci-host-callback-status-ok)
+                (=
+                  overflow-status
+                  tlci_core.tlci-host-callback-status-bad-request)))))))))
+
 (define (comptime-host-smoke-result-string-expr?
   [pools : compiler_ast_types.AstNodePoolContext]
   [expected : String]) : bool
@@ -1986,6 +2055,8 @@
       (io.panic "comptime host smoke: expression-typed binding callback")]
     [(not (comptime-host-smoke-local-values-ok?))
       (io.panic "comptime host smoke: local value callbacks")]
+    [(not (comptime-host-smoke-local-capacity-ok?))
+      (io.panic "comptime host smoke: local capacity callbacks")]
     [(not (comptime-host-smoke-reflection-builders-ok?))
       (io.panic "comptime host smoke: reflection builders")]
     [(not (comptime-host-smoke-struct-set-from-value-ok?))

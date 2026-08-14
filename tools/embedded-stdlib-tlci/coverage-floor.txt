@@ -24,9 +24,9 @@
 # Issue #6556 moves stdlib.vector/vector off its fallback shell by adding
 # tuple-type and consuming-array template lowering plus computed local
 # destructuring/conditions and aligning the producer/host local budget with
-# large module generators. The generalized support also removes the
-# stdlib.hashmap/hashmap, stdlib.serialize/serialize, and stdlib.sort/vec
-# shells, raising native coverage from 101 to 105 of 107 entries without
+# large module generators. Its generalized support also removes the
+# stdlib.hashmap/hashmap shell. Together with #6554/#6555's serialize and sort
+# routes, native coverage rises from 101 to 105 of 107 entries without
 # interpreted arms.
 native-entries-min 105
 interpreted-arms-max 0

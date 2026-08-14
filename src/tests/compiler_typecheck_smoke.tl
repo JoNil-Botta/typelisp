@@ -5414,10 +5414,7 @@
     [owner-module-id : i64 (ci.intern "macro.owner")]
     [item-name-id : i64 (ci.intern "Item")]
     [structural-module-id : i64
-      (tc_core.macro-hygiene-global-id
-        owner-module-id
-        source-name-id
-        false)]
+      (tc_core.macro-hygiene-global-id owner-module-id source-name-id false)]
     [qualified-item-id : i64
       (ci.intern-composite-pair-id structural-module-id item-name-id)]
     [ctx : tc_core.TcContext
@@ -5438,9 +5435,7 @@
       (=
         (tc_core.tc-source-name-id-or ctx structural-module-id -1)
         source-name-id)
-      (tc_core.tc-module-identity-id-eq?
-        structural-module-id
-        source-name-id))))
+      (tc_core.tc-module-identity-id-eq? structural-module-id source-name-id))))
 
 (test
   compiler-typecheck-structural-name-rendering

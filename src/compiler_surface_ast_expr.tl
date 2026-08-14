@@ -12,7 +12,7 @@
   (import stdlib.byte_buf_core))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-optional-name!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]
@@ -29,7 +29,7 @@
     -1))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-expr-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [items : ast.AstExprList]) : unit
@@ -56,7 +56,7 @@
       (ast.AstExprList slots count))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-param!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]
@@ -77,7 +77,7 @@
     (codec.surface-ast-read-bool! reader)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-param-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]
@@ -108,7 +108,7 @@
       (ast.AstParamList slots count))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-pattern-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]
@@ -127,7 +127,7 @@
             (set! index (+ index 1))))))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-pattern!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]
@@ -201,7 +201,7 @@
           ast.AstPattern.Wildcard)])))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-let-binding-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]
@@ -239,7 +239,7 @@
       (ast.AstLetBindingList slots count))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-resource-binding-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]
@@ -280,7 +280,7 @@
       (ast.AstResourceBindingList slots count))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-match-arm-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]
@@ -316,7 +316,7 @@
       (ast.AstMatchArmList slots count))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-ast-write-expr!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]

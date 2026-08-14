@@ -3,7 +3,7 @@
 ;; surface codecs are also included by the TLCl loader, and pulling the full
 ;; container module through an alias would create a second nominal universe.
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 (import stdlib.string)
 
@@ -14,7 +14,7 @@
   (string.string-ref text index))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-binary-push-u64!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [value : i64]) : unit
@@ -43,7 +43,7 @@
         (cast (bit-and (shr value 56) 0xff) : u8)))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-binary-push-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
@@ -95,7 +95,7 @@
         (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) length)))))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (define (surface-binary-copy [bytes : (__tl_dyn-array u8)]) : (__tl_dyn-array
       u8)
     (let

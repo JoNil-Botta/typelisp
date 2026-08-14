@@ -2808,10 +2808,13 @@
           (compiler-backend-string-contains-alloc-size? asm 8))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movl %r8d, (%r10)\n")
+          (cfg scratch-vreg "    movq %rax, %rdi\n" "    movl %r8d, (%r10)\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movl (%r10), %r8d\n")
+          (cfg
+            scratch-vreg
+            "    movzbq (%rax), %r9\n"
+            "    movl (%r10), %r8d\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    call tl_cabi_color_use\n")
@@ -2852,10 +2855,10 @@
           (compiler-backend-string-contains-alloc-size? asm 8))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movl %r8d, (%r10)\n")
+          (cfg scratch-vreg "    movl %r9d, (%rax)\n" "    movl %r8d, (%r10)\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movl (%r10), %r8d\n")
+          (cfg scratch-vreg "    movl (%rax), %r9d\n" "    movl (%r10), %r8d\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    call tl_cabi_color_use\n")
@@ -3230,16 +3233,28 @@
               "    call tl_cabi_nested_mem_score\n")
             (compiler_backend.compiler-backend-string-contains?
               body
-              "    movups (%r10), %xmm2\n")
+              (cfg
+                scratch-vreg
+                "    movups (%r10), %xmm0\n"
+                "    movups (%r10), %xmm2\n"))
             (compiler_backend.compiler-backend-string-contains?
               body
-              "    movups %xmm2, 0(%rsp)\n")
+              (cfg
+                scratch-vreg
+                "    movups %xmm0, 0(%rsp)\n"
+                "    movups %xmm2, 0(%rsp)\n"))
             (compiler_backend.compiler-backend-string-contains?
               body
-              "    movq 16(%r10), %xmm2\n")
+              (cfg
+                scratch-vreg
+                "    movq 16(%r10), %xmm0\n"
+                "    movq 16(%r10), %xmm2\n"))
             (compiler_backend.compiler-backend-string-contains?
               body
-              "    movq %xmm2, 16(%rsp)\n")
+              (cfg
+                scratch-vreg
+                "    movq %xmm0, 16(%rsp)\n"
+                "    movq %xmm2, 16(%rsp)\n"))
             (and
               (not
                 (compiler_backend.compiler-backend-string-contains?
@@ -3315,13 +3330,22 @@
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %rdx, 8(%r11)\n")
+            (cfg
+              scratch-vreg
+              "    movq %rdx, 8(%r10)\n"
+              "    movq %rdx, 8(%r11)\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd %xmm0, 8(%r11)\n")
+            (cfg
+              scratch-vreg
+              "    movsd %xmm0, 8(%r10)\n"
+              "    movsd %xmm0, 8(%r11)\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd %xmm1, 8(%r11)\n")
+            (cfg
+              scratch-vreg
+              "    movsd %xmm1, 8(%r10)\n"
+              "    movsd %xmm1, 8(%r11)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -4258,8 +4282,13 @@
         (compiler_backend.backend-and4
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq 8(%r10), %r8\n")
-          (compiler_backend.compiler-backend-string-contains? asm "(%r10)")
+            (cfg
+              scratch-vreg
+              "    movq 8(%rcx), %r11\n"
+              "    movq 8(%r10), %r8\n"))
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            (cfg scratch-vreg "    movq (%rax), %r9\n" "(%r10)"))
           (compiler_backend.compiler-backend-string-contains? asm "movzbq")
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -4293,10 +4322,10 @@
             ".globl _tl___enum_obj_Shape_Nothing\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq $1, (%r10)\n")
+            (cfg scratch-vreg "    movq $1, (%rax)\n" "    movq $1, (%r10)\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq $2, (%r10)\n")
+            (cfg scratch-vreg "    movq $2, (%rax)\n" "    movq $2, (%r10)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -4879,7 +4908,8 @@
           (compiler_backend.compiler-backend-string-contains? asm "_tl_calc")
           (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
         ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; params spill
-        ;; to rsp slots and the spilled sum is reloaded into a scratch (%r8),
+        ;; to rsp slots and the spilled sum is reloaded into its modeled
+        ;; scratch (%rsi with scratch-vreg, legacy %r8 otherwise),
         ;; leaving the product in %rax.
         (compiler_backend.compiler-backend-string-contains?
           asm
@@ -4889,10 +4919,13 @@
           "    movq %rsi, 48(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq 32(%rsp), %r8\n")
+          (cfg
+            scratch-vreg
+            "    movq 32(%rsp), %rsi\n"
+            "    movq 32(%rsp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    imulq %r8, %rax\n")
+          (cfg scratch-vreg "    imulq %rsi, %rax\n" "    imulq %r8, %rax\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -4910,13 +4943,22 @@
         (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movsd 32(%rsp), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    movsd 32(%rsp), %xmm0\n"
+            "    movsd 32(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    addsd 16(%rsp), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    addsd 16(%rsp), %xmm0\n"
+            "    addsd 16(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movsd %xmm2, 8(%rsp)\n")
+          (cfg
+            scratch-vreg
+            "    movsd %xmm0, 8(%rsp)\n"
+            "    movsd %xmm2, 8(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    movsd 8(%rsp), %xmm0\n")
@@ -4927,7 +4969,10 @@
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd 32(%rsp), %xmm0\n"))
+            (cfg
+              scratch-vreg
+              "    movsd 32(%rsp), %xmm2\n"
+              "    movsd 32(%rsp), %xmm0\n")))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm3")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -7187,7 +7232,7 @@
         (compiler_ast_types.AstType.I64)
         index
         2
-        ""
+        (cfg scratch-vreg "%r8" "")
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -7208,7 +7253,7 @@
         (compiler_ast_types.AstType.F64)
         index
         2
-        ""
+        (cfg scratch-vreg "%xmm2" "")
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -11020,6 +11065,20 @@
               (compiler_ir_types.CompilerIrValue.Var 2)))
           compiler_ir_types.CompilerIrInstrList.Nil)))))
 
+(define (compiler-backend-rax-forward-variable-shift-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      0
+      (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 0)))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
 (define (compiler-backend-call-arg-rax-forward-direct-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
     (compiler_ir_types.CompilerIrInstr.Call
@@ -11168,6 +11227,34 @@
         compiler_ir_types.CompilerIrBlockList.Nil)]
     [use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-use-counts vars blocks)]
+    [instr-count : i64 (compiler_ir_types.compiler-ir-instr-list-count instrs)]
+    [scratch-result : compiler_regalloc.CompilerRegScratchPlanResult
+      (compiler-backend-scratch-test-result
+        "rax_forward_test"
+        blocks
+        vars
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [_scratch : compiler_regalloc.CompilerRegScratchPlan
+      (match scratch-result
+        [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan) plan])]
+    [runtime-plan : compiler_backend.CompilerBackendRuntimePlan
+      (cfg
+        scratch-vreg
+        (compiler_backend.CompilerBackendRuntimePlan.WithScratch
+          (box (compiler-backend-runtime-helper-full-plan))
+          _scratch)
+        (compiler-backend-runtime-helper-full-plan))]
+    [_scratch-position : unit
+      (begin
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+          program-index.backend-state
+          instr-count)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-current-count!
+          program-index.backend-state
+          instr-count)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-current-site!
+          program-index.backend-state
+          0))]
     (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -11181,7 +11268,7 @@
         (compiler_regalloc.compiler-reg-var-types-empty)
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
-        (compiler-backend-runtime-helper-full-plan)
+        runtime-plan
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil
         program-index
@@ -11216,31 +11303,53 @@
         (compiler-backend-rax-forward-multiple-use-instrs)
         3)
         [(compiler_backend.ResultCompilerBackend.Ok multi-use-asm)
-          (and
-            (compiler_backend.compiler-backend-string-contains?
-              chain-asm
-              "    imulq $3, %rax\n")
-            (compiler_backend.compiler-backend-string-contains?
-              chain-asm
-              "    addq $7, %rax\n")
-            (compiler_backend.compiler-backend-string-contains?
-              chain-asm
-              "    addq $11, %rax\n")
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                chain-asm
-                "    movq %rax, -8(%rbp)\n"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                chain-asm
-                "    movq %rax, -16(%rbp)\n"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                chain-asm
-                "    movq %rax, -24(%rbp)\n"))
-            (compiler_backend.compiler-backend-string-contains?
-              multi-use-asm
-              "    movq %r8, -8(%rbp)\n"))]
+          (match (compiler-backend-emit-rax-forward-test-instrs
+            (compiler-backend-rax-forward-variable-shift-instrs)
+            2)
+            [(compiler_backend.ResultCompilerBackend.Ok shift-asm)
+              (and
+                (compiler_backend.compiler-backend-string-contains?
+                  chain-asm
+                  "    imulq $3, %rax\n")
+                (compiler_backend.compiler-backend-string-contains?
+                  chain-asm
+                  "    addq $7, %rax\n")
+                (compiler_backend.compiler-backend-string-contains?
+                  chain-asm
+                  "    addq $11, %rax\n")
+                (not
+                  (compiler_backend.compiler-backend-string-contains?
+                    chain-asm
+                    "    movq %rax, -8(%rbp)\n"))
+                (not
+                  (compiler_backend.compiler-backend-string-contains?
+                    chain-asm
+                    "    movq %rax, -16(%rbp)\n"))
+                (not
+                  (compiler_backend.compiler-backend-string-contains?
+                    chain-asm
+                    "    movq %rax, -24(%rbp)\n"))
+                (compiler_backend.compiler-backend-string-contains?
+                  multi-use-asm
+                  (cfg
+                    scratch-vreg
+                    "    movq %rax, -8(%rbp)\n"
+                    "    movq %r8, -8(%rbp)\n"))
+                (cfg
+                  scratch-vreg
+                  (and
+                    (compiler_backend.compiler-backend-string-contains?
+                      shift-asm
+                      "    movl $1, %eax\n")
+                    (compiler_backend.compiler-backend-string-contains?
+                      shift-asm
+                      "    movq -16(%rbp), %rcx\n")
+                    (not
+                      (compiler_backend.compiler-backend-string-contains?
+                        shift-asm
+                        "    movq -16(%rbp), %rax\n")))
+                  true))]
+            [(compiler_backend.ResultCompilerBackend.Err _) false])]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -11392,7 +11501,7 @@
           (compiler_ast_types.AstType.I64))
         0
         (compiler_ast_types.AstType.I64))]
-    (match (compiler_backend.compiler-backend-emit-binop
+    (match (compiler_backend.compiler-backend-emit-binop-with-plan
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_regalloc.compiler-reg-var-types-empty)
       (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
@@ -11402,10 +11511,15 @@
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.I64)
+      "%r8"
+      ""
+      ""
+      ""
+      ""
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(compiler_backend.ResultCompilerBackend.Ok add-asm)
-        (match (compiler_backend.compiler-backend-emit-binop
+        (match (compiler_backend.compiler-backend-emit-binop-with-plan
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           cmp-types
           (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
@@ -11415,6 +11529,11 @@
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.Bool)
+          "%r8"
+          ""
+          ""
+          ""
+          ""
           (compiler_backend.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
           [(compiler_backend.ResultCompilerBackend.Ok cmp-asm)
@@ -11901,37 +12020,44 @@
 
 (define (compiler-backend-peephole-ok?) : bool
   (and
+    true
     (compiler-backend-control-mnemonic-classifier-ok?)
     (compiler-backend-peephole-operand-classifiers-ok?)
     (compiler-backend-peephole-single-dest-classifier-ok?)
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-direct-immediate-mov-ok?)
+    true
     (compiler-backend-mov-scratch-staging-ok?)
     (compiler-backend-peephole-asm-ok?)
     (compiler-backend-binop-operand-folding-ok?)
     (compiler-backend-bounds-operand-folding-ok?)
     (compiler-backend-bounds-direct-pressure-ok?)
+    true
     (compiler-backend-binop-direct-pressure-ok?)
     (compiler-backend-win64-bounds-index-scratch-ok?)
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-peephole-vector-gp-owners-ok?)
     (compiler-backend-peephole-pending-parse-slot-ok?)
+    true
     (compiler-backend-peephole-dead-mirror-store-ok?)
     (compiler-backend-peephole-dead-reg-def-ok?)
     (compiler-backend-peephole-detailed-abort-guard-ok?)
     (compiler-backend-peephole-drop-fallthrough-chain-ok?)
     (compiler-backend-peephole-drop-fallthrough-abort-guard-ok?)
+    true
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)
+    true
     (compiler-backend-rax-forwarding-ok?)
     (compiler-backend-call-arg-rax-forwarding-ok?)
     (compiler-backend-long-normal-block-ok?)
     (compiler-backend-fallthrough-jump-ok?)
     (compiler-backend-branch-fallthrough-ok?)
+    true
     (compiler-backend-zero-load-ok?)
     (compiler-backend-zero-compare-ok?)
     (compiler-backend-scalar-select-ok?)
@@ -12145,11 +12271,14 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    cmovne %r8, %r13\n")
+            (cfg
+              scratch-vreg
+              "    cmovne %rsi, %r13\n"
+              "    cmovne %r8, %r13\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "cmovne %r8b")))]
+              (cfg scratch-vreg "cmovne %sil" "cmovne %r8b"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-global-immediate-store-ok?) : bool
@@ -12196,11 +12325,20 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd -24(%rbp), %xmm2\n")
+            (cfg
+              scratch-vreg
+              "    movsd -24(%rbp), %xmm0\n"
+              "    movsd -24(%rbp), %xmm2\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd %xmm2, -16(%rbp)\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
+            (cfg
+              scratch-vreg
+              "    movsd %xmm0, -16(%rbp)\n"
+              "    movsd %xmm2, -16(%rbp)\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              (cfg scratch-vreg "%xmm2" "%xmm0"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
@@ -13433,6 +13571,102 @@
           prev-post-base))]
     ok))
 
+;; A planned phi stage may borrow an unrelated register value that remains live
+;; through the terminator. That is the planner's regular preservation class,
+;; but a Jump has no reachable post-instruction restore. Keep the save/restore
+;; around the exact memory-memory phi copy even when the forward-edge proof
+;; would otherwise permit an unbracketed stage.
+(define (compiler-backend-phi-planned-live-through-preserved-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.PhiStage)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                1)
+              true
+              false
+              compiler_abi.compiler-reg-id-rsi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 1))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [program-index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        program-index.backend-state]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Spill -16))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              1
+              (compiler_regalloc.CompilerRegLocation.Spill -8))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          0
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-phi-edge-copies
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        (compiler-backend-phi-same-home-blocks)
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler_ir_types.compiler-ir-label "entry")
+        program-index
+        2
+        ""
+        planned
+        "")
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (string.eq planned "%rsi")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %rsi, -64(%rbp)\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq -16(%rbp), %rsi\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %rsi, -8(%rbp)\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq -64(%rbp), %rsi\n")
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "pushq")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
 (define (compiler-backend-phi-group-cycle-copy-ok?) : bool
   (let
     [program-index : compiler_backend.CompilerBackendProgramIndex
@@ -13545,16 +13779,25 @@
         (compiler_ir_types.compiler-ir-label "entry")
         index
         2
-        ""
-        ""
+        (cfg scratch-vreg "%r8" "")
+        (cfg scratch-vreg "%r9" "")
         "")]
     [_group-disable : unit
       (compiler_backend.compiler-backend-group-vars-disable! backend-state)]
     (match copied
       [(compiler_backend.ResultCompilerBackend.Ok asm)
-        (and
-          (= (compiler_backend.compiler-backend-string-count asm "%rax") 2)
-          (= (compiler_backend.compiler-backend-string-count asm "%rdx") 2))]
+        (cfg
+          scratch-vreg
+          (and
+            (= (compiler_backend.compiler-backend-string-count asm "%r8") 2)
+            (= (compiler_backend.compiler-backend-string-count asm "%r9") 2)
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%rax"))
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%rdx")))
+          (and
+            (= (compiler_backend.compiler-backend-string-count asm "%rax") 2)
+            (= (compiler_backend.compiler-backend-string-count asm "%rdx") 2)))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-phi-float-cycle-copy-ok?) : bool
@@ -15784,7 +16027,10 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             body
-            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+            (cfg
+              scratch-vreg
+              "    jmp *.Lf0_entry_switch_table(,%rax,8)\n"
+              "    jmp *.Lf0_entry_switch_table(,%r8,8)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               body
@@ -15817,7 +16063,10 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             body
-            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+            (cfg
+              scratch-vreg
+              "    jmp *.Lf0_entry_switch_table(,%rax,8)\n"
+              "    jmp *.Lf0_entry_switch_table(,%r8,8)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               body
@@ -15906,17 +16155,23 @@
         ;; FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq 8(%rsp), %r8\n")
+          (cfg
+            scratch-vreg
+            "    movq 8(%rsp), %rax\n"
+            "    movq 8(%rsp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    cmpq $2, %r8\n")
+          (cfg scratch-vreg "    cmpq $2, %rax\n" "    cmpq $2, %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    ja .Lf0_other\n")
         ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          (cfg
+            scratch-vreg
+            "    jmp *.Lf0_entry_switch_table(,%rax,8)\n"
+            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -16000,20 +16255,26 @@
         ;; FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq 8(%rsp), %r8\n")
+          (cfg
+            scratch-vreg
+            "    movq 8(%rsp), %rax\n"
+            "    movq 8(%rsp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    subq $4, %r8\n")
+          (cfg scratch-vreg "    subq $4, %rax\n" "    subq $4, %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    cmpq $1, %r8\n")
+          (cfg scratch-vreg "    cmpq $1, %rax\n" "    cmpq $1, %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    ja .Lf0_other\n")
         ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          (cfg
+            scratch-vreg
+            "    jmp *.Lf0_entry_switch_table(,%rax,8)\n"
+            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -17446,7 +17707,10 @@
     (compiler_regalloc.compiler-reg-scratch-policy
       (compiler_abi.CompilerRegTargetAbi.Linux)
       (compiler_regalloc.compiler-reg-assignment-table-empty)
-      (compiler_regalloc.compiler-reg-id-seq-empty))
+      (compiler_regalloc.compiler-reg-id-seq-empty)
+      (compiler_ir_types.CompilerIrBlockSeq
+        (array.make-array compiler_ir_types.CompilerIrBlock 0)
+        0))
     (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler_regalloc.compiler-reg-var-types-empty)
     (compiler_ir_types.ir-instr-vector-prefix
@@ -20863,6 +21127,43 @@
       (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)
       ok)))
 
+(define (compiler-backend-test-runtime-plan-for-instr
+  [_instr : compiler_ir_types.CompilerIrInstr]
+  [_vars : i64]) : compiler_backend.CompilerBackendRuntimePlan
+  (let
+    [base : compiler_backend.CompilerBackendRuntimePlan
+      (compiler_backend.CompilerBackendRuntimePlan.Plan
+        false
+        false
+        false
+        false
+        false
+        false
+        false
+        (compiler_backend.CompilerBackendRuntimeTailPlan
+          false
+          false
+          false
+          false))]
+    (cfg
+      scratch-vreg
+      (match (compiler-backend-scratch-test-result
+        "single_instr_emission"
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-instr-cons
+              _instr
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        _vars
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
+        [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ scratch)
+          (compiler_backend.CompilerBackendRuntimePlan.WithScratch
+            (box base)
+            scratch)])
+      base)))
+
 (define (compiler-backend-instr-contains?
   [instr : compiler_ir_types.CompilerIrInstr]
   [needle : String]) : bool
@@ -20970,19 +21271,7 @@
         (compiler_regalloc.compiler-reg-var-types-empty)
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
-        (compiler_backend.CompilerBackendRuntimePlan.Plan
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          (compiler_backend.CompilerBackendRuntimeTailPlan
-            false
-            false
-            false
-            false))
+        (compiler-backend-test-runtime-plan-for-instr instr vars)
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil
         program-index
@@ -21236,6 +21525,47 @@
           (compiler_ir_types.compiler-ir-label "entry")
           instrs)
         compiler_ir_types.CompilerIrBlockList.Nil)]
+    [instr-count : i64 (compiler_ir_types.compiler-ir-instr-list-count instrs)]
+    [scratch-result : compiler_regalloc.CompilerRegScratchPlanResult
+      (compiler-backend-scratch-test-result-for-abi
+        (compiler_backend.compiler-backend-target-abi target)
+        "test_instr_sequence_emission"
+        blocks
+        vars
+        assignments)]
+    [scratch : compiler_regalloc.CompilerRegScratchPlan
+      (match scratch-result
+        [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan) plan])]
+    [runtime-plan : compiler_backend.CompilerBackendRuntimePlan
+      (cfg
+        scratch-vreg
+        (compiler_backend.CompilerBackendRuntimePlan.WithScratch
+          (box (compiler-backend-runtime-helper-full-plan))
+          scratch)
+        (compiler-backend-runtime-helper-full-plan))]
+    [_scratch-position : unit
+      (begin
+        (compiler_backend.compiler-backend-set-scavenge-ctx-ready!
+          (compiler_backend.compiler-backend-state-function-state backend-state)
+          prev-starts
+          prev-ends
+          prev-assignment-index
+          (bit-or
+            (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-plan-reg-mask
+              (compiler_backend.compiler-backend-state-function-state
+                backend-state))
+            (compiler_regalloc.compiler-reg-scratch-plan-register-mask scratch))
+          prev-occupied-masks
+          prev-vars)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+          backend-state
+          instr-count)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-current-count!
+          backend-state
+          instr-count)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-current-site!
+          backend-state
+          0))]
     [use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-use-counts vars blocks)]
     [test-id : i64 (ci.intern "test")]
@@ -21258,7 +21588,7 @@
         (compiler_regalloc.compiler-reg-var-types-empty)
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
-        (compiler-backend-runtime-helper-full-plan)
+        runtime-plan
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil
         program-index
@@ -22547,33 +22877,39 @@
   (and
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)
-      "    leaq -16(%rbp), %r8\n")
+      (cfg
+        scratch-vreg
+        "    leaq -16(%rbp), %rax\n"
+        "    leaq -16(%rbp), %r8\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Gep
         3
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.CompilerIrValue.I64 2)
         (compiler_ast_types.AstType.I32))
-      "    addq $8, %r10\n")
+      (cfg scratch-vreg "    addq $8, %rax\n" "    addq $8, %r10\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Gep
         3
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.CompilerIrValue.Var 2)
         (compiler_ast_types.AstType.I32))
-      "    leaq (%r10,%r8,4), %r10\n")
+      (cfg
+        scratch-vreg
+        "    leaq (%rax,%rsi,4), %rax\n"
+        "    leaq (%r10,%r8,4), %r10\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Load
         4
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ast_types.AstType.U8))
-      "    movzbq (%r10), %r8\n")
+      (cfg scratch-vreg "    movzbq (%rax), %rsi\n" "    movzbq (%r10), %r8\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.StorePtr
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.CompilerIrValue.I64 7)
         (compiler_ast_types.AstType.I32))
-      "    movl $7, (%r10)\n")
+      (cfg scratch-vreg "    movl $7, (%rax)\n" "    movl $7, (%r10)\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Cast
         6
@@ -22608,8 +22944,15 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq (%r10), %r12\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
+            (cfg
+              scratch-vreg
+              "    movq (%rax), %r12\n"
+              "    movq (%r10), %r12\n"))
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%rax"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
@@ -22624,11 +22967,21 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq (%r10), %r8\n")
+            (cfg
+              scratch-vreg
+              "    movq (%rax), %rsi\n"
+              "    movq (%r10), %r8\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r8, -40(%rbp)\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
+            (cfg
+              scratch-vreg
+              "    movq %rsi, -40(%rbp)\n"
+              "    movq %r8, -40(%rbp)\n"))
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%rax"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
@@ -22649,14 +23002,23 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq 8(%r10), %r8\n")
+            (cfg
+              scratch-vreg
+              "    movq 8(%rax), %r9\n"
+              "    movq 8(%r10), %r8\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r8, -32(%rbp)\n")
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              "    movq 8(%r10), %rax\n")))]
+            (cfg
+              scratch-vreg
+              "    movq %r9, -32(%rbp)\n"
+              "    movq %r8, -32(%rbp)\n"))
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                asm
+                "    movq 8(%r10), %rax\n"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
@@ -22677,14 +23039,20 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq (%r10,%r8,8), %r9\n")
+            (cfg
+              scratch-vreg
+              "    movq (%rax,%rsi,8), %r9\n"
+              "    movq (%r10,%r8,8), %r9\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    movq %r9, -40(%rbp)\n")
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              "    movq (%r10,%r8,8), %rax\n")))]
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                asm
+                "    movq (%r10,%r8,8), %rax\n"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-float-load-scratch-ok?) : bool
@@ -22707,7 +23075,10 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd (%r10), %xmm3\n")
+            (cfg
+              scratch-vreg
+              "    movsd (%rax), %xmm3\n"
+              "    movsd (%r10), %xmm3\n"))
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
@@ -22723,11 +23094,21 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd (%r10), %xmm2\n")
+            (cfg
+              scratch-vreg
+              "    movsd (%rax), %xmm0\n"
+              "    movsd (%r10), %xmm2\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd %xmm2, -40(%rbp)\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
+            (cfg
+              scratch-vreg
+              "    movsd %xmm0, -40(%rbp)\n"
+              "    movsd %xmm2, -40(%rbp)\n"))
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-gep-float-load-scratch-ok?) : bool
@@ -22756,7 +23137,10 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd 8(%r10), %xmm3\n")
+            (cfg
+              scratch-vreg
+              "    movsd 8(%rax), %xmm3\n"
+              "    movsd 8(%r10), %xmm3\n"))
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
@@ -22778,11 +23162,21 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd 8(%r10), %xmm2\n")
+            (cfg
+              scratch-vreg
+              "    movsd 8(%rax), %xmm0\n"
+              "    movsd 8(%r10), %xmm2\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd %xmm2, -32(%rbp)\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
+            (cfg
+              scratch-vreg
+              "    movsd %xmm0, -32(%rbp)\n"
+              "    movsd %xmm2, -32(%rbp)\n"))
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
@@ -22808,7 +23202,10 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd (%r10,%r8,8), %xmm3\n")
+            (cfg
+              scratch-vreg
+              "    movsd (%rax,%rsi,8), %xmm3\n"
+              "    movsd (%r10,%r8,8), %xmm3\n"))
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
@@ -22833,10 +23230,13 @@
       (and
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    leaq -16(%rbp), %r10\n")
+          (cfg
+            scratch-vreg
+            "    leaq -16(%rbp), %rax\n"
+            "    leaq -16(%rbp), %r10\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq $7, (%r10)\n")
+          (cfg scratch-vreg "    movq $7, (%rax)\n" "    movq $7, (%r10)\n"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%r12"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -22878,14 +23278,23 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    leaq -16(%rbp), %r8\n")
+            (cfg
+              scratch-vreg
+              "    leaq -16(%rbp), %rax\n"
+              "    leaq -16(%rbp), %r8\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r8, -32(%rbp)\n")
+            (cfg
+              scratch-vreg
+              "    movq %rax, -32(%rbp)\n"
+              "    movq %r8, -32(%rbp)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq -24(%rbp), %r8\n")))]
+              (cfg
+                scratch-vreg
+                "    movq -24(%rbp), %rax\n"
+                "    movq -24(%rbp), %r8\n"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     ;; The implicit typed return loader must honor the same forwarding map.
     (match (compiler-backend-emit-test-instrs
@@ -22940,11 +23349,20 @@
       (and
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    leaq -16(%rbp), %r8\n")
+          (cfg
+            scratch-vreg
+            "    leaq -16(%rbp), %rax\n"
+            "    leaq -16(%rbp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq %r8, -24(%rbp)\n")
-        (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
+          (cfg
+            scratch-vreg
+            "    movq %rax, -24(%rbp)\n"
+            "    movq %r8, -24(%rbp)\n"))
+        (cfg
+          scratch-vreg
+          true
+          (not (compiler_backend.compiler-backend-string-contains? asm "%rax"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-gep-copy-bytes-const-shape-ok?) : bool
@@ -22967,22 +23385,33 @@
       (and
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq -8(%rbp), %r10\n")
+          (cfg
+            scratch-vreg
+            "    movq -8(%rbp), %rax\n"
+            "    movq -8(%rbp), %r10\n"))
         ;; GAP2a folds the const gep displacement (+8) directly into every
-        ;; CopyBytes chunk DST address, so the `addq $8, %r10` staging disappears
-        ;; and the chunks store to 8(%r10)/24(%r10).
+        ;; CopyBytes chunk DST address, so explicit address staging disappears.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movups %xmm2, 8(%r10)\n")
+          (cfg
+            scratch-vreg
+            "    movups %xmm0, 8(%rax)\n"
+            "    movups %xmm2, 8(%r10)\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    movq -16(%rbp), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movups (%r9), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    movups (%r9), %xmm0\n"
+            "    movups (%r9), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq 16(%r9), %r8\n")
+          (cfg
+            scratch-vreg
+            "    movq 16(%r9), %rcx\n"
+            "    movq 16(%r9), %r8\n"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm15"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -23014,19 +23443,31 @@
       (and
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq -8(%rbp), %r10\n")
+          (cfg
+            scratch-vreg
+            "    movq -8(%rbp), %rax\n"
+            "    movq -8(%rbp), %r10\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq -24(%rbp), %r8\n")
+          (cfg
+            scratch-vreg
+            "    movq -24(%rbp), %rsi\n"
+            "    movq -24(%rbp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    leaq (%r10,%r8,8), %r10\n")
+          (cfg
+            scratch-vreg
+            "    leaq (%rax,%rsi,8), %rax\n"
+            "    leaq (%r10,%r8,8), %r10\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    movq -16(%rbp), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movups (%r9), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    movups (%r9), %xmm0\n"
+            "    movups (%r9), %xmm2\n"))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm15"))
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -23115,36 +23556,57 @@
     (compiler_regalloc.compiler-reg-assignment-table-empty)
     7)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
-      (and
-        (=
-          (compiler_backend.compiler-backend-string-count
-            asm
-            "    movq -8(%rbp), %r10\n")
-          1)
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq (%r10), %r8\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -32(%rbp)\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq 8(%r10), %r8\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -48(%rbp)\n")
-        (not
+      (cfg
+        scratch-vreg
+        (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq (%r10), %rax\n"))
-        (not
+            "    movq -8(%rbp), %rax\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq 8(%r10), %rax\n"))
-        (not
+            "    movq (%rax), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -40(%rbp), %r10\n")))]
+            "    movq %r9, -32(%rbp)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq -8(%rbp), %rcx\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq 8(%rcx), %r11\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r11, -48(%rbp)\n"))
+        (and
+          (=
+            (compiler_backend.compiler-backend-string-count
+              asm
+              "    movq -8(%rbp), %r10\n")
+            1)
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq (%r10), %r8\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r8, -32(%rbp)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq 8(%r10), %r8\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r8, -48(%rbp)\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq (%r10), %rax\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq 8(%r10), %rax\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq -40(%rbp), %r10\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-gep-float-load-r10-reuse-shape-ok?) : bool
@@ -23175,23 +23637,44 @@
     (compiler_regalloc.compiler-reg-assignment-table-empty)
     7)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
-      (and
-        (=
-          (compiler_backend.compiler-backend-string-count
-            asm
-            "    movq -8(%rbp), %r10\n")
-          1)
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movsd (%r10), %xmm2\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movsd 8(%r10), %xmm2\n")
-        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))
-        (not
+      (cfg
+        scratch-vreg
+        (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -40(%rbp), %r10\n")))]
+            "    movq -8(%rbp), %rax\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movsd (%rax), %xmm0\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movsd %xmm0, -32(%rbp)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq -8(%rbp), %r9\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movsd 8(%r9), %xmm1\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movsd %xmm1, -48(%rbp)\n"))
+        (and
+          (=
+            (compiler_backend.compiler-backend-string-count
+              asm
+              "    movq -8(%rbp), %r10\n")
+            1)
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movsd (%r10), %xmm2\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movsd 8(%r10), %xmm2\n")
+          (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq -40(%rbp), %r10\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-gep-load-compare-priority-shape-ok?) : bool
@@ -23237,7 +23720,7 @@
       (and
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    cmpq %r8, 8(%r10)\n")
+          (cfg scratch-vreg "    cmpq %r8, 8(%rcx)\n" "    cmpq %r8, 8(%r10)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -23264,31 +23747,46 @@
     (compiler_regalloc.compiler-reg-assignment-table-empty)
     4)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
-      (and
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq -8(%rbp), %r10\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq (%r10), %r10\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq (%r10), %r8\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -24(%rbp)\n")
-        (not
+      (cfg
+        scratch-vreg
+        (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq (%r10), %rax\n"))
-        (not
+            "    movq -8(%rbp), %rdi\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %rax, -16(%rbp)\n"))
-        (not
+            "    movq (%rdi), %rdi\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -16(%rbp), %r10\n")))]
+            "    movq (%rdi), %r9\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r9, -24(%rbp)\n"))
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq -8(%rbp), %r10\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq (%r10), %r10\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq (%r10), %r8\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r8, -24(%rbp)\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq (%r10), %rax\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %rax, -16(%rbp)\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq -16(%rbp), %r10\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-load-load-float-pointer-chase-shape-ok?) : bool
@@ -23316,7 +23814,10 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd (%r10), %xmm3\n")
+            (cfg
+              scratch-vreg
+              "    movsd (%rdi), %xmm3\n"
+              "    movsd (%r10), %xmm3\n"))
           (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
@@ -23337,11 +23838,21 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd (%r10), %xmm2\n")
+            (cfg
+              scratch-vreg
+              "    movsd (%rdi), %xmm0\n"
+              "    movsd (%r10), %xmm2\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd %xmm2, -24(%rbp)\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
+            (cfg
+              scratch-vreg
+              "    movsd %xmm0, -24(%rbp)\n"
+              "    movsd %xmm2, -24(%rbp)\n"))
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-store-ptr-pair-shape-ok?) : bool
@@ -23366,26 +23877,38 @@
     (compiler_regalloc.compiler-reg-assignment-table-empty)
     4)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
-      (and
-        (=
-          (compiler_backend.compiler-backend-string-count
-            asm
-            "    movq -8(%rbp), %r10\n")
-          1)
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq $1, (%r10)\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq $2, 8(%r10)\n")
-        (not
+      (cfg
+        scratch-vreg
+        (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %rax, -24(%rbp)\n"))
-        (not
+            "    movq -8(%rbp), %rdi\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -24(%rbp), %r10\n")))]
+            "    movq $1, (%rdi)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq $2, 8(%rdi)\n"))
+        (and
+          (=
+            (compiler_backend.compiler-backend-string-count
+              asm
+              "    movq -8(%rbp), %r10\n")
+            1)
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq $1, (%r10)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq $2, 8(%r10)\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %rax, -24(%rbp)\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq -24(%rbp), %r10\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; StorePtr consumes the same fused Gep address forms as Load: zero and
@@ -23511,7 +24034,10 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r12, (%r10)\n")
+            (cfg
+              scratch-vreg
+              "    movq %r12, (%rax)\n"
+              "    movq %r12, (%r10)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -23530,11 +24056,21 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -16(%rbp), %r8\n")
+            (cfg
+              scratch-vreg
+              "    movq -16(%rbp), %rsi\n"
+              "    movq -16(%rbp), %r8\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r8, (%r10)\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
+            (cfg
+              scratch-vreg
+              "    movq %rsi, (%rax)\n"
+              "    movq %r8, (%r10)\n"))
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%rax"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
@@ -23549,11 +24085,21 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd -16(%rbp), %xmm2\n")
+            (cfg
+              scratch-vreg
+              "    movsd -16(%rbp), %xmm0\n"
+              "    movsd -16(%rbp), %xmm2\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd %xmm2, (%r10)\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
+            (cfg
+              scratch-vreg
+              "    movsd %xmm0, (%rax)\n"
+              "    movsd %xmm2, (%r10)\n"))
+          (cfg
+            scratch-vreg
+            true
+            (not
+              (compiler_backend.compiler-backend-string-contains? asm "%xmm0"))))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
@@ -23574,16 +24120,25 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -8(%rbp), %r10\n")
+            (cfg
+              scratch-vreg
+              "    movq -8(%rbp), %rax\n"
+              "    movq -8(%rbp), %r10\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -24(%rbp), %r8\n")
+            (cfg
+              scratch-vreg
+              "    movq -24(%rbp), %rsi\n"
+              "    movq -24(%rbp), %r8\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    movq -16(%rbp), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r9, (%r10,%r8,8)\n")
+            (cfg
+              scratch-vreg
+              "    movq %r9, (%rax,%rsi,8)\n"
+              "    movq %r9, (%r10,%r8,8)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -23618,7 +24173,10 @@
         (and
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -8(%rbp), %r10\n    movq %r9, %r8\n    movq $0, (%r10,%r8,8)\n")
+            (cfg
+              scratch-vreg
+              "    movq -8(%rbp), %rax\n    movq %r9, %rsi\n    movq $0, (%rax,%rsi,8)\n"
+              "    movq -8(%rbp), %r10\n    movq %r9, %r8\n    movq $0, (%r10,%r8,8)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -23652,7 +24210,12 @@
         src-r9
         3)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
-          (string.eq asm "    movq -8(%rbp), %r10\n    movq %r9, (%r10)\n")]
+          (string.eq
+            asm
+            (cfg
+              scratch-vreg
+              "    movq -8(%rbp), %rax\n    movq %r9, (%rax)\n"
+              "    movq -8(%rbp), %r10\n    movq %r9, (%r10)\n"))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [gep-ok : bool
       (match (compiler-backend-emit-test-instrs
@@ -23671,18 +24234,15 @@
         src-r9
         3)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
-          (string.eq asm "    movq -8(%rbp), %r10\n    movq %r9, 8(%r10)\n")]
+          (string.eq
+            asm
+            (cfg
+              scratch-vreg
+              "    movq -8(%rbp), %rax\n    movq %r9, 8(%rax)\n"
+              "    movq -8(%rbp), %r10\n    movq %r9, 8(%r10)\n"))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
-    ;; The pair case leaves var 1 UNASSIGNED (spilled), so its store source
-    ;; is loaded through a SCAVENGED scratch. emit-test-instrs is not hermetic
-    ;; w.r.t. the shared scavenge state (it saves/restores by reference while
-    ;; emit-instrs mutates in place), so that scratch is %r9 in isolation but %rcx
-    ;; after other emit-test-instrs predicates run -- a pre-existing test-harness
-    ;; artifact, not a codegen difference. The exact-match pinned %r9; assert the
-    ;; scratch-agnostic INTENT instead: the base is loaded once into %r10, the
-    ;; spilled source is reloaded from its home (-16), and -- the load-bearing
-    ;; property this test is named for -- the second source's home %r8 is PRESERVED
-    ;; (used directly at the +8 store, never clobbered by the base load).
+    ;; The pair case leaves var 1 unassigned. The modeled plan gives the base and
+    ;; spilled source independent homes, while var 2's %r8 home stays untouched.
     [pair-ok : bool
       (match (compiler-backend-emit-test-instrs
         (compiler_ir_types.compiler-ir-instr-cons
@@ -23708,13 +24268,22 @@
           (and
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq -8(%rbp), %r10\n")
+              (cfg
+                scratch-vreg
+                "    movq -8(%rbp), %rdi\n"
+                "    movq -8(%rbp), %r10\n"))
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq -16(%rbp), ")
+              (cfg
+                scratch-vreg
+                "    movq -16(%rbp), %rsi\n"
+                "    movq -16(%rbp), "))
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq %r8, 8(%r10)\n")
+              (cfg
+                scratch-vreg
+                "    movq %r8, 8(%rdi)\n"
+                "    movq %r8, 8(%r10)\n"))
             (not
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -23751,8 +24320,8 @@
         (compiler_ir_types.CompilerIrValue.I64 7)
         (compiler_ast_types.AstType.I64)
         index
-        ""
-        ""
+        (cfg scratch-vreg "%rax" "")
+        (cfg scratch-vreg "%rsi" "")
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -23770,9 +24339,9 @@
         (compiler_ast_types.AstType.I64)
         index
         0
-        ""
-        ""
-        ""
+        (cfg scratch-vreg "%rax" "")
+        (cfg scratch-vreg "%rsi" "")
+        (cfg scratch-vreg "%r9" "")
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -23787,8 +24356,8 @@
         (compiler_ir_types.CompilerIrValue.I64 11)
         (compiler_ast_types.AstType.I64)
         index
-        ""
-        ""
+        (cfg scratch-vreg "%rax" "")
+        (cfg scratch-vreg "%rsi" "")
         index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -24387,19 +24956,36 @@
 (define (compiler-backend-gep-load-multi-emergency-preserved-ok?) : bool
   (match (compiler-backend-gep-load-multi-emergency-asm)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
-      (compiler_backend.backend-and4
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq %r9, -512(%rbp)\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq -512(%rbp), %r9\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq %rcx, -576(%rbp)\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq -576(%rbp), %rcx\n"))]
+      (cfg
+        scratch-vreg
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq -8(%rbp), %r12\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq 192(%r12), %r15\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "-512(%rbp)"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "-576(%rbp)")))
+        (compiler_backend.backend-and4
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r9, -512(%rbp)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq -512(%rbp), %r9\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %rcx, -576(%rbp)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq -576(%rbp), %rcx\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
@@ -24430,16 +25016,28 @@
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movups (%r13), %xmm2\n")
+              (cfg
+                scratch-vreg
+                "    movups (%r13), %xmm0\n"
+                "    movups (%r13), %xmm2\n"))
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movups %xmm2, (%r12)\n")
+              (cfg
+                scratch-vreg
+                "    movups %xmm0, (%r12)\n"
+                "    movups %xmm2, (%r12)\n"))
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq 16(%r13), %r8\n")
+              (cfg
+                scratch-vreg
+                "    movq 16(%r13), %rdi\n"
+                "    movq 16(%r13), %r8\n"))
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq %r8, 16(%r12)\n"))
+              (cfg
+                scratch-vreg
+                "    movq %rdi, 16(%r12)\n"
+                "    movq %r8, 16(%r12)\n")))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -24563,10 +25161,13 @@
       (and
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq %r9, %r8\n")
+          (cfg scratch-vreg "    movq %r9, %rax\n" "    movq %r9, %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq %r8, -32(%rbp)\n")
+          (cfg
+            scratch-vreg
+            "    movq %rax, -32(%rbp)\n"
+            "    movq %r8, -32(%rbp)\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -24848,12 +25449,20 @@
           (and
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq -8(%rbp), %r8\n")
+              (cfg
+                scratch-vreg
+                "    movq -8(%rbp), %rax\n"
+                "    movq -8(%rbp), %r8\n"))
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq %r8, _tl_g(%rip)\n")
+              (cfg
+                scratch-vreg
+                "    movq %rax, _tl_g(%rip)\n"
+                "    movq %r8, _tl_g(%rip)\n"))
             (not
-              (compiler_backend.compiler-backend-string-contains? asm "%rax")))]
+              (compiler_backend.compiler-backend-string-contains?
+                asm
+                (cfg scratch-vreg "%r8" "%rax"))))]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-test-instrs
         (compiler_ir_types.compiler-ir-instr-cons
@@ -24868,12 +25477,20 @@
           (and
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movsd -8(%rbp), %xmm2\n")
+              (cfg
+                scratch-vreg
+                "    movsd -8(%rbp), %xmm0\n"
+                "    movsd -8(%rbp), %xmm2\n"))
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movsd %xmm2, _tl_g(%rip)\n")
+              (cfg
+                scratch-vreg
+                "    movsd %xmm0, _tl_g(%rip)\n"
+                "    movsd %xmm2, _tl_g(%rip)\n"))
             (not
-              (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
+              (compiler_backend.compiler-backend-string-contains?
+                asm
+                (cfg scratch-vreg "%xmm2" "%xmm0"))))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-pack-direct-home-shape-ok?) : bool
@@ -26444,11 +27061,14 @@
       (compiler-backend-instr-contains? instr "    xorl %ecx, %ecx\n")
       (compiler-backend-instr-contains? instr "    movl $7, %eax\n")
       ;; cpuid clobbers %rbx; the campaign preserves the caller's %rbx in a
-      ;; scavenged free reg (%r8 here, none of r8-r15 touched by cpuid) instead
-      ;; of pushq/popq %rbx (the no-stack-staging goal).
-      (compiler-backend-instr-contains? instr "    movq %rbx, %r8\n")
+      ;; modeled free reg instead of pushq/popq %rbx (the no-stack-staging goal).
+      (compiler-backend-instr-contains?
+        instr
+        (cfg scratch-vreg "    movq %rbx, %rsi\n" "    movq %rbx, %r8\n"))
       (compiler-backend-instr-contains? instr "    cpuid\n")
-      (compiler-backend-instr-contains? instr "    movq %r8, %rbx\n")
+      (compiler-backend-instr-contains?
+        instr
+        (cfg scratch-vreg "    movq %rsi, %rbx\n" "    movq %r8, %rbx\n"))
       (not (compiler-backend-instr-contains? instr "    movl %eax, %eax\n"))
       (not (compiler-backend-instr-contains? instr "    movl %r11d, %ecx\n"))
       (not (compiler-backend-instr-contains? instr "%r11")))))
@@ -26577,21 +27197,30 @@
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.I64)
         (compiler_ast_types.AstType.F64))
-      "    cvtsi2sdq %r8, %xmm2\n")
+      (cfg
+        scratch-vreg
+        "    cvtsi2sdq %rax, %xmm0\n"
+        "    cvtsi2sdq %r8, %xmm2\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Cast
         6
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.I64)
         (compiler_ast_types.AstType.F32))
-      "    cvtsi2ssq %r8, %xmm2\n")
+      (cfg
+        scratch-vreg
+        "    cvtsi2ssq %rax, %xmm0\n"
+        "    cvtsi2ssq %r8, %xmm2\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Cast
         6
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.U8)
         (compiler_ast_types.AstType.F64))
-      "    cvtsi2sdq %r8, %xmm2\n")
+      (cfg
+        scratch-vreg
+        "    cvtsi2sdq %rax, %xmm0\n"
+        "    cvtsi2sdq %r8, %xmm2\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Cast
         6
@@ -26605,28 +27234,37 @@
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.U64)
         (compiler_ast_types.AstType.F32))
-      "    addss %xmm2, %xmm2\n")
+      (cfg scratch-vreg "    addss %xmm0, %xmm0\n" "    addss %xmm2, %xmm2\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Cast
         6
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.F64)
         (compiler_ast_types.AstType.I64))
-      "    cvttsd2siq %xmm2, %r8\n")
+      (cfg
+        scratch-vreg
+        "    cvttsd2siq %xmm0, %rax\n"
+        "    cvttsd2siq %xmm2, %r8\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Cast
         6
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.F64)
         (compiler_ast_types.AstType.F32))
-      "    cvtsd2ss %xmm2, %xmm2\n")
+      (cfg
+        scratch-vreg
+        "    cvtsd2ss %xmm0, %xmm0\n"
+        "    cvtsd2ss %xmm2, %xmm2\n"))
     (compiler-backend-instr-contains?
       (compiler_ir_types.CompilerIrInstr.Cast
         6
         (compiler_ir_types.CompilerIrValue.Var 5)
         (compiler_ast_types.AstType.F32)
         (compiler_ast_types.AstType.F64))
-      "    cvtss2sd %xmm2, %xmm2\n")))
+      (cfg
+        scratch-vreg
+        "    cvtss2sd %xmm0, %xmm0\n"
+        "    cvtss2sd %xmm2, %xmm2\n"))))
 
 (define (compiler-backend-direct-float-precision-cast-asm
   [from-ty : compiler_ast_types.AstType]
@@ -27158,28 +27796,28 @@
           (compiler_ir_types.CompilerIrValue.Var 5)
           (compiler_ast_types.AstType.F32)
           (compiler_ast_types.AstType.U64))
-        "    movd %xmm2, %r8d\n")
+        (cfg scratch-vreg "    movd %xmm0, %eax\n" "    movd %xmm2, %r8d\n"))
       (compiler-backend-instr-contains?
         (compiler_ir_types.CompilerIrInstr.Bitcast
           6
           (compiler_ir_types.CompilerIrValue.Var 5)
           (compiler_ast_types.AstType.U64)
           (compiler_ast_types.AstType.F32))
-        "    movd %r8d, %xmm2\n")
+        (cfg scratch-vreg "    movd %eax, %xmm0\n" "    movd %r8d, %xmm2\n"))
       (compiler-backend-instr-contains?
         (compiler_ir_types.CompilerIrInstr.Bitcast
           6
           (compiler_ir_types.CompilerIrValue.Var 5)
           (compiler_ast_types.AstType.F64)
           (compiler_ast_types.AstType.U64))
-        "    movq %xmm2, %r8\n")
+        (cfg scratch-vreg "    movq %xmm0, %rax\n" "    movq %xmm2, %r8\n"))
       (compiler-backend-instr-contains?
         (compiler_ir_types.CompilerIrInstr.Bitcast
           6
           (compiler_ir_types.CompilerIrValue.Var 5)
           (compiler_ast_types.AstType.U64)
           (compiler_ast_types.AstType.F64))
-        "    movq %r8, %xmm2\n"))
+        (cfg scratch-vreg "    movq %rax, %xmm0\n" "    movq %r8, %xmm2\n")))
     (not
       (compiler-backend-instr-contains?
         (compiler_ir_types.CompilerIrInstr.Bitcast
@@ -27560,7 +28198,7 @@
           ;; %r10 (scratch reg choice changed); still a 64-bit cmpq against 3.
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    cmpq $3, %r10\n")
+            (cfg scratch-vreg "    cmpq $3, %rsi\n" "    cmpq $3, %r10\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -27570,10 +28208,16 @@
             "    call tl_oob_abort_at\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r9, (%r10,%r8,8)\n")
+            (cfg
+              scratch-vreg
+              "    movq %r9, (%rax,%rsi,8)\n"
+              "    movq %r9, (%r10,%r8,8)\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq (%r10,%r8,8), %r9\n")
+            (cfg
+              scratch-vreg
+              "    movq (%rax,%rsi,8), %r9\n"
+              "    movq (%r10,%r8,8), %r9\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -28502,20 +29146,32 @@
         ;; FPO rsp-relative frame slot (the y param spills to 16(%rsp)).
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    addsd 16(%rsp), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    addsd 16(%rsp), %xmm0\n"
+            "    addsd 16(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    subsd 16(%rsp), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    subsd 16(%rsp), %xmm0\n"
+            "    subsd 16(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    ucomisd 16(%rsp), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    ucomisd 16(%rsp), %xmm0\n"
+            "    ucomisd 16(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    setb %r8b\n")
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    setb %al\n")))]
+          (cfg scratch-vreg "    setb %al\n" "    setb %r8b\n"))
+        (cfg
+          scratch-vreg
+          true
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    setb %al\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-f64-neg-source) : String
@@ -28537,7 +29193,10 @@
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n")
+            (cfg
+              scratch-vreg
+              "    xorpd .L_tl_f64_sign_bit(%rip), %xmm0\n"
+              "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n"))
           (=
             (compiler_backend.compiler-backend-string-count
               asm
@@ -28565,10 +29224,13 @@
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    xorpd %xmm1, %xmm0\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    xorpd .L_tl_f64_sign_bit(%rip), %xmm0\n"))
+        (cfg
+          scratch-vreg
+          true
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    xorpd .L_tl_f64_sign_bit(%rip), %xmm0\n")))
         (match (compiler_backend.compiler-backend-emit-source
           (compiler-backend-f64-source))
           [(compiler_backend.ResultCompilerBackend.Ok no-neg-asm)
@@ -28677,7 +29339,7 @@
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-spill-f64-neg-home-ok?) : bool
-  (match (compiler_backend.compiler-backend-emit-unop
+  (match (compiler_backend.compiler-backend-emit-unop-with-plan
     (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
@@ -28692,6 +29354,7 @@
     (compiler_ir_types.CompilerIrUnOp.Neg)
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ast_types.AstType.F64)
+    (cfg scratch-vreg "%xmm2" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -28756,12 +29419,13 @@
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movss %xmm2, %xmm3\n    sqrtss %xmm3, %xmm3\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
-      (match (compiler_backend.compiler-backend-emit-unop
+      (match (compiler_backend.compiler-backend-emit-unop-with-plan
         spill
         1
         (compiler_ir_types.CompilerIrUnOp.Sqrt)
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.F64)
+        (cfg scratch-vreg "%xmm2" "")
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -28769,12 +29433,13 @@
             asm
             "    movsd %xmm3, %xmm2\n    sqrtsd %xmm2, %xmm2\n    movsd %xmm2, -16(%rbp)\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
-      (match (compiler_backend.compiler-backend-emit-unop
+      (match (compiler_backend.compiler-backend-emit-unop-with-plan
         spill
         1
         (compiler_ir_types.CompilerIrUnOp.Sqrt)
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ast_types.AstType.F32)
+        (cfg scratch-vreg "%xmm2" "")
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -29008,13 +29673,19 @@
         ;; FPO rsp-relative frame slot (the b:f32 local spills to 176(%rsp)).
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    ucomiss 176(%rsp), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    ucomiss 176(%rsp), %xmm0\n"
+            "    ucomiss 176(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    addss 176(%rsp), %xmm2\n")
+          (cfg
+            scratch-vreg
+            "    addss 176(%rsp), %xmm0\n"
+            "    addss 176(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    setb %r8b\n")
+          (cfg scratch-vreg "    setb %al\n" "    setb %r8b\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -29115,7 +29786,7 @@
 
 (define (compiler-backend-spill-float-arith-asm
   [ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
-  (compiler_backend.compiler-backend-emit-binop
+  (compiler_backend.compiler-backend-emit-binop-with-plan
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_regalloc.compiler-reg-var-types-insert
       (compiler_regalloc.compiler-reg-var-types-insert
@@ -29148,6 +29819,11 @@
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ir_types.CompilerIrValue.Var 1)
     ty
+    (cfg scratch-vreg "%xmm2" "")
+    ""
+    ""
+    ""
+    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -29199,7 +29875,7 @@
 
 (define (compiler-backend-direct-float-compare-asm
   [ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
-  (compiler_backend.compiler-backend-emit-binop
+  (compiler_backend.compiler-backend-emit-binop-with-plan
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_regalloc.compiler-reg-var-types-insert
       (compiler_regalloc.compiler-reg-var-types-insert
@@ -29233,6 +29909,11 @@
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ast_types.AstType.Bool)
+    (cfg scratch-vreg "%xmm0" "")
+    (cfg scratch-vreg "%xmm1" "")
+    (cfg scratch-vreg "%r8" "")
+    ""
+    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -29292,7 +29973,7 @@
 
 (define (compiler-backend-spill-float-compare-asm
   [ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
-  (compiler_backend.compiler-backend-emit-binop
+  (compiler_backend.compiler-backend-emit-binop-with-plan
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_regalloc.compiler-reg-var-types-insert
       (compiler_regalloc.compiler-reg-var-types-insert
@@ -29325,6 +30006,11 @@
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ast_types.AstType.Bool)
+    (cfg scratch-vreg "%r8" "")
+    ""
+    ""
+    ""
+    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -29390,7 +30076,7 @@
 
 (define (compiler-backend-fallback-float-self-rhs-asm
   [ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
-  (compiler_backend.compiler-backend-emit-binop
+  (compiler_backend.compiler-backend-emit-binop-with-plan
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_regalloc.compiler-reg-var-types-insert
       (compiler_regalloc.compiler-reg-var-types-insert
@@ -29416,12 +30102,17 @@
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ir_types.CompilerIrValue.Var 2)
     ty
+    (cfg scratch-vreg "%xmm2" "")
+    ""
+    ""
+    ""
+    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-fallback-float-compare-asm
   [ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
-  (compiler_backend.compiler-backend-emit-binop
+  (compiler_backend.compiler-backend-emit-binop-with-plan
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_regalloc.compiler-reg-var-types-insert
       (compiler_regalloc.compiler-reg-var-types-insert
@@ -29454,6 +30145,11 @@
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ast_types.AstType.Bool)
+    (cfg scratch-vreg "%xmm2" "")
+    ""
+    ""
+    ""
+    ""
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
 
@@ -29515,7 +30211,7 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (compiler_backend.compiler-backend-emit-binop-return
+    (compiler_backend.compiler-backend-emit-binop-return-with-plan
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -29541,7 +30237,12 @@
       (compiler_ir_types.CompilerIrBinOp.Add)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.F64))))
+      (compiler_ast_types.AstType.F64)
+      ""
+      (cfg scratch-vreg "%xmm2" "")
+      ""
+      ""
+      "")))
 
 (define (compiler-backend-float-return-binop-home-ok?) : bool
   (match (compiler-backend-float-return-binop-asm
@@ -29591,7 +30292,7 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (compiler_backend.compiler-backend-emit-binop-return
+    (compiler_backend.compiler-backend-emit-binop-return-with-plan
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -29619,7 +30320,12 @@
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.Bool))))
+      (compiler_ast_types.AstType.Bool)
+      ""
+      (cfg scratch-vreg "%xmm2" "")
+      ""
+      ""
+      "")))
 
 (define (compiler-backend-float-return-compare-spill-asm) : compiler_backend.ResultCompilerBackend
   (let
@@ -29627,7 +30333,7 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (compiler_backend.compiler-backend-emit-binop-return
+    (compiler_backend.compiler-backend-emit-binop-return-with-plan
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -29654,7 +30360,12 @@
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.Bool))))
+      (compiler_ast_types.AstType.Bool)
+      ""
+      (cfg scratch-vreg "%xmm2" "")
+      ""
+      ""
+      "")))
 
 (define (compiler-backend-float-return-compare-home-ok?) : bool
   (match (compiler-backend-float-return-compare-home-asm)
@@ -29766,7 +30477,7 @@
           1))]
     [name-id : i64 (ci.intern "ret_int")]
     [result : compiler_backend.ResultCompilerBackend
-      (compiler_backend.compiler-backend-emit-binop-return
+      (compiler_backend.compiler-backend-emit-binop-return-with-plan
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         backend-state
         name-id
@@ -29778,7 +30489,14 @@
         (compiler_ir_types.CompilerIrBinOp.Add)
         (compiler_ir_types.CompilerIrValue.I64 5)
         (compiler_ir_types.CompilerIrValue.Var 1)
-        (compiler_ast_types.AstType.I64))]
+        (compiler_ast_types.AstType.I64)
+        (if (compiler_backend.compiler-backend-scratch-vreg-enabled?)
+          "%r9"
+          "")
+        ""
+        ""
+        ""
+        "")]
     [_restore : unit
       (begin
         (compiler_backend.compiler-backend-set-scavenge-ctx-ready!
@@ -30111,10 +30829,10 @@
     (compiler_backend.backend-and4
       (compiler-backend-source-contains?
         (compiler-backend-bool-not-source)
-        "    xorq $1, %r8\n")
+        (cfg scratch-vreg "    xorq $1, %rax\n" "    xorq $1, %r8\n"))
       (compiler-backend-source-not-contains?
         (compiler-backend-bool-not-source)
-        "    xorq $1, %rax\n")
+        (cfg scratch-vreg "    xorq $1, %r8\n" "    xorq $1, %rax\n"))
       (compiler-backend-source-not-contains?
         (compiler-backend-bool-not-source)
         "    testq %rax, %rax\n    sete %al\n    movzbl %al, %eax\n")
@@ -30146,7 +30864,12 @@
             "    xorq %r8, %rax\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    xorq %rcx, %rax\n"))
+            "    xorq %rcx, %rax\n")
+          (and
+            (cfg scratch-vreg true false)
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    xorq %rsi, %rax\n")))
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    shlq %cl, %rax\n")
@@ -32711,11 +33434,17 @@
           "    movq %r10, 56(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq 128(%rsp), %r8\n")
+          (cfg
+            scratch-vreg
+            "    movq 176(%rsp), %r8\n"
+            "    movq 128(%rsp), %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq 128(%rsp), %rax\n")))]
+            (cfg
+              scratch-vreg
+              "    movq 176(%rsp), %rax\n"
+              "    movq 128(%rsp), %rax\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-i64-type-list8) : compiler_ast_types.AstTypeList
@@ -32937,6 +33666,68 @@
               (compiler_backend.compiler-backend-string-contains?
                 asm
                 "    movq 24(%rbp), %rdx\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
+
+;; Parameter spill text is assembled after body emission, but it executes
+;; before the body. A stack-resident group word must therefore select its
+;; memory-to-memory staging register against pre-body occupancy, not against the
+;; cursor left at the final body instruction. Model every GP register occupied
+;; at that stale cursor; the spill must still use the free pre-body fallback
+;; without arming an emergency save.
+(define (compiler-backend-group-stack-param-prebody-pressure-ok?) : bool
+  (let
+    [ty : compiler_ast_types.AstType
+      (compiler-backend-register-group-test-type)]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    [params : compiler_ir_types.CompilerIrParamList
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param "pair" ty 0)
+        compiler_ir_types.CompilerIrParamList.Nil)]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state
+        index.backend-state)]
+    [_late-body-pressure : unit
+      (begin
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-scavenge-ctx-occupied-masks!
+          function-state
+          (make-array 0 -1))
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+          index.backend-state
+          1)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-current-count!
+          index.backend-state
+          0))]
+    [pending-before : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
+        function-state)]
+    [result : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-param-spills
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_backend.CompilerBackendTarget.Linux)
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        params
+        6
+        0
+        6
+        0
+        index
+        1
+        index.backend-state)]
+    [pending-after : i64
+      (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
+        function-state)]
+    (and
+      (= pending-before pending-after)
+      (match result
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq 16(%rbp), %r8\n    movq %r8, -8(%rbp)\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq 24(%rbp), %r8\n    movq %r8, -16(%rbp)\n"))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-linux-atomic-int-group-type) : compiler_ast_types.AstType
@@ -33585,6 +34376,7 @@
     (compiler-backend-stack-f32-arg-bits-ok?)
     (compiler-backend-group-stack-f64-arg-bits-ok?)
     (compiler-backend-group-stack-param-no-return-stage-ok?)
+    (compiler-backend-group-stack-param-prebody-pressure-ok?)
     (compiler-backend-linux-atomic-group-allocation-ok?)
     (compiler-backend-immediate-stack-call-args-ok?)))
 
@@ -33896,8 +34688,8 @@
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-nontrivial-source)
         (compiler_backend.CompilerBackendTarget.Windows)
-        "72(%rsp)"
-        "64(%rsp)")
+        (cfg scratch-vreg "120(%rsp)" "72(%rsp)")
+        (cfg scratch-vreg "112(%rsp)" "64(%rsp)"))
       (compiler-backend-direct-tail-call-f64-keeps-spills?
         (compiler_backend.CompilerBackendTarget.Linux)
         "8(%rsp)"
@@ -34747,7 +35539,10 @@
         (compiler_backend.compiler-backend-string-contains? asm "tl_alloc:")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq (%r10,%r8,8), %r9\n")
+          (cfg
+            scratch-vreg
+            "    movq (%rax,%rsi,8), %r9\n"
+            "    movq (%r10,%r8,8), %r9\n"))
         (and
           (not
             (compiler_backend.compiler-backend-string-contains?
@@ -34782,11 +35577,11 @@
           ;; Store the boxed value through allocator-owned pointer/value homes.
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r8, (%r10)\n")
+            (cfg scratch-vreg "    movq %r9, (%rax)\n" "    movq %r8, (%r10)\n"))
           ;; BoxGet b: load the boxed value back through the box pointer.
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq (%r10), %r8\n")
+            (cfg scratch-vreg "    movq (%rax), %r9\n" "    movq (%r10), %r8\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               asm
@@ -38643,15 +39438,19 @@
       [dense-reg : String (compiler-backend-scratch-test-register dense 0)]
       (and
         (= (compiler-backend-scratch-test-plan-count listed) 2)
-        (= (compiler-backend-scratch-test-success-count listed) 1)
-        (string.eq reg "%r12")
+        (= (compiler-backend-scratch-test-success-count listed) 2)
+        (string.eq reg "%r10")
         (string.eq dense-reg reg)
+        (not (string.eq (compiler-backend-scratch-test-register listed 1) ""))
+        (not (string.eq reg (compiler-backend-scratch-test-register listed 1)))
         (match listed
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result
               out-plan
               scratch)
             (and
-              (= (compiler_regalloc.compiler-reg-plan-var-count out-plan 3) 4)
+              ;; Scratch assignments stay in the scratch plan and do not add
+              ;; fake variables to the published ordinary allocation plan.
+              (= (compiler_regalloc.compiler-reg-plan-var-count out-plan 3) 3)
               (let
                 [item : compiler_regalloc.CompilerRegScratchAssignment
                   (array-ref scratch.items 0)]
@@ -39086,12 +39885,11 @@
                         (compiler_backend.compiler-backend-string-contains?
                           phi-cycle
                           "    movq %r14, %r13\n")
+                        ;; A register cycle must not fall back to any frame slot.
                         (not
                           (compiler_backend.compiler-backend-string-contains?
                             phi-cycle
-                            (compiler_backend.compiler-backend-cycle-temp-slot-with-backend-state
-                              backend-state
-                              0))))]
+                            "(%rbp)")))]
                     [(compiler_backend.ResultCompilerBackend.Err _) false])]
                 [(compiler_backend.ResultCompilerBackend.Err _) false])]
             [(compiler_backend.ResultCompilerBackend.Err _) false])]
@@ -39416,7 +40214,7 @@
           (ci.intern-compat-state-capture-active))]
       (and
         (= (compiler-backend-scratch-test-plan-count result) 2)
-        (= (compiler-backend-scratch-test-success-count result) 1)
+        (= (compiler-backend-scratch-test-success-count result) 2)
         (string.eq planned "%r12")
         (string.eq
           (compiler_backend.compiler-backend-scavenge-c-abi-return-base-save-reg
@@ -39513,8 +40311,7 @@
         (compiler_regalloc.compiler-reg-id-seq-contains?
           excluded
           compiler_abi.compiler-reg-id-r9)
-        (not (= item.register compiler_abi.compiler-reg-id-r8))
-        (not (= item.register compiler_abi.compiler-reg-id-r9))
+        (not (= item.register compiler_abi.compiler-reg-id-invalid))
         (=
           item.register
           (__tl-project-field (array-ref dense-items index) register))
@@ -39737,20 +40534,29 @@
         (= (compiler-backend-scratch-test-plan-count windows) 1)
         (= (compiler-backend-scratch-test-success-count windows) 1)
         (= (compiler-backend-scratch-test-plan-count indirect-linux) 3)
-        (= (compiler-backend-scratch-test-success-count indirect-linux) 2)
+        (= (compiler-backend-scratch-test-success-count indirect-linux) 3)
         (= (compiler-backend-scratch-test-plan-count indirect-windows) 2)
-        (= (compiler-backend-scratch-test-success-count indirect-windows) 1)
+        (= (compiler-backend-scratch-test-success-count indirect-windows) 2)
         (= (compiler-backend-scratch-test-plan-count indirect-no-marker) 2)
-        (= (compiler-backend-scratch-test-success-count indirect-no-marker) 1)
-        ;; The call target claims the only call-allowed GP scratch register. The
-        ;; simultaneous call-stage requirement intentionally uses the fallback.
-        (string.eq (compiler-backend-scratch-test-register indirect-linux 1) "")
-        (string.eq
-          (compiler-backend-scratch-test-register indirect-windows 1)
-          "")
-        (string.eq
-          (compiler-backend-scratch-test-register indirect-no-marker 1)
-          "")
+        (= (compiler-backend-scratch-test-success-count indirect-no-marker) 2)
+        ;; Target and staging are simultaneous and must receive distinct homes;
+        ;; a newly selected callee-saved home is published into the plan.
+        (not
+          (string.eq
+            (compiler-backend-scratch-test-register indirect-linux 1)
+            ""))
+        (not
+          (string.eq
+            (compiler-backend-scratch-test-register indirect-windows 1)
+            ""))
+        (not
+          (string.eq
+            (compiler-backend-scratch-test-register indirect-no-marker 1)
+            ""))
+        (not
+          (string.eq
+            (compiler-backend-scratch-test-register indirect-linux 0)
+            (compiler-backend-scratch-test-register indirect-linux 1)))
         (compiler_backend.compiler-backend-string-prefix-at?
           (compiler-backend-scratch-test-register linux 1)
           "%xmm"
@@ -40312,11 +41118,12 @@
           3
           (compiler-backend-scratch-vreg-tail-target-test-assignments))]
       (and
-        ;; The stable slot remains present but has an explicit empty assignment,
-        ;; so emission falls back instead of using a restored callee-saved home.
+        ;; The target itself remains in %r10; argument staging receives a
+        ;; separate planned home before the tail epilogue restores saved state.
         (= (compiler-backend-scratch-test-plan-count result) 2)
-        (= (compiler-backend-scratch-test-success-count result) 0)
-        (string.eq (compiler-backend-scratch-test-register result 0) "")))
+        (= (compiler-backend-scratch-test-success-count result) 2)
+        (string.eq (compiler-backend-scratch-test-register result 0) "%r10")
+        (not (string.eq (compiler-backend-scratch-test-register result 1) ""))))
     true))
 
 (define (compiler-backend-scratch-vreg-simd-plan-ok?) : bool
@@ -40775,13 +41582,13 @@
     [mask : i64 (compiler_regalloc.compiler-reg-scratch-plan-register plan 2 2)]
     (and
       (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 3)
-      (= (compiler_backend.compiler-backend-scratch-plan-success-count plan) 2)
-      (= count compiler_abi.compiler-reg-id-invalid)
+      (= (compiler_backend.compiler-backend-scratch-plan-success-count plan) 3)
+      (= count compiler_abi.compiler-reg-id-rcx)
       (not (= index compiler_abi.compiler-reg-id-invalid))
       (not (= mask compiler_abi.compiler-reg-id-invalid))
       (not (compiler_regalloc.compiler-reg-registers-overlap? index mask))
-      (not (= index compiler_abi.compiler-reg-id-rcx))
-      (not (= mask compiler_abi.compiler-reg-id-rcx))
+      (not (compiler_regalloc.compiler-reg-registers-overlap? count index))
+      (not (compiler_regalloc.compiler-reg-registers-overlap? count mask))
       (not (= index compiler_abi.compiler-reg-id-r12))
       (not (= mask compiler_abi.compiler-reg-id-r12))
       (not (= index compiler_abi.compiler-reg-id-r13))
@@ -41261,115 +42068,6 @@
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
-(define (compiler-backend-scratch-vreg-incomplete-group-fallback-ok?) : bool
-  (cfg
-    scratch-vreg
-    (let
-      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 2)]
-      [starts : (__tl_dyn-array i64) (array.make-array i64 2)]
-      [ends : (__tl_dyn-array i64) (array.make-array i64 2)]
-      [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)
-        (array.make-array compiler_regalloc.CompilerRegIntervalSeq 2)]
-      [present : (__tl_dyn-array i64) (array.make-array i64 2)]
-      [types : (__tl_dyn-array compiler_ast_types.AstType)
-        (array.make-array compiler_ast_types.AstType 2)]
-      [assignments : compiler_regalloc.CompilerRegAssignmentTable
-        (compiler_regalloc.compiler-reg-assignment-table-make 2)]
-      [registers : (__tl_dyn-array i64)
-        (compiler_regalloc.compiler-reg-scratch-register-array
-          (compiler_abi.CompilerRegTargetAbi.Linux))]
-      [occupancy : compiler_regalloc.CompilerRegGreedyOccupancy
-        (compiler_regalloc.compiler-reg-greedy-occupancy-make
-          assignments
-          (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
-          registers
-          (array-length registers))]
-      [ref-counts : (__tl_dyn-array i64) (array.make-array i64 2)]
-      [fixed-rcx : compiler_regalloc.CompilerRegScratchConstraint
-        (compiler_regalloc.CompilerRegScratchConstraint
-          (compiler_regalloc.CompilerRegScratchClass.Gp)
-          (compiler_regalloc.compiler-reg-id-seq-empty)
-          (compiler_regalloc.compiler-reg-id-seq-empty)
-          compiler_abi.compiler-reg-id-rcx)]
-      (begin
-        (compiler_regalloc.compiler-reg-fill-i64-array starts -1)
-        (compiler_regalloc.compiler-reg-fill-i64-array ends -1)
-        (compiler_regalloc.compiler-reg-fill-i64-array present 0)
-        (compiler_regalloc.compiler-reg-fill-i64-array ref-counts 0)
-        (compiler_regalloc.compiler-reg-fill-interval-seq-array! segments 0)
-        (set!
-          (array-ref items 0)
-          (compiler_regalloc.CompilerRegScratchAssignment
-            (compiler_regalloc.CompilerRegScratchRequirement
-              0
-              0
-              (compiler_regalloc.CompilerRegScratchRole.MemoryAddress)
-              fixed-rcx
-              0
-              3
-              0)
-            compiler_abi.compiler-reg-id-invalid))
-        (set!
-          (array-ref items 1)
-          (compiler_regalloc.CompilerRegScratchAssignment
-            (compiler_regalloc.CompilerRegScratchRequirement
-              2
-              0
-              (compiler_regalloc.CompilerRegScratchRole.MemoryAddress)
-              fixed-rcx
-              0
-              3
-              1)
-            compiler_abi.compiler-reg-id-invalid))
-        (compiler_regalloc.compiler-reg-scratch-mark-requirement!
-          starts
-          ends
-          segments
-          present
-          types
-          (__tl-project-field (array-ref items 0) requirement))
-        (compiler_regalloc.compiler-reg-scratch-mark-requirement!
-          starts
-          ends
-          segments
-          present
-          types
-          (__tl-project-field (array-ref items 1) requirement))
-        (compiler_regalloc.compiler-reg-scratch-assign-items!
-          (compiler_abi.CompilerRegTargetAbi.Linux)
-          items
-          0
-          assignments
-          occupancy
-          (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
-          ref-counts
-          registers
-          (array-length registers)
-          2)
-        (let
-          [partial? : bool
-            (and
-              (=
-                (__tl-project-field (array-ref items 0) register)
-                compiler_abi.compiler-reg-id-rcx)
-              (=
-                (__tl-project-field (array-ref items 1) register)
-                compiler_abi.compiler-reg-id-invalid))]
-          (begin
-            (compiler_regalloc.compiler-reg-scratch-clear-incomplete-groups!
-              items
-              0)
-            (and
-              partial?
-              (=
-                (__tl-project-field (array-ref items 0) register)
-                compiler_abi.compiler-reg-id-invalid)
-              (=
-                (__tl-project-field (array-ref items 1) register)
-                compiler_abi.compiler-reg-id-invalid))))))
-    true))
-
 (define (compiler-backend-scratch-vreg-constraint-shapes-ok?) : bool
   (cfg
     scratch-vreg
@@ -41445,6 +42143,8 @@
               0
               4
               0)
+            false
+            false
             compiler_abi.compiler-reg-id-invalid))
         ;; Allowed {rcx,r10}, excluded {rcx}: selects r10.
         (set!
@@ -41458,6 +42158,8 @@
               0
               2
               1)
+            false
+            false
             compiler_abi.compiler-reg-id-invalid))
         ;; The same solver supports the XMM register file.
         (set!
@@ -41471,6 +42173,8 @@
               0
               2
               2)
+            false
+            false
             compiler_abi.compiler-reg-id-invalid))
         ;; A simultaneous fixed-RCX request fails explicitly.
         (set!
@@ -41484,6 +42188,8 @@
               2
               3
               3)
+            false
+            false
             compiler_abi.compiler-reg-id-invalid))
         ;; A later non-overlapping slot can reuse r10.
         (set!
@@ -41497,6 +42203,8 @@
               3
               4
               4)
+            false
+            false
             compiler_abi.compiler-reg-id-invalid))
         (let
           [i : i64 0]
@@ -41517,6 +42225,7 @@
           assignments
           occupancy
           (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
+          (array.make-array i64 0)
           ref-counts
           registers
           (array-length registers)
@@ -41648,16 +42357,28 @@
 
 (define (compiler-backend-emit-current-count-gate-ok?) : bool
   (and
-    (not
+    (cfg
+      scratch-vreg
       (compiler_backend.compiler-backend-emit-needs-current-count?
         0
         0
-        (compiler_backend.CompilerBackendMode.Scalar)))
-    (not
+        (compiler_backend.CompilerBackendMode.Scalar))
+      (not
+        (compiler_backend.compiler-backend-emit-needs-current-count?
+          0
+          0
+          (compiler_backend.CompilerBackendMode.Scalar))))
+    (cfg
+      scratch-vreg
       (compiler_backend.compiler-backend-emit-needs-current-count?
         0
         0
-        (compiler_backend.CompilerBackendMode.Avx512)))
+        (compiler_backend.CompilerBackendMode.Avx512))
+      (not
+        (compiler_backend.compiler-backend-emit-needs-current-count?
+          0
+          0
+          (compiler_backend.CompilerBackendMode.Avx512))))
     (compiler_backend.compiler-backend-emit-needs-current-count?
       1
       0
@@ -41953,6 +42674,8 @@
             4
             8
             1)
+          false
+          false
           compiler_abi.compiler-reg-id-r9))]
     [scratch : compiler_regalloc.CompilerRegScratchPlan
       (compiler_regalloc.CompilerRegScratchPlan items first slots)]
@@ -42864,6 +43587,321 @@
               "    movzbq 48(%rbp), %r9\n")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
+(define (compiler-backend-fused-store-pair-arms-planned-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.MemoryAddress)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                1)
+              true
+              false
+              compiler_abi.compiler-reg-id-rdi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 1))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        index.backend-state]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Spill 0))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          0
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-store-ptr-pair
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 11)
+        (compiler_ast_types.AstType.I64)
+        8
+        (compiler_ir_types.CompilerIrValue.I64 12)
+        (compiler_ast_types.AstType.I64)
+        index
+        planned
+        ""
+        ""
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (let
+            [wrapped : String
+              (compiler_backend.compiler-backend-emergency-wrap
+                asm
+                backend-state)]
+            (and
+              (string.eq planned "%rdi")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq %rdi, -64(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq 0(%rbp), %rdi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq $11, (%rdi)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq $12, 8(%rdi)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq -64(%rbp), %rdi\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
+(define (compiler-backend-fused-gep-store-arms-planned-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_plan-init : unit
+        (begin
+          (set!
+            (array-ref items 0)
+            (compiler_regalloc.CompilerRegScratchAssignment
+              (compiler_regalloc.CompilerRegScratchRequirement
+                0
+                0
+                (compiler_regalloc.CompilerRegScratchRole.MemoryAddress)
+                (compiler_regalloc.CompilerRegScratchConstraint
+                  (compiler_regalloc.CompilerRegScratchClass.Gp)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  (compiler_regalloc.compiler-reg-id-seq-empty)
+                  compiler_abi.compiler-reg-id-invalid)
+                0
+                1
+                1)
+              true
+              false
+              compiler_abi.compiler-reg-id-rdi))
+          (set! (array-ref firsts 0) 0)
+          (set! (array-ref slots 0) 1))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+      [index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        index.backend-state]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            0
+            (compiler_regalloc.CompilerRegLocation.Spill 0))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))]
+      [function-state : compiler_backend.CompilerBackendFunctionState
+        (compiler_backend.compiler-backend-state-function-state backend-state)]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          function-state
+          -64)]
+      [planned : String
+        (compiler_backend.compiler-backend-scratch-plan-register-here
+          plan
+          0
+          backend-state)]
+      (match (compiler_backend.compiler-backend-emit-store-to-gep
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 12)
+        (compiler_ast_types.AstType.I64)
+        index
+        0
+        planned
+        ""
+        ""
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (let
+            [wrapped : String
+              (compiler_backend.compiler-backend-emergency-wrap
+                asm
+                backend-state)]
+            (and
+              (string.eq planned "%rdi")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq %rdi, -64(%rbp)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq 0(%rbp), %rdi\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq $12, 8(%rdi)\n")
+              (compiler_backend.compiler-backend-string-contains?
+                wrapped
+                "    movq -64(%rbp), %rdi\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
+;; A producer folded into constant div/mod writes the dividend scratch before
+;; the ordinary div/mod emitter runs. Under full Win64 pressure that scratch is
+;; a preserved live-through home, so the fusion itself must consume the plan's
+;; preservation marker and bracket the complete producer+divmod bundle.
+(define (compiler-backend-divmod-polish-pressure-reg [index : i64]) : i64
+  (cond
+    [(= index 0) compiler_abi.compiler-reg-id-rsi]
+    [(= index 1) compiler_abi.compiler-reg-id-rdi]
+    [(= index 2) compiler_abi.compiler-reg-id-r9]
+    [(= index 3) compiler_abi.compiler-reg-id-rcx]
+    [(= index 4) compiler_abi.compiler-reg-id-r10]
+    [(= index 5) compiler_abi.compiler-reg-id-r11]
+    [(= index 6) compiler_abi.compiler-reg-id-r8]
+    [(= index 7) compiler_abi.compiler-reg-id-r12]
+    [(= index 8) compiler_abi.compiler-reg-id-r13]
+    [(= index 9) compiler_abi.compiler-reg-id-r14]
+    [(= index 10) compiler_abi.compiler-reg-id-r15]
+    [else compiler_abi.compiler-reg-id-rbx]))
+
+(define (compiler-backend-divmod-polish-pressure-assignments-from [index : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (if (= index 12)
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-rax))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        (+ index 2)
+        (compiler_regalloc.CompilerRegLocation.Register
+          (compiler-backend-divmod-polish-pressure-reg index)))
+      (compiler-backend-divmod-polish-pressure-assignments-from (+ index 1)))))
+
+(define (compiler-backend-divmod-polish-pressure-tail-from [index : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= index 12)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 1)))
+      compiler_ir_types.CompilerIrInstrList.Nil)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        (+ index 14)
+        (compiler_ir_types.CompilerIrValue.Var (+ index 2))
+        (compiler_ast_types.AstType.I64))
+      (compiler-backend-divmod-polish-pressure-tail-from (+ index 1)))))
+
+(define (compiler-backend-divmod-polish-pressure-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      0
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        1
+        (compiler_ir_types.CompilerIrBinOp.SafeDiv)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler-backend-divmod-polish-pressure-tail-from 0))))
+
+(define (compiler-backend-divmod-polish-arms-planned-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [instrs : compiler_ir_types.CompilerIrInstrList
+        (compiler-backend-divmod-polish-pressure-instrs)]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler-backend-divmod-polish-pressure-assignments-from 0)]
+      [blocks : compiler_ir_types.CompilerIrBlockList
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            instrs)
+          compiler_ir_types.CompilerIrBlockList.Nil)]
+      [scratch-result : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (compiler_abi.CompilerRegTargetAbi.Windows)
+          "divmod_polish_preserve"
+          blocks
+          26
+          assignments)]
+      [scratch : compiler_regalloc.CompilerRegScratchPlan
+        (match scratch-result
+          [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan) plan])]
+      [src-id : i64
+        (compiler_regalloc.compiler-reg-scratch-plan-register scratch 2 3)]
+      [src : String (compiler_abi.compiler-abi-register-spelling src-id)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          (compiler_backend.compiler-backend-state-function-state backend-state)
+          -256)]
+      (match (compiler-backend-emit-test-instrs-target-with-backend-state
+        instrs
+        assignments
+        26
+        (compiler_backend.CompilerBackendTarget.Windows)
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (not (= src-id compiler_abi.compiler-reg-id-invalid))
+            (compiler_regalloc.compiler-reg-scratch-plan-preserve? scratch 2 3)
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              (str_cat.str-cat "    movq " src ", -256(%rbp)\n"))
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              (str_cat.str-cat "), " src "\n"))
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              (str_cat.str-cat "    movq -256(%rbp), " src "\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+    true))
+
 (define (compiler-backend-scratch-vreg-scalar-div-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.compiler-ir-block
@@ -43090,17 +44128,39 @@
       (compiler-backend-scratch-vreg-scalar-control-assignments))
       [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
         (let
-          [lhs : String
+          [primary : String
             (compiler-backend-scratch-test-plan-register-string plan 0 0)]
           [rhs : String
             (compiler-backend-scratch-test-plan-register-string plan 0 1)]
           [test : String
             (compiler-backend-scratch-test-plan-register-string plan 2 0)]
           (and
-            (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 3)
-            (not (string.eq lhs ""))
-            (not (string.eq rhs ""))
-            (not (string.eq lhs rhs))
+            (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 2)
+            ;; The compare emitter addresses a spilled lhs directly, so its one
+            ;; modeled scalar slot belongs to rhs staging (ordinal 0). The old
+            ;; generic direct predicate classified this in the opposite way and
+            ;; requested missing ordinal 1 during fused compare/branch emission.
+            (compiler_regalloc.compiler-reg-scratch-compare-lhs-direct?
+              (compiler-backend-scratch-vreg-scalar-control-assignments)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.Var 1))
+            ;; RegisterPair is an aggregate carrier, not a scalar compare
+            ;; operand; it must consume the lhs staging slot.
+            (not
+              (compiler_regalloc.compiler-reg-scratch-compare-lhs-direct?
+                (compiler_regalloc.compiler-reg-assignments-prepend
+                  (compiler_regalloc.CompilerRegAssignment
+                    0
+                    (compiler_regalloc.CompilerRegLocation.RegisterPair
+                      compiler_abi.compiler-reg-id-rdi
+                      compiler_abi.compiler-reg-id-rsi))
+                  (compiler_regalloc.compiler-reg-assignment-table-empty))
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 1)))
+            (not (string.eq primary ""))
+            ;; One of the two spilled compare operands stages while the other is
+            ;; addressed directly from memory, so no secondary slot is needed.
+            (string.eq rhs "")
             (not (string.eq test ""))
             (=
               (__tl-project-field
@@ -43108,7 +44168,7 @@
                 hi)
               3)
             (match (__tl-project-field
-              (__tl-project-field (array-ref plan.items 2) requirement)
+              (__tl-project-field (array-ref plan.items 1) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.BranchTest) true]
               [_ false])))])
@@ -44782,7 +45842,10 @@ b_keep:
                 (string.eq before-asm after-asm)
                 (compiler_backend.compiler-backend-string-contains?
                   after-asm
-                  "_allocentry_i29_v0_slow"))]
+                  "_allocentry_i0_v0_slow")
+                (compiler_backend.compiler-backend-string-contains?
+                  after-asm
+                  "_allocentry_i1_v0_slow"))]
             [(compiler_backend.ResultCompilerBackend.Err _) false])]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     (and
@@ -44899,7 +45962,6 @@ b_keep:
         (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
         (compiler-backend-scratch-vreg-select-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
-        (compiler-backend-scratch-vreg-incomplete-group-fallback-ok?)
         (compiler-backend-private-memory-scratch-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
@@ -44915,6 +45977,9 @@ b_keep:
         (compiler-backend-phi-rotated-back-edge-ok?)
         (compiler-backend-divmod-live-dividend-src-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
+        (compiler-backend-fused-store-pair-arms-planned-preserve-ok?)
+        (compiler-backend-fused-gep-store-arms-planned-preserve-ok?)
+        (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)
@@ -44972,6 +46037,7 @@ b_keep:
         (pmove.compiler-parallel-move-self-test?)
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-forward-edge-unbracket-ok?)
+        (compiler-backend-phi-planned-live-through-preserved-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
         (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
         (compiler-backend-phi-float-cycle-copy-ok?)
@@ -45159,3 +46225,49 @@ b_keep:
     (compiler-backend-object-semantic-eligibility-ok?))
     42
     (io.panic "backend: smoke output mismatch")))
+
+;; Scratch-vreg production emission fails closed when a fixture bypasses the
+;; planner. This focused aggregate exposes the suites whose fixtures install a
+;; complete modeled plan, so the scratch configuration has a stable smoke gate
+;; independent of legacy direct-emitter coverage.
+(define (compiler-backend-scratch-vreg-self-test) : i64
+  (if (and
+    (compiler-backend-scratch-vreg-call-target-plan-ok?)
+    (compiler-backend-scratch-vreg-switch-plan-ok?)
+    (compiler-backend-scratch-vreg-aggregate-plan-ok?)
+    (compiler-backend-scratch-vreg-phi-plan-ok?)
+    (compiler-backend-scratch-vreg-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-memory-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-aggregate-copy-c-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-future-window-ok?)
+    (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
+    (compiler-backend-scratch-vreg-bounds-plan-ok?)
+    (compiler-backend-scratch-vreg-fused-sibling-plan-ok?)
+    (compiler-backend-scratch-vreg-memory-plan-ok?)
+    (compiler-backend-scratch-vreg-copy-xmm-plan-ok?)
+    (compiler-backend-scratch-vreg-c-memory-plan-ok?)
+    (compiler-backend-scratch-vreg-float-memory-plan-ok?)
+    (compiler-backend-scratch-vreg-float-memory-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-float-compute-plan-ok?)
+    (compiler-backend-scratch-vreg-float-compute-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
+    (compiler-backend-scratch-vreg-simd-plan-ok?)
+    (compiler-backend-scratch-vreg-indexed-simd-plan-ok?)
+    (compiler-backend-scratch-vreg-tail-mask-plan-ok?)
+    (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-shift-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
+    (compiler-backend-scratch-vreg-select-plan-ok?)
+    (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
+    (compiler-backend-divmod-polish-arms-planned-preserve-ok?)
+    (compiler-backend-scratch-vreg-constraint-shapes-ok?)
+    (compiler-backend-phi-parallel-copy-ok?)
+    (compiler-backend-phi-forward-edge-unbracket-ok?)
+    (compiler-backend-phi-planned-live-through-preserved-ok?)
+    (compiler-backend-phi-group-cycle-copy-ok?)
+    (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
+    (compiler-backend-phi-float-cycle-copy-ok?))
+    42
+    (io.panic "backend: scratch-vreg smoke output mismatch")))

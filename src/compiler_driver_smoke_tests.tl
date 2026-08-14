@@ -917,6 +917,58 @@
         (compiler_driver_core.compiler-driver-state-surface-arena state-a)
         (compiler_driver_core.compiler-driver-state-surface-arena state-b)))))
 
+;; Driver construction owns two nested allocation targets: retained
+;; typecheck/lower/backend state in the surface arena, and checked-lowering
+;; wrapper cells plus storage in a fresh pool arena. Both constructors must
+;; restore their caller, and the latter's returned context must stay readable
+;; until its explicit error-path cleanup.
+(define (compiler-driver-construction-arena-scope-ok?) : bool
+  (let
+    ;; Driver state still stores its owners as raw handles. Wrap a raw test
+    ;; owner as the production bridge does, rather than claiming the returned
+    ;; state is region-polymorphic under a direct `arena.make` owner.
+    [caller-handle : i64 (arena.tl_arena_make)]
+    [caller : arena.Arena (arena.Arena caller-handle)]
+    [ok : bool
+      (in-arena
+        caller
+        (let
+          [state : compiler_driver_core.CompilerDriverState
+            (compiler_driver_core.compiler-driver-state-new-for-compile)]
+          [surface-arena : i64
+            (compiler_driver_core.compiler-driver-state-surface-arena state)]
+          [state-restored? : bool
+            (and
+              (= (arena.tl_arena_current) caller-handle)
+              (> surface-arena 0)
+              (not (= surface-arena caller-handle))
+              (=
+                (compiler_backend.compiler-backend-state-owner-arena
+                  (compiler_driver_core.compiler-driver-state-backend state))
+                surface-arena))]
+          [pools : compiler_ast_types.AstNodePoolContext
+            (compiler_driver_core.compiler-driver-state-new-checked-lower-pools)]
+          [pool-arena : i64
+            (compiler_ast_types.ast-node-pool-context-base-arena pools)]
+          [pools-restored? : bool
+            (and
+              (= (arena.tl_arena_current) caller-handle)
+              (> pool-arena 0)
+              (not (= pool-arena caller-handle))
+              (= (compiler_ast_types.ast-node-pool-context-expr-len pools) 0)
+              (= (compiler_ast_types.ast-node-pool-context-type-len pools) 0))]
+          (begin
+            (compiler_driver_core.compiler-driver-state-destroy-uncommitted-pools!
+              pools)
+            (and
+              state-restored?
+              pools-restored?
+              (= (arena.tl_arena_current) caller-handle)))))]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy caller-handle))
+      ok)))
+
 (define (compiler-driver-reader-context-smoke-prepare-state!
   [state : compiler_driver_core.CompilerDriverState]) : unit
   (begin
@@ -1011,6 +1063,7 @@
   (begin
     (cbi.compiler-builtin-reset!)
     (cbi.compiler-builtin-initialize-for-parse!)
+    (unless (compiler-driver-construction-arena-scope-ok?) (return 2))
     (if (compiler-driver-reader-context-smoke-ok?)
       42
       1)))
@@ -1164,9 +1217,9 @@
                       (and isolated-ok? b-released-ok?))))))))))))
 
 ;; The driver owns one opaque lower job state per compile state. Populate A
-;; through a successful lower, drive B through a semantic failure, then reset B
-;; through the driver lifecycle. The 30-cell structural observation of A must
-;; remain exact, while B returns to its fresh observation.
+;; through a successful lower, drive B through failures before and after cache
+;; population, then reset B through the driver lifecycle. A's complete
+;; structural observation must remain exact, while B returns to fresh state.
 (define (compiler-driver-lower-state-isolation-ok?) : bool
   (let
     [state-a : compiler_driver_core.CompilerDriverState
@@ -1178,6 +1231,12 @@
     [lower-b : compiler_lower.CompilerLowerState
       (compiler_driver_core.compiler-driver-state-owned-lower-state state-b)]
     [initial-a : compiler_lower.CompilerLowerStateObservation
+      (compiler_lower.compiler-lower-state-observe lower-a)]
+    [b-prepopulate-failed : bool
+      (match (compiler_lower.lower-compiler-source-with-state lower-b "(define")
+        [(compiler_lower.ResultCompilerLower.Err _) true]
+        [(compiler_lower.ResultCompilerLower.Ok _ _) false])]
+    [a-after-b-prepopulate-failure : compiler_lower.CompilerLowerStateObservation
       (compiler_lower.compiler-lower-state-observe lower-a)]
     (match (compiler_lower.lower-compiler-source-with-state
       lower-a
@@ -1213,6 +1272,15 @@
                 [(= lower-a.address lower-b.address)
                   (compiler-driver-reader-context-smoke-fail
                     "lower state owners alias")]
+                [(not b-prepopulate-failed)
+                  (compiler-driver-reader-context-smoke-fail
+                    "controlled pre-cache lower state B failure succeeded")]
+                [(not
+                    (compiler_lower.compiler-lower-state-observation-eq?
+                      initial-a
+                      a-after-b-prepopulate-failure))
+                  (compiler-driver-reader-context-smoke-fail
+                    "pre-cache state B failure mutated state A")]
                 [(compiler_lower.compiler-lower-state-observation-eq?
                     initial-a
                     a-before)

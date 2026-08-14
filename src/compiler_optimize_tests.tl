@@ -42328,6 +42328,22 @@
           (compiler_ir_types.CompilerIrInstrList.Nil)))
       (compiler_ir_types.CompilerIrBlockList.Nil))))
 
+(define (opt-ssa-runtime-global-operand-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ssa_runtime_global_operand")
+    (compiler_ir_types.CompilerIrParamList.Nil)
+    (compiler_ast_types.AstType.I64)
+    0
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.RuntimeGlobal 2)))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
 (define (opt-ssa-dominance-fail-function) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "ssa_dominance_fail")
@@ -44421,6 +44437,12 @@
               (opt-ssa-use-before-def-function))
             "optimizer verify: use before definition"))
         25]
+      [(not
+          (compiler_optimize.opt-verify-error-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-ssa-runtime-global-operand-function))
+            "optimizer verify: runtime-global marker used as an instruction value"))
+        63]
       [(not
           (compiler_optimize.opt-verify-error-ok?
             (compiler_optimize.opt-verify-function

@@ -55,7 +55,7 @@
 ;: loop rather than assuming it, so the harness fails loudly if the macro later
 ;: becomes native instead of silently testing the wrong path.
 (define stress-shell-identity : String
-  "stdlib.clone/synthesize-helpers")
+  "stdlib.hashmap/hashmap")
 
 ;: Canary words written around the dispatch state and re-checked every
 ;: iteration. A wild write from the bridge lands here rather than going

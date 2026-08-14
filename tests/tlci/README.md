@@ -10,9 +10,10 @@ version 1 has been removed — there were no external consumers — so the parse
 and emitter target v2 only.
 
 The checked-in `.tlci` files pin the current format. These immutable corpus
-images predate package source-set bindings; they intentionally inspect as
-`source-set-binding-schema: missing-or-legacy` with an unavailable digest while
-remaining valid v2 images. `valid-metadata-only.tlci`
+images predate package source-set bindings and checked frontend surfaces; they
+intentionally inspect as `source-set-binding-schema: missing-or-legacy` with an
+unavailable digest and all three surface kinds missing while remaining valid v2
+images. `valid-metadata-only.tlci`
 pins the minimal container, `valid-sections.tlci` pins page-aligned rodata/code
 and one fixup, entry, and symbol record without executing its inert code bytes,
 and `valid-imports.tlci` pins a named import record and its packed name.

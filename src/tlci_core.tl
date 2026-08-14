@@ -580,6 +580,8 @@
   "enum-variant-payload-type")
 (define tlci-host-callback-name-array-element-type : String
   "array-element-type")
+(define tlci-host-callback-name-box-element-type : String
+  "box-element-type")
 (define tlci-host-callback-name-array-length : String
   "array-length")
 (define tlci-host-callback-name-array-dynamic? : String
@@ -596,6 +598,8 @@
   "expr-list-length")
 (define tlci-host-callback-name-expr-list-nth : String
   "expr-list-nth")
+(define tlci-host-callback-name-expr-list-type-nth : String
+  "expr-list-type-nth")
 (define tlci-host-callback-name-expr-binding-clause-name : String
   "expr-binding-clause-name")
 (define tlci-host-callback-name-expr-binding-clause-has-type? : String
@@ -903,15 +907,17 @@
 (define tlci-host-callback-name-expr-ptr-cast : String
   "expr-ptr-cast")
 
-;; The literal text of a string-literal `Expr` operand, pushed as the comptime
-;; String value the interpreted `comptime.expr-string-value` yields -- the same
+;; The literal text of a string-literal `Expr`, pushed as the comptime String
+;; value the interpreted `comptime.expr-string-value` yields -- the same
 ;; `(CompilerCtfeValue.String (intern-str id) id)` identity, so a downstream
-;; `expr-var`/`string-append` sees exactly what interpretation gave it. A
-;; non-literal operand is a bad request, matching the interpreted error rather
-;; than silently yielding empty text. This is the single most common first
-;; blocker in the embedded census (5 shells across #5626, #5701 and #5606).
+;; `expr-var`/`string-append` sees exactly what interpretation gave it. The
+;; operand form reads a macro operand directly; the generic form pops a computed
+;; Expr from the session stack. A non-literal produces the interpreted
+;; diagnostic rather than silently yielding empty text.
 (define tlci-host-callback-name-operand-expr-string-value : String
   "operand-expr-string-value")
+(define tlci-host-callback-name-expr-string-value : String
+  "expr-string-value")
 
 ;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a plain
 ;; identifier expression", and an accessor pushing that identifier's spelling as
@@ -4385,6 +4391,75 @@
                     [_ false])))]
             [_ false])]))))
 
+(define (tlci-test-aux-directory-shapes-ok?) : bool
+  (let
+    [sections : (__tl_dyn-array TlciAuxSection)
+      (array.make-array TlciAuxSection 2)]
+    [duplicates : (__tl_dyn-array TlciAuxSection)
+      (array.make-array TlciAuxSection 2)]
+    [first : (__tl_dyn-array u8) (tlci-string->bytes "first")]
+    [unknown : (__tl_dyn-array u8) (tlci-string->bytes "unknown")]
+    (begin
+      (set!
+        (array-ref sections 0)
+        (TlciAuxSection tlci-aux-kind-package-identity 1 first))
+      (set! (array-ref sections 1) (TlciAuxSection 99 7 unknown))
+      (set! (array-ref duplicates 0) (array-ref sections 0))
+      (set! (array-ref duplicates 1) (array-ref sections 0))
+      (and
+        (match (tlci-aux-pack-rodata (tlci-empty-bytes) duplicates)
+          [(ResultTlciAuxBytes.Err _) true]
+          [_ false])
+        (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
+          [(ResultTlciAuxBytes.Err _) false]
+          [(ResultTlciAuxBytes.Ok packed)
+            (match (tlci-aux-directory packed)
+              [(ResultTlciAuxDirectory.Ok directory)
+                (let
+                  [duplicate-kind : (__tl_dyn-array u8)
+                    (tlci-copy-bytes packed)]
+                  [overlap : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
+                  [oversized : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
+                  [first-record : i64 directory.directory-offset]
+                  [second-record : i64 (+ first-record tlci-aux-record-size)]
+                  [first-offset : i64
+                    (tlci-read-u64 packed (+ first-record 16))]
+                  (begin
+                    (tlci-set-u64!
+                      duplicate-kind
+                      second-record
+                      tlci-aux-kind-package-identity)
+                    (tlci-set-u64! overlap (+ second-record 16) first-offset)
+                    (tlci-set-u64!
+                      oversized
+                      (+ first-record 24)
+                      (+ directory.directory-offset 1))
+                    (and
+                      (match (tlci-aux-find packed 99)
+                        [(ResultTlciAuxLookup.Ok schema payload)
+                          (and (= schema 7) (tlci-bytes-eq? payload unknown))]
+                        [_ false])
+                      (match (tlci-aux-find
+                        duplicate-kind
+                        tlci-aux-kind-package-identity)
+                        [(ResultTlciAuxLookup.Err _) true]
+                        [_ false])
+                      (match (tlci-aux-find
+                        overlap
+                        tlci-aux-kind-package-identity)
+                        [(ResultTlciAuxLookup.Err _) true]
+                        [_ false])
+                      (match (tlci-aux-find
+                        oversized
+                        tlci-aux-kind-package-identity)
+                        [(ResultTlciAuxLookup.Err _) true]
+                        [_ false])
+                      (match (tlci-aux-directory
+                        (tlci-slice-bytes packed 0 (- (array-length packed) 1)))
+                        [(ResultTlciAuxDirectory.Missing) true]
+                        [_ false]))))]
+              [_ false])])))))
+
 (define (tlci-test-producer-identity-admission-ok?) : bool
   (let
     [current : String "0123456789abcdef0123456789abcdef01234567"]
@@ -4548,6 +4623,7 @@
     [(not (tlci-test-dense-spmd-sequences?)) 17]
     [(not (tlci-test-package-source-binding-admission-ok?)) 18]
     [(not (tlci-test-host-platform-admission-ok?)) 19]
+    [(not (tlci-test-aux-directory-shapes-ok?)) 20]
     [else 0]))
 
 (define (tlci-core-self-test) : i64

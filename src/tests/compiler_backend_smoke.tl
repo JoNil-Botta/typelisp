@@ -5,4 +5,7 @@
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (compiler_backend_tests.compiler-backend-self-test)))
+    (cfg
+      scratch-vreg
+      (compiler_backend_tests.compiler-backend-scratch-vreg-self-test)
+      (compiler_backend_tests.compiler-backend-self-test))))

@@ -17633,7 +17633,9 @@
   (preheader-guard ir.CompilerIrInstrSeq)
   (latch-guard ir.CompilerIrInstrSeq)
   (exit-phis ir.CompilerIrInstrSeq)
-  (exit-env OptCopyEnv))
+  (exit-env OptCopyEnv)
+  (doms OptDomInfo)
+  (classified? bool))
 
 (define (opt-rotate-ssa-land-label [header : i64]) : i64
   (ir.compiler-ir-label
@@ -17870,16 +17872,10 @@
         (opt-rotate-ssa-succs-inside? body (opt-label-tail succs)))]))
 
 ;; True when the header's exit arm is the loop's ONLY way out: no body block
-;; other than the header has a successor outside the body. The fresh exit phis
-;; are defined in the exit block, so every outside reader of a loop-carried
-;; value has to be dominated by it; with a second exit (a `break`, or a lowered
-;; `(and ...)` loop condition whose second test leaves through a body block)
-;; the outside reader is reachable without passing through the exit block and
-;; the substitution is a dominance violation. That rewrite used to be built and
-;; handed to the verifier, which rejected it -- correct, but it cost a full
-;; rewrite, context build and verify per round per such loop. Only the exit-phi
-;; case needs the property, so multi-exit loops with no outside reader still
-;; rotate.
+;; other than the header has a successor outside the body. This no longer
+;; decides whether an outside reader can be served -- the classified placement
+;; below decides that per read -- but it still separates the two populations,
+;; and the flag_exit deferral is keyed on it.
 (define (opt-rotate-ssa-single-exit?
   [pred-map : OptPredMap]
   [body : OptLabelSet]
@@ -17923,6 +17919,51 @@
         (ir.compiler-ir-block-seq-to-list seq)
         header)]))
 
+;; LCSSA-style exit-value placement. Rotation deletes the header, so a
+;; loop-carried value `p` that used to be defined there is defined in the body
+;; block afterwards; an outside reader of `p` is only still dominated by a
+;; definition if it sits under one of exactly two blocks.
+;;
+;;   class 1 -- the exit block dominates the read. The rotation gives that
+;;              block the fresh exit phi `q` (merging the preheader's initial
+;;              value with the latch's back-edge value), and `q` dominates
+;;              everything the exit block dominates, so the read is rewritten
+;;              to `q`. Unreachable positions are folded in here: they are
+;;              rewritten exactly as the pre-existing pass rewrote them, and
+;;              nothing reads them.
+;;   class 2 -- the BODY block dominates the read. That is the multi-exit case:
+;;              the read hangs off a second exit that leaves the loop through a
+;;              body block, and the body block's moved phi still dominates it,
+;;              so the read keeps `p` untouched and needs no phi at all. After
+;;              rotation the body block dominates every block in the loop (the
+;;              only entries left are the landing block and the latch), which
+;;              is why a second exit target is reachable only through it.
+;;   class 0 -- neither dominates: the read is at a JOIN of the two exit paths.
+;;              A phi INPUT at such a join is still placeable, because an input
+;;              is evaluated on its own edge and the edge's source block has a
+;;              class of its own; a non-phi read is not, and refuses the loop.
+;;
+;; The header's exit arm and the second exit are the only ways out of the loop
+;; before AND after rotation (rotation only re-sources the header's exit edge
+;; onto the preheader and the latch), so this classification computed on the
+;; pre-rotation dominator tree is valid for the rotated CFG.
+(define (opt-rotate-ssa-position-class
+  [doms : OptDomInfo]
+  [body : OptLabelSet]
+  [exit-label : i64]
+  [body-label : i64]
+  [label : i64]) : i64
+  (cond
+    [(opt-dom-dominates? doms exit-label label) 1]
+    [(opt-label-contains body label) 2]
+    [(opt-dom-dominates? doms body-label label) 2]
+    [(not (opt-dom-dominates? doms label label)) 1]
+    [else 0]))
+
+;; The pre-existing flat walk: every var read anywhere outside the loop body.
+;; A single-exit loop needs nothing finer -- its whole outside region is
+;; dominated by the exit block, so every read is class 1 -- and this is the one
+;; traversal such a loop pays, exactly as before the classification existed.
 (define (opt-rotate-ssa-uses-outside-body
   [set : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]
@@ -17943,6 +17984,131 @@
         set
         (ir.compiler-ir-block-seq-to-list seq)
         body)]))
+
+;; A read's POSITION is the block holding it, except for a phi input, whose
+;; position is the label on the input's edge.
+(define (opt-rotate-ssa-class-phi-uses
+  [set : opt_i64_i64_map.Map]
+  [inputs : ir.CompilerIrPhiInputList]
+  [doms : OptDomInfo]
+  [body : OptLabelSet]
+  [exit-label : i64]
+  [body-label : i64]
+  [want : i64]) : opt_i64_i64_map.Map
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) set]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-rotate-ssa-class-phi-uses
+        set
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        doms
+        body
+        exit-label
+        body-label
+        want)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (opt-rotate-ssa-class-phi-uses
+        (if (=
+          (opt-rotate-ssa-position-class doms body exit-label body-label label)
+          want)
+          (opt-collect-value-uses set value)
+          set)
+        (__tl-box-place rest)
+        doms
+        body
+        exit-label
+        body-label
+        want)]))
+
+(define (opt-rotate-ssa-class-instr-uses
+  [set : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [block-class : i64]
+  [doms : OptDomInfo]
+  [body : OptLabelSet]
+  [exit-label : i64]
+  [body-label : i64]
+  [want : i64]) : opt_i64_i64_map.Map
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    set
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (opt-rotate-ssa-class-instr-uses
+        (match instr
+          [(ir.CompilerIrInstr.Phi _ inputs _)
+            (opt-rotate-ssa-class-phi-uses
+              set
+              inputs
+              doms
+              body
+              exit-label
+              body-label
+              want)]
+          [_
+            (if (or (= block-class want) (= want (- 0 1)))
+              (opt-collect-instr-uses set instr)
+              set)])
+        instrs
+        (+ index 1)
+        block-class
+        doms
+        body
+        exit-label
+        body-label
+        want))))
+
+;; Var ids read from a position of class `want`, over the blocks outside the
+;; loop body. `want` 1 collects the reads the exit phi has to serve, `want` 0
+;; the reads no placement can serve, and `want` -1 every NON-phi read outside
+;; the loop whatever its class -- the last one is flag_exit's C4 in the cheap
+;; form the deferral below needs.
+(define (opt-rotate-ssa-uses-at-class
+  [set : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [doms : OptDomInfo]
+  [body : OptLabelSet]
+  [exit-label : i64]
+  [body-label : i64]
+  [want : i64]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) set]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-rotate-ssa-uses-at-class
+            (if (opt-label-contains body label)
+              set
+              (opt-rotate-ssa-class-instr-uses
+                set
+                instrs
+                0
+                (opt-rotate-ssa-position-class
+                  doms
+                  body
+                  exit-label
+                  body-label
+                  label)
+                doms
+                body
+                exit-label
+                body-label
+                want))
+            (__tl-box-place rest)
+            doms
+            body
+            exit-label
+            body-label
+            want)])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-rotate-ssa-uses-at-class
+        set
+        (ir.compiler-ir-block-seq-to-list seq)
+        doms
+        body
+        exit-label
+        body-label
+        want)]))
 
 (define (opt-rotate-ssa-instr-dst [instr : ir.CompilerIrInstr]) : i64
   (match instr
@@ -18108,9 +18274,11 @@
       (opt-rotate-ssa-moved-phis-fill! recs land-label latch slots 0)
       (ir.CompilerIrInstrSeq slots count))))
 
-;; For each header phi whose destination is used outside the loop body, mint a
-;; fresh exit phi merging the same edge inputs at the exit block, and record
-;; the destination remap for the outside-use rewrite.
+;; For each header phi whose destination is read from the exit block's
+;; dominated region, mint a fresh exit phi merging the same edge inputs at the
+;; exit block, and record the destination remap for that region's rewrite.
+;; Reads under the body block (a second exit's region) are served by the moved
+;; phi itself and get no entry here.
 (define (opt-rotate-ssa-exit-phis-from
   [recs : OptRotateSsaPhiRecs]
   [outside-uses : opt_i64_i64_map.Map]
@@ -18208,8 +18376,63 @@
         ty)]
     [_ (opt-copy-subst-instr env instr)]))
 
+;; A phi input is rewritten per EDGE, not per block: only the inputs whose
+;; edge leaves the exit block's dominated region are served by the exit phi.
+;; In a single-exit loop every outside reader sits in that region, which is
+;; exactly the whole-block substitution the pass has always done.
+(define (opt-rotate-ssa-subst-phi-inputs-classified
+  [plan : OptRotateSsaPlan]
+  [inputs : ir.CompilerIrPhiInputList]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-rotate-ssa-subst-phi-inputs-classified
+        plan
+        (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        (if (= (opt-rotate-ssa-plan-class plan label) 1)
+          (opt-copy-resolve plan.exit-env value)
+          value)
+        label
+        (opt-rotate-ssa-subst-phi-inputs-classified plan (__tl-box-place rest)))]))
+
+;; A single-exit loop's whole outside region is class 1 by construction (the
+;; header's exit arm is the only way out, so the exit block dominates every
+;; reader of a loop-carried value), and saying so directly keeps that loop off
+;; the dominator queries and off the classified walks entirely -- the pass
+;; costs exactly what it cost before this file learned about second exits.
+(define (opt-rotate-ssa-plan-class [plan : OptRotateSsaPlan] [label : i64]) : i64
+  (if plan.classified?
+    (opt-rotate-ssa-position-class
+      plan.doms
+      plan.body
+      plan.exit-label
+      plan.body-label
+      label)
+    1))
+
+;; The rotation's own use rewriting. A non-phi read is served by the exit phi
+;; only where the exit block dominates the whole block; under the body block
+;; (class 2) the moved phi still reaches it and the read is left alone.
+(define (opt-rotate-ssa-subst-instr-classified
+  [plan : OptRotateSsaPlan]
+  [block-class : i64]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (ir.CompilerIrInstr.Phi
+        dst
+        (opt-rotate-ssa-subst-phi-inputs-classified plan inputs)
+        ty)]
+    [_
+      (if (= block-class 1)
+        (opt-copy-subst-instr plan.exit-env instr)
+        instr)]))
+
 (define (opt-rotate-ssa-rewrite-instr-seq
-  [env : OptCopyEnv]
+  [plan : OptRotateSsaPlan]
+  [block-class : i64]
   [subst? : bool]
   [replace-final? : bool]
   [prefix : ir.CompilerIrInstrSeq]
@@ -18246,7 +18469,7 @@
             (set!
               (array-ref slots (+ prefix-count index))
               (if subst?
-                (opt-rotate-ssa-subst-instr env instr)
+                (opt-rotate-ssa-subst-instr-classified plan block-class instr)
                 instr))
             (set! index (+ index 1)))))
       (set! index 0)
@@ -18286,9 +18509,13 @@
         [(= label plan.preheader) plan.preheader-guard]
         [(= label plan.latch) plan.latch-guard]
         [else (ir.compiler-ir-instr-seq-empty)])]
+    [inside? : bool (opt-label-contains plan.body label)]
     (opt-rotate-ssa-rewrite-instr-seq
-      plan.exit-env
-      (not (opt-label-contains plan.body label))
+      plan
+      (if inside?
+        (- 0 1)
+        (opt-rotate-ssa-plan-class plan label))
+      (not inside?)
       replace-final?
       prefix
       guard
@@ -18323,9 +18550,206 @@
         plan
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-;; True when at least one header-phi destination is read outside the loop body,
-;; i.e. when the rewrite has to mint exit phis at the exit block. Every clause
-;; that exists only to make those phis well-formed is gated on this.
+;; A block's weight for the bound below: its instruction count, or the whole
+;; cap when it makes a call. A trip that calls is never cheap enough for a
+;; two-instruction saving to matter, and the compiler's own small loops are
+;; overwhelmingly calling loops -- which is why this clause is what separates
+;; the scan loops that pay from the recursive-descent loops that do not.
+(define (opt-rotate-ssa-seq-weight
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [cap : i64]) : i64
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (ir.compiler-ir-instr-seq-count instrs)
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Call _ _ _ _) cap]
+      [(ir.CompilerIrInstr.CallIndirect _ _ _ _) cap]
+      [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) cap]
+      [(ir.CompilerIrInstr.CallCAbiStoreResult _) cap]
+      [_ (opt-rotate-ssa-seq-weight instrs (+ index 1) cap)])))
+
+;; Instructions across the loop body, capped so a big body stops counting: the
+;; only question is whether the body is SMALL, and a loop with a hundred
+;; instructions in it does not need an exact total.
+(define (opt-rotate-ssa-body-instr-count
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLabelSet]
+  [cursor : OptLabelSet]
+  [acc : i64]
+  [cap : i64]) : i64
+  (if (>= acc cap)
+    acc
+    (match cursor
+      [(OptLabelSet.Nil) acc]
+      [(OptLabelSet.Dense _ _)
+        (opt-rotate-ssa-body-instr-count
+          blocks
+          body
+          (opt-label-tail cursor)
+          (+
+            acc
+            (match (opt-cfg-find-block blocks (opt-label-ref cursor 0))
+              [(OptMaybeBlock.No) 0]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (opt-rotate-ssa-seq-weight instrs 0 cap)])]))
+          cap)])))
+
+;; THE MULTI-EXIT BOUND. Rotating a multi-exit loop buys one thing: the trip
+;; stops paying a top test plus an unconditional back edge and pays a single
+;; conditional back edge instead. That is a fixed two-instruction saving per
+;; trip, so it is worth having in a tight scan loop and worth nothing in a big
+;; one -- while the cost, a rewrite plus a fresh dominator build plus a full
+;; verify per accepted loop, is paid per loop regardless. Measured on this
+;; tree, admitting every multi-exit loop cost the opt2 self-compile +0.30%
+;; (155,033,343,221 -> 155,495,112,924) for benchmark wins that came entirely
+;; from bodies under this bound: `benchmarks/peephole_lines`'s `pl-line-end`
+;; goes 7 instructions per byte to 6 (-11.5% on the benchmark's hottest
+;; function) and `benchmarks/liveness_scan`'s word scan the same way.
+(define (opt-rotate-ssa-multi-exit-body-max) : i64
+  32)
+
+;; flag_exit's C1 monotone seed, read straight off the records this pass
+;; already built: a bool-typed header phi whose preheader edge carries a bool
+;; literal, with no non-phi reader outside the loop (flag_exit's C4, which is
+;; what decides whether it can ever fire).
+;;
+;; THE DEFERRAL. flag_exit sits six passes BELOW this one and converts exactly
+;; that shape: it redirects the clearing edge straight out of the loop, which
+;; DELETES the second exit's gate and leaves a single-exit loop this pass then
+;; rotates in the ordinary way, with the flag test gone from the trip entirely.
+;; That is worth far more than rotating the flag-carrying form, and rotating
+;; first destroys it -- rotation moves the flag phi out of the header, so C1
+;; stops matching and the conversion never fires again. Measured on
+;; `benchmarks/intern_table`'s `it-slice-eq?`: rotating its `(and (< i len)
+;; ok)` loop ahead of flag_exit costs +35,506,866 Ir (591,082,051 ->
+;; 626,588,917, +6.01%), because the converted+versioned form exits on the
+;; first mismatch at 7 instructions per byte and the rotated flag form runs the
+;; whole slice at ten with a `test`/`jcc` on the flag every trip. So a loop
+;; whose second exit is still gated by a convertible monotone flag is left to
+;; flag_exit; one whose flag has a non-phi reader outside the loop is one
+;; flag_exit can never convert, and rotates here.
+;; The back-edge input decides whether the flag is still LIVE as a flag. C1
+;; wants a var there to start its closure walk from; once flag_exit has run it
+;; pins the closure's definitions to K, so the back edge carries the literal
+;; too and there is nothing left to convert. Testing it is what keeps the
+;; deferral from outliving the conversion it defers to -- the converted loop
+;; still has two exits and still carries the (now constant) flag phis until
+;; SCCP retires them, and a deferral keyed on the seed alone would refuse the
+;; rotation flag_exit exists to enable.
+(define (opt-rotate-ssa-flag-seeded-rec?
+  [init : ir.CompilerIrValue]
+  [back : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Bool)
+      (match init
+        [(ir.CompilerIrValue.Bool _)
+          (match back
+            [(ir.CompilerIrValue.Var _) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (opt-rotate-ssa-rec-flag-seeded?
+  [recs : OptRotateSsaPhiRecs]
+  [var : i64]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) false]
+    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
+      (or
+        (and
+          (= dst var)
+          (opt-rotate-ssa-flag-seeded-rec? init back ty)
+          (not (opt-used-contains nonphi-uses dst)))
+        (opt-rotate-ssa-rec-flag-seeded? (__tl-box-place rest) var nonphi-uses))]))
+
+;; flag_exit's C3 gate, in the direct form: a block inside the loop ending in a
+;; branch ON THE FLAG ITSELF with one arm leaving the loop. C3 wants the branch
+;; condition to be a member of the flag's monotone closure, and a gate that
+;; tests something DERIVED from the flag -- `benchmarks/liveness_scan`'s
+;; `(and (< i words) (not changed))`, whose gate branches on a UnOp -- is not in
+;; that closure and is a loop flag_exit can never convert. Deferring it would
+;; cost the rotation and buy nothing (measured: liveness_scan -2,353,975 Ir when
+;; that loop rotates), so the deferral asks for the gate flag_exit asks for.
+(define (opt-rotate-ssa-flag-gate-instrs?
+  [instrs : ir.CompilerIrInstrSeq]
+  [body : OptLabelSet]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (<= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch cond-value true-label false-label)
+          (and
+            (opt-loop-rotation-exit-target? body true-label)
+            (opt-label-contains body false-label)
+            (match cond-value
+              [(ir.CompilerIrValue.Var gate-var)
+                (opt-rotate-ssa-rec-flag-seeded? recs gate-var nonphi-uses)]
+              [_ false]))]
+        [_ false]))))
+
+(define (opt-rotate-ssa-flag-gate-arms?
+  [instrs : ir.CompilerIrInstrSeq]
+  [body : OptLabelSet]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (<= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch cond-value true-label false-label)
+          (or
+            (opt-rotate-ssa-flag-gate-instrs? instrs body recs nonphi-uses)
+            (and
+              (opt-loop-rotation-exit-target? body false-label)
+              (opt-label-contains body true-label)
+              (match cond-value
+                [(ir.CompilerIrValue.Var gate-var)
+                  (opt-rotate-ssa-rec-flag-seeded? recs gate-var nonphi-uses)]
+                [_ false])))]
+        [_ false]))))
+
+(define (opt-rotate-ssa-flag-gate-blocks?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLabelSet]
+  [header : i64]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (or
+            (and
+              (not (= label header))
+              (opt-label-contains body label)
+              (opt-rotate-ssa-flag-gate-arms? instrs body recs nonphi-uses))
+            (opt-rotate-ssa-flag-gate-blocks?
+              (__tl-box-place rest)
+              body
+              header
+              recs
+              nonphi-uses))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-rotate-ssa-flag-gate-blocks?
+        (ir.compiler-ir-block-seq-to-list seq)
+        body
+        header
+        recs
+        nonphi-uses)]))
+
+;; True when at least one header-phi destination appears in the given
+;; classified read set. With the class-1 set it says the rewrite has to mint
+;; exit phis at the exit block; with the class-0 set it says a read exists that
+;; no placement can serve, which refuses the loop.
 (define (opt-rotate-ssa-recs-used-outside?
   [recs : OptRotateSsaPhiRecs]
   [outside-uses : opt_i64_i64_map.Map]) : bool
@@ -18339,6 +18763,7 @@
 (define (opt-rotate-ssa-apply
   [blocks : ir.CompilerIrBlockList]
   [pred-map : OptPredMap]
+  [doms : OptDomInfo]
   [frame : i64]
   [header : i64]
   [preheader : i64]
@@ -18352,11 +18777,76 @@
     [phis : ir.CompilerIrInstrSeq shape.phis]
     [recs : OptRotateSsaPhiRecs shape.recs]
     [guard : ir.CompilerIrInstrSeq shape.guard]
+    ;; THE PRE-EXISTING WALK, and the pre-existing cost. Every candidate still
+    ;; pays exactly this one traversal of the outside region and nothing else.
     [outside-uses : opt_i64_i64_map.Map
       (opt-rotate-ssa-uses-outside-body
         (opt_i64_i64_map.with-capacity 64)
         blocks
         body)]
+    ;; THE COST GATE. The classified placement is reached only from the SHAPE
+    ;; THE PASS ALREADY REFUSED: a loop-carried value read outside the loop
+    ;; (the pre-existing exit-phi trigger), the exit block private to the header
+    ;; (the pre-existing well-formedness demand), a second exit, and a body
+    ;; small enough for a two-instruction-per-trip saving to matter. Everything
+    ;; this pass admitted before reaches the same verdict down the same path at
+    ;; the same price; only its refusals get a second look.
+    ;;
+    ;; Every term here is lazy, and that is the point. Deciding the placement
+    ;; eagerly -- even just far enough to skip the walks -- costs the opt2
+    ;; self-compile about a quarter of a percent, because this compiler is built
+    ;; out of multi-exit loops and every one of them then pays a second-exit
+    ;; scan and three classified traversals once per round per pipeline
+    ;; iteration, to answer a question the bounds were going to discard.
+    [classify? : bool
+      (and
+        (opt-rotate-ssa-recs-used-outside? recs outside-uses)
+        (opt-rotate-ssa-only-label?
+          (opt-pred-map-lookup pred-map exit-label)
+          header)
+        (not (opt-rotate-ssa-single-exit? pred-map body body header))
+        (<
+          (opt-rotate-ssa-body-instr-count
+            blocks
+            body
+            body
+            0
+            (opt-rotate-ssa-multi-exit-body-max))
+          (opt-rotate-ssa-multi-exit-body-max)))]
+    ;; Reads the exit phi must serve, and reads nothing can serve.
+    [exit-uses : opt_i64_i64_map.Map
+      (if classify?
+        (opt-rotate-ssa-uses-at-class
+          (opt_i64_i64_map.with-capacity 64)
+          blocks
+          doms
+          body
+          exit-label
+          body-label
+          1)
+        outside-uses)]
+    [unplaceable-uses : opt_i64_i64_map.Map
+      (if classify?
+        (opt-rotate-ssa-uses-at-class
+          (opt_i64_i64_map.with-capacity 64)
+          blocks
+          doms
+          body
+          exit-label
+          body-label
+          0)
+        (opt_i64_i64_map.with-capacity 1))]
+    [nonphi-uses : opt_i64_i64_map.Map
+      (if classify?
+        (opt-rotate-ssa-uses-at-class
+          (opt_i64_i64_map.with-capacity 64)
+          blocks
+          doms
+          body
+          exit-label
+          body-label
+          (- 0 1))
+        (opt_i64_i64_map.with-capacity 1))]
     ;; The exit block only has to be the header's private successor when the
     ;; rewrite prepends phis to it. Those phis carry exactly the two loop-edge
     ;; inputs {preheader, latch}, so any third predecessor would leave them
@@ -18368,7 +18858,7 @@
     ;; block, so the pre-existing clause refused BOTH halves of every versioned
     ;; counted loop -- including the hot fast half.
     [exit-phis-needed? : bool
-      (opt-rotate-ssa-recs-used-outside? recs outside-uses)]
+      (opt-rotate-ssa-recs-used-outside? recs exit-uses)]
     (if (and
       (not (= exit-label preheader))
       (not (opt-cfg-block-exists? blocks land-label))
@@ -18381,7 +18871,23 @@
           (opt-rotate-ssa-only-label?
             (opt-pred-map-lookup pred-map exit-label)
             header)
-          (opt-rotate-ssa-single-exit? pred-map body body header)))
+          ;; A loop the gate above declined to classify gets the pre-existing
+          ;; verdict: an outside reader it cannot serve from one exit block
+          ;; refuses it.
+          (or classify? (opt-rotate-ssa-single-exit? pred-map body body header))))
+      ;; A loop-carried read at a JOIN of the two exit paths (a non-phi read
+      ;; under neither the exit block nor the body block) is the one shape the
+      ;; placement cannot express: it would need a phi at the join, whose other
+      ;; inputs the rotation does not own. That is the whole of what replaced
+      ;; the old blanket single-exit refusal -- a loop whose second exit feeds
+      ;; only phi inputs, or feeds a region the body block dominates, rotates.
+      (not (opt-rotate-ssa-recs-used-outside? recs unplaceable-uses))
+      ;; ... and a classified loop still carrying a convertible monotone flag
+      ;; belongs to flag_exit, not here.
+      (or
+        (not classify?)
+        (not
+          (opt-rotate-ssa-flag-gate-blocks? blocks body header recs nonphi-uses)))
       (opt-rotate-ssa-body-avoids-exit? pred-map body header exit-label)
       (not (opt-rotate-ssa-block-has-phi? blocks body-label))
       (not (opt-rotate-ssa-block-has-phi? blocks exit-label))
@@ -18416,7 +18922,7 @@
             [(OptRotateSsaClone.Clone latch-guard after-latch)
               (match (opt-rotate-ssa-exit-phis
                 recs
-                outside-uses
+                exit-uses
                 preheader
                 latch
                 after-latch)
@@ -18435,7 +18941,9 @@
                         preheader-guard
                         latch-guard
                         exit-phis
-                        exit-env)
+                        exit-env
+                        doms
+                        classify?)
                       blocks)
                     next-frame)])])])
       (OptRotateSsaRewrite.No))))
@@ -18475,6 +18983,7 @@
               (opt-rotate-ssa-apply
                 blocks
                 pred-map
+                context.doms
                 frame
                 header
                 preheader
@@ -51486,34 +51995,32 @@
   [rewrites : (__tl_dyn-array i64)]
   [deletes : (__tl_dyn-array i64)]
   [index : i64]
-  [count : i64]) : ir.CompilerIrInstrList
-  (if (>= index count)
-    (ir.CompilerIrInstrList.Nil)
-    (if (= (array-ref deletes index) 1)
-      (opt-load-combine-rebuild-instrs
-        instrs
-        rewrites
-        deletes
-        (+ index 1)
-        count)
-      (let
-        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (ir.compiler-ir-instr-cons
-          (if (>= (array-ref rewrites index) 0)
-            (match instr
-              [(ir.CompilerIrInstr.BinOp dst _ _ _ ty)
-                (ir.CompilerIrInstr.Load
-                  dst
-                  (ir.CompilerIrValue.Var (array-ref rewrites index))
-                  ty)]
-              [_ instr])
-            instr)
-          (opt-load-combine-rebuild-instrs
-            instrs
-            rewrites
-            deletes
-            (+ index 1)
-            count))))))
+  [count : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    [cursor : i64 index]
+    (begin
+      (while (< cursor count)
+        (begin
+          (if (= (array-ref deletes cursor) 1)
+            unit
+            (let
+              [instr : ir.CompilerIrInstr
+                (ir.compiler-ir-instr-seq-ref instrs cursor)]
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (if (>= (array-ref rewrites cursor) 0)
+                  (match instr
+                    [(ir.CompilerIrInstr.BinOp dst _ _ _ ty)
+                      (ir.CompilerIrInstr.Load
+                        dst
+                        (ir.CompilerIrValue.Var (array-ref rewrites cursor))
+                        ty)]
+                    [_ instr])
+                  instr))))
+          (set! cursor (+ cursor 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 ;; One block: candidate prescan, def index, root scan, then a rebuild only
 ;; when at least one root folded.
@@ -51554,7 +52061,7 @@
               0
               count)]
           (if (> folded 0)
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               label
               (opt-load-combine-rebuild-instrs instrs rewrites deletes 0 count))
             block)))]))
@@ -65879,24 +66386,67 @@
           (set! cursor (+ cursor 1))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
-;; The derived Geps this label owns, in plan order.
-(define (opt-gep-offset-hoisted-for-label
+;; Append the derived Geps this label owns in plan order.
+(define (opt-gep-offset-hoisted-for-label-into!
   [derived : OptGepOffsetDerivedList]
-  [label : i64]) : ir.CompilerIrInstrList
+  [label : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match derived
-    [(OptGepOffsetDerivedList.Nil) (ir.CompilerIrInstrList.Nil)]
+    [(OptGepOffsetDerivedList.Nil) unit]
     [(OptGepOffsetDerivedList.Dense _ _)
       (match (opt-gep-offset-derived-ref derived 0)
         [(OptGepOffsetDerived.Derived record-label dst base index elem-ty)
-          (if (= record-label label)
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Gep dst base index elem-ty)
-              (opt-gep-offset-hoisted-for-label
-                (opt-gep-offset-derived-tail derived)
-                label))
-            (opt-gep-offset-hoisted-for-label
+          (begin
+            (if (= record-label label)
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.Gep dst base index elem-ty))
+              unit)
+            (opt-gep-offset-hoisted-for-label-into!
               (opt-gep-offset-derived-tail derived)
-              label))])]))
+              label
+              (&mut builder)))])]))
+
+(define (opt-gep-offset-hoisted-for-label
+  [derived : OptGepOffsetDerivedList]
+  [label : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder (ir.compiler-ir-instr-builder-new)]
+    (begin
+      (opt-gep-offset-hoisted-for-label-into! derived label (&mut builder))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-instr-seq-insert-before-terminator
+  [hoisted : ir.CompilerIrInstrSeq]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [inserted-count : i64 (ir.compiler-ir-instr-seq-count hoisted)]
+    (if (= inserted-count 0)
+      instrs
+      (let
+        [original-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [terminator-index : i64
+          (opt-licm-first-terminator-index instrs 0 original-count)]
+        [builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity
+            (+ original-count inserted-count))]
+        (begin
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            instrs
+            0
+            terminator-index)
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            hoisted
+            0
+            inserted-count)
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            instrs
+            terminator-index
+            original-count)
+          (ir.compiler-ir-instr-builder-to-seq builder))))))
 
 (define (opt-gep-offset-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -65912,7 +66462,7 @@
           (ir.compiler-ir-block-cons
             (ir.CompilerIrBlock.Block
               label
-              (opt-licm-insert-before-terminator-seq
+              (opt-instr-seq-insert-before-terminator
                 (opt-gep-offset-hoisted-for-label derived label)
                 (opt-gep-offset-rewrite-instr-seq
                   instrs
@@ -66658,20 +67208,29 @@
 
 (define (opt-cmp-sink-move-onto
   [instrs : ir.CompilerIrInstrSeq]
-  [def-index : i64]
-  [index : i64]
-  [out : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (if (< index 0)
-    out
-    (opt-cmp-sink-move-onto
-      instrs
-      def-index
-      (- index 1)
-      (if (= index def-index)
-        out
-        (ir.compiler-ir-instr-cons
-          (ir.compiler-ir-instr-seq-ref instrs index)
-          out)))))
+  [def-index : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [last : i64 (- count 1)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index last)
+        (begin
+          (if (= index def-index)
+            unit
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref instrs def-index))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref instrs last))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-cmp-sink-block-pass [block : ir.CompilerIrBlock]) : OptBlockPassResult
   (match block
@@ -66697,19 +67256,9 @@
                         lhs
                         rhs)
                         (OptBlockPassResult.Result
-                          (ir.compiler-ir-block
+                          (ir.CompilerIrBlock.Block
                             label
-                            (opt-cmp-sink-move-onto
-                              instrs
-                              def-index
-                              (- count 2)
-                              (ir.compiler-ir-instr-cons
-                                (ir.compiler-ir-instr-seq-ref instrs def-index)
-                                (ir.compiler-ir-instr-cons
-                                  (ir.compiler-ir-instr-seq-ref
-                                    instrs
-                                    (- count 1))
-                                  ir.CompilerIrInstrList.Nil))))
+                            (opt-cmp-sink-move-onto instrs def-index))
                           true)
                         (OptBlockPassResult.Result block false))]
                     [_ (OptBlockPassResult.Result block false)])))]
@@ -68567,15 +69116,19 @@
             (opt-label-tail successors)
             dst)))]))
 
-(define (opt-successor-sink-collect-instr-list-uses!
-  [instrs : ir.CompilerIrInstrList]
+(define (opt-successor-sink-collect-pending-uses!
+  [instrs : ir.CompilerIrInstrSeq]
+  [pending : (__tl_dyn-array i64)]
+  [pending-len : i64]
   [uses : (__tl_dyn-array i64)]) : unit
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) unit]
-    [(ir.CompilerIrInstrList.Cons instr rest)
+  (let
+    [index : i64 0]
+    (while (< index pending-len)
       (begin
-        (opt-collect-instr-uses-array uses instr)
-        (opt-successor-sink-collect-instr-list-uses! (__tl-box-place rest) uses))]))
+        (opt-collect-instr-uses-array
+          uses
+          (ir.compiler-ir-instr-seq-ref instrs (array-ref pending index)))
+        (set! index (+ index 1))))))
 
 (define (opt-successor-sink-fill-defs!
   [frame : i64]
@@ -68680,12 +69233,17 @@
 
 (define (opt-successor-sink-covered-use-count
   [context : OptSuccessorSinkPrepareContext]
-  [pending-moves : ir.CompilerIrInstrList]
+  [pending : (__tl_dyn-array i64)]
+  [pending-len : (__tl_dyn-array i64)]
   [var : i64]) : i64
   (let
     [pending-uses : (__tl_dyn-array i64) (opt-used-array-new context.frame)]
     (begin
-      (opt-successor-sink-collect-instr-list-uses! pending-moves pending-uses)
+      (opt-successor-sink-collect-pending-uses!
+        context.instrs
+        pending
+        (array-ref pending-len 0)
+        pending-uses)
       (+
         (+
           (array-ref context.base-allowed var)
@@ -68698,7 +69256,8 @@
   [instr : ir.CompilerIrInstr]
   [uses : (__tl_dyn-array i64)]
   [var : i64]
-  [pending-moves : ir.CompilerIrInstrList]
+  [pending : (__tl_dyn-array i64)]
+  [pending-len : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [origins : (__tl_dyn-array i64)]) : bool
   (if (>= var context.frame)
@@ -68710,7 +69269,8 @@
         instr
         uses
         (+ var 1)
-        pending-moves
+        pending
+        pending-len
         (&mut builder)
         origins)
       (and
@@ -68718,7 +69278,8 @@
           type-segment-bases
           context
           var
-          pending-moves
+          pending
+          pending-len
           (&mut builder)
           origins)
         (opt-successor-sink-prepare-operands-from!
@@ -68727,7 +69288,8 @@
           instr
           uses
           (+ var 1)
-          pending-moves
+          pending
+          pending-len
           (&mut builder)
           origins)))))
 
@@ -68735,7 +69297,8 @@
   [type-segment-bases : i64]
   [context : OptSuccessorSinkPrepareContext]
   [instr : ir.CompilerIrInstr]
-  [pending-moves : ir.CompilerIrInstrList]
+  [pending : (__tl_dyn-array i64)]
+  [pending-len : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [origins : (__tl_dyn-array i64)]) : bool
   (let
@@ -68748,7 +69311,8 @@
         instr
         uses
         0
-        pending-moves
+        pending
+        pending-len
         (&mut builder)
         origins))))
 
@@ -68823,7 +69387,8 @@
   [type-segment-bases : i64]
   [context : OptSuccessorSinkPrepareContext]
   [var : i64]
-  [pending-moves : ir.CompilerIrInstrList]
+  [pending : (__tl_dyn-array i64)]
+  [pending-len : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [origins : (__tl_dyn-array i64)]) : bool
   (if (or
@@ -68876,7 +69441,11 @@
             [all-move? : bool
               (=
                 (array-ref context.total-uses var)
-                (opt-successor-sink-covered-use-count context pending-moves var))]
+                (opt-successor-sink-covered-use-count
+                  context
+                  pending
+                  pending-len
+                  var))]
             [can-move? : bool
               (and
                 all-move?
@@ -68890,17 +69459,22 @@
               (cond
                 [can-move?
                   (let
-                    [next-pending : ir.CompilerIrInstrList
-                      (ir.compiler-ir-instr-cons producer pending-moves)]
+                    [pending-before : i64 (array-ref pending-len 0)]
+                    [_pending : unit
+                      (begin
+                        (set! (array-ref pending pending-before) index)
+                        (set! (array-ref pending-len 0) (+ pending-before 1)))]
                     [ok : bool
                       (opt-successor-sink-prepare-operands!
                         type-segment-bases
                         context
                         producer
-                        next-pending
+                        pending
+                        pending-len
                         (&mut builder)
                         origins)]
                     (begin
+                      (set! (array-ref pending-len 0) pending-before)
                       (if ok
                         (begin
                           (opt-successor-sink-append-prepared!
@@ -68936,7 +69510,8 @@
                           type-segment-bases
                           context
                           producer
-                          pending-moves
+                          pending
+                          pending-len
                           (&mut builder)
                           origins)]
                       (if ok
@@ -69001,8 +69576,12 @@
     [clone-count : (__tl_dyn-array i64) (opt-used-array-new 1)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (+ count 4))]
+    [pending : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [pending-len : (__tl_dyn-array i64) (array.make-array i64 1)]
     [origins : (__tl_dyn-array i64) (array.make-array i64 (+ count 4))]
     (begin
+      (set! (array-ref pending 0) index)
+      (set! (array-ref pending-len 0) 1)
       (opt-successor-sink-fill-defs! frame instrs defs)
       (opt-successor-sink-collect-successor-uses! cfg target base-allowed)
       (opt-successor-sink-collect-moved-uses! moves target base-allowed)
@@ -69037,14 +69616,13 @@
             removed
             frame-cell
             clone-count)]
-        [pending : ir.CompilerIrInstrList
-          (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)]
         [ok : bool
           (opt-successor-sink-prepare-operands!
             type-segment-bases
             context
             instr
             pending
+            pending-len
             (&mut builder)
             origins)]
         (if ok
@@ -75678,7 +76256,7 @@
 ;; read-only param slots before shifting by the caller's var count.
 ;; ---------------------------------------------------------------------------
 (defenum OptInlineState
-  (State ir.CompilerIrInstrList i64 i64))
+  (State ir.CompilerIrInstrSeq i64 i64))
 
 (defenum OptInlinePredRename
   (Rename i64 i64))
@@ -75741,7 +76319,7 @@
   (Blocks ir.CompilerIrBlockList i64 i64))
 
 (defenum OptInlineSpanState
-  (State ir.CompilerIrInstrList i64 i64 ir.CompilerSourceSpans))
+  (State ir.CompilerIrInstrSeq i64 i64 ir.CompilerSourceSpans))
 
 (defenum OptInlineSpanBlocks
   (Blocks ir.CompilerIrBlockList i64 i64 ir.CompilerSourceSpans))
@@ -75753,7 +76331,7 @@
   (Clone ir.CompilerIrBlockList ir.CompilerIrPhiInputList))
 
 (defenum OptInlineMultiInstrClone
-  (Clone ir.CompilerIrInstrList ir.CompilerIrPhiInputList))
+  (Clone ir.CompilerIrInstrSeq ir.CompilerIrPhiInputList))
 
 (defenum OptInlineMultiSpanClone
   (Clone
@@ -75762,10 +76340,7 @@
     ir.CompilerSourceSpans))
 
 (defenum OptInlineMultiSpanInstrClone
-  (Clone
-    ir.CompilerIrInstrList
-    ir.CompilerIrPhiInputList
-    ir.CompilerSourceSpans))
+  (Clone ir.CompilerIrInstrSeq ir.CompilerIrPhiInputList ir.CompilerSourceSpans))
 
 (defenum OptInlineMaybeBlockRewrite
   (NoBlockRewrite)
@@ -77041,40 +77616,62 @@
           (opt-inline-staged-args-array-fill! out params args base stage-all? 0)
           (ir.CompilerIrCallArgs.Array out)))]))
 
+(define (opt-inline-stage-param-instrs-into!
+  [params : ir.CompilerIrParamList]
+  [args : ir.CompilerIrCallArgs]
+  [base : i64]
+  [stage-all? : bool]
+  [index : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
+  (match (ir.compiler-ir-param-list-force-cons params)
+    [(ir.CompilerIrParamList.Nil) unit]
+    [(ir.CompilerIrParamList.Array seq)
+      (opt-inline-stage-param-instrs-into!
+        (ir.compiler-ir-param-seq-to-list seq)
+        args
+        base
+        stage-all?
+        index
+        (&mut builder))]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (match param
+        [(ir.CompilerIrParam.Param name ty _)
+          (begin
+            (if (or stage-all? (not (string.eq name "__sret")))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.Mov
+                  (+ base index)
+                  (opt-inline-clone-arg-at args index)
+                  (clone ty)))
+              unit)
+            (opt-inline-stage-param-instrs-into!
+              (__tl-box-place rest)
+              args
+              base
+              stage-all?
+              (+ index 1)
+              (&mut builder)))])]))
+
 (define (opt-inline-stage-param-instrs
   [params : ir.CompilerIrParamList]
   [args : ir.CompilerIrCallArgs]
   [base : i64]
   [stage-all? : bool]
-  [index : i64]) : ir.CompilerIrInstrList
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) ir.CompilerIrInstrList.Nil]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-inline-stage-param-instrs
-        (ir.compiler-ir-param-seq-to-list seq)
+  [index : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (opt-inline-param-count params))]
+    (begin
+      (opt-inline-stage-param-instrs-into!
+        params
         args
         base
         stage-all?
-        index)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param name ty _)
-          (let
-            [remaining : ir.CompilerIrInstrList
-              (opt-inline-stage-param-instrs
-                (__tl-box-place rest)
-                args
-                base
-                stage-all?
-                (+ index 1))]
-            (if (or stage-all? (not (string.eq name "__sret")))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Mov
-                  (+ base index)
-                  (opt-inline-clone-arg-at args index)
-                  (clone ty))
-                remaining)
-              remaining))])]))
+        index
+        (&mut builder))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-inline-clone-arg-at [sa : ir.CompilerIrCallArgs] [id : i64]) : ir.CompilerIrValue
   (match sa
@@ -77316,27 +77913,24 @@
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
-  [label-prefix : String]) : ir.CompilerIrInstrList
-  (if (>= index count)
-    ir.CompilerIrInstrList.Nil
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (if (= index (- count 1))
-        (ir.compiler-ir-instr-cons
-          (opt-inline-return->mov instr dst ret sa np base)
-          ir.CompilerIrInstrList.Nil)
-        (ir.compiler-ir-instr-cons
-          (opt-inline-clone-instr instr sa np base label-prefix)
-          (opt-inline-expand-instrs-from
-            instrs
-            (+ index 1)
-            count
-            dst
-            ret
-            sa
-            np
-            base
-            label-prefix))))))
+  [label-prefix : String]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    [cursor : i64 index]
+    (begin
+      (while (< cursor count)
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr
+              (ir.compiler-ir-instr-seq-ref instrs cursor)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (if (= cursor (- count 1))
+                (opt-inline-return->mov instr dst ret sa np base)
+                (opt-inline-clone-instr instr sa np base label-prefix))))
+          (set! cursor (+ cursor 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-inline-expand-instrs
   [instrs : ir.CompilerIrInstrSeq]
@@ -77345,7 +77939,7 @@
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
-  [label-prefix : String]) : ir.CompilerIrInstrList
+  [label-prefix : String]) : ir.CompilerIrInstrSeq
   (opt-inline-expand-instrs-from
     instrs
     0
@@ -77423,6 +78017,58 @@
             (ir.compiler-source-spans-insert-instr out caller cloned span)]
           [(ir.CompilerMaybeSourceSpan.No) out])])))
 
+(define (opt-inline-expand-instrs-with-spans-into!
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [dst : i64]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [label-prefix : String]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]
+  [caller : i64]
+  [call-instr : ir.CompilerIrInstr]
+  [callee : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : ir.CompilerSourceSpans
+  (if (>= index count)
+    out-spans
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      [cloned : ir.CompilerIrInstr
+        (if (= index (- count 1))
+          (opt-inline-return->mov instr dst ret sa np base)
+          (opt-inline-clone-instr instr sa np base label-prefix))]
+      [next-spans : ir.CompilerSourceSpans
+        (opt-inline-record-clone-span
+          source-spans
+          out-spans
+          caller
+          call-instr
+          callee
+          instr
+          cloned)]
+      (begin
+        (ir.compiler-ir-instr-builder-push! (&mut builder) cloned)
+        (opt-inline-expand-instrs-with-spans-into!
+          instrs
+          (+ index 1)
+          count
+          dst
+          ret
+          sa
+          np
+          base
+          label-prefix
+          source-spans
+          next-spans
+          caller
+          call-instr
+          callee
+          (&mut builder))))))
+
 (define (opt-inline-expand-instrs-with-spans-from
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -77438,61 +78084,31 @@
   [caller : i64]
   [call-instr : ir.CompilerIrInstr]
   [callee : i64]) : OptInlineSpanState
-  (if (>= index count)
-    (OptInlineSpanState.State ir.CompilerIrInstrList.Nil base 0 out-spans)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (if (= index (- count 1))
-        (let
-          [moved : ir.CompilerIrInstr
-            (opt-inline-return->mov instr dst ret sa np base)]
-          [next-spans : ir.CompilerSourceSpans
-            (opt-inline-record-clone-span
-              source-spans
-              out-spans
-              caller
-              call-instr
-              callee
-              instr
-              moved)]
-          (OptInlineSpanState.State
-            (ir.compiler-ir-instr-cons moved ir.CompilerIrInstrList.Nil)
-            base
-            0
-            next-spans))
-        (let
-          [cloned : ir.CompilerIrInstr
-            (opt-inline-clone-instr instr sa np base label-prefix)]
-          [next-spans : ir.CompilerSourceSpans
-            (opt-inline-record-clone-span
-              source-spans
-              out-spans
-              caller
-              call-instr
-              callee
-              instr
-              cloned)]
-          (match (opt-inline-expand-instrs-with-spans-from
-            instrs
-            (+ index 1)
-            count
-            dst
-            ret
-            sa
-            np
-            base
-            label-prefix
-            source-spans
-            next-spans
-            caller
-            call-instr
-            callee)
-            [(OptInlineSpanState.State rest-instrs next-vars _ final-spans)
-              (OptInlineSpanState.State
-                (ir.compiler-ir-instr-cons cloned rest-instrs)
-                next-vars
-                0
-                final-spans)]))))))
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    [final-spans : ir.CompilerSourceSpans
+      (opt-inline-expand-instrs-with-spans-into!
+        instrs
+        index
+        count
+        dst
+        ret
+        sa
+        np
+        base
+        label-prefix
+        source-spans
+        out-spans
+        caller
+        call-instr
+        callee
+        (&mut builder))]
+    (OptInlineSpanState.State
+      (ir.compiler-ir-instr-builder-to-seq builder)
+      base
+      0
+      final-spans)))
 
 (define (opt-inline-expand-instrs-with-spans
   [instrs : ir.CompilerIrInstrSeq]
@@ -77540,14 +78156,17 @@
     [_ (opt-inline-empty-instr-seq)]))
 
 (define (opt-inline-append
-  [a : ir.CompilerIrInstrList]
-  [b : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match a
-    [(ir.CompilerIrInstrList.Nil) b]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (ir.compiler-ir-instr-cons
-        instr
-        (opt-inline-append (__tl-box-place rest) b))]))
+  [a : ir.CompilerIrInstrSeq]
+  [b : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [acount : i64 (ir.compiler-ir-instr-seq-count a)]
+    [bcount : i64 (ir.compiler-ir-instr-seq-count b)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ acount bcount))]
+    (begin
+      (ir.compiler-ir-instr-builder-append-seq-range! (&mut builder) a 0 acount)
+      (ir.compiler-ir-instr-builder-append-seq-range! (&mut builder) b 0 bcount)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-inline-block-append
   [a : ir.CompilerIrBlockList]
@@ -77692,7 +78311,7 @@
 ;; block the next slot, and the caller reserves the range above the clone's
 ;; rebased frame (opt-inline-multiblock-build-rewrite-seq). It is read only on
 ;; the TailCall arm, so a tail-call-free body never touches it.
-(define (opt-inline-clone-multiblock-instr-seq-from
+(define (opt-inline-clone-multiblock-instr-seq-into!
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]
   [count : i64]
@@ -77702,19 +78321,18 @@
   [tail-dst : i64]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
-  [base : i64]) : OptInlineMultiInstrClone
+  [base : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : ir.CompilerIrPhiInputList
   (if (>= pos count)
-    (OptInlineMultiInstrClone.Clone
-      ir.CompilerIrInstrList.Nil
-      ir.CompilerIrPhiInputList.Nil)
+    ir.CompilerIrPhiInputList.Nil
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
       (match instr
         [(ir.CompilerIrInstr.Return maybe)
-          (OptInlineMultiInstrClone.Clone
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Jump cont-label)
-              ir.CompilerIrInstrList.Nil)
+          (begin
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.CompilerIrInstr.Jump cont-label))
             (ir.compiler-ir-phi-input-cons
               (opt-inline-return-value maybe sa np base)
               cloned-label
@@ -77727,25 +78345,27 @@
         ;; arguments go through the ordinary argument remapper, so a forwarded
         ;; `__sret` pointer stays the buffer the caller supplied.
         [(ir.CompilerIrInstr.TailCall cname cargs cty)
-          (OptInlineMultiInstrClone.Clone
-            (ir.compiler-ir-instr-cons
+          (begin
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
               (ir.CompilerIrInstr.Call
                 tail-dst
                 (ir.compiler-ir-symbol-clone cname)
                 (opt-inline-remap-args cargs sa np base)
-                (clone cty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Jump cont-label)
-                ir.CompilerIrInstrList.Nil))
+                (clone cty)))
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.CompilerIrInstr.Jump cont-label))
             (ir.compiler-ir-phi-input-cons
               (ir.CompilerIrValue.Var tail-dst)
               cloned-label
               ir.CompilerIrPhiInputList.Nil))]
         [_
-          (let
-            [cloned : ir.CompilerIrInstr
-              (opt-inline-clone-multiblock-instr instr prefix sa np base)]
-            (match (opt-inline-clone-multiblock-instr-seq-from
+          (begin
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (opt-inline-clone-multiblock-instr instr prefix sa np base))
+            (opt-inline-clone-multiblock-instr-seq-into!
               instrs
               (+ pos 1)
               count
@@ -77755,11 +78375,39 @@
               tail-dst
               sa
               np
-              base)
-              [(OptInlineMultiInstrClone.Clone rest-instrs rest-inputs)
-                (OptInlineMultiInstrClone.Clone
-                  (ir.compiler-ir-instr-cons cloned rest-instrs)
-                  rest-inputs)]))]))))
+              base
+              (&mut builder)))]))))
+
+(define (opt-inline-clone-multiblock-instr-seq-from
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]
+  [cloned-label : i64]
+  [prefix : String]
+  [cont-label : i64]
+  [tail-dst : i64]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : OptInlineMultiInstrClone
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ (- count pos) 1))]
+    [inputs : ir.CompilerIrPhiInputList
+      (opt-inline-clone-multiblock-instr-seq-into!
+        instrs
+        pos
+        count
+        cloned-label
+        prefix
+        cont-label
+        tail-dst
+        sa
+        np
+        base
+        (&mut builder))]
+    (OptInlineMultiInstrClone.Clone
+      (ir.compiler-ir-instr-builder-to-seq builder)
+      inputs)))
 
 (define (opt-inline-clone-multiblock-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
@@ -77806,7 +78454,7 @@
           [(OptInlineMultiInstrClone.Clone cloned-instrs inputs)
             (OptInlineMultiClone.Clone
               (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block cloned-label cloned-instrs)
+                (ir.CompilerIrBlock.Block cloned-label cloned-instrs)
                 ir.CompilerIrBlockList.Nil)
               inputs)]))]))
 
@@ -79085,11 +79733,21 @@
 ;; pays liveness_scan -0.21%. The autopsy of the intern_table loss is NOT the
 ;; allocation churn the older bands document: `it-intern-slice` keeps exactly
 ;; six callee-saved pushes with `it-slice-eq?` absorbed and grows its frame by
-;; 16 bytes. What it loses is the loop BCE VERSIONING the standalone callee gets
-;; -- `it-slice-eq?` emits a `__bce_guard` plus a bounds-free `__bce_fast` inner
-;; loop of seven instructions per byte, and the absorbed copy inside
-;; `it-intern-slice` (a function the versioner never versions) runs the guarded
-;; form at fifteen. A callee-saved/spill proxy alone reads that inline as free.
+;; 16 bytes. What it loses is the MONOTONE-FLAG CONVERSION, and the rotation
+;; that rides on it. `it-slice-eq?`'s `(and (< i len) ok)` loop is multi-exit.
+;; Standalone, `flag_exit` turns the flag's clearing arm into a direct exit and
+;; `rotate_ssa` then takes the single-exit remainder bottom-tested, so the
+;; callee runs seven instructions per byte and leaves on the FIRST mismatch.
+;; Absorbed into `it-intern-slice` neither pass fires: the merged body keeps
+;; the flag, tests it every trip, jumps back unconditionally, and scans the
+;; whole slice at ten. The multi-exit rotation added above does not rescue it
+;; either -- the merged body reads the loop's counter past BOTH exits with a
+;; NON-PHI instruction at the join where they meet, and that is the one shape
+;; `opt-rotate-ssa-apply`'s classified exit placement still refuses. Measured
+;; with that placement in the tree, the merged plan prices identically (after =
+;; 5232 either way) and this site still refuses. (An earlier reading of the same
+;; loss blamed lost BCE versioning; that is disproven -- the merged copy IS
+;; versioned.) A callee-saved/spill proxy alone reads that inline as free.
 ;;
 ;; So the plan is priced in three terms, each measured on the RE-OPTIMIZED body:
 ;;
@@ -80129,29 +80787,23 @@
                           (+ vars (opt-inline-frame-growth cvars np))
                           (+ added-so-far added-blocks)))
                       (OptInlineState.State
-                        (ir.compiler-ir-instr-cons
-                          (ir.CompilerIrInstr.Call dst cname cargs cret)
-                          ir.CompilerIrInstrList.Nil)
+                        (ir.compiler-ir-instr-seq1
+                          (ir.CompilerIrInstr.Call dst cname cargs cret))
                         vars
                         added-so-far)))
                   (OptInlineState.State
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Call dst cname cargs cret)
-                      ir.CompilerIrInstrList.Nil)
+                    (ir.compiler-ir-instr-seq1
+                      (ir.CompilerIrInstr.Call dst cname cargs cret))
                     vars
                     added-so-far)))])]
         [(OptMaybeFunction.No)
           (OptInlineState.State
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Call dst cname cargs cret)
-              ir.CompilerIrInstrList.Nil)
+            (ir.compiler-ir-instr-seq1
+              (ir.CompilerIrInstr.Call dst cname cargs cret))
             vars
             added-so-far)])]
     [_
-      (OptInlineState.State
-        (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)
-        vars
-        added-so-far)]))
+      (OptInlineState.State (ir.compiler-ir-instr-seq1 instr) vars added-so-far)]))
 
 (define (opt-inline-try-with-spans
   [instr : ir.CompilerIrInstr]
@@ -80252,30 +80904,27 @@
                               (+ added-so-far added-blocks)
                               next-spans)]))
                       (OptInlineSpanState.State
-                        (ir.compiler-ir-instr-cons
-                          (ir.CompilerIrInstr.Call dst cname cargs cret)
-                          ir.CompilerIrInstrList.Nil)
+                        (ir.compiler-ir-instr-seq1
+                          (ir.CompilerIrInstr.Call dst cname cargs cret))
                         vars
                         added-so-far
                         out-spans)))
                   (OptInlineSpanState.State
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Call dst cname cargs cret)
-                      ir.CompilerIrInstrList.Nil)
+                    (ir.compiler-ir-instr-seq1
+                      (ir.CompilerIrInstr.Call dst cname cargs cret))
                     vars
                     added-so-far
                     out-spans)))])]
         [(OptMaybeFunction.No)
           (OptInlineSpanState.State
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Call dst cname cargs cret)
-              ir.CompilerIrInstrList.Nil)
+            (ir.compiler-ir-instr-seq1
+              (ir.CompilerIrInstr.Call dst cname cargs cret))
             vars
             added-so-far
             out-spans)])]
     [_
       (OptInlineSpanState.State
-        (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)
+        (ir.compiler-ir-instr-seq1 instr)
         vars
         added-so-far
         out-spans)]))
@@ -80294,42 +80943,43 @@
   [added-so-far : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineState
-  (if (>= pos end)
-    (OptInlineState.State ir.CompilerIrInstrList.Nil vars added-so-far)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
-      (match (opt-inline-try
-        instr
-        index
-        census
-        func-name
-        block-label
-        site-pos
-        vars
-        caller-blocks
-        added-so-far
-        scc-result
-        caller-scc)
-        [(OptInlineState.State expanded vars2 added2)
-          (match (opt-inline-walk-instr-seq-from
-            instrs
-            (+ pos 1)
-            end
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- end pos))]
+    [cursor : i64 pos]
+    [next-site : i64 site-pos]
+    [next-vars : i64 vars]
+    [next-added : i64 added-so-far]
+    (begin
+      (while (< cursor end)
+        (begin
+          (match (opt-inline-try
+            (ir.compiler-ir-instr-seq-ref instrs cursor)
             index
             census
             func-name
             block-label
-            (+ site-pos 1)
-            vars2
+            next-site
+            next-vars
             caller-blocks
-            added2
+            next-added
             scc-result
             caller-scc)
-            [(OptInlineState.State rest-list vars3 added3)
-              (OptInlineState.State
-                (opt-inline-append expanded rest-list)
-                vars3
-                added3)])]))))
+            [(OptInlineState.State expanded vars2 added2)
+              (begin
+                (ir.compiler-ir-instr-builder-append-seq-range!
+                  (&mut builder)
+                  expanded
+                  0
+                  (ir.compiler-ir-instr-seq-count expanded))
+                (set! next-vars vars2)
+                (set! next-added added2))])
+          (set! cursor (+ cursor 1))
+          (set! next-site (+ next-site 1))))
+      (OptInlineState.State
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        next-vars
+        next-added))))
 
 (define (opt-inline-walk-instr-seq-with-spans-from
   [instrs : ir.CompilerIrInstrSeq]
@@ -80347,51 +80997,48 @@
   [caller-scc : i64]
   [source-spans : ir.CompilerSourceSpans]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanState
-  (if (>= pos end)
-    (OptInlineSpanState.State
-      ir.CompilerIrInstrList.Nil
-      vars
-      added-so-far
-      out-spans)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
-      (match (opt-inline-try-with-spans
-        instr
-        index
-        census
-        func-name
-        block-label
-        site-pos
-        vars
-        caller-blocks
-        added-so-far
-        scc-result
-        caller-scc
-        source-spans
-        out-spans)
-        [(OptInlineSpanState.State expanded vars2 added2 spans2)
-          (match (opt-inline-walk-instr-seq-with-spans-from
-            instrs
-            (+ pos 1)
-            end
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- end pos))]
+    [cursor : i64 pos]
+    [next-site : i64 site-pos]
+    [next-vars : i64 vars]
+    [next-added : i64 added-so-far]
+    [next-spans : ir.CompilerSourceSpans out-spans]
+    (begin
+      (while (< cursor end)
+        (begin
+          (match (opt-inline-try-with-spans
+            (ir.compiler-ir-instr-seq-ref instrs cursor)
             index
             census
             func-name
             block-label
-            (+ site-pos 1)
-            vars2
+            next-site
+            next-vars
             caller-blocks
-            added2
+            next-added
             scc-result
             caller-scc
             source-spans
-            spans2)
-            [(OptInlineSpanState.State rest-list vars3 added3 spans3)
-              (OptInlineSpanState.State
-                (opt-inline-append expanded rest-list)
-                vars3
-                added3
-                spans3)])]))))
+            next-spans)
+            [(OptInlineSpanState.State expanded vars2 added2 spans2)
+              (begin
+                (ir.compiler-ir-instr-builder-append-seq-range!
+                  (&mut builder)
+                  expanded
+                  0
+                  (ir.compiler-ir-instr-seq-count expanded))
+                (set! next-vars vars2)
+                (set! next-added added2)
+                (set! next-spans spans2))])
+          (set! cursor (+ cursor 1))
+          (set! next-site (+ next-site 1))))
+      (OptInlineSpanState.State
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        next-vars
+        next-added
+        next-spans))))
 
 ;; Rewrite the instruction range [seq-start, end) through the single-block
 ;; expansion path and emit it as one block labelled `head-label`, with `lead`
@@ -80409,7 +81056,7 @@
   [block-label : i64]
   [head-label : i64]
   [seq-start : i64]
-  [lead : ir.CompilerIrInstrList]
+  [lead : ir.CompilerIrInstrSeq]
   [instrs : ir.CompilerIrInstrSeq]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -80436,7 +81083,9 @@
     [(OptInlineState.State new-instrs vars2 added2)
       (OptInlineMaybeBlockRewrite.SomeBlockRewrite
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block head-label (opt-inline-append lead new-instrs))
+          (ir.CompilerIrBlock.Block
+            head-label
+            (opt-inline-append lead new-instrs))
           ir.CompilerIrBlockList.Nil)
         vars2
         added2)]))
@@ -80445,7 +81094,7 @@
   [block-label : i64]
   [head-label : i64]
   [seq-start : i64]
-  [lead : ir.CompilerIrInstrList]
+  [lead : ir.CompilerIrInstrSeq]
   [instrs : ir.CompilerIrInstrSeq]
   [call-pos : i64]
   [count : i64]
@@ -80749,7 +81398,7 @@
                               checked?)
                               0
                               added-blocks))]
-                        [stage-instrs : ir.CompilerIrInstrList
+                        [stage-instrs : ir.CompilerIrInstrSeq
                           (if stage-args?
                             (opt-inline-stage-param-instrs
                               cparams
@@ -80757,7 +81406,7 @@
                               prefix-vars
                               stage-all-args?
                               0)
-                            ir.CompilerIrInstrList.Nil)]
+                            (opt-inline-empty-instr-seq))]
                         [staged-args : ir.CompilerIrCallArgs
                           (if stage-args?
                             (opt-inline-staged-args
@@ -80776,16 +81425,15 @@
                         ;; `vars2` above reserved `tail-slots` ids from here.
                         [tail-base : i64
                           (opt-inline-rebase-var cvars np clone-base)]
-                        [prefix-instrs2 : ir.CompilerIrInstrList
+                        [prefix-instrs2 : ir.CompilerIrInstrSeq
                           (opt-inline-append
                             lead
                             (opt-inline-append
                               prefix-instrs
                               (opt-inline-append
                                 stage-instrs
-                                (ir.compiler-ir-instr-cons
-                                  (ir.CompilerIrInstr.Jump entry-label)
-                                  ir.CompilerIrInstrList.Nil))))]
+                                (ir.compiler-ir-instr-seq1
+                                  (ir.CompilerIrInstr.Jump entry-label)))))]
                         (match (opt-inline-clone-multiblock-blocks
                           cblocks
                           prefix
@@ -80822,9 +81470,7 @@
                                 block-label
                                 cont-label
                                 (+ call-pos 1)
-                                (ir.compiler-ir-instr-cons
-                                  result-instr
-                                  ir.CompilerIrInstrList.Nil)
+                                (ir.compiler-ir-instr-seq1 result-instr)
                                 (+ site-pos 1)
                                 index
                                 census
@@ -80858,7 +81504,7 @@
                                         unit)]
                                     (OptInlineMaybeBlockRewrite.SomeBlockRewrite
                                       (ir.compiler-ir-block-cons
-                                        (ir.compiler-ir-block
+                                        (ir.CompilerIrBlock.Block
                                           head-label
                                           prefix-instrs2)
                                         (opt-inline-block-append
@@ -80888,7 +81534,7 @@
   [block-label : i64]
   [head-label : i64]
   [seq-start : i64]
-  [lead : ir.CompilerIrInstrList]
+  [lead : ir.CompilerIrInstrSeq]
   [site-pos : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -81052,7 +81698,7 @@
             label
             label
             0
-            ir.CompilerIrInstrList.Nil
+            (opt-inline-empty-instr-seq)
             0
             index
             census
@@ -81079,92 +81725,87 @@
   [caller : i64]
   [call-instr : ir.CompilerIrInstr]
   [callee : i64]) : OptInlineMultiSpanInstrClone
-  (if (>= pos count)
-    (OptInlineMultiSpanInstrClone.Clone
-      ir.CompilerIrInstrList.Nil
-      ir.CompilerIrPhiInputList.Nil
-      out-spans)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
-      (match instr
-        [(ir.CompilerIrInstr.Return maybe)
-          (OptInlineMultiSpanInstrClone.Clone
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Jump cont-label)
-              ir.CompilerIrInstrList.Nil)
-            (ir.compiler-ir-phi-input-cons
-              (opt-inline-return-value maybe sa np base)
-              cloned-label
-              ir.CompilerIrPhiInputList.Nil)
-            out-spans)]
-        ;; Same conversion as the span-free twin. The converted call takes the
-        ;; tail call's span: it is the instruction that keeps the callee's line,
-        ;; and a trap raised inside the called function has to report through it
-        ;; exactly as it did when the site was a real tail call. The `Jump` gets
-        ;; none, matching the Return arm.
-        [(ir.CompilerIrInstr.TailCall cname cargs cty)
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ (- count pos) 1))]
+    [cursor : i64 pos]
+    [done? : bool false]
+    [inputs : ir.CompilerIrPhiInputList ir.CompilerIrPhiInputList.Nil]
+    [next-spans : ir.CompilerSourceSpans out-spans]
+    (begin
+      (while (and (< cursor count) (not done?))
+        (begin
           (let
-            [converted : ir.CompilerIrInstr
-              (ir.CompilerIrInstr.Call
-                tail-dst
-                (ir.compiler-ir-symbol-clone cname)
-                (opt-inline-remap-args cargs sa np base)
-                (clone cty))]
-            (OptInlineMultiSpanInstrClone.Clone
-              (ir.compiler-ir-instr-cons
-                converted
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Jump cont-label)
-                  ir.CompilerIrInstrList.Nil))
-              (ir.compiler-ir-phi-input-cons
-                (ir.CompilerIrValue.Var tail-dst)
-                cloned-label
-                ir.CompilerIrPhiInputList.Nil)
-              (opt-inline-record-clone-span
-                source-spans
-                out-spans
-                caller
-                call-instr
-                callee
-                instr
-                converted)))]
-        [_
-          (let
-            [cloned : ir.CompilerIrInstr
-              (opt-inline-clone-multiblock-instr instr prefix sa np base)]
-            [spans2 : ir.CompilerSourceSpans
-              (opt-inline-record-clone-span
-                source-spans
-                out-spans
-                caller
-                call-instr
-                callee
-                instr
-                cloned)]
-            (match (opt-inline-clone-multiblock-instr-seq-with-spans-from
-              instrs
-              (+ pos 1)
-              count
-              cloned-label
-              prefix
-              cont-label
-              tail-dst
-              sa
-              np
-              base
-              source-spans
-              spans2
-              caller
-              call-instr
-              callee)
-              [(OptInlineMultiSpanInstrClone.Clone
-                  rest-instrs
-                  rest-inputs
-                  spans3)
-                (OptInlineMultiSpanInstrClone.Clone
-                  (ir.compiler-ir-instr-cons cloned rest-instrs)
-                  rest-inputs
-                  spans3)]))]))))
+            [instr : ir.CompilerIrInstr
+              (ir.compiler-ir-instr-seq-ref instrs cursor)]
+            (match instr
+              [(ir.CompilerIrInstr.Return maybe)
+                (begin
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (ir.CompilerIrInstr.Jump cont-label))
+                  (set!
+                    inputs
+                    (ir.compiler-ir-phi-input-cons
+                      (opt-inline-return-value maybe sa np base)
+                      cloned-label
+                      ir.CompilerIrPhiInputList.Nil))
+                  (set! done? true))]
+              ;; Same conversion as the span-free twin. The converted call takes
+              ;; the tail call's span; the synthetic Jump remains spanless.
+              [(ir.CompilerIrInstr.TailCall cname cargs cty)
+                (let
+                  [converted : ir.CompilerIrInstr
+                    (ir.CompilerIrInstr.Call
+                      tail-dst
+                      (ir.compiler-ir-symbol-clone cname)
+                      (opt-inline-remap-args cargs sa np base)
+                      (clone cty))]
+                  (begin
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      converted)
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrInstr.Jump cont-label))
+                    (set!
+                      inputs
+                      (ir.compiler-ir-phi-input-cons
+                        (ir.CompilerIrValue.Var tail-dst)
+                        cloned-label
+                        ir.CompilerIrPhiInputList.Nil))
+                    (set!
+                      next-spans
+                      (opt-inline-record-clone-span
+                        source-spans
+                        next-spans
+                        caller
+                        call-instr
+                        callee
+                        instr
+                        converted))
+                    (set! done? true)))]
+              [_
+                (let
+                  [cloned : ir.CompilerIrInstr
+                    (opt-inline-clone-multiblock-instr instr prefix sa np base)]
+                  (begin
+                    (ir.compiler-ir-instr-builder-push! (&mut builder) cloned)
+                    (set!
+                      next-spans
+                      (opt-inline-record-clone-span
+                        source-spans
+                        next-spans
+                        caller
+                        call-instr
+                        callee
+                        instr
+                        cloned))))]))
+          (set! cursor (+ cursor 1))))
+      (OptInlineMultiSpanInstrClone.Clone
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        inputs
+        next-spans))))
 
 (define (opt-inline-clone-multiblock-instr-seq-with-spans
   [instrs : ir.CompilerIrInstrSeq]
@@ -81231,7 +81872,7 @@
           [(OptInlineMultiSpanInstrClone.Clone cloned-instrs inputs spans2)
             (OptInlineMultiSpanClone.Clone
               (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block cloned-label cloned-instrs)
+                (ir.CompilerIrBlock.Block cloned-label cloned-instrs)
                 ir.CompilerIrBlockList.Nil)
               inputs
               spans2)]))]))
@@ -81311,7 +81952,7 @@
   [block-label : i64]
   [head-label : i64]
   [seq-start : i64]
-  [lead : ir.CompilerIrInstrList]
+  [lead : ir.CompilerIrInstrSeq]
   [instrs : ir.CompilerIrInstrSeq]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -81342,7 +81983,9 @@
     [(OptInlineSpanState.State new-instrs vars2 added2 spans2)
       (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block head-label (opt-inline-append lead new-instrs))
+          (ir.CompilerIrBlock.Block
+            head-label
+            (opt-inline-append lead new-instrs))
           ir.CompilerIrBlockList.Nil)
         vars2
         added2
@@ -81352,7 +81995,7 @@
   [block-label : i64]
   [head-label : i64]
   [seq-start : i64]
-  [lead : ir.CompilerIrInstrList]
+  [lead : ir.CompilerIrInstrSeq]
   [instrs : ir.CompilerIrInstrSeq]
   [call-pos : i64]
   [count : i64]
@@ -81639,7 +82282,7 @@
                               checked?)
                               0
                               added-blocks))]
-                        [stage-instrs : ir.CompilerIrInstrList
+                        [stage-instrs : ir.CompilerIrInstrSeq
                           (if stage-args?
                             (opt-inline-stage-param-instrs
                               cparams
@@ -81647,7 +82290,7 @@
                               prefix-vars
                               stage-all-args?
                               0)
-                            ir.CompilerIrInstrList.Nil)]
+                            (opt-inline-empty-instr-seq))]
                         [staged-args : ir.CompilerIrCallArgs
                           (if stage-args?
                             (opt-inline-staged-args
@@ -81666,16 +82309,15 @@
                         ;; `vars2` above reserved `tail-slots` ids from here.
                         [tail-base : i64
                           (opt-inline-rebase-var cvars np clone-base)]
-                        [prefix-instrs2 : ir.CompilerIrInstrList
+                        [prefix-instrs2 : ir.CompilerIrInstrSeq
                           (opt-inline-append
                             lead
                             (opt-inline-append
                               prefix-instrs
                               (opt-inline-append
                                 stage-instrs
-                                (ir.compiler-ir-instr-cons
-                                  (ir.CompilerIrInstr.Jump entry-label)
-                                  ir.CompilerIrInstrList.Nil))))]
+                                (ir.compiler-ir-instr-seq1
+                                  (ir.CompilerIrInstr.Jump entry-label)))))]
                         (match (opt-inline-clone-multiblock-blocks-with-spans
                           cblocks
                           prefix
@@ -81712,9 +82354,7 @@
                                 block-label
                                 cont-label
                                 (+ call-pos 1)
-                                (ir.compiler-ir-instr-cons
-                                  result-instr
-                                  ir.CompilerIrInstrList.Nil)
+                                (ir.compiler-ir-instr-seq1 result-instr)
                                 (+ site-pos 1)
                                 index
                                 census
@@ -81750,7 +82390,7 @@
                                         unit)]
                                     (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
                                       (ir.compiler-ir-block-cons
-                                        (ir.compiler-ir-block
+                                        (ir.CompilerIrBlock.Block
                                           head-label
                                           prefix-instrs2)
                                         (opt-inline-block-append
@@ -81777,7 +82417,7 @@
   [block-label : i64]
   [head-label : i64]
   [seq-start : i64]
-  [lead : ir.CompilerIrInstrList]
+  [lead : ir.CompilerIrInstrSeq]
   [site-pos : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -81942,7 +82582,7 @@
             label
             label
             0
-            ir.CompilerIrInstrList.Nil
+            (opt-inline-empty-instr-seq)
             0
             index
             census
@@ -82903,19 +83543,12 @@
                       (+ vars (opt-inline-frame-growth cvars np))
                       0))
                   (OptInlineState.State
-                    (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)
+                    (ir.compiler-ir-instr-seq1 instr)
                     vars
                     0)))])]
         [(OptMaybeFunction.No)
-          (OptInlineState.State
-            (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)
-            vars
-            0)])]
-    [_
-      (OptInlineState.State
-        (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)
-        vars
-        0)]))
+          (OptInlineState.State (ir.compiler-ir-instr-seq1 instr) vars 0)])]
+    [_ (OptInlineState.State (ir.compiler-ir-instr-seq1 instr) vars 0)]))
 
 (define (opt-inline-tiny-leaf-walk-seq-from
   [instrs : ir.CompilerIrInstrSeq]
@@ -82927,32 +83560,37 @@
   [block-label : i64]
   [site-pos : i64]
   [vars : i64]) : OptInlineState
-  (if (>= pos end)
-    (OptInlineState.State ir.CompilerIrInstrList.Nil vars 0)
-    (match (opt-inline-tiny-leaf-try
-      (ir.compiler-ir-instr-seq-ref instrs pos)
-      index
-      flags
-      func-name
-      block-label
-      site-pos
-      vars)
-      [(OptInlineState.State expanded vars2 _)
-        (match (opt-inline-tiny-leaf-walk-seq-from
-          instrs
-          (+ pos 1)
-          end
-          index
-          flags
-          func-name
-          block-label
-          (+ site-pos 1)
-          vars2)
-          [(OptInlineState.State rest-list vars3 _)
-            (OptInlineState.State
-              (opt-inline-append expanded rest-list)
-              vars3
-              0)])])))
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- end pos))]
+    [cursor : i64 pos]
+    [next-site : i64 site-pos]
+    [next-vars : i64 vars]
+    (begin
+      (while (< cursor end)
+        (begin
+          (match (opt-inline-tiny-leaf-try
+            (ir.compiler-ir-instr-seq-ref instrs cursor)
+            index
+            flags
+            func-name
+            block-label
+            next-site
+            next-vars)
+            [(OptInlineState.State expanded vars2 _)
+              (begin
+                (ir.compiler-ir-instr-builder-append-seq-range!
+                  (&mut builder)
+                  expanded
+                  0
+                  (ir.compiler-ir-instr-seq-count expanded))
+                (set! next-vars vars2))])
+          (set! cursor (+ cursor 1))
+          (set! next-site (+ next-site 1))))
+      (OptInlineState.State
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        next-vars
+        0))))
 
 (define (opt-inline-tiny-leaf-rewrite-block
   [block : ir.CompilerIrBlock]
@@ -82980,7 +83618,7 @@
           [(OptInlineState.State new-instrs vars2 _)
             (OptInlineBlocks.Blocks
               (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block label new-instrs)
+                (ir.CompilerIrBlock.Block label new-instrs)
                 ir.CompilerIrBlockList.Nil)
               vars2
               0)]))]))
@@ -83121,19 +83759,19 @@
                           0
                           next-spans)]))
                   (OptInlineSpanState.State
-                    (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)
+                    (ir.compiler-ir-instr-seq1 instr)
                     vars
                     0
                     out-spans)))])]
         [(OptMaybeFunction.No)
           (OptInlineSpanState.State
-            (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)
+            (ir.compiler-ir-instr-seq1 instr)
             vars
             0
             out-spans)])]
     [_
       (OptInlineSpanState.State
-        (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)
+        (ir.compiler-ir-instr-seq1 instr)
         vars
         0
         out-spans)]))
@@ -83150,37 +83788,42 @@
   [vars : i64]
   [source-spans : ir.CompilerSourceSpans]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanState
-  (if (>= pos end)
-    (OptInlineSpanState.State ir.CompilerIrInstrList.Nil vars 0 out-spans)
-    (match (opt-inline-tiny-leaf-try-with-spans
-      (ir.compiler-ir-instr-seq-ref instrs pos)
-      index
-      flags
-      func-name
-      block-label
-      site-pos
-      vars
-      source-spans
-      out-spans)
-      [(OptInlineSpanState.State expanded vars2 _ spans2)
-        (match (opt-inline-tiny-leaf-walk-seq-with-spans-from
-          instrs
-          (+ pos 1)
-          end
-          index
-          flags
-          func-name
-          block-label
-          (+ site-pos 1)
-          vars2
-          source-spans
-          spans2)
-          [(OptInlineSpanState.State rest-list vars3 _ spans3)
-            (OptInlineSpanState.State
-              (opt-inline-append expanded rest-list)
-              vars3
-              0
-              spans3)])])))
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- end pos))]
+    [cursor : i64 pos]
+    [next-site : i64 site-pos]
+    [next-vars : i64 vars]
+    [next-spans : ir.CompilerSourceSpans out-spans]
+    (begin
+      (while (< cursor end)
+        (begin
+          (match (opt-inline-tiny-leaf-try-with-spans
+            (ir.compiler-ir-instr-seq-ref instrs cursor)
+            index
+            flags
+            func-name
+            block-label
+            next-site
+            next-vars
+            source-spans
+            next-spans)
+            [(OptInlineSpanState.State expanded vars2 _ spans2)
+              (begin
+                (ir.compiler-ir-instr-builder-append-seq-range!
+                  (&mut builder)
+                  expanded
+                  0
+                  (ir.compiler-ir-instr-seq-count expanded))
+                (set! next-vars vars2)
+                (set! next-spans spans2))])
+          (set! cursor (+ cursor 1))
+          (set! next-site (+ next-site 1))))
+      (OptInlineSpanState.State
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        next-vars
+        0
+        next-spans))))
 
 (define (opt-inline-tiny-leaf-rewrite-block-with-spans
   [block : ir.CompilerIrBlock]
@@ -83213,7 +83856,7 @@
           [(OptInlineSpanState.State new-instrs vars2 _ spans2)
             (OptInlineSpanBlocks.Blocks
               (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block label new-instrs)
+                (ir.CompilerIrBlock.Block label new-instrs)
                 ir.CompilerIrBlockList.Nil)
               vars2
               0
@@ -90228,13 +90871,21 @@
     (opt-alias-empty)
     (opt-alias-update-value-facts facts instr 0)))
 
+(define (opt-alias-run-from
+  [facts : OptAliasFacts (:consume)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptAliasFacts
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    facts
+    (opt-alias-run-from
+      (opt-alias-update-facts facts (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
 (define (opt-alias-run
   [facts : OptAliasFacts (:consume)]
-  [instrs : ir.CompilerIrInstrList]) : OptAliasFacts
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) facts]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (opt-alias-run (opt-alias-update-facts facts instr) (__tl-box-place rest))]))
+  [instrs : ir.CompilerIrInstrSeq]) : OptAliasFacts
+  (opt-alias-run-from facts instrs 0))
 
 ;; --- implicit scratch-region candidate report -------------------------------
 ;;
@@ -90709,14 +91360,8 @@
 (define (opt-scratch-scope-scan-instrs
   [type-segment-bases : i64]
   [state : OptScratchScopeState]
-  [instrs : ir.CompilerIrInstrList]) : OptScratchScopeState
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) state]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (opt-scratch-scope-scan-instrs
-        type-segment-bases
-        (opt-scratch-state-step type-segment-bases state instr)
-        (__tl-box-place rest))]))
+  [instrs : ir.CompilerIrInstrSeq]) : OptScratchScopeState
+  (opt-scratch-scope-scan-instr-seq-from type-segment-bases state instrs 0))
 
 (define (opt-scratch-scope-scan-instr-seq-from
   [type-segment-bases : i64]
@@ -90759,7 +91404,7 @@
 
 (define (opt-scratch-scope-report-instrs
   [type-segment-bases : i64]
-  [instrs : ir.CompilerIrInstrList]) : OptScratchScopeReport
+  [instrs : ir.CompilerIrInstrSeq]) : OptScratchScopeReport
   (opt-scratch-scope-report-from-state
     (opt-scratch-scope-scan-instrs
       type-segment-bases
@@ -91332,15 +91977,11 @@
       (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var mark-var))
       (ast.AstType.Unit))))
 
-(define (opt-scratch-reset-mark-instrs [mark-var : i64]) : ir.CompilerIrInstrList
-  (ir.compiler-ir-instr-cons
-    (opt-scratch-reset-mark-instr mark-var)
-    ir.CompilerIrInstrList.Nil))
+(define (opt-scratch-reset-mark-instrs [mark-var : i64]) : ir.CompilerIrInstrSeq
+  (ir.compiler-ir-instr-seq1 (opt-scratch-reset-mark-instr mark-var)))
 
-(define (opt-scratch-reset-reset-instrs [reset-var : i64] [mark-var : i64]) : ir.CompilerIrInstrList
-  (ir.compiler-ir-instr-cons
-    (opt-scratch-reset-reset-instr reset-var mark-var)
-    ir.CompilerIrInstrList.Nil))
+(define (opt-scratch-reset-reset-instrs [reset-var : i64] [mark-var : i64]) : ir.CompilerIrInstrSeq
+  (ir.compiler-ir-instr-seq1 (opt-scratch-reset-reset-instr reset-var mark-var)))
 
 (define (opt-scratch-reset-rewrite-block
   [block : ir.CompilerIrBlock]
@@ -91353,13 +91994,13 @@
       (if (= label preheader)
         (ir.CompilerIrBlock.Block
           label
-          (opt-licm-insert-before-terminator-seq
+          (opt-instr-seq-insert-before-terminator
             (opt-scratch-reset-mark-instrs mark-var)
             instrs))
         (if (= label latch)
           (ir.CompilerIrBlock.Block
             label
-            (opt-licm-insert-before-terminator-seq
+            (opt-instr-seq-insert-before-terminator
               (opt-scratch-reset-reset-instrs reset-var mark-var)
               instrs))
           block))]))
@@ -94814,34 +95455,36 @@
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (opt-load-cse-dispatch
-        type-segment-bases
-        hs
-        false
-        sources
-        call-memory
-        state
-        instr)
-        [(OptLoadCseResult.Result next-state new-instr)
-          (ir.compiler-ir-instr-cons
-            new-instr
-            (opt-load-cse-instrs-from
-              type-segment-bases
-              hs
-              sources
-              call-memory
-              next-state
-              (__tl-box-place rest)))])]))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [next-state : OptLoadCseState state]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (opt-load-cse-dispatch
+            type-segment-bases
+            hs
+            false
+            sources
+            call-memory
+            next-state
+            (ir.compiler-ir-instr-seq-ref instrs index))
+            [(OptLoadCseResult.Result after-state new-instr)
+              (begin
+                (set! next-state after-state)
+                (ir.compiler-ir-instr-builder-push! (&mut builder) new-instr))])
+          (set! index (+ index 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-load-cse-instrs
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (opt-load-cse-instrs-from
     type-segment-bases
     hs

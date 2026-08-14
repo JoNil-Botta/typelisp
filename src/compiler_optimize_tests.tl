@@ -19721,45 +19721,31 @@
         enum-ty))))
 
 (define (opt-inline-dense-input-shape-ok?
-  [instrs : compiler_ir_types.CompilerIrInstrList]) : bool
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
   (and
-    (= (compiler_ir_types.compiler-ir-instr-list-count instrs) 3)
-    (match instrs
-      [(compiler_ir_types.CompilerIrInstrList.Cons
-          (compiler_ir_types.CompilerIrInstr.Mov
-            first-dst
-            (compiler_ir_types.CompilerIrValue.I64 first-value)
-            _)
-          rest)
-        (match (__tl-box-place rest)
-          [(compiler_ir_types.CompilerIrInstrList.Cons
-              (compiler_ir_types.CompilerIrInstr.BinOp
-                second-dst
-                (compiler_ir_types.CompilerIrBinOp.Add)
-                (compiler_ir_types.CompilerIrValue.Var second-left)
-                (compiler_ir_types.CompilerIrValue.I64 second-right)
-                _)
-              rest2)
-            (match (__tl-box-place rest2)
-              [(compiler_ir_types.CompilerIrInstrList.Cons
-                  (compiler_ir_types.CompilerIrInstr.Mov
-                    final-dst
-                    (compiler_ir_types.CompilerIrValue.Var final-source)
-                    _)
-                  rest3)
-                (and
-                  (= first-dst 10)
-                  (= first-value 7)
-                  (= second-dst 11)
-                  (= second-left 10)
-                  (= second-right 5)
-                  (= final-dst 99)
-                  (= final-source 11)
-                  (match (__tl-box-place rest3)
-                    [(compiler_ir_types.CompilerIrInstrList.Nil) true]
-                    [_ false]))]
-              [_ false])]
-          [_ false])]
+    (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 3)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+      [(compiler_ir_types.CompilerIrInstr.Mov
+          first-dst
+          (compiler_ir_types.CompilerIrValue.I64 first-value)
+          _)
+        (and (= first-dst 10) (= first-value 7))]
+      [_ false])
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1)
+      [(compiler_ir_types.CompilerIrInstr.BinOp
+          second-dst
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var second-left)
+          (compiler_ir_types.CompilerIrValue.I64 second-right)
+          _)
+        (and (= second-dst 11) (= second-left 10) (= second-right 5))]
+      [_ false])
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+      [(compiler_ir_types.CompilerIrInstr.Mov
+          final-dst
+          (compiler_ir_types.CompilerIrValue.Var final-source)
+          _)
+        (and (= final-dst 99) (= final-source 11))]
       [_ false])))
 
 (define (compiler-optimize-inline-dense-input-ok?) : bool
@@ -19796,7 +19782,7 @@
       (compiler_optimize.opt-inline-single-block-instrs cons-blocks)]
     [array-seq : compiler_ir_types.CompilerIrInstrSeq
       (compiler_optimize.opt-inline-single-block-instrs array-blocks)]
-    [expanded-cons : compiler_ir_types.CompilerIrInstrList
+    [expanded-cons : compiler_ir_types.CompilerIrInstrSeq
       (compiler_optimize.opt-inline-expand-instrs
         cons-seq
         99
@@ -19805,7 +19791,7 @@
         0
         10
         "dense")]
-    [expanded-array : compiler_ir_types.CompilerIrInstrList
+    [expanded-array : compiler_ir_types.CompilerIrInstrSeq
       (compiler_optimize.opt-inline-expand-instrs
         array-seq
         99
@@ -43316,11 +43302,12 @@
 ;; `opt-rotate-ssa-body-avoids-exit?` still refuses. Both exits meet again in
 ;; `done`.
 ;;
-;; With `live-out` the counter is also read past the loop, on BOTH exit edges,
-;; and that is the one thing the rewrite cannot express: the fresh exit phi
-;; lands in the header's exit block, which does not dominate the body's exit,
-;; so the substitution breaks SSA and the verifier gate hands the loop back
-;; unrotated. Without it there is nothing to merge and the loop rotates.
+;; With `live-out` the counter is also read past the loop, on BOTH exit edges.
+;; The classified placement serves each edge from the block that dominates it:
+;; the `exit` edge takes the fresh exit phi, and the `escape` edge keeps the
+;; counter itself, because after rotation the BODY block holds the moved phi
+;; and dominates the body's own exit. Both variants therefore rotate; the
+;; blanket single-exit refusal this used to hit is gone.
 (define (opt-rotate-ssa-test-second-exit-blocks [live-out : bool]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (opt-flag-exit-test-jump-block "entry" "header")
@@ -43612,6 +43599,25 @@
     10
     (opt-rotate-ssa-test-flag-loop-blocks)))
 
+;; One rotation pass over the flag loop, with nothing below it in the pipeline.
+;; This has to leave the loop ALONE: the flag is flag_exit's monotone seed with
+;; flag_exit's own gate (a branch on the flag itself, leaving the loop), and
+;; that pass -- six slots below -- converts the shape into a direct exit and
+;; deletes the second exit outright, leaving a single-exit loop the rotation
+;; then takes in the ordinary way with the flag test gone from the trip.
+;; Rotating first moves the flag phi out of the header, C1 stops matching, and
+;; the conversion never fires again: measured at +35,506,866 Ir on
+;; benchmarks/intern_table.
+(define (opt-rotate-ssa-test-flag-loop-run) : compiler_ir_types.CompilerIrFunction
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-rotate-ssa-test-flag-loop-blocks)]
+    (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (opt-rotate-ssa-test-flag-loop-function))
+      [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
+
 ;; End to end: whatever order the loop passes settle in, no loop of this class
 ;; may reach the backend jumping back unconditionally to a header that re-tests
 ;; its own counter. Note this fixture is clean enough that `flag_exit` converts
@@ -43654,6 +43660,27 @@
                   (= (opt-rotate-ssa-test-phi-input-value inputs "entry") 0)
                   (= (opt-rotate-ssa-test-phi-input-value inputs "latch") 2))]
               [_ false]))])]))
+
+;; The value a named block's leading phi carries on a named edge, using the
+;; same encoding as `opt-rotate-ssa-test-phi-input-value`. This is what pins
+;; LCSSA placement: one join phi, two edges, two different sources.
+(define (opt-rotate-ssa-test-block-phi-input-value
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [edge : String]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 2)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (<= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 0)
+            (- 0 2)
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+              [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+                (opt-rotate-ssa-test-phi-input-value inputs edge)]
+              [_ (- 0 2)]))])]))
 
 ;; 0 for the literal `0` the preheader edge carries, the var id for a Var input,
 ;; -1 when the edge is missing or carries anything else.
@@ -43775,11 +43802,15 @@
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
 
 ;; Scan discipline: a REFUSED loop must not retire the rounds. The leading loop
-;; here is the second-exit-with-live-out class -- it leaves the loop through a
-;; body block AND its counter is read past both exits, so the fresh exit phi
-;; could not dominate the body's own exit and the rotation is refused. The
-;; plain counted loop that follows it in the loop list is rotatable and has
-;; nothing to do with it. The refusal used to be delivered by the post-rotation
+;; here is the one shape the classified placement still refuses -- it leaves
+;; the loop through a body block, and its counter is read past both exits by a
+;; NON-PHI instruction at the join where the two exit paths meet. Neither the
+;; exit block nor the body block dominates that join, so neither the fresh exit
+;; phi nor the moved phi reaches the read, and serving it would need a phi at
+;; the join whose other inputs this rewrite does not own. (A phi INPUT at the
+;; same join is placeable, and that is the live-out fixture above; only a
+;; non-phi read is not.) The plain counted loop that follows it in the loop
+;; list is rotatable and has nothing to do with it. The refusal used to be delivered by the post-rotation
 ;; verify, which sat ABOVE the scan and ended the whole rounds loop, so the
 ;; trailing loop was never examined by that stage -- nor by the next one, which
 ;; re-scans the same list and stops at the same place. That is how
@@ -43855,15 +43886,11 @@
                   (compiler_ir_types.compiler-ir-block
                     (compiler_ir_types.compiler-ir-label "done")
                     (compiler_ir_types.compiler-ir-instr-cons
-                      (compiler_ir_types.CompilerIrInstr.Phi
+                      (compiler_ir_types.CompilerIrInstr.BinOp
                         5
-                        (compiler_ir_types.compiler-ir-phi-input-cons
-                          (compiler_ir_types.CompilerIrValue.Var 1)
-                          (compiler_ir_types.compiler-ir-label "exit")
-                          (compiler_ir_types.compiler-ir-phi-input-cons
-                            (compiler_ir_types.CompilerIrValue.Var 1)
-                            (compiler_ir_types.compiler-ir-label "escape")
-                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.CompilerIrBinOp.Add)
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        (compiler_ir_types.CompilerIrValue.I64 0)
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.compiler-ir-instr-cons
                         (compiler_ir_types.CompilerIrInstr.Jump
@@ -44046,14 +44073,67 @@
             (compiler_optimize.opt-verify-function
               (opt-rotate-ssa-test-second-exit-run false))))
         21]
-      ;; ... and is refused, unchanged, once a loop-carried value is read past
-      ;; BOTH exits: the exit phi cannot reach the body's own exit block
+      ;; ... and STILL rotates once a loop-carried value is read past BOTH
+      ;; exits, because the two edges are served from different definitions:
+      ;; the join phi's `exit` input takes the fresh exit phi (var 8: the fixture's frame is 6 and
+      ;; the two cloned guards take 6 and 7) and its `escape` input keeps the moved
+      ;; phi (var 1), which the body block dominates after rotation.
+      [(opt-block-list-has-label?
+          second-exit-live-out-blocks
+          (compiler_ir_types.compiler-ir-label "header"))
+        22]
+      [(not
+          (opt-block-list-has-label?
+            second-exit-live-out-blocks
+            (compiler_ir_types.compiler-ir-label "header__rotate_land")))
+        46]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-rotate-ssa-test-second-exit-run true))))
+        47]
+      [(not
+          (opt-rotate-ssa-test-starts-with-phi?
+            second-exit-live-out-blocks
+            (compiler_ir_types.compiler-ir-label "exit")))
+        48]
+      [(not
+          (opt-rotate-ssa-test-ends-with-branch?
+            second-exit-live-out-blocks
+            (compiler_ir_types.compiler-ir-label "latch")))
+        49]
+      [(not
+          (=
+            (opt-rotate-ssa-test-block-phi-input-value
+              second-exit-live-out-blocks
+              "done"
+              "exit")
+            8))
+        50]
+      [(not
+          (=
+            (opt-rotate-ssa-test-block-phi-input-value
+              second-exit-live-out-blocks
+              "done"
+              "escape")
+            1))
+        51]
       [(not
           (compiler_optimize.opt-block-list-eq
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            second-exit-live-out-blocks
-            (opt-rotate-ssa-test-second-exit-blocks true)))
-        22]
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-rerun
+                (opt-rotate-ssa-test-second-exit-run true)))
+            second-exit-live-out-blocks))
+        52]
+      ;; the flag class is DEFERRED to flag_exit, not rotated here
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-flag-loop-run))
+            (opt-rotate-ssa-test-flag-loop-blocks)))
+        53]
       ;; the exit phi merges the preheader's zero-trip value and the latch's
       [(not (opt-rotate-ssa-test-exit-phi-inputs-ok? rotated-blocks)) 23]
       ;; rotating a rotated loop is a no-op, in both fixtures
@@ -45870,7 +45950,8 @@
       [positive : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-positive-instrs))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-positive-instrs)))]
       [loop-positive : bool
         (opt-scratch-loop-list-has-candidate?
           (compiler_optimize.opt-cfg-natural-loops
@@ -45878,27 +45959,30 @@
       [call-blocked : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-test-one-block
-            (compiler_ir_types.CompilerIrInstr.Call
-              9
-              (opt-test-symbol "touch")
-              (compiler_ir_types.CompilerIrCallArgs.Nil)
-              (compiler_ast_types.AstType.Unit))))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-test-one-block
+              (compiler_ir_types.CompilerIrInstr.Call
+                9
+                (opt-test-symbol "touch")
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.Unit)))))]
       [extern-blocked : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-test-one-block
-            (compiler_ir_types.CompilerIrInstr.CallIndirectC
-              9
-              (compiler_ir_types.CompilerIrValue.Function
-                (opt-test-symbol "ffi_touch"))
-              (compiler_ir_types.CompilerIrCallArgs.Nil)
-              (compiler_ast_types.AstType.I64))))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-test-one-block
+              (compiler_ir_types.CompilerIrInstr.CallIndirectC
+                9
+                (compiler_ir_types.CompilerIrValue.Function
+                  (opt-test-symbol "ffi_touch"))
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.I64)))))]
       [raw-blocked : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-test-one-block
-            (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-test-one-block
+              (compiler_ir_types.CompilerIrInstr.AddrOf 2 1))))]
       ;; The scratch analysis records its roots with `opt-alias-mark-unique`, so
       ;; the fixture builds the fact the same way instead of hand-encoding it.
       [store-blocked : compiler_optimize.OptScratchScopeReport
@@ -45924,12 +46008,13 @@
       [arena-blocked : compiler_optimize.OptScratchScopeReport
         (compiler_optimize.opt-scratch-scope-report-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (opt-scratch-test-one-block
-            (compiler_ir_types.CompilerIrInstr.Call
-              9
-              cbi.compiler-builtin-id-tl-region-mark
-              (compiler_ir_types.CompilerIrCallArgs.Nil)
-              (compiler_ast_types.AstType.I64))))]
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            (opt-scratch-test-one-block
+              (compiler_ir_types.CompilerIrInstr.Call
+                9
+                cbi.compiler-builtin-id-tl-region-mark
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.I64)))))]
       [return-blocked : compiler_optimize.OptScratchScopeReport
         (let
           [roots : compiler_optimize.OptScratchRootList
@@ -46173,27 +46258,33 @@
     [unique : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-unique-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-unique-instrs)))]
     [transitive : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-transitive-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-transitive-instrs)))]
     [loaded : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-load-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-load-instrs)))]
     [stored : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-store-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-store-instrs)))]
     [called : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-call-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-call-instrs)))]
     [copied : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-run
         (compiler_optimize.opt-alias-empty)
-        (opt-alias-test-copy-instrs))]
+        (compiler_ir_types.compiler-ir-instr-seq-from-list
+          (opt-alias-test-copy-instrs)))]
     [joined : compiler_optimize.OptAliasFacts
       (compiler_optimize.opt-alias-intersect
         (opt-alias-join-facts-a)
@@ -46317,97 +46408,101 @@
       [else 42])))
 
 (define (opt-load-cse-run [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-empty)
-    (compiler_optimize.opt-load-cse-empty-state-for-size
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_ir_types.compiler-ir-instr-list-count instrs))
-    instrs))
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-load-header-set-empty)
+      (compiler_optimize.opt-load-cse-empty-state-for-size
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_ir_types.compiler-ir-instr-list-count instrs))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 ;; Run with header-typed handle params (vars 0 and 1 are (Array i64)
 ;; descriptors) so the descriptor/element granularity rules can be exercised.
 (define (opt-load-cse-run-with-array-param
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-from-function
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_ir_types.compiler-ir-param-cons
-        (compiler_ir_types.CompilerIrParam.Param
-          "xs"
-          (compiler_ast_types.AstType.DynArray 0)
-          0)
+      (compiler_optimize.opt-load-header-set-from-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_ir_types.compiler-ir-param-cons
           (compiler_ir_types.CompilerIrParam.Param
-            "ys"
+            "xs"
             (compiler_ast_types.AstType.DynArray 0)
-            1)
-          (compiler_ir_types.CompilerIrParamList.Nil)))
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          instrs)
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (compiler_optimize.opt-load-cse-empty-state-for-size
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_ir_types.compiler-ir-instr-list-count instrs))
-    instrs))
+            0)
+          (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.CompilerIrParam.Param
+              "ys"
+              (compiler_ast_types.AstType.DynArray 0)
+              1)
+            (compiler_ir_types.CompilerIrParamList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            instrs)
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (compiler_optimize.opt-load-cse-empty-state-for-size
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_ir_types.compiler-ir-instr-list-count instrs))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 (define (opt-load-cse-run-with-params
   [params : compiler_ir_types.CompilerIrParamList]
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-from-function
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      params
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          instrs)
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (compiler_optimize.opt-load-cse-state-with-caps-and-facts
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_optimize.opt-load-cse-table-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count instrs))
-      (compiler_optimize.opt-load-cse-kinds-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count instrs))
-      (compiler_optimize.opt-alias-seed-params
+      (compiler_optimize.opt-load-header-set-from-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        params))
-    instrs))
+        params
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            instrs)
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_optimize.opt-load-cse-table-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+        (compiler_optimize.opt-load-cse-kinds-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+        (compiler_optimize.opt-alias-seed-params
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          params))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 (define (opt-load-cse-run-with-params-and-call-memory
   [params : compiler_ir_types.CompilerIrParamList]
   [call-memory : opt_i64_i64_map.Map]
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_optimize.opt-load-cse-instrs-from
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-load-header-set-from-function
+  (compiler_ir_types.compiler-ir-instr-seq-to-list
+    (compiler_optimize.opt-load-cse-instrs-from
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      params
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          instrs)
-        (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (opt_i64_i64_map.with-capacity 1)
-    call-memory
-    (compiler_optimize.opt-load-cse-state-with-caps-and-facts
-      (profile_state.compiler-profile-state-metrics
-        (profile_state.compiler-profile-state-new))
-      (compiler_optimize.opt-load-cse-table-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count instrs))
-      (compiler_optimize.opt-load-cse-kinds-cap-for-size
-        (compiler_ir_types.compiler-ir-instr-list-count instrs))
-      (compiler_optimize.opt-alias-seed-params
+      (compiler_optimize.opt-load-header-set-from-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        params))
-    instrs))
+        params
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            instrs)
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (opt_i64_i64_map.with-capacity 1)
+      call-memory
+      (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
+        (compiler_optimize.opt-load-cse-table-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+        (compiler_optimize.opt-load-cse-kinds-cap-for-size
+          (compiler_ir_types.compiler-ir-instr-list-count instrs))
+        (compiler_optimize.opt-alias-seed-params
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          params))
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
 (define (opt-load-cse-mixed-ref-params) : compiler_ir_types.CompilerIrParamList
   (compiler_ir_types.compiler-ir-param-cons

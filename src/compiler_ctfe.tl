@@ -215,13 +215,7 @@
   (if (ctfe_key_map.needs-grow? map)
     (let
       [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-      [previous : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set data.map-storage-arena))
-        (ctfe_key_map.grow! map)
-        (unsafe
-          (arena.tl_arena_set previous))))
+      (in-arena (arena.Arena data.map-storage-arena) (ctfe_key_map.grow! map)))
     unit))
 
 ;; Standalone APIs and direct CTFE tests are serial compatibility surfaces.
@@ -280,16 +274,13 @@
   [state : CompilerCtfeMacroState]) : unit
   (let
     [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    [previous : i64 (arena.tl_arena_current)]
     (begin
-      (unsafe
-        (arena.tl_arena_set data.map-storage-arena))
-      (if (< (ctfe_key_map.capacity (& data.visible-macro-name-set)) 128)
-        (set! data.visible-macro-name-set (ctfe_key_map.with-capacity 128))
-        (ctfe_key_map.clear-ref! (&mut data.visible-macro-name-set)))
-      (compiler-ctfe-macro-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set previous)))))
+      (in-arena
+        (arena.Arena data.map-storage-arena)
+        (if (< (ctfe_key_map.capacity (& data.visible-macro-name-set)) 128)
+          (set! data.visible-macro-name-set (ctfe_key_map.with-capacity 128))
+          (ctfe_key_map.clear-ref! (&mut data.visible-macro-name-set))))
+      (compiler-ctfe-macro-state-data-set! state data))))
 
 (define (ctfe-visible-macro-name-add-for-state!
   [state : CompilerCtfeMacroState]
@@ -1184,29 +1175,6 @@
         handle
         root))))
 
-(define (ctfe-env-arena-owner-current-head [handle : i64]) : i64
-  (let
-    [root : i64 (ctfe-env-arena-owner-root handle)]
-    (if (= root 0)
-      0
-      (let
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (if (= head 0)
-          root
-          head)))))
-
-(define (ctfe-env-arena-restore-after-owner-alloc!
-  [previous-arena : i64]
-  [owner : i64]) : unit
-  (if (=
-    (ctfe-env-arena-owner-root previous-arena)
-    (ctfe-env-arena-owner-root owner))
-    unit
-    (unsafe
-      (arena.tl_arena_set (ctfe-env-arena-owner-current-head previous-arena)))))
-
 (define (ctfe-env-arena-new) : CtfeEnvArena
   (CtfeEnvArena
     (__tl_make-array (__tl_dyn-array CtfeEnvBinding) 1)
@@ -1343,30 +1311,29 @@
     [count : i64 store.segment-count]
     [capacity : i64 (array-length store.segments)]
     [owner : i64 store.owner-arena]
-    [previous-arena : i64 (arena.tl_arena_current)]
     (begin
-      (unsafe
-        (arena.tl_arena_set (ctfe-env-arena-owner-current-head owner)))
-      (if (< count capacity)
-        unit
-        (let
-          [bigger : (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding))
-            (__tl_make-array
-              (__tl_dyn-array CtfeEnvBinding)
-              (if (< capacity 1)
-                1
-                (* capacity 2)))]
-          (begin
-            (ctfe-env-arena-segments-copy-range!
-              (&mut bigger)
-              (& store.segments)
-              count)
-            (set! store.segments bigger))))
-      (set!
-        (array-ref store.segments count)
-        (array.make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
-      (set! store.segment-count (+ count 1))
-      (ctfe-env-arena-restore-after-owner-alloc! previous-arena owner)
+      (in-arena
+        (arena.Arena owner)
+        (begin
+          (if (< count capacity)
+            unit
+            (let
+              [bigger : (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding))
+                (__tl_make-array
+                  (__tl_dyn-array CtfeEnvBinding)
+                  (if (< capacity 1)
+                    1
+                    (* capacity 2)))]
+              (begin
+                (ctfe-env-arena-segments-copy-range!
+                  (&mut bigger)
+                  (& store.segments)
+                  count)
+                (set! store.segments bigger))))
+          (set!
+            (array-ref store.segments count)
+            (array.make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
+          (set! store.segment-count (+ count 1))))
       (cfg compile-profile (ctfe-env-profile-note-arena-grow!) unit))))
 
 (define (ctfe-env-arena-ensure-index!
@@ -2062,16 +2029,13 @@
   [state : CompilerCtfeMacroState]) : unit
   (let
     [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    [previous : i64 (arena.tl_arena_current)]
     (begin
-      (unsafe
-        (arena.tl_arena_set data.map-storage-arena))
-      (if (< (ctfe_key_map.capacity (& data.module-macro-export-keys)) 256)
-        (set! data.module-macro-export-keys (ctfe_key_map.with-capacity 256))
-        (ctfe_key_map.clear-ref! (&mut data.module-macro-export-keys)))
-      (compiler-ctfe-macro-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set previous)))))
+      (in-arena
+        (arena.Arena data.map-storage-arena)
+        (if (< (ctfe_key_map.capacity (& data.module-macro-export-keys)) 256)
+          (set! data.module-macro-export-keys (ctfe_key_map.with-capacity 256))
+          (ctfe_key_map.clear-ref! (&mut data.module-macro-export-keys))))
+      (compiler-ctfe-macro-state-data-set! state data))))
 
 (define (ctfe-module-macro-export-add-id-for-state!
   [state : CompilerCtfeMacroState]
@@ -2138,20 +2102,17 @@
       (if data.module-value-reflection-enabled
         1024
         1)]
-    [previous : i64 (arena.tl_arena_current)]
     (begin
-      (unsafe
-        (arena.tl_arena_set data.map-storage-arena))
-      (if (<
-        (ctfe_key_map.capacity (& data.module-value-type-ids))
-        minimum-capacity)
-        (set!
-          data.module-value-type-ids
-          (ctfe_key_map.with-capacity minimum-capacity))
-        (ctfe_key_map.clear-ref! (&mut data.module-value-type-ids)))
-      (compiler-ctfe-macro-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set previous)))))
+      (in-arena
+        (arena.Arena data.map-storage-arena)
+        (if (<
+          (ctfe_key_map.capacity (& data.module-value-type-ids))
+          minimum-capacity)
+          (set!
+            data.module-value-type-ids
+            (ctfe_key_map.with-capacity minimum-capacity))
+          (ctfe_key_map.clear-ref! (&mut data.module-value-type-ids))))
+      (compiler-ctfe-macro-state-data-set! state data))))
 
 (define (ctfe-module-value-add-id-for-state!
   [state : CompilerCtfeMacroState]

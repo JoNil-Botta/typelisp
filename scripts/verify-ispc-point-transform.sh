@@ -162,6 +162,12 @@ record_static() {
     _instructions=$(awk '/^[[:space:]]+[A-Za-z][A-Za-z0-9.]*/ { n++ } END { print n+0 }' "$_body")
     _branches=$(grep -E -c '^[[:space:]]+j[a-z]+' "$_body" || true)
     _calls=$(grep -E -c '^[[:space:]]+call' "$_body" || true)
+    _bounds_aborts=$(grep -E -c \
+        '^[[:space:]]+call[[:space:]]+tl_oob_abort(_at)?' "$_body" || true)
+    if [ "$_impl" = typelisp ] && [ "$_bounds_aborts" -gt 4 ]; then
+        echo "point_transform: TypeLisp $_mode has $_bounds_aborts bounds-abort sites (maximum 4)" >&2
+        exit 1
+    fi
     _packed=$(grep -E -c '^[[:space:]]+v?(add|sub|mul)ps[[:space:]]' "$_body" || true)
     _fma=$(grep -E -c '^[[:space:]]+v?fm(add|sub)' "$_body" || true)
     _registers=$(count_unique_registers '%[A-Za-z][A-Za-z0-9]*' "$_body")

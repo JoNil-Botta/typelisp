@@ -55,6 +55,11 @@ compile and run in `avx2` and `avx512`.
   verifier also pins native AVX2/AVX-512 load, arithmetic, store, and tail-mask
   code shapes. This guards the array-surface migration away from public
   `(Array T)` signatures.
+- `native_slice_multi_output_i64.tl` - one native-Slice `foreach` reads both
+  source slices twice at the same lane index and writes two distinct outputs.
+  Offset views, surrounding sentinels, and a 19-element masked tail run in all
+  modes; the verifier pins packed add/sub shapes and exactly four bounds-abort
+  sites in each SIMD helper. Exit 42.
 - `inline_helper_i64.tl` - `foreach` over `n = 1` i64 lane through a direct
   source-known helper with a varying scalar argument. Exit 42.
 - `inline_helper_shadow_i64.tl` - `foreach` over `n = 13` i64 lanes through a

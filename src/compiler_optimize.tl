@@ -4984,7 +4984,8 @@
   (BinKey ir.CompilerIrBinOp ir.CompilerIrValue ir.CompilerIrValue ast.AstType)
   (UnKey ir.CompilerIrUnOp ir.CompilerIrValue ast.AstType)
   (CpuIdKey ir.CompilerIrValue ir.CompilerIrValue i64)
-  (XgetbvKey ir.CompilerIrValue))
+  (XgetbvKey ir.CompilerIrValue)
+  (WordKey ir.CompilerIrValue i64 ast.AstType))
 
 (defenum OptExprTable
   (Nil)
@@ -5471,7 +5472,13 @@
         (hash.combine
           (hash.i64 reg-index)
           (hash.combine (opt-value-hash leaf) (opt-value-hash subleaf))))]
-    [(OptExprKey.XgetbvKey index) (hash.combine 4 (opt-value-hash index))]))
+    [(OptExprKey.XgetbvKey index) (hash.combine 4 (opt-value-hash index))]
+    [(OptExprKey.WordKey source index ty)
+      (hash.combine
+        5
+        (hash.combine
+          (opt-type-hash type-segment-bases ty)
+          (hash.combine (opt-value-hash source) (hash.i64 index))))]))
 
 (define (opt-type-list-hash-at
   [type-segment-bases : i64]
@@ -6801,6 +6808,14 @@
     [(OptExprKey.XgetbvKey aindex)
       (match b
         [(OptExprKey.XgetbvKey bindex) (opt-value-eq aindex bindex)]
+        [_ false])]
+    [(OptExprKey.WordKey asource aindex aty)
+      (match b
+        [(OptExprKey.WordKey bsource bindex bty)
+          (and
+            (= aindex bindex)
+            (opt-value-eq asource bsource)
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]))
 
 (define (opt-expr-lookup
@@ -6828,7 +6843,8 @@
     [(OptExprKey.UnKey _ v _) (opt-value-is-var? v var)]
     [(OptExprKey.CpuIdKey leaf subleaf _)
       (or (opt-value-is-var? leaf var) (opt-value-is-var? subleaf var))]
-    [(OptExprKey.XgetbvKey index) (opt-value-is-var? index var)]))
+    [(OptExprKey.XgetbvKey index) (opt-value-is-var? index var)]
+    [(OptExprKey.WordKey source _ _) (opt-value-is-var? source var)]))
 
 ;; Drop every entry whose key references `var` (a stale operand) or whose result
 ;; is `var` (a stale definition).
@@ -43187,6 +43203,74 @@
                       (set! index (+ index 1)))])])]))
       store-count)))
 
+;; Native Slice parameters are two-word register groups passed by value. Their
+;; data/length words cannot change when a body store mutates one of the buffers,
+;; so repeated accesses in one straight-line SPMD body may reuse the extraction.
+;; Limit the fact to header-typed parameter values supplied by the whole-function
+;; scan: a general aggregate Word may observe mutable backing and is not safe to
+;; carry across a store. Calls and control-flow boundaries remain barriers.
+(define (opt-slice-word-cse-instr
+  [type-segment-bases : i64]
+  [hs : OptLoadHeaderSet]
+  [table : OptExprTable]
+  [instr : ir.CompilerIrInstr]) : OptCseResult
+  (match instr
+    [(ir.CompilerIrInstr.Word dst source index ty)
+      (let
+        [next : OptExprTable (opt-expr-invalidate-var table dst)]
+        (match source
+          [(ir.CompilerIrValue.Var source-var)
+            (if (opt-load-slice-var? hs source-var)
+              (let
+                [key : OptExprKey (OptExprKey.WordKey source index ty)]
+                (match (opt-expr-lookup type-segment-bases next key)
+                  [(ir.CompilerIrMaybeValue.Some earlier)
+                    (OptCseResult.Result
+                      next
+                      (ir.CompilerIrInstr.Mov dst earlier ty))]
+                  [(ir.CompilerIrMaybeValue.No)
+                    (OptCseResult.Result
+                      (OptExprTable.Cons key dst (box next))
+                      instr)]))
+              (OptCseResult.Result next instr))]
+          [_ (OptCseResult.Result next instr)]))]
+    [(ir.CompilerIrInstr.Syscall _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.Call _ _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.SpmdCall _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.VectorShuffle _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.TailCall _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.Jump _) (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.Branch _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.Return _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.Switch _ _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [_
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst)
+          (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
+        [(option_i64.None) (OptCseResult.Result table instr)])]))
+
 (define (opt-load-copy-instr-seq-rewrite!
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -43198,24 +43282,36 @@
     [call-memory : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     [load-state : OptLoadCseState state]
     [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
+    [word-state : OptExprTable (OptExprTable.Nil)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (while (< index count)
-      (match (opt-load-cse-dispatch
+      (match (opt-slice-word-cse-instr
         type-segment-bases
         hs
-        false
-        sources
-        call-memory
-        load-state
+        word-state
         (ir.compiler-ir-instr-seq-ref instrs index))
-        [(OptLoadCseResult.Result next-load loaded)
-          (match (opt-copy-instr copy-state loaded)
-            [(OptCopyResult.Result next-copy rewritten)
-              (begin
-                (ir.compiler-ir-instr-seq-set! instrs index rewritten)
-                (set! load-state next-load)
-                (set! copy-state next-copy)
-                (set! index (+ index 1)))])]))))
+        [(OptCseResult.Result next-word word-rewritten)
+          ;; Substitute established copies before load analysis. In particular,
+          ;; a repeated Slice Word becomes `Mov fresh, canonical`; the following
+          ;; Gep must be keyed on CANONICAL rather than the fresh copy temp.
+          (let
+            [copy-rewritten : ir.CompilerIrInstr
+              (opt-copy-subst-instr copy-state word-rewritten)]
+            (match (opt-load-cse-dispatch
+              type-segment-bases
+              hs
+              false
+              sources
+              call-memory
+              load-state
+              copy-rewritten)
+              [(OptLoadCseResult.Result next-load loaded)
+                (begin
+                  (ir.compiler-ir-instr-seq-set! instrs index loaded)
+                  (set! load-state next-load)
+                  (set! copy-state (opt-copy-update-env copy-state loaded))
+                  (set! word-state next-word)
+                  (set! index (+ index 1)))]))]))))
 
 ;; --- fold pre-scan -------------------------------------------------------------
 ;;
@@ -92347,9 +92443,9 @@
 ;; header-typedness of gep bases comes from a per-function pre-pass
 ;; (OptLoadHeaderSet) marking vars that are array/string descriptor handles at
 ;; EVERY def site (multi-def vars with disagreeing types are poisoned -- the
-;; block-local pass runs pre-SSA).
-;; Function-constant header-typed var set: var -> 1 (array/string handle at
-;; every typed def) or 2 (poisoned: any non-handle or untyped def).
+;; block-local pass runs pre-SSA). Code 1 is an ordinary descriptor handle, 2
+;; is poisoned, and 3 is a by-value native Slice parameter. Both 1 and 3 are
+;; header-typed; only 3 has stable register-group Word extractions.
 (defenum OptLoadHeaderSet
   (Sparse opt_i64_i64_map.Map)
   (Dense (__tl_dyn-array i64)))
@@ -92373,46 +92469,104 @@
       (opt-load-header-set-fill-zero! items 0)
       (OptLoadHeaderSet.Dense items))))
 
-(define (opt-load-header-set-mark
+(define (opt-load-header-set-mark-code
   [set : OptLoadHeaderSet (:consume)]
   [var : i64]
-  [header? : bool]) : OptLoadHeaderSet
+  [code : i64]) : OptLoadHeaderSet
   (match set
     [(OptLoadHeaderSet.Sparse map)
-      (if header?
-        (if (opt_i64_i64_map.contains? (& map) var)
+      (let
+        [next-code : i64
+          (match (opt_i64_i64_map.get (& map) var)
+            [(opt_i64_i64_map.LookupFound current)
+              (if (= current code)
+                current
+                2)]
+            [(opt_i64_i64_map.LookupMissing) code])]
+        (if (match (opt_i64_i64_map.get (& map) var)
+          [(opt_i64_i64_map.LookupFound current) (= current next-code)]
+          [(opt_i64_i64_map.LookupMissing) false])
           set
           (let
             [out : opt_i64_i64_map.Map map]
             (begin
-              (opt_i64_i64_map.insert-ref! (&mut out) var 1)
-              (OptLoadHeaderSet.Sparse out))))
+              (opt_i64_i64_map.insert-ref! (&mut out) var next-code)
+              (OptLoadHeaderSet.Sparse out)))))]
+    [(OptLoadHeaderSet.Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        set
         (let
-          [out : opt_i64_i64_map.Map map]
+          [current : i64 (array-ref items var)]
           (begin
-            (opt_i64_i64_map.insert-ref! (&mut out) var 2)
-            (OptLoadHeaderSet.Sparse out))))]
+            (if (= current 0)
+              (set! (array-ref items var) code)
+              (if (= current code)
+                unit
+                (set! (array-ref items var) 2)))
+            set)))]))
+
+(define (opt-load-header-set-mark
+  [set : OptLoadHeaderSet (:consume)]
+  [var : i64]
+  [header? : bool]) : OptLoadHeaderSet
+  (opt-load-header-set-mark-code
+    set
+    var
+    (if header?
+      1
+      2)))
+
+;; Taking a Slice parameter's storage address does not change its header type,
+;; but it does make the by-value words mutable through that escaped address.
+;; Downgrade code 3 to the ordinary-header code so store-crossing Word reuse is
+;; refused while descriptor location classification remains available.
+(define (opt-load-header-set-mark-unstable
+  [set : OptLoadHeaderSet (:consume)]
+  [var : i64]) : OptLoadHeaderSet
+  (match set
+    [(OptLoadHeaderSet.Sparse map)
+      (match (opt_i64_i64_map.get (& map) var)
+        [(opt_i64_i64_map.LookupFound value)
+          (if (= value 3)
+            (let
+              [out : opt_i64_i64_map.Map map]
+              (begin
+                (opt_i64_i64_map.insert-ref! (&mut out) var 1)
+                (OptLoadHeaderSet.Sparse out)))
+            set)]
+        [(opt_i64_i64_map.LookupMissing) set])]
     [(OptLoadHeaderSet.Dense items)
       (if (or (< var 0) (>= var (array-length items)))
         set
         (begin
-          (if header?
-            (if (= (array-ref items var) 0)
-              (set! (array-ref items var) 1)
-              unit)
-            (set! (array-ref items var) 2))
+          (if (= (array-ref items var) 3)
+            (set! (array-ref items var) 1)
+            unit)
           set))]))
 
 (define (opt-load-header-var? [set : OptLoadHeaderSet] [var : i64]) : bool
   (match set
     [(OptLoadHeaderSet.Sparse map)
       (match (opt_i64_i64_map.get (& map) var)
-        [(opt_i64_i64_map.LookupFound value) (= value 1)]
+        [(opt_i64_i64_map.LookupFound value) (or (= value 1) (= value 3))]
         [(opt_i64_i64_map.LookupMissing) false])]
     [(OptLoadHeaderSet.Dense items)
       (if (or (< var 0) (>= var (array-length items)))
         false
-        (= (array-ref items var) 1))]))
+        (let
+          [value : i64 (array-ref items var)]
+          (or (= value 1) (= value 3))))]))
+
+(define (opt-load-slice-var? [set : OptLoadHeaderSet] [var : i64]) : bool
+  (match set
+    [(OptLoadHeaderSet.Sparse map)
+      (match (opt_i64_i64_map.get (& map) var)
+        [(opt_i64_i64_map.LookupFound value) (= value 3)]
+        [(opt_i64_i64_map.LookupMissing) false])]
+    [(OptLoadHeaderSet.Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        false
+        (= (array-ref items var) 3))]))
 
 ;; A checked reference to an array/string descriptor addresses that descriptor
 ;; directly, so its parameter var is a header base for GEP/load classification
@@ -92422,18 +92576,36 @@
   [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.Ref _ inner)
-      (opt-licm-array-header-type?
-        type-segment-bases
-        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      (or
+        (opt-reference-to-slice? type-segment-bases inner)
+        (opt-licm-array-header-type?
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases inner)))]
     [(ast.AstType.MutRef _ inner)
-      (opt-licm-array-header-type?
-        type-segment-bases
-        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      (or
+        (opt-reference-to-slice? type-segment-bases inner)
+        (opt-licm-array-header-type?
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases inner)))]
     [(ast.AstType.Region _ inner)
       (opt-load-header-param-type?
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [_ (opt-licm-array-header-type? type-segment-bases ty)]))
+
+(define (opt-load-slice-param-type?
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Ref _ inner)
+      (opt-reference-to-slice? type-segment-bases inner)]
+    [(ast.AstType.MutRef _ inner)
+      (opt-reference-to-slice? type-segment-bases inner)]
+    [(ast.AstType.Region _ inner)
+      (opt-load-slice-param-type?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ false]))
 
 (define (opt-load-header-set-add-param
   [type-segment-bases : i64]
@@ -92441,10 +92613,12 @@
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (match param
     [(ir.CompilerIrParam.Param _ ty var)
-      (opt-load-header-set-mark
-        set
-        var
-        (opt-load-header-param-type? type-segment-bases ty))]))
+      (if (opt-load-slice-param-type? type-segment-bases ty)
+        (opt-load-header-set-mark-code set var 3)
+        (opt-load-header-set-mark
+          set
+          var
+          (opt-load-header-param-type? type-segment-bases ty)))]))
 
 (define (opt-load-header-set-add-param-seq
   [type-segment-bases : i64]
@@ -92527,6 +92701,10 @@
         set
         dst
         (opt-licm-array-header-type? type-segment-bases to-ty))]
+    [(ir.CompilerIrInstr.AddrOf dst source)
+      (opt-load-header-set-mark-unstable
+        (opt-load-header-set-mark set dst false)
+        source)]
     [_
       (match (opt-instr-def-var instr)
         [(option_i64.Some dst) (opt-load-header-set-mark set dst false)]
@@ -93478,6 +93656,24 @@
                     (OptLoadLocElement))
                   invalidated)])]
           [_ invalidated])]
+      ;; Native Slice references are register groups rather than pointers to
+      ;; heap descriptors. Word zero is their data pointer; retain the checked
+      ;; reference's element provenance so a store through a different mutable
+      ;; root does not invalidate source-element loads.
+      [(ir.CompilerIrInstr.Word dst src index ty)
+        (match src
+          [(ir.CompilerIrValue.Var source-var)
+            (if (and
+              (= index 0)
+              (= (opt-load-loc-type-size type-segment-bases ty) 8)
+              (opt-load-slice-var? hs source-var))
+              (opt-load-kinds-bind
+                profile-state
+                invalidated
+                dst
+                (OptLoadLocElement))
+              invalidated)]
+          [_ invalidated])]
       [(ir.CompilerIrInstr.Mov dst src _)
         (match src
           [(ir.CompilerIrValue.Var s)
@@ -93514,6 +93710,7 @@
 ;; i.e. the epoch a fresh allocation in `instr` must be tagged with.
 (define (opt-load-alias-update-facts
   [type-segment-bases : i64]
+  [hs : OptLoadHeaderSet]
   [facts : OptAliasFacts]
   [kinds : OptLoadPtrKinds]
   [instr : ir.CompilerIrInstr]
@@ -93534,6 +93731,27 @@
                   (opt-alias-mark-may-alias base dst))]
               [_ (opt-alias-mark-may-alias base dst)])]
           [_ (opt-alias-mark-may-alias base dst)]))]
+    ;; Word zero of a native Slice parameter is its data pointer. The header
+    ;; set distinguishes that by-value register group from general aggregate
+    ;; Word operations, whose backing may be mutable.
+    [(ir.CompilerIrInstr.Word dst source index ty)
+      (let
+        [base : OptAliasFacts (opt-alias-remove-var facts dst)]
+        (if (and
+          (= index 0)
+          (match ty
+            [(ast.AstType.U64) true]
+            [_ false]))
+          (match source
+            [(ir.CompilerIrValue.Var source-var)
+              (if (opt-load-slice-var? hs source-var)
+                (match (opt-alias-lookup base source-var)
+                  [(OptMaybeAliasKind.Some _)
+                    (opt-alias-copy-var base dst source-var)]
+                  [(OptMaybeAliasKind.No) base])
+                base)]
+            [_ base])
+          base))]
     [_ (opt-alias-update-value-facts facts instr epoch)]))
 
 ;; Allocation-epoch counter discipline: a fresh allocation increments the
@@ -94831,6 +95049,7 @@
         (OptLoadCseState.State
           (opt-load-alias-update-facts
             type-segment-bases
+            hs
             facts
             kinds
             instr
@@ -94863,6 +95082,7 @@
         (OptLoadCseState.State
           (opt-load-alias-update-facts
             type-segment-bases
+            hs
             facts
             kinds
             instr
@@ -94904,6 +95124,7 @@
         (OptLoadCseState.State
           (opt-load-alias-update-facts
             type-segment-bases
+            hs
             facts
             kinds
             instr
@@ -95054,6 +95275,7 @@
         (OptLoadCseState.State
           (opt-load-alias-update-facts
             type-segment-bases
+            hs
             facts
             kinds
             instr
@@ -95099,6 +95321,7 @@
         [facts2 : OptAliasFacts
           (opt-load-alias-update-facts
             type-segment-bases
+            hs
             facts
             kinds
             instr
@@ -95169,6 +95392,7 @@
 ;; destination are disjoint ranges of the same tracked base.
 (define (opt-load-cse-state-copy-bytes
   [type-segment-bases : i64]
+  [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
   [state : OptLoadCseState (:consume)]
@@ -95195,6 +95419,7 @@
         [facts2 : OptAliasFacts
           (opt-load-alias-update-facts
             type-segment-bases
+            hs
             facts
             kinds
             instr
@@ -95313,6 +95538,7 @@
                 (OptLoadCseState.State
                   (opt-load-alias-update-facts
                     type-segment-bases
+                    hs
                     facts
                     kinds
                     new-instr
@@ -95341,6 +95567,7 @@
                 (OptLoadCseState.State
                   (opt-load-alias-update-facts
                     type-segment-bases
+                    hs
                     facts
                     kinds
                     instr
@@ -95396,6 +95623,7 @@
       (OptLoadCseResult.Result
         (opt-load-cse-state-copy-bytes
           type-segment-bases
+          hs
           gated?
           sources
           state

@@ -144,6 +144,7 @@ tests/spmd/uniform_zip_i64.tl
 tests/spmd/multi_output_i64.tl
 tests/spmd/store_alias_i64.tl
 tests/spmd/native_slice_surface_i64.tl
+tests/spmd/native_slice_multi_output_i64.tl
 tests/spmd/inline_helper_i64.tl
 tests/spmd/inline_helper_shadow_i64.tl
 tests/spmd/inline_helper_f64.tl
@@ -1078,6 +1079,49 @@ verify_native_slice_shape() {
     fi
 }
 
+verify_native_slice_multi_output_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/native_slice_multi_output_i64.tl "$_mode" 2
+    _tag=tests_spmd_native_slice_multi_output_i64_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    _func="$WORKDIR/$_tag.$_mode.multi-output-slice.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] native Slice multi-output $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/native_slice_multi_output_i64.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n \
+        '/^_tl_native_slice_multi_output_i64_map_two_outputs:/,/^$/p' \
+        "$_asm" > "$_func"
+    if [ ! -s "$_func" ]; then
+        echo "[spmd-simd] native Slice multi-output $_mode helper is missing" >&2
+        echo "tests/spmd/native_slice_multi_output_i64.tl $_mode (missing helper)" >> "$FAILURES"
+        return
+    fi
+    _aborts=$(grep -E -c \
+        '^[[:space:]]+call[[:space:]]+tl_oob_abort(_at)?' "$_func" || true)
+    if [ "$_aborts" -ne 4 ]; then
+        echo "[spmd-simd] native Slice multi-output $_mode has $_aborts bounds-abort sites (expected 4)" >&2
+        echo "tests/spmd/native_slice_multi_output_i64.tl $_mode ($_aborts bounds aborts)" >> "$FAILURES"
+    fi
+    for shape in vpaddq vpsubq; do
+        if ! grep -F -- "$shape" "$_func" > /dev/null; then
+            echo "[spmd-simd] native Slice multi-output $_mode missing $shape" >&2
+            echo "tests/spmd/native_slice_multi_output_i64.tl $_mode (missing $shape)" >> "$FAILURES"
+        fi
+    done
+    if [ "$_mode" = avx2 ]; then
+        if ! grep -F -- '%ymm' "$_func" > /dev/null; then
+            echo "[spmd-simd] native Slice multi-output AVX2 lacks vector code" >&2
+            echo "tests/spmd/native_slice_multi_output_i64.tl avx2 (scalar fallback)" >> "$FAILURES"
+        fi
+    elif ! grep -E -- '%zmm[0-9]+|%k[0-7]' "$_func" > /dev/null; then
+        echo "[spmd-simd] native Slice multi-output AVX-512 lacks vector code" >&2
+        echo "tests/spmd/native_slice_multi_output_i64.tl avx512 (scalar fallback)" >> "$FAILURES"
+    fi
+}
+
 verify_avx2_native_mask_shapes() {
     compile_spmd_mode tests/spmd/masked_if_value_types.tl avx2
     _tag=tests_spmd_masked_if_value_types_tl
@@ -1209,6 +1253,7 @@ for mode in avx2 avx512; do
     verify_map_compare_shape "$mode"
     verify_map_shift_shape "$mode"
     verify_native_slice_shape "$mode"
+    verify_native_slice_multi_output_shape "$mode"
 done
 
 verify_avx2_private_helper_call_shape

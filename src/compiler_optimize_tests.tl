@@ -20939,6 +20939,16 @@
           [_ 0])
         (opt-count-load-instrs (__tl-box-place rest)))]))
 
+(define (opt-count-word-instrs [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
+  (match instrs
+    [(compiler_ir_types.CompilerIrInstrList.Nil) 0]
+    [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
+      (+
+        (match instr
+          [(compiler_ir_types.CompilerIrInstr.Word _ _ _ _) 1]
+          [_ 0])
+        (opt-count-word-instrs (__tl-box-place rest)))]))
+
 (define (opt-count-load-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
   [index : i64]
@@ -46475,6 +46485,43 @@
           params))
       (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))))
 
+;; Drive the fused block-local load/copy traversal used by optimize-block. This
+;; also exercises the native-Slice Word facts that intentionally do not belong
+;; to the standalone load-CSE helper above.
+(define (opt-load-copy-run-with-params
+  [params : compiler_ir_types.CompilerIrParamList]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [type-segment-bases : i64
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "entry")
+          instrs)
+        (compiler_ir_types.CompilerIrBlockList.Nil))]
+    [hs : compiler_optimize.OptLoadHeaderSet
+      (compiler_optimize.opt-load-header-set-from-function
+        type-segment-bases
+        params
+        blocks)]
+    [seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs)]
+    (begin
+      (compiler_optimize.opt-load-copy-instr-seq-rewrite!
+        type-segment-bases
+        hs
+        (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+          (profile_state.compiler-profile-state-metrics
+            (profile_state.compiler-profile-state-new))
+          (compiler_optimize.opt-load-cse-table-cap-for-size
+            (compiler_ir_types.compiler-ir-instr-list-count instrs))
+          (compiler_optimize.opt-load-cse-kinds-cap-for-size
+            (compiler_ir_types.compiler-ir-instr-list-count instrs))
+          (compiler_optimize.opt-alias-seed-params type-segment-bases params))
+        seq)
+      (compiler_ir_types.compiler-ir-instr-seq-to-list seq))))
+
 (define (opt-load-cse-run-with-params-and-call-memory
   [params : compiler_ir_types.CompilerIrParamList]
   [call-memory : opt_i64_i64_map.Map]
@@ -46557,6 +46604,51 @@
         (compiler_ast_types.ast-ty-mut-ref 0 (compiler_ast_types.AstType.I64))
         1)
       (compiler_ir_types.CompilerIrParamList.Nil))))
+
+(define (opt-load-cse-slice-distinct-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "read"
+      (compiler_ast_types.ast-ty-ref
+        0
+        (compiler_ast_types.ast-ty-slice (compiler_ast_types.AstType.I64)))
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "write"
+        (compiler_ast_types.ast-ty-mut-ref
+          0
+          (compiler_ast_types.ast-ty-slice (compiler_ast_types.AstType.I64)))
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "index"
+          (compiler_ast_types.AstType.I64)
+          20)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+(define (opt-load-cse-slice-exclusive-param) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "values"
+      (compiler_ast_types.ast-ty-mut-ref
+        0
+        (compiler_ast_types.ast-ty-slice (compiler_ast_types.AstType.I64)))
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "index"
+        (compiler_ast_types.AstType.I64)
+        20)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+(define (opt-load-cse-group-param) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "descriptor"
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64))
+      0)
+    (compiler_ir_types.CompilerIrParamList.Nil)))
 
 (define (opt-dead-store-run-with-array-param
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
@@ -47672,6 +47764,251 @@
                   (compiler_ir_types.CompilerIrValue.Var 4)
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
+;; A native Slice parameter is a by-value two-word register group. Re-extracting
+;; its data/length after a store to a distinct mutable Slice must canonicalize
+;; both words, allowing the source-element load to survive that disjoint store.
+(define (opt-load-cse-slice-distinct-store-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Word
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      0
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Word
+        3
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        1
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var 20)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (opt-test-symbol "slice_bounds"))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            4
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 20)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              5
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Word
+                6
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                0
+                (compiler_ast_types.AstType.U64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  7
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.CompilerIrValue.Var 20)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.StorePtr
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (compiler_ir_types.CompilerIrValue.I64 99)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Word
+                      8
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      0
+                      (compiler_ast_types.AstType.U64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Word
+                        9
+                        (compiler_ir_types.CompilerIrValue.Var 0)
+                        1
+                        (compiler_ast_types.AstType.U64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                          (compiler_ir_types.CompilerIrValue.Var 20)
+                          (compiler_ir_types.CompilerIrValue.Var 9)
+                          (opt-test-symbol "slice_bounds"))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Gep
+                            10
+                            (compiler_ir_types.CompilerIrValue.Var 8)
+                            (compiler_ir_types.CompilerIrValue.Var 20)
+                            (compiler_ast_types.AstType.I64))
+                          (compiler_ir_types.compiler-ir-instr-cons
+                            (compiler_ir_types.CompilerIrInstr.Load
+                              11
+                              (compiler_ir_types.CompilerIrValue.Var 10)
+                              (compiler_ast_types.AstType.I64))
+                            (compiler_ir_types.CompilerIrInstrList.Nil)))))))))))))))
+
+;; The same data-root derivation must NOT retain a cached load when a copy may
+;; overwrite that source element. CopyBytes is used so store-to-load forwarding
+;; cannot hide an incorrect alias verdict.
+(define (opt-load-cse-slice-same-store-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Word
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      0
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.CopyBytes
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 99)
+            8)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Word
+              5
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              0
+              (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                6
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.CompilerIrValue.Var 20)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Load
+                  7
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
+(define (opt-load-cse-slice-unknown-store-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Word
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      0
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 99)
+            (compiler_ir_types.CompilerIrValue.I64 9)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Word
+              5
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              0
+              (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                6
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.CompilerIrValue.Var 20)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Load
+                  7
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
+(define (opt-load-cse-slice-call-barrier-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Word
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      0
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Word
+        3
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        1
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          (opt-test-symbol "touch_slice")
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Word
+            5
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            0
+            (compiler_ast_types.AstType.U64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Word
+              6
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              1
+              (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; Address-taking makes the parameter's own two-word storage mutable, unlike a
+;; store through its data pointer. The whole-function marker must refuse reuse.
+(define (opt-load-cse-slice-address-store-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Word
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      0
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.AddrOf 3 0)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 9)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Word
+            4
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            0
+            (compiler_ast_types.AstType.U64))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+;; General aggregate Word operations remain store-sensitive; only recognized
+;; native Slice parameter groups get the specialized stable-word fact.
+(define (opt-load-cse-group-word-store-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Word
+      1
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      0
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 99)
+        (compiler_ir_types.CompilerIrValue.I64 9)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Word
+          2
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          0
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
 
 ;; Hashmap slot stores use a scaled data-buffer Gep followed by an unscaled
 ;; inline-field Gep. The latter must retain element provenance so it preserves
@@ -48801,6 +49138,30 @@
       (opt-load-cse-run-with-params
         (opt-load-cse-descriptor-ref-params)
         (opt-load-cse-descriptor-data-root-instrs))]
+    [slice-distinct-store : compiler_ir_types.CompilerIrInstrList
+      (opt-load-copy-run-with-params
+        (opt-load-cse-slice-distinct-params)
+        (opt-load-cse-slice-distinct-store-instrs))]
+    [slice-same-store : compiler_ir_types.CompilerIrInstrList
+      (opt-load-copy-run-with-params
+        (opt-load-cse-slice-exclusive-param)
+        (opt-load-cse-slice-same-store-instrs))]
+    [slice-unknown-store : compiler_ir_types.CompilerIrInstrList
+      (opt-load-copy-run-with-params
+        (opt-load-cse-slice-exclusive-param)
+        (opt-load-cse-slice-unknown-store-instrs))]
+    [slice-call-barrier : compiler_ir_types.CompilerIrInstrList
+      (opt-load-copy-run-with-params
+        (opt-load-cse-slice-exclusive-param)
+        (opt-load-cse-slice-call-barrier-instrs))]
+    [slice-address-store : compiler_ir_types.CompilerIrInstrList
+      (opt-load-copy-run-with-params
+        (opt-load-cse-slice-exclusive-param)
+        (opt-load-cse-slice-address-store-instrs))]
+    [group-word-store : compiler_ir_types.CompilerIrInstrList
+      (opt-load-copy-run-with-params
+        (opt-load-cse-group-param)
+        (opt-load-cse-group-word-store-instrs))]
     [element-gep-chain-store : compiler_ir_types.CompilerIrInstrList
       (opt-load-cse-run-with-array-param
         (opt-load-cse-element-gep-chain-store-instrs))]
@@ -49271,6 +49632,53 @@
               (compiler_ast_types.AstType.I64))
             1))
         103]
+      ;; Native Slice register-group words remain stable across a disjoint
+      ;; output store, and the derived exclusive roots keep the source load.
+      [(not (= (opt-count-word-instrs slice-distinct-store) 3)) 218]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              slice-distinct-store
+              8
+              2
+              (compiler_ast_types.AstType.U64))
+            1))
+        219]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              slice-distinct-store
+              9
+              3
+              (compiler_ast_types.AstType.U64))
+            1))
+        220]
+      [(not (= (opt-count-load-instrs slice-distinct-store) 1)) 221]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              slice-distinct-store
+              11
+              5
+              (compiler_ast_types.AstType.I64))
+            1))
+        222]
+      ;; A same-root or unknown write still invalidates the cached element load.
+      [(not (= (opt-count-word-instrs slice-same-store) 1)) 223]
+      [(not (= (opt-count-load-instrs slice-same-store) 2)) 224]
+      [(not (= (opt-count-mov-dst-instrs slice-same-store 7) 0)) 225]
+      [(not (= (opt-count-word-instrs slice-unknown-store) 1)) 226]
+      [(not (= (opt-count-load-instrs slice-unknown-store) 2)) 227]
+      [(not (= (opt-count-mov-dst-instrs slice-unknown-store 7) 0)) 228]
+      ;; Calls invalidate the stable-word run, and ordinary aggregate Word
+      ;; operations never enter it in the first place.
+      [(not (= (opt-count-word-instrs slice-call-barrier) 4)) 229]
+      [(not (= (opt-count-mov-dst-instrs slice-call-barrier 5) 0)) 230]
+      [(not (= (opt-count-mov-dst-instrs slice-call-barrier 6) 0)) 231]
+      [(not (= (opt-count-word-instrs group-word-store) 2)) 232]
+      [(not (= (opt-count-mov-dst-instrs group-word-store 2) 0)) 233]
+      [(not (= (opt-count-word-instrs slice-address-store) 2)) 234]
+      [(not (= (opt-count-mov-dst-instrs slice-address-store 4) 0)) 235]
       [else 44])))
 
 ;; --- constant-trip full unroll + byte-compose load combining fixtures -----------

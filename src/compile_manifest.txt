@@ -150,7 +150,7 @@ contains|_tl_build_config_from:
 contains|_tl_build_source_plan_render:
 contains|_tl_build_package:
 contains|_tl_build_package_emit:
-contains|_tl_build_package_write_tlci:
+contains|build: package emission requires checked frontend surface support
 contains|_tl_build_doctest_build_source:
 contains|_tl_build_cli_core_build_doctest_typecheck_package_paths:
 contains|_tl_doc_test_typecheck_source_with_roots:
@@ -421,7 +421,7 @@ contains|_tl_compiler_driver_emit_file_pic_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_state_emit_file_buffer_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_state_emit_file_pic_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_emit_package_loaded:
-contains|_tl_compiler_driver_emit_package_loaded_object_image:
+not-contains|_tl_compiler_driver_emit_package_loaded_object_image:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_state_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_ir_summary_render:
@@ -723,7 +723,7 @@ decision|src/compiler_surface_ast.tl|package-agnostic parsed frontend surface co
 decision|src/compiler_surface_facts.tl|package-agnostic checked-prefix fact schema (#5519/#5522): relocates summary and per-declaration clone-root observations through image-local identities and installs no producer-generation ids or pointers
 decision|src/compiler_surface_hydrate.tl|package-agnostic tlci frontend surface lookup and hydration (#5519/#5522): validates section/schema identity, remaps compiler identities, and decodes portable AST state into caller-owned pools
 decision|src/compiler_prelude_surface_producer.tl|stdlib-prelude deployment producer for generic package surface sections (#5519/#5522): cold-loads the fixed closure, captures its portable identity/AST payload, and packages it behind a byte-only boundary from native tlci generation
-decision|src/compiler_package_surface_producer.tl|single-pass checked package frontend surface capture (#5526): main-less, imported by build_cli_core.tl under embedded-stdlib-tlci and completed by compiler_lower.tl
+decision|src/compiler_package_surface_producer.tl|single-pass checked package frontend surface capture (#5526): main-less, enabled for surface producers, root compiler identity builds, and embedded-stdlib-tlci; imported by build_cli_core.tl and completed by compiler_lower.tl
 
 decision|src/compiler_comptime_diagnostics_core.tl|shared interpreted/native comptime fuel diagnostic prefix (#2656): main-less helper module imported by compiler_ctfe and tlci_loader so status-2 native failures retain interpreted message parity before appending the registered macro name
 decision|src/compiler_dependency_tlci.tl|dependency TLCI discovery, trust admission, mapping lifecycle, and defining-module catalog registry (#5482): main-less helper module imported by build_cli_core and check_cli_core; exercised by their selfhost cases and compiler dependency registry self-tests

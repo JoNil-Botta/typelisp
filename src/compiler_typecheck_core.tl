@@ -22231,7 +22231,12 @@
           next)))))
 
 (define (tc-macro-state-lazy-import [state : TcMacroState]) : TcLazyImportState
-  (TcLazyImportState (tc-lazy-import-state-address-initialize state)))
+  (TcLazyImportState
+    (let
+      [address : i64 (tc-macro-state-slot-address state 14)]
+      (if (> address 0)
+        address
+        (tc-lazy-import-state-address-initialize state)))))
 
 (define (tc-job-state-lazy-import [state : TcJobState]) : TcLazyImportState
   (tc-macro-state-lazy-import (tc-job-state-macro-state state)))
@@ -22384,12 +22389,13 @@
 (define (tc-lazy-import-stubs-reset-for-job! [state : TcJobState]) : unit
   (tc-lazy-import-stubs-reset-for-state! (tc-job-state-macro-state state)))
 
-(define (tc-lazy-import-stubs-ensure-for-state! [state : TcMacroState]) : unit
+(define (tc-lazy-import-stubs-ensure-for-state!
+  [state : TcMacroState]
+  [lazy-state : TcLazyImportState]) : unit
   (let
     [source-names : ci.InternSourceNameSessionHandle
       (tc-macro-state-source-names state)]
-    [data : TcLazyImportStateData
-      (tc-lazy-import-state-data (tc-macro-state-lazy-import state))]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
     (if (and
       (=
         data.intern-table-id
@@ -22401,51 +22407,48 @@
       (tc-lazy-import-stubs-reset-for-state! state))))
 
 (define (tc-lazy-import-stub-count-for-state [state : TcMacroState]) : i64
-  (begin
-    (tc-lazy-import-stubs-ensure-for-state! state)
-    (__tl-project-field
-      (tc-lazy-import-state-data (tc-macro-state-lazy-import state))
-      record-count)))
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    (__tl-project-field (tc-lazy-import-state-data lazy-state) record-count)))
 
 (define (tc-lazy-import-summary-backed-stub-count-for-state
   [state : TcMacroState]) : i64
-  (begin
-    (tc-lazy-import-stubs-ensure-for-state! state)
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
     (__tl-project-field
-      (tc-lazy-import-state-data (tc-macro-state-lazy-import state))
+      (tc-lazy-import-state-data lazy-state)
       summary-backed-count)))
 
 (define (tc-lazy-import-summary-macro-force-count-for-state
   [state : TcMacroState]) : i64
-  (begin
-    (tc-lazy-import-stubs-ensure-for-state! state)
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
     (__tl-project-field
-      (tc-lazy-import-state-data (tc-macro-state-lazy-import state))
+      (tc-lazy-import-state-data lazy-state)
       summary-macro-force-count)))
 
 (define (tc-lazy-import-summary-macro-force-record-for-state!
   [state : TcMacroState]) : unit
-  (begin
-    (tc-lazy-import-stubs-ensure-for-state! state)
-    (let
-      [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
-      [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
-      (begin
-        (set!
-          data.summary-macro-force-count
-          (+ data.summary-macro-force-count 1))
-        (tc-lazy-import-state-data-set! lazy-state data)))))
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    (begin
+      (set! data.summary-macro-force-count (+ data.summary-macro-force-count 1))
+      (tc-lazy-import-state-data-set! lazy-state data))))
 
 (define (tc-lazy-import-summary-macro-force-reset-for-state!
   [state : TcMacroState]) : unit
-  (begin
-    (tc-lazy-import-stubs-ensure-for-state! state)
-    (let
-      [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
-      [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
-      (begin
-        (set! data.summary-macro-force-count 0)
-        (tc-lazy-import-state-data-set! lazy-state data)))))
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    (begin
+      (set! data.summary-macro-force-count 0)
+      (tc-lazy-import-state-data-set! lazy-state data))))
 
 ;; Standalone source APIs and focused smokes use the serial compatibility job.
 (define (tc-lazy-import-stub-count) : i64
@@ -22468,8 +22471,9 @@
   [summary-backed : bool]) : unit
   (let
     [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
-    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! macro-state)]
     [lazy-state : TcLazyImportState (tc-macro-state-lazy-import macro-state)]
+    [_ready : unit
+      (tc-lazy-import-stubs-ensure-for-state! macro-state lazy-state)]
     [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
     (begin
       (if (< data.record-count tc-lazy-import-stub-capacity)
@@ -22498,23 +22502,22 @@
   [state : TcMacroState]
   [importer-module-id : i64]
   [alias-id : i64]) : TcMaybeNameId
-  (begin
-    (tc-lazy-import-stubs-ensure-for-state! state)
-    (let
-      [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
-      [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
-      [slot : i64
-        (tc-lazy-import-stub-index-slot-for-data
-          (& data)
-          importer-module-id
-          alias-id)]
-      (if (< slot 0)
-        (TcMaybeNameId.No)
-        (let
-          [entry : i64 (array-ref data.index-slots slot)]
-          (if (= entry 0)
-            (TcMaybeNameId.No)
-            (TcMaybeNameId.Some (array-ref data.target-ids (- entry 1)))))))))
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    [slot : i64
+      (tc-lazy-import-stub-index-slot-for-data
+        (& data)
+        importer-module-id
+        alias-id)]
+    (if (< slot 0)
+      (TcMaybeNameId.No)
+      (let
+        [entry : i64 (array-ref data.index-slots slot)]
+        (if (= entry 0)
+          (TcMaybeNameId.No)
+          (TcMaybeNameId.Some (array-ref data.target-ids (- entry 1))))))))
 
 (define (tc-lazy-import-stub-target-id-for-state
   [state : TcMacroState]
@@ -22600,41 +22603,40 @@
   [symbols : csym.CompilerSymbols]
   [alias-id : i64]
   [base-id : i64]) : TcMaybeNameId
-  (begin
-    (tc-lazy-import-stubs-ensure-for-state! state)
-    (let
-      [data : TcLazyImportStateData
-        (tc-lazy-import-state-data (tc-macro-state-lazy-import state))]
-      [index : i64 (- data.record-count 1)]
-      [found-key : i64 -1]
-      [found-handle : i64 -1]
-      [ambiguous : bool false]
-      (begin
-        (while (and (not ambiguous) (>= index 0))
-          (let
-            [stub-alias-id : i64 (array-ref data.alias-ids index)]
-            [target-id : i64 (array-ref data.target-ids index)]
-            (begin
-              (if (and (= stub-alias-id alias-id) (not (= target-id alias-id)))
-                (let
-                  [key-id : i64
-                    (csym.compiler-symbol-module-key-id-by-id target-id base-id)]
-                  [handle : i64
-                    (csym.compiler-symbols-lookup-type-id-or symbols key-id -1)]
-                  (if (csym.compiler-symbols-handle-found? handle)
-                    (if (< found-handle 0)
-                      (begin
-                        (set! found-key key-id)
-                        (set! found-handle handle))
-                      (if (= handle found-handle)
-                        unit
-                        (set! ambiguous true)))
-                    unit))
-                unit)
-              (set! index (- index 1)))))
-        (if (and (not ambiguous) (>= found-handle 0))
-          (TcMaybeNameId.Some found-key)
-          (TcMaybeNameId.No))))))
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    [index : i64 (- data.record-count 1)]
+    [found-key : i64 -1]
+    [found-handle : i64 -1]
+    [ambiguous : bool false]
+    (begin
+      (while (and (not ambiguous) (>= index 0))
+        (let
+          [stub-alias-id : i64 (array-ref data.alias-ids index)]
+          [target-id : i64 (array-ref data.target-ids index)]
+          (begin
+            (if (and (= stub-alias-id alias-id) (not (= target-id alias-id)))
+              (let
+                [key-id : i64
+                  (csym.compiler-symbol-module-key-id-by-id target-id base-id)]
+                [handle : i64
+                  (csym.compiler-symbols-lookup-type-id-or symbols key-id -1)]
+                (if (csym.compiler-symbols-handle-found? handle)
+                  (if (< found-handle 0)
+                    (begin
+                      (set! found-key key-id)
+                      (set! found-handle handle))
+                    (if (= handle found-handle)
+                      unit
+                      (set! ambiguous true)))
+                  unit))
+              unit)
+            (set! index (- index 1)))))
+      (if (and (not ambiguous) (>= found-handle 0))
+        (TcMaybeNameId.Some found-key)
+        (TcMaybeNameId.No)))))
 
 (define (tc-source-dotted-alias-target-id
   [state : TcMacroState]

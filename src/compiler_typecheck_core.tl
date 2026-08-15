@@ -4769,6 +4769,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-walk-decl-generation-rotations : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-walk-decl-generation-skips : i64
     0))
 (cfg
@@ -7986,6 +7990,9 @@
       (compiler-tc-macro-counter-profile-line
         "walk_decl_generations"
         compiler-tc-walk-decl-generations)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_generation_rotations"
+        compiler-tc-walk-decl-generation-rotations)
       (compiler-tc-macro-counter-profile-line
         "walk_decl_generation_skips"
         compiler-tc-walk-decl-generation-skips)
@@ -84201,7 +84208,7 @@
     0
     0
     0
-    32
+    8
     0
     0
     0
@@ -85375,12 +85382,13 @@
 ;; still copied out at every declaration boundary -- that is what makes the
 ;; garbage droppable -- but a fresh arena is only cut every
 ;; `macro-decl-generation-batch-size` declarations. One arena costs a reserve
-;; and a release syscall pair, and the self-compile fires 9,061 declaration
-;; expansions: per-declaration arenas cost more wall time than the retention is
-;; worth, while the memory they hold back is a batch of expansion garbage
-;; (measured mean 45 KB per firing declaration, so ~1.4 MB per live batch at
-;; 32) against a 225 MB owner. Retention is bounded by 2 batches, not by the
-;; walk.
+;; and a release syscall pair. #5893 measured 13,820 generation entries (9,498
+;; attributed firing declarations) on a Linux opt1 self-compile: batch 32 used
+;; 432 arenas and retained 106,558,504 non-output bytes, while batch 8 used
+;; 1,728 arenas and retained 77,175,304 bytes without a work regression. Batch
+;; 1 retained only 27,169,064 bytes, but paid 13,820 arena pairs and raised
+;; fired-declaration self time by 9.4%. Eight is the measured memory/work knee;
+;; retention is bounded by 2 batches, not by the walk.
 ;; Make `next` the live generation and destroy the one retired a batch ago.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for
@@ -85393,6 +85401,11 @@
     [retired : i64
       (tc-macro-walk-field state macro-decl-generation-retired-arena)]
     (begin
+      (cfg
+        compile-profile
+        (set!
+          compiler-tc-walk-decl-generation-rotations
+          (+ compiler-tc-walk-decl-generation-rotations 1)))
       (tc-macro-walk-set! state macro-decl-generation-arena next)
       (tc-macro-walk-set! state macro-decl-generation-retired-arena previous)
       (if (= retired 0)

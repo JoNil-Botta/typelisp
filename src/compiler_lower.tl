@@ -111,9 +111,9 @@
         (+ compiler-lower-profile-name-env-stores 1)))
     (let
       [segments : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
-        (make-array (__tl_dyn-array LowerNameBinding) 4)]
+        (__tl_make-array (__tl_dyn-array LowerNameBinding) 4)]
       [first : (__tl_dyn-array LowerNameBinding)
-        (make-array LowerNameBinding 16)]
+        (__tl_make-array LowerNameBinding 16)]
       [owner : i64 (lower-name-arena-owner-root (arena.tl_arena_current))]
       (begin
         (set! (array-ref segments 0) first)
@@ -148,7 +148,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
-            (make-array
+            (__tl_make-array
               (__tl_dyn-array LowerNameBinding)
               (if (< capacity 1)
                 4
@@ -159,7 +159,9 @@
               (& store.segments)
               count)
             (set! store.segments bigger))))
-      (set! (array-ref store.segments count) (make-array LowerNameBinding 16))
+      (set!
+        (array-ref store.segments count)
+        (__tl_make-array LowerNameBinding 16))
       (set! store.segment-count (+ count 1))
       (lower-name-arena-restore-after-owner-alloc! previous-arena owner))))
 
@@ -357,8 +359,8 @@
 (define (lower-empty-global-name-cache [owner-address : i64]) : LowerNameCache
   (LowerNameCache
     (lower_i64_i64_map.with-capacity 8)
-    (make-array i64 0)
-    (make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
     (lower_i64_i64_map.with-capacity 8)
     (lower-module-path-index-empty)
     (clone_support.CloneRootEntries.Empty)
@@ -510,7 +512,8 @@
 
 (define (lower-comptime-error-id-cache-empty) : (__tl_dyn-array i64)
   (let
-    [cache : (__tl_dyn-array i64) (make-array i64 lower-comptime-cache-size)]
+    [cache : (__tl_dyn-array i64)
+      (__tl_make-array i64 lower-comptime-cache-size)]
     (begin
       (set! (array-ref cache lower-comptime-cache-generation-index) -1)
       (set! (array-ref cache lower-comptime-cache-table-id-index) -1)
@@ -755,7 +758,7 @@
         (compiler-lower-state-cell bool true))
       (set!
         (array-ref cells alias-symbol-memo)
-        (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0)))
+        (compiler-lower-state-cell (__tl_dyn-array i64) (__tl_make-array i64 0)))
       (set!
         (array-ref cells canonical-path-count)
         (compiler-lower-state-cell i64 0))
@@ -790,13 +793,13 @@
           (lower_i64_i64_map.with-capacity 16)))
       (set!
         (array-ref cells module-decl-index-starts)
-        (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0)))
+        (compiler-lower-state-cell (__tl_dyn-array i64) (__tl_make-array i64 0)))
       (set!
         (array-ref cells module-decl-index-ends)
-        (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0)))
+        (compiler-lower-state-cell (__tl_dyn-array i64) (__tl_make-array i64 0)))
       (set!
         (array-ref cells module-decl-index-positions)
-        (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0)))
+        (compiler-lower-state-cell (__tl_dyn-array i64) (__tl_make-array i64 0)))
       (set!
         (array-ref cells module-decl-index-arena)
         (compiler-lower-state-cell i64 0))
@@ -3329,7 +3332,7 @@
     [count : i64 (lower-name-env-count left)]
     [cur : LowerNameEnv left]
     [bindings : (__tl_dyn-array LowerNameFlatBinding)
-      (make-array LowerNameFlatBinding count)]
+      (__tl_make-array LowerNameFlatBinding count)]
     [index : i64 0]
     [out : LowerNameEnv right]
     (begin
@@ -3650,8 +3653,8 @@
         names
         (LowerNameCache
           (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
-          (make-array i64 count)
-          (make-array i64 count)
+          (__tl_make-array i64 count)
+          (__tl_make-array i64 count)
           (lower_i64_i64_map.with-capacity 64)
           (lower-module-path-index-empty)
           (clone_support.CloneRootEntries.Empty)
@@ -3678,8 +3681,8 @@
         names
         (LowerNameCache
           (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
-          (make-array i64 count)
-          (make-array i64 count)
+          (__tl_make-array i64 count)
+          (__tl_make-array i64 count)
           (lower_i64_i64_map.with-capacity 16)
           (lower-module-path-index-empty)
           (clone_support.CloneRootEntries.Empty)
@@ -4180,7 +4183,7 @@
       env
       (LowerTypeCache.Some
         (lower_i64_i64_map.with-capacity (lower-type-cache-capacity count))
-        (make-array ast.AstType count)
+        (__tl_make-array ast.AstType count)
         0
         (LowerTypeParent.None)
         lower-state.address))))
@@ -4197,7 +4200,7 @@
       env
       (LowerTypeCache.Some
         (lower_i64_i64_map.with-capacity (lower-type-cache-capacity count))
-        (make-array ast.AstType count)
+        (__tl_make-array ast.AstType count)
         0
         (LowerTypeParent.Global)
         lower-state.address))))
@@ -4613,7 +4616,7 @@
   [count : i64]) : unit
   (let
     [slots : (__tl_dyn-array i64)
-      (make-array
+      (__tl_make-array
         i64
         (if (< count 1)
           1
@@ -4635,7 +4638,7 @@
     lower-state
     (__tl_dyn-array i64)
     alias-symbol-memo
-    (make-array i64 0)))
+    (__tl_make-array i64 0)))
 
 (define (lower-alias-symbol-memo-get
   [lower-state : CompilerLowerState]
@@ -6922,17 +6925,17 @@
       lower-state
       (__tl_dyn-array i64)
       module-decl-index-starts
-      (make-array i64 0))
+      (__tl_make-array i64 0))
     (compiler-lower-state-write!
       lower-state
       (__tl_dyn-array i64)
       module-decl-index-ends
-      (make-array i64 0))
+      (__tl_make-array i64 0))
     (compiler-lower-state-write!
       lower-state
       (__tl_dyn-array i64)
       module-decl-index-positions
-      (make-array i64 0))))
+      (__tl_make-array i64 0))))
 
 (define (lower-module-decl-index-ensure!
   [lower-state : CompilerLowerState]
@@ -6974,10 +6977,10 @@
           (arena.tl_arena_set index-arena))]
       [modules : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 512)]
       [module-count : i64 0]
-      [counts : (__tl_dyn-array i64) (make-array i64 (+ count 1))]
-      [starts : (__tl_dyn-array i64) (make-array i64 (+ count 1))]
-      [ends : (__tl_dyn-array i64) (make-array i64 (+ count 1))]
-      [positions : (__tl_dyn-array i64) (make-array i64 (+ count 1))]
+      [counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
       [cur-module-id : i64 empty-module-id]
       [i : i64 0]
       [running : i64 0]
@@ -7972,7 +7975,7 @@
           (ResultLowerModuleLocalView.Err message)])]))
 
 (define (lower-id-set-empty) : LowerIdSet
-  (LowerIdSet (make-array i64 0) 0))
+  (LowerIdSet (__tl_make-array i64 0) 0))
 
 (define (lower-id-set-contains? [items : LowerIdSet] [name : i64]) : bool
   (let
@@ -7992,7 +7995,7 @@
     items
     (let
       [len : i64 items.len]
-      [slots : (__tl_dyn-array i64) (make-array i64 (+ len 1))]
+      [slots : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
       [index : i64 0]
       (begin
         (while (< index len)
@@ -8012,7 +8015,7 @@
     (begin
       (if (< len (array-length slots))
         (set! (array-ref slots len) name)
-        (array-push! slots name))
+        (__tl_array-push! slots name))
       (LowerIdSet slots (+ len 1)))))
 
 (define (lower-spmd-inline-empty-helper-stack) : LowerIdSet
@@ -8221,7 +8224,10 @@
           source-name-id)))))
 
 (define (lower-spmd-inline-subst-empty) : LowerSpmdInlineSubst
-  (LowerSpmdInlineSubst (make-array i64 0) (make-array ast.AstExpr 0) 0))
+  (LowerSpmdInlineSubst
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstExpr 0)
+    0))
 
 (define (lower-spmd-inline-subst-lookup
   [subs : LowerSpmdInlineSubst]
@@ -8247,8 +8253,8 @@
   [name : i64]) : LowerSpmdInlineSubst
   (let
     [len : i64 subs.len]
-    [names : (__tl_dyn-array i64) (make-array i64 len)]
-    [values : (__tl_dyn-array ast.AstExpr) (make-array ast.AstExpr len)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+    [values : (__tl_dyn-array ast.AstExpr) (__tl_make-array ast.AstExpr len)]
     [index : i64 0]
     [kept : i64 0]
     (begin
@@ -8269,8 +8275,9 @@
   [rest : LowerSpmdInlineSubst]) : LowerSpmdInlineSubst
   (let
     [len : i64 rest.len]
-    [names : (__tl_dyn-array i64) (make-array i64 (+ len 1))]
-    [values : (__tl_dyn-array ast.AstExpr) (make-array ast.AstExpr (+ len 1))]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
+    [values : (__tl_dyn-array ast.AstExpr)
+      (__tl_make-array ast.AstExpr (+ len 1))]
     [index : i64 0]
     (begin
       (while (< index len)
@@ -11514,7 +11521,7 @@
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
   (LowerFunctionBodyIndex
     (lower_i64_i64_map.with-capacity 8192)
-    (make-array LowerMaybeFunctionBody count)
+    (__tl_make-array LowerMaybeFunctionBody count)
     0))
 
 ;; Build a small per-module overlay name cache holding only the module's
@@ -13520,7 +13527,7 @@
     [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
     [out-paths : ast.AstDeclPathList
       (ast.ast-decl-path-list-with-capacity count)]
-    [keep : (__tl_dyn-array i64) (make-array i64 count)]
+    [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [source-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [index : i64 0]
     (begin
@@ -13584,7 +13591,7 @@
 
 (define (lower-decl-keep-plan-all [count : i64]) : LowerDeclKeepPlan
   (let
-    [keep : (__tl_dyn-array i64) (make-array i64 count)]
+    [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -13656,7 +13663,7 @@
       (let
         [source : (__tl_dyn-array i64) plan.keep]
         [count : i64 plan.source-count]
-        [keep : (__tl_dyn-array i64) (make-array i64 count)]
+        [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -14177,15 +14184,15 @@
             (LowerMaybeMaskedLoadCache.Some
               (box
                 (LowerMaskedLoadCacheData
-                  (make-array i64 (lower-masked-load-cache-entry-capacity))
-                  (make-array i64 (lower-masked-load-cache-entry-capacity))
-                  (make-array i64 (lower-masked-load-cache-entry-capacity))
-                  (make-array
+                  (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
+                  (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
+                  (__tl_make-array i64 (lower-masked-load-cache-entry-capacity))
+                  (__tl_make-array
                     ir.CompilerIrValue
                     (lower-masked-load-cache-entry-capacity))
                   0
-                  (make-array i64 (lower-masked-load-cache-mask-capacity))
-                  (make-array i64 (lower-masked-load-cache-mask-capacity))
+                  (__tl_make-array i64 (lower-masked-load-cache-mask-capacity))
+                  (__tl_make-array i64 (lower-masked-load-cache-mask-capacity))
                   0))))]
         [(LowerMaybeMaskedLoadCache.Some cache)
           (begin
@@ -20906,7 +20913,7 @@
       found)))
 
 (define (lower-capture-list-empty) : LowerCaptureList
-  (LowerCaptureList (make-array LowerCapture 0) 0))
+  (LowerCaptureList (__tl_make-array LowerCapture 0) 0))
 
 (define (lower-capture-list-add-front
   [captures : LowerCaptureList]
@@ -20915,7 +20922,7 @@
     [items : (__tl_dyn-array LowerCapture) captures.items]
     [count : i64 captures.count]
     (begin
-      (array-push! items capture)
+      (__tl_array-push! items capture)
       (LowerCaptureList items (+ count 1)))))
 
 (define (lower-unsupported-capture-message) : String
@@ -22417,7 +22424,11 @@
         (box (lower-diagnostic "lower: missing arena restore binding"))))))
 
 (define (lower-cleanup-stack-empty) : LowerCleanupStack
-  (LowerCleanupStack (make-array i64 0) (make-array i64 0) (make-array i64 0) 0))
+  (LowerCleanupStack
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    0))
 
 (define (lower-cleanup-stack-push
   [cleanups : LowerCleanupStack]
@@ -22429,9 +22440,9 @@
     [live-name-ids : (__tl_dyn-array i64) cleanups.live-name-ids]
     [count : i64 cleanups.count]
     (begin
-      (array-push! hidden-name-ids hidden-name-id)
-      (array-push! cleanup-name-ids cleanup-name-id)
-      (array-push! live-name-ids 0)
+      (__tl_array-push! hidden-name-ids hidden-name-id)
+      (__tl_array-push! cleanup-name-ids cleanup-name-id)
+      (__tl_array-push! live-name-ids 0)
       (LowerCleanupStack
         hidden-name-ids
         cleanup-name-ids
@@ -22449,9 +22460,9 @@
     [live-name-ids : (__tl_dyn-array i64) cleanups.live-name-ids]
     [count : i64 cleanups.count]
     (begin
-      (array-push! hidden-name-ids hidden-name-id)
-      (array-push! cleanup-name-ids cleanup-name-id)
-      (array-push! live-name-ids live-name-id)
+      (__tl_array-push! hidden-name-ids hidden-name-id)
+      (__tl_array-push! cleanup-name-ids cleanup-name-id)
+      (__tl_array-push! live-name-ids live-name-id)
       (LowerCleanupStack
         hidden-name-ids
         cleanup-name-ids
@@ -26887,11 +26898,11 @@
 (define tc-rtf-cap : i64
   65536)
 (define tc-rtf-gen-arr : (__tl_dyn-array i64)
-  (make-array i64 tc-rtf-cap))
+  (__tl_make-array i64 tc-rtf-cap))
 (define tc-rtf-id-arr : (__tl_dyn-array i64)
-  (make-array i64 tc-rtf-cap))
+  (__tl_make-array i64 tc-rtf-cap))
 (define tc-rtf-ty-arr : (__tl_dyn-array ast.AstType)
-  (make-array ast.AstType tc-rtf-cap))
+  (__tl_make-array ast.AstType tc-rtf-cap))
 (define tc-rtf-current-gen : i64
   0)
 (define tc-rtf-filled : bool
@@ -31509,7 +31520,7 @@
 
 (define (lower-c-abi-slot-list-single [slot : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
-    [items : (__tl_dyn-array LowerCAbiSlot) (make-array LowerCAbiSlot 1)]
+    [items : (__tl_dyn-array LowerCAbiSlot) (__tl_make-array LowerCAbiSlot 1)]
     (begin
       (set! (array-ref items 0) slot)
       (LowerCAbiSlotList items 1))))
@@ -31518,7 +31529,7 @@
   [first : LowerCAbiSlot]
   [second : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
-    [items : (__tl_dyn-array LowerCAbiSlot) (make-array LowerCAbiSlot 2)]
+    [items : (__tl_dyn-array LowerCAbiSlot) (__tl_make-array LowerCAbiSlot 2)]
     (begin
       (set! (array-ref items 0) first)
       (set! (array-ref items 1) second)
@@ -43458,7 +43469,7 @@
     [_ (LowerMaybeIrValue.No)]))
 
 (define (lower-array-var-set-empty) : LowerArrayVarSet
-  (LowerArrayVarSet (make-array i64 0) (make-array i64 0) 0))
+  (LowerArrayVarSet (__tl_make-array i64 0) (__tl_make-array i64 0) 0))
 
 (define (lower-array-var-set-add
   [set : LowerArrayVarSet]
@@ -43482,8 +43493,8 @@
       (if found
         (LowerArrayVarSet vars offsets count)
         (begin
-          (array-push! vars var)
-          (array-push! offsets offset)
+          (__tl_array-push! vars var)
+          (__tl_array-push! offsets offset)
           (LowerArrayVarSet vars offsets (+ count 1)))))))
 
 (define (lower-array-var-set-merge
@@ -48242,7 +48253,7 @@
     [_ false]))
 
 (define (lower-vector-map-store-list-empty) : LowerVectorMapStoreList
-  (LowerVectorMapStoreList (make-array LowerVectorMapStore 0) 0))
+  (LowerVectorMapStoreList (__tl_make-array LowerVectorMapStore 0) 0))
 
 (define (lower-vector-map-store-list-add
   [stores : LowerVectorMapStoreList]
@@ -48251,7 +48262,7 @@
     [items : (__tl_dyn-array LowerVectorMapStore) stores.items]
     [count : i64 stores.count]
     (begin
-      (array-push! items store)
+      (__tl_array-push! items store)
       (LowerVectorMapStoreList items (+ count 1)))))
 
 (define (lower-vector-map-store-list-ref
@@ -51353,8 +51364,8 @@
 
 (define (lower-vector-map-value-cache-empty) : LowerVectorMapValueCache
   (LowerVectorMapValueCache
-    (make-array LowerVectorMapValueKey 0)
-    (make-array ir.CompilerIrValue 0)
+    (__tl_make-array LowerVectorMapValueKey 0)
+    (__tl_make-array ir.CompilerIrValue 0)
     0))
 
 (define (lower-vector-map-value-cache-lookup
@@ -51383,8 +51394,8 @@
     [values : (__tl_dyn-array ir.CompilerIrValue) cache.values]
     [count : i64 cache.count]
     (begin
-      (array-push! keys key)
-      (array-push! values value)
+      (__tl_array-push! keys key)
+      (__tl_array-push! values value)
       (LowerVectorMapValueCache keys values (+ count 1)))))
 
 ;; Populate the vector-map cache in the entry block with values whose source
@@ -52816,7 +52827,7 @@
         [s : LowerState state]
         [count : i64 stores.count]
         [results : (__tl_dyn-array ir.CompilerIrValue)
-          (make-array ir.CompilerIrValue count)]
+          (__tl_make-array ir.CompilerIrValue count)]
         [store-index : i64 0]
         [cache : LowerVectorMapValueCache preheader-cache]
         [result-vec : ir.CompilerIrValue ir.CompilerIrValue.Unit]
@@ -58441,7 +58452,7 @@
         [s : LowerState state]
         [count : i64 stores.count]
         [results : (__tl_dyn-array ir.CompilerIrValue)
-          (make-array ir.CompilerIrValue count)]
+          (__tl_make-array ir.CompilerIrValue count)]
         [store-index : i64 0]
         [cache : LowerVectorMapValueCache (lower-vector-map-value-cache-empty)]
         [mask : ir.CompilerIrValue ir.CompilerIrValue.Unit]
@@ -64944,8 +64955,8 @@
 
 (define (compiler-lower-arena-state-new) : CompilerLowerArenaState
   (let
-    [scratch : (__tl_dyn-array i64) (make-array i64 1)]
-    [ir : (__tl_dyn-array i64) (make-array i64 1)]
+    [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ir : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref scratch 0) 0)
       (set! (array-ref ir 0) 0)

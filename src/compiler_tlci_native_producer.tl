@@ -2258,6 +2258,33 @@
           (string.int->string (string.string-length region)))
         (+ inner-opened 1)))))
 
+;; Pack a nominal type name followed by its ordered lifetime names. Source
+;; identifiers cannot contain newlines, so the host callback can validate and
+;; reconstruct the list without allocating an operation or stack value per
+;; lifetime. The callback also receives the exact item count; truncated,
+;; trailing, or empty fields therefore fail closed. Refs #6551.
+(define (embedded-native-template-type-var-args-payload
+  [name : i64]
+  [lifetimes : (& lifetimes compiler_ast_types.AstLifetimeList)]) : String
+  (let
+    [payload : String (ci.intern-str name)]
+    [index : i64 0]
+    (begin
+      (while (< index (compiler_ast_types.ast-lifetime-list-len lifetimes))
+        (begin
+          (set!
+            payload
+            (str_cat.str-cat
+              payload
+              "\n"
+              (ci.intern-str
+                (compiler_ast_types.ast-lifetime-list-get
+                  lifetimes
+                  index
+                  (compiler_ast_types.ast-lifetime-fallback)))))
+          (set! index (+ index 1))))
+      payload)))
+
 (define (embedded-native-template-type-ops
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [ty : compiler_ast_types.AstType]
@@ -2369,43 +2396,63 @@
       (let
         [lifetimes : compiler_ast_types.AstLifetimeList
           (__tl-box-place lifetimes-box)]
-        [valid : bool
-          (and
-            (= name cbi.compiler-builtin-id-fix-unquote)
-            (= (compiler_ast_types.ast-lifetime-list-len (& lifetimes)) 1))]
-        [operand-name : i64
-          (if valid
-            (compiler_ast_types.ast-lifetime-list-get
-              (& lifetimes)
-              0
-              (compiler_ast_types.ast-lifetime-fallback))
-            -1)]
-        [param : i64
-          (if valid
-            (embedded-stdlib-tlci-param-index params operand-name)
-            -1)]
-        [slot : i64
-          (if (and valid (< param 0))
-            (embedded-native-local-index (ci.intern-str operand-name))
-            -1)]
-        (if (and (< param 0) (< slot 0))
-          (embedded-native-fallback-opened "template-type:non-scalar")
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (if (>= param 0)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-push-operand)
-                (tlci_core.tlci-host-callback-name-shared-view
-                  tlci_core.tlci-host-callback-name-local-get))
-              (string.int->string
-                (if (>= param 0)
-                  param
-                  slot))
-              "0"
-              "0")
-            1)))]
+        (if (= name cbi.compiler-builtin-id-fix-unquote)
+          (let
+            [valid : bool
+              (= (compiler_ast_types.ast-lifetime-list-len (& lifetimes)) 1)]
+            [operand-name : i64
+              (if valid
+                (compiler_ast_types.ast-lifetime-list-get
+                  (& lifetimes)
+                  0
+                  (compiler_ast_types.ast-lifetime-fallback))
+                -1)]
+            [param : i64
+              (if valid
+                (embedded-stdlib-tlci-param-index params operand-name)
+                -1)]
+            [slot : i64
+              (if (and valid (< param 0))
+                (embedded-native-local-index (ci.intern-str operand-name))
+                -1)]
+            (if (and (< param 0) (< slot 0))
+              (embedded-native-fallback-opened "template-type:unquote")
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  (if (>= param 0)
+                    (tlci_core.tlci-host-callback-name-shared-view
+                      tlci_core.tlci-host-callback-name-push-operand)
+                    (tlci_core.tlci-host-callback-name-shared-view
+                      tlci_core.tlci-host-callback-name-local-get))
+                  (string.int->string
+                    (if (>= param 0)
+                      param
+                      slot))
+                  "0"
+                  "0")
+                1)))
+          (let
+            [payload : String
+              (embedded-native-template-type-var-args-payload
+                name
+                (& lifetimes))]
+            [count : i64
+              (compiler_ast_types.ast-lifetime-list-len (& lifetimes))]
+            (if (= count 0)
+              (embedded-native-fallback-opened "template-type:var-args-empty")
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-type-var-args)
+                  (string.int->string count)
+                  (embedded-native-name-arg
+                    (embedded-native-escape-string payload))
+                  (string.int->string (string.string-length payload)))
+                1)))))]
     [(compiler_ast_types.AstType.Var type-name-id)
       (let
         [type-name : String (ci.intern-str type-name-id)]
@@ -7730,6 +7777,7 @@
     "(extern comptime-host-let-binding-list-cons (:symbol \"_tl_comptime_host_let-binding-list-cons\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-let (:symbol \"_tl_comptime_host_expr-let\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-var (:symbol \"_tl_comptime_host_type-var\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-type-var-args (:symbol \"_tl_comptime_host_type-var-args\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-scalar (:symbol \"_tl_comptime_host_type-scalar\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-array-element-type (:symbol \"_tl_comptime_host_array-element-type\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-box-element-type (:symbol \"_tl_comptime_host_box-element-type\") : (-> i64 i64 i64 i64 i64 i64))\n"

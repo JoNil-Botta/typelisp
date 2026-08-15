@@ -1327,6 +1327,26 @@ run_capture lint-clean-check "$COMPILER" lint "$SRC" --check
 assert_empty "$WORKDIR/lint-clean-check.stderr"
 assert_contains "$WORKDIR/lint-clean-check.stdout" "lint: 0 finding(s)"
 
+LINT_DOTTED_COMPAT_SRC="$WORKDIR/lint_dotted_compat.tl"
+cat > "$LINT_DOTTED_COMPAT_SRC" <<'EOF'
+(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    (set! p.x y)
+    (__tl-project-field p x)))
+EOF
+# cli-gate-case stage1-wrapper-lint-dotted-compat wrapper run_capture
+run_capture lint-dotted-compat "$COMPILER" lint "$LINT_DOTTED_COMPAT_SRC" --prefer-dotted-field
+assert_empty "$WORKDIR/lint-dotted-compat.stderr"
+assert_contains "$WORKDIR/lint-dotted-compat.stdout" "lint: 0 finding(s)"
+
+# cli-gate-case stage1-wrapper-lint-dotted-compat-check wrapper run_capture
+run_capture lint-dotted-compat-check "$COMPILER" lint "$LINT_DOTTED_COMPAT_SRC" --prefer-dotted-field --check
+assert_empty "$WORKDIR/lint-dotted-compat-check.stderr"
+assert_contains "$WORKDIR/lint-dotted-compat-check.stdout" "lint: 0 finding(s)"
+
 LINT_SRC="$WORKDIR/lint_bad.tl"
 cat > "$LINT_SRC" <<'EOF'
 (define (main) : i64

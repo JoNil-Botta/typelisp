@@ -8,6 +8,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
+(cfg test (import stdlib.test))
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_profile_state as profile_state)
 (import compiler_backend)
@@ -1057,13 +1058,13 @@
   (define compiler-driver-profile-phase-start-intern-pool-len-metric : i64
     11))
 (cfg
-  compile-profile
-  (define compiler-driver-profile-prelude-source-pipeline-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-driver-profile-prelude-source-pipeline-entries-metric : i64
+    12))
 (cfg
-  compile-profile
-  (define compiler-driver-profile-prelude-hydrations : i64
-    0))
+  (any compile-profile test)
+  (define compiler-driver-profile-prelude-hydrations-metric : i64
+    13))
 (cfg
   compile-profile
   (define compiler-driver-batch-profile-start-ms-metric : i64
@@ -1086,19 +1087,104 @@
     18))
 
 (cfg
-  compile-profile
+  (any compile-profile test)
   (define (compiler-driver-profile-value
     [state : profile_state.CompilerProfileState]
     [metric : i64]) : i64
     (profile_state.compiler-profile-state-metric-value state metric)))
 
 (cfg
-  compile-profile
+  (any compile-profile test)
   (define (compiler-driver-profile-set!
     [state : profile_state.CompilerProfileState]
     [metric : i64]
     [value : i64]) : unit
     (profile_state.compiler-profile-state-metric-set! state metric value)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-driver-profile-add!
+    [state : profile_state.CompilerProfileState]
+    [metric : i64]
+    [value : i64]) : unit
+    (profile_state.compiler-profile-state-metric-add! state metric value)))
+
+(define (compiler-driver-profile-reset-prelude!
+  [_state : profile_state.CompilerProfileState]) : unit
+  (cfg
+    (any compile-profile test)
+    (begin
+      (compiler-driver-profile-set!
+        _state
+        compiler-driver-profile-prelude-source-pipeline-entries-metric
+        0)
+      (compiler-driver-profile-set!
+        _state
+        compiler-driver-profile-prelude-hydrations-metric
+        0))
+    unit))
+
+(define (compiler-driver-profile-note-prelude-source-pipeline!
+  [_state : profile_state.CompilerProfileState]) : unit
+  (cfg
+    (any compile-profile test)
+    (compiler-driver-profile-add!
+      _state
+      compiler-driver-profile-prelude-source-pipeline-entries-metric
+      1)
+    unit))
+
+(define (compiler-driver-profile-note-prelude-hydration!
+  [_state : profile_state.CompilerProfileState]) : unit
+  (cfg
+    (any compile-profile test)
+    (compiler-driver-profile-add!
+      _state
+      compiler-driver-profile-prelude-hydrations-metric
+      1)
+    unit))
+
+(cfg
+  test
+  (test
+    compiler-driver-profile-prelude-job-isolation
+    (let
+      [left : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      (begin
+        (compiler-driver-profile-reset-prelude! left)
+        (compiler-driver-profile-reset-prelude! right)
+        (compiler-driver-profile-note-prelude-source-pipeline! left)
+        (compiler-driver-profile-note-prelude-hydration! right)
+        (compiler-driver-profile-note-prelude-source-pipeline! left)
+        (compiler-driver-profile-note-prelude-hydration! left)
+        (compiler-driver-profile-reset-prelude! right)
+        (test.assert-i64-eq
+          (compiler-driver-profile-value
+            left
+            compiler-driver-profile-prelude-source-pipeline-entries-metric)
+          2
+          "left job keeps interleaved source-pipeline count")
+        (test.assert-i64-eq
+          (compiler-driver-profile-value
+            left
+            compiler-driver-profile-prelude-hydrations-metric)
+          1
+          "right reset does not erase left hydration count")
+        (test.assert-i64-eq
+          (compiler-driver-profile-value
+            right
+            compiler-driver-profile-prelude-source-pipeline-entries-metric)
+          0
+          "right source-pipeline count resets independently")
+        (test.assert-i64-eq
+          (compiler-driver-profile-value
+            right
+            compiler-driver-profile-prelude-hydrations-metric)
+          0
+          "right hydration count resets independently")))))
 
 (cfg
   compile-profile
@@ -1470,8 +1556,7 @@
   (define (compiler-driver-profile-start-total
     [state : profile_state.CompilerProfileState]) : unit
     (begin
-      (set! compiler-driver-profile-prelude-source-pipeline-entries 0)
-      (set! compiler-driver-profile-prelude-hydrations 0)
+      (compiler-driver-profile-reset-prelude! state)
       (compiler-driver-profile-set!
         state
         compiler-driver-profile-total-start-ms-metric
@@ -1504,7 +1589,8 @@
 
 (cfg
   compile-profile
-  (define (compiler-driver-profile-prelude-counters) : unit
+  (define (compiler-driver-profile-prelude-counters
+    [state : profile_state.CompilerProfileState]) : unit
     (cfg
       compile-profile-summary
       unit
@@ -1513,12 +1599,17 @@
           (str_cat.str-cat
             "compile-profile-detail|prelude.source_pipeline_entries|"
             (string.int->string
-              compiler-driver-profile-prelude-source-pipeline-entries)
+              (compiler-driver-profile-value
+                state
+                compiler-driver-profile-prelude-source-pipeline-entries-metric))
             "\n"))
         (io.print-error
           (str_cat.str-cat
             "compile-profile-detail|prelude.hydrations|"
-            (string.int->string compiler-driver-profile-prelude-hydrations)
+            (string.int->string
+              (compiler-driver-profile-value
+                state
+                compiler-driver-profile-prelude-hydrations-metric))
             "\n"))))))
 
 (cfg
@@ -2950,19 +3041,12 @@
                 configuration
                 pools)]))))))
 
-(define (compiler-driver-note-prelude-source-pipeline!) : unit
-  (cfg
-    compile-profile
-    (set!
-      compiler-driver-profile-prelude-source-pipeline-entries
-      (+ compiler-driver-profile-prelude-source-pipeline-entries 1))
-    unit))
-
-(define (compiler-driver-load-runtime-prelude-cold
+(define (compiler-driver-load-runtime-prelude-cold-and-profile-state
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (begin
-    (compiler-driver-note-prelude-source-pipeline!)
+    (compiler-driver-profile-note-prelude-source-pipeline! profile-state)
     (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg
       (compiler_load.compiler-load-runtime-prelude-path-shared-view)
       (sym_i64_env.sym-i64-empty)
@@ -2998,17 +3082,29 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (compiler_load.ResultCompilerLoadWithPaths.Err diag)])))
 
-(define (compiler-driver-load-runtime-prelude-cache-miss
-  [key : compiler_load.CompilerLoadPreludeCacheKey]
+(define (compiler-driver-load-runtime-prelude-cold
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
+  (compiler-driver-load-runtime-prelude-cold-and-profile-state
+    stdlib-roots
+    cfgs
+    (profile_state.compiler-profile-state-new)))
+
+(define (compiler-driver-load-runtime-prelude-cache-miss-and-profile-state
+  [key : compiler_load.CompilerLoadPreludeCacheKey]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (in-arena
     (arena.Arena compiler_ast_types.node-pool-base-arena)
     (let
       [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
         (compiler_load.compiler-load-prelude-cache-key-copy key)]
       [cold : compiler_load.ResultCompilerLoadWithPaths
-        (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
+        (compiler-driver-load-runtime-prelude-cold-and-profile-state
+          stdlib-roots
+          cfgs
+          profile-state)]
       (begin
         (match cold
           [(compiler_load.ResultCompilerLoadWithPaths.Ok
@@ -3025,9 +3121,20 @@
           [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
         cold))))
 
-(define (compiler-driver-load-runtime-prelude
+(define (compiler-driver-load-runtime-prelude-cache-miss
+  [key : compiler_load.CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
+  (compiler-driver-load-runtime-prelude-cache-miss-and-profile-state
+    key
+    stdlib-roots
+    cfgs
+    (profile_state.compiler-profile-state-new)))
+
+(define (compiler-driver-load-runtime-prelude-and-profile-state
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (if (compiler_load.compiler-load-session-cache-enabled?)
     (let
       [key : compiler_load.CompilerLoadPreludeCacheKey
@@ -3042,18 +3149,34 @@
             modules
             seen)]
         [(CompilerLoadPreludeCacheMiss)
-          (compiler-driver-load-runtime-prelude-cache-miss
+          (compiler-driver-load-runtime-prelude-cache-miss-and-profile-state
             key
             stdlib-roots
-            cfgs)]))
-    (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)))
+            cfgs
+            profile-state)]))
+    (compiler-driver-load-runtime-prelude-cold-and-profile-state
+      stdlib-roots
+      cfgs
+      profile-state)))
 
-(define (compiler-driver-load-file-with-runtime
-  [input-path : String]
+(define (compiler-driver-load-runtime-prelude
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
+  (compiler-driver-load-runtime-prelude-and-profile-state
+    stdlib-roots
+    cfgs
+    (profile_state.compiler-profile-state-new)))
+
+(define (compiler-driver-load-file-with-runtime-and-profile-state
+  [input-path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   ;; Prepend the implicit prelude (runtime + core macros), then load the entry.
-  (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
+  (match (compiler-driver-load-runtime-prelude-and-profile-state
+    stdlib-roots
+    cfgs
+    profile-state)
     [(compiler_load.ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
@@ -3084,6 +3207,16 @@
           (compiler_load.ResultCompilerLoadWithPaths.Err diag)])]
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))
+
+(define (compiler-driver-load-file-with-runtime
+  [input-path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
+  (compiler-driver-load-file-with-runtime-and-profile-state
+    input-path
+    stdlib-roots
+    cfgs
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-driver-load-file-for-pic-image
   [input-path : String]
@@ -3128,9 +3261,10 @@
   [load-state : compiler_load.CompilerLoadSessionState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (begin
-    (compiler-driver-note-prelude-source-pipeline!)
+    (compiler-driver-profile-note-prelude-source-pipeline! profile-state)
     (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
       load-state
       (compiler_load.compiler-load-runtime-prelude-path-shared-view)
@@ -3175,7 +3309,8 @@
   [key : compiler_load.CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (in-arena
     (arena.Arena (compiler_ast_types.ast-node-pool-context-base-arena pools))
     (let
@@ -3186,7 +3321,8 @@
           load-state
           stdlib-roots
           cfgs
-          pools)]
+          pools
+          profile-state)]
       (begin
         (match cold
           [(compiler_load.ResultCompilerLoadWithPaths.Ok
@@ -3209,7 +3345,8 @@
   [load-state : compiler_load.CompilerLoadSessionState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (if (compiler_load.compiler-load-session-state-cache-enabled? load-state)
     (let
       [key : compiler_load.CompilerLoadPreludeCacheKey
@@ -3232,12 +3369,14 @@
             key
             stdlib-roots
             cfgs
-            pools)]))
+            pools
+            profile-state)]))
     (compiler-driver-load-runtime-prelude-cold-with-pools
       load-state
       stdlib-roots
       cfgs
-      pools)))
+      pools
+      profile-state)))
 
 (define (compiler-driver-load-runtime-prelude-with-state-pools-and-surface
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -3245,7 +3384,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : compiler_ast_types.AstNodePoolContext]
   ;; lint-allow: unused-variable -- used by embedded-stdlib-tlci builds.
-  [surface-arena : i64]) : compiler_load.ResultCompilerLoadWithPaths
+  [surface-arena : i64]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (cfg
     embedded-stdlib-tlci
     (let
@@ -3271,7 +3411,8 @@
             load-state
             stdlib-roots
             cfgs
-            pools)]
+            pools
+            profile-state)]
         [(CompilerDriverPreludeSurface.Ok decls paths modules seen)
           (begin
             ;; Hydration bypasses the ordinary stdlib source loader, so record
@@ -3284,12 +3425,7 @@
               (compiler_load.compiler-load-runtime-prelude-path-shared-view))
             (compiler_load.compiler-load-session-state-note-embedded-stdlib-source!
               load-state)
-            (cfg
-              compile-profile
-              (set!
-                compiler-driver-profile-prelude-hydrations
-                (+ compiler-driver-profile-prelude-hydrations 1))
-              unit)
+            (compiler-driver-profile-note-prelude-hydration! profile-state)
             (compiler_load.ResultCompilerLoadWithPaths.Ok
               decls
               paths
@@ -3299,19 +3435,22 @@
       load-state
       stdlib-roots
       cfgs
-      pools)))
+      pools
+      profile-state)))
 
 (define (compiler-driver-load-runtime-prelude-with-state-and-pools
   [load-state : compiler_load.CompilerLoadSessionState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (compiler-driver-load-runtime-prelude-with-state-pools-and-surface
     load-state
     stdlib-roots
     cfgs
     pools
-    0))
+    0
+    profile-state))
 
 (define (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -3319,7 +3458,8 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : compiler_ast_types.AstNodePoolContext]
-  [surface-arena : i64]) : compiler_load.ResultCompilerLoadWithPaths
+  [surface-arena : i64]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (let
     [_prelude-begin : unit
       (cfg
@@ -3332,7 +3472,8 @@
         stdlib-roots
         cfgs
         pools
-        surface-arena)]
+        surface-arena
+        profile-state)]
     [_prelude-end : unit
       (cfg
         compile-startup-profile
@@ -3383,12 +3524,14 @@
   [source : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude-with-state-and-pools
     load-state
     stdlib-roots
     cfgs
-    pools)
+    pools
+    profile-state)
     [(compiler_load.ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
@@ -3436,7 +3579,8 @@
     source
     stdlib-roots
     cfgs
-    pools))
+    pools
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-driver-load-file-for-pic-image-with-pools
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -3490,7 +3634,11 @@
   [mode : compiler_backend.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
-  (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
+  (match (compiler-driver-load-file-with-runtime-and-profile-state
+    input-path
+    stdlib-roots
+    cfgs
+    profile-state)
     [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
       (begin
         (cfg
@@ -3655,7 +3803,8 @@
       stdlib-roots
       parse-cfgs
       pools
-      (compiler-driver-state-surface-arena state))
+      (compiler-driver-state-surface-arena state)
+      (compiler-driver-state-profile state))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
           (cfg
@@ -3663,7 +3812,10 @@
             (compiler-driver-profile-finish-phase
               (compiler-driver-state-profile state)
               "load"))
-          (cfg compile-profile (compiler-driver-profile-prelude-counters))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-prelude-counters
+              (compiler-driver-state-profile state)))
           (compiler-driver-allocation-profile-snapshot! "load")
           (compiler-driver-allocation-profile-pool-storage-snapshot!
             "source-load"

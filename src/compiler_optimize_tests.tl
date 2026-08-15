@@ -22,6 +22,108 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
+;; The fixture-wide constructor migration is owned by #6562. These two narrow
+;; adapters keep its existing list-first data builders usable while the
+;; production helpers under test now accept and return dense instruction
+;; sequences directly.
+(define (opt-test-instr-seq [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler_ir_types.compiler-ir-instr-seq-from-list instrs))
+
+(define (opt-test-instr-list [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-seq-to-list instrs))
+
+(define (opt-test-fold-instrs
+  [type-segment-bases : i64]
+  [env : compiler_optimize.OptConstEnv]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq (opt-test-instr-seq instrs)]
+    (begin
+      (compiler_optimize.opt-fold-instrs! type-segment-bases env (&mut seq))
+      (opt-test-instr-list seq))))
+
+(define (opt-test-strength-instrs
+  [env : compiler_optimize.OptConstEnv]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq (opt-test-instr-seq instrs)]
+    (begin
+      (compiler_optimize.opt-strength-instrs! env (&mut seq))
+      (opt-test-instr-list seq))))
+
+(define (opt-test-collect-instrs-uses
+  [set : opt_i64_i64_map.Map]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : opt_i64_i64_map.Map
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq (opt-test-instr-seq instrs)]
+    (compiler_optimize.opt-collect-instrs-uses set (& seq))))
+
+(define (opt-test-dce-instrs
+  [set : opt_i64_i64_map.Map]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq (opt-test-instr-seq instrs)]
+    (begin
+      (compiler_optimize.opt-dce-instrs! set (&mut seq))
+      (opt-test-instr-list seq))))
+
+(define (opt-test-instr-list-eq
+  [type-segment-bases : i64]
+  [left : compiler_ir_types.CompilerIrInstrList]
+  [right : compiler_ir_types.CompilerIrInstrList]) : bool
+  (match left
+    [(compiler_ir_types.CompilerIrInstrList.Nil)
+      (match right
+        [(compiler_ir_types.CompilerIrInstrList.Nil) true]
+        [_ false])]
+    [(compiler_ir_types.CompilerIrInstrList.Cons left-instr left-rest)
+      (match right
+        [(compiler_ir_types.CompilerIrInstrList.Cons right-instr right-rest)
+          (and
+            (compiler_optimize.opt-instr-eq
+              type-segment-bases
+              left-instr
+              right-instr)
+            (opt-test-instr-list-eq
+              type-segment-bases
+              (__tl-box-place left-rest)
+              (__tl-box-place right-rest)))]
+        [_ false])]))
+
+(define (opt-test-cse-instrs
+  [type-segment-bases : i64]
+  [table : compiler_optimize.OptExprTable]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq (opt-test-instr-seq instrs)]
+    (begin
+      (compiler_optimize.opt-cse-instrs! type-segment-bases table (&mut seq))
+      (opt-test-instr-list seq))))
+
+(define (opt-test-copy-instrs
+  [env : compiler_optimize.OptCopyEnv]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq (opt-test-instr-seq instrs)]
+    (begin
+      (compiler_optimize.opt-copy-instrs! env (&mut seq))
+      (opt-test-instr-list seq))))
+
+(define (opt-test-bounds-instrs
+  [type-segment-bases : i64]
+  [facts : compiler_optimize.OptBoundsFacts]
+  [casts : compiler_optimize.OptBoundsCastEnv]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq (opt-test-instr-seq instrs)]
+    (begin
+      (compiler_optimize.opt-bounds-instrs!
+        type-segment-bases
+        facts
+        casts
+        (&mut seq))
+      (opt-test-instr-list seq))))
+
 ;; #6061: force every converted dense family past its initial capacity and
 ;; pin the logical newest-first/LIFO semantics that the former Cons chains had.
 (define (opt-dense-test-licm-roots
@@ -303,21 +405,24 @@
   [last : i64]) : compiler_optimize.OptSsaRenameBlocks
   (if (> next last)
     blocks
-    (opt-dense-test-ssa-rename-blocks
-      (compiler_optimize.opt-ssa-rename-blocks-prepend
-        blocks
-        next
-        (compiler_ir_types.CompilerIrInstrList.Nil))
-      (+ next 1)
-      last)))
+    (let
+      [empty : compiler_ir_types.CompilerIrInstrSeq
+        (compiler_ir_types.compiler-ir-instr-seq-empty)]
+      (opt-dense-test-ssa-rename-blocks
+        (compiler_optimize.opt-ssa-rename-blocks-prepend blocks next (& empty))
+        (+ next 1)
+        last))))
 
 (define (opt-dense-test-ssa-rename-block-newest?
   [blocks : compiler_optimize.OptSsaRenameBlocks]) : bool
-  (match (compiler_optimize.opt-ssa-rename-blocks-lookup blocks 4)
-    [(compiler_ir_types.CompilerIrInstrList.Cons instr _)
-      (match instr
-        [(compiler_ir_types.CompilerIrInstr.Return _) true]
-        [_ false])]
+  (match (compiler_optimize.opt-ssa-rename-blocks-ref blocks 0)
+    [(compiler_optimize.OptSsaDenseEntry.RenameBlock label instrs)
+      (and
+        (= label 4)
+        (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 1)
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+          [(compiler_ir_types.CompilerIrInstr.Return _) true]
+          [_ false]))]
     [_ false]))
 
 (define (opt-dense-test-ssa-rename-block-is?
@@ -499,6 +604,10 @@
       (compiler_optimize.opt-ssa-phi-sites-new)]
     [ssa-renamed-independent : compiler_optimize.OptSsaRenameBlocks
       (compiler_optimize.opt-ssa-rename-blocks-new)]
+    [ssa-renamed-body : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq1
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.No)))]
     [ssa-renamed : compiler_optimize.OptSsaRenameBlocks
       (compiler_optimize.opt-ssa-rename-blocks-prepend
         (opt-dense-test-ssa-rename-blocks
@@ -506,10 +615,7 @@
           1
           8)
         4
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Return
-            (compiler_ir_types.CompilerIrMaybeValue.No))
-          (compiler_ir_types.CompilerIrInstrList.Nil)))]
+        (& ssa-renamed-body))]
     [ssa-outs-independent : compiler_optimize.OptSsaBlockOuts
       (compiler_optimize.opt-ssa-block-outs-new)]
     [ssa-outs : compiler_optimize.OptSsaBlockOuts
@@ -3648,69 +3754,67 @@
     [instrs : compiler_ir_types.CompilerIrInstrList
       (opt-vector-mask-test-instrs)]
     [folded : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         instrs)]
     [dce : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
-        (compiler_optimize.opt-collect-instrs-uses
-          (opt_i64_i64_map.with-capacity 64)
-          instrs)
+      (opt-test-dce-instrs
+        (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)
         instrs)]
     [bounds : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
         instrs)]
     [vector-cse : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-vector-cse-instrs))]
     [vector-reduce-cse : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-vector-reduce-cse-instrs))]
     [vector-stale : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         (opt-vector-reduce-stale-instrs))]
     [vector-copy : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-vector-copy-instrs))]
     [mask-copy : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-mask-copy-instrs))]
     [mask-reduce-copy : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-mask-reduce-copy-instrs))]
     [mask-not-copy : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-mask-not-copy-instrs))]
     [mask-idempotent-copy : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
-        (compiler_optimize.opt-fold-instrs
+        (opt-test-fold-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (compiler_optimize.OptConstEnv.Nil)
           (opt-mask-idempotent-copy-instrs)))]
     [mask-idempotent-dce : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
-        (compiler_optimize.opt-collect-instrs-uses
+      (opt-test-dce-instrs
+        (opt-test-collect-instrs-uses
           (opt_i64_i64_map.with-capacity 64)
           mask-idempotent-copy)
         mask-idempotent-copy)]
     (cond
       [(not
-          (compiler_optimize.opt-instr-list-eq
+          (opt-test-instr-list-eq
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             folded
             instrs))
@@ -3951,7 +4055,7 @@
   (let
     [instrs : compiler_ir_types.CompilerIrInstrList (opt-self-test-instrs)]
     [optimized : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         instrs)]
@@ -4011,7 +4115,7 @@
         [stale-instrs : compiler_ir_types.CompilerIrInstrList
           (opt-stale-load-test-instrs)]
         [stale-optimized : compiler_ir_types.CompilerIrInstrList
-          (compiler_optimize.opt-fold-instrs
+          (opt-test-fold-instrs
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_optimize.OptConstEnv.Nil)
             stale-instrs)]
@@ -4408,22 +4512,22 @@
 (define (compiler-optimize-float-fold-ok?) : bool
   (let
     [pos : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         (opt-float-fold-instrs))]
     [neg : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         (opt-float-fold-invalid-instrs))]
     [finite-casts : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         (opt-finite-cast-fold-instrs))]
     [deferred-casts : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         (opt-finite-cast-no-fold-instrs))]
@@ -4678,12 +4782,12 @@
 (define (compiler-optimize-commute-constant-lhs-self-test) : i64
   (let
     [once : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         (opt-cc-instrs))]
     [twice : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         once)]
@@ -4696,12 +4800,12 @@
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let
     [pos : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         (opt-typed-fold-instrs))]
     [neg : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-fold-instrs
+      (opt-test-fold-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptConstEnv.Nil)
         (opt-typed-fold-invalid-instrs))]
@@ -4906,11 +5010,11 @@
 (define (compiler-optimize-strength-self-test) : i64
   (let
     [pos : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-strength-instrs
+      (opt-test-strength-instrs
         (compiler_optimize.OptConstEnv.Nil)
         (opt-strength-self-test-instrs))]
     [neg : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-strength-instrs
+      (opt-test-strength-instrs
         (compiler_optimize.OptConstEnv.Nil)
         (opt-strength-negative-instrs))]
     (cond
@@ -4997,11 +5101,9 @@
   [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
   (let
     [used : opt_i64_i64_map.Map
-      (compiler_optimize.opt-collect-instrs-uses
-        (opt_i64_i64_map.with-capacity 64)
-        instrs)]
+      (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
     [cleaned : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs used instrs)]
+      (opt-test-dce-instrs used instrs)]
     (compiler_ir_types.compiler-ir-instr-list-count cleaned)))
 
 (define (opt-dce-clean-array-count
@@ -5074,14 +5176,12 @@
   (let
     [instrs : compiler_ir_types.CompilerIrInstrList (opt-dce-self-test-instrs)]
     [used : opt_i64_i64_map.Map
-      (compiler_optimize.opt-collect-instrs-uses
-        (opt_i64_i64_map.with-capacity 64)
-        instrs)]
+      (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
     [cleaned : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs used instrs)]
+      (opt-test-dce-instrs used instrs)]
     [again : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
-        (compiler_optimize.opt-collect-instrs-uses
+      (opt-test-dce-instrs
+        (opt-test-collect-instrs-uses
           (opt_i64_i64_map.with-capacity 64)
           cleaned)
         cleaned)]
@@ -5182,11 +5282,9 @@
     [instrs : compiler_ir_types.CompilerIrInstrList
       (opt-dce-mem-self-test-instrs)]
     [used : opt_i64_i64_map.Map
-      (compiler_optimize.opt-collect-instrs-uses
-        (opt_i64_i64_map.with-capacity 64)
-        instrs)]
+      (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
     [cleaned : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs used instrs)]
+      (opt-test-dce-instrs used instrs)]
     (if (compiler_optimize.opt-used-contains used 0)
       (if (= (compiler_ir_types.compiler-ir-instr-list-count cleaned) 3)
         42
@@ -6288,37 +6386,37 @@
 (define (compiler-optimize-cse-self-test) : i64
   (let
     [cse : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-self-test-instrs))]
     [sqrt : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-sqrt-instrs))]
     [store : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-store-clears-instrs))]
     [redef : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-operand-redef-instrs))]
     [probe : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-probe-instrs))]
     [probe-different : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-probe-different-instrs))]
     [shift-count-types : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-cse-instrs
+      (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-shift-count-type-instrs))]
@@ -8936,48 +9034,46 @@
 (define (compiler-optimize-copy-self-test) : i64
   (let
     [pos : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-copy-pos-instrs))]
     [src-redef : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-copy-src-redef-instrs))]
     [dst-redef : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-copy-dst-redef-instrs))]
     [cse : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
-        (compiler_optimize.opt-cse-instrs
+        (opt-test-cse-instrs
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (compiler_optimize.OptExprTable.Nil)
           (opt-copy-cse-instrs)))]
     [cse-dce : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
-        (compiler_optimize.opt-collect-instrs-uses
-          (opt_i64_i64_map.with-capacity 64)
-          cse)
+      (opt-test-dce-instrs
+        (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) cse)
         cse)]
     [f64 : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-copy-f64-instrs))]
     [phi : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-copy-phi-instrs))]
     [pack-word : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-copy-pack-word-instrs))]
     [pack-source-redef : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-copy-pack-source-redef-instrs))]
     [pack-dst-redef : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-copy-instrs
+      (opt-test-copy-instrs
         (compiler_optimize.OptCopyEnv.Nil)
         (opt-copy-pack-dst-redef-instrs))]
     (cond
@@ -11184,46 +11280,46 @@
   (let
     [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
     [duplicate : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
         (opt-bounds-duplicate-instrs))]
     [different : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
         (opt-bounds-different-instrs))]
     [redef : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
         (opt-bounds-redef-instrs))]
     [call : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
         (opt-bounds-call-instrs))]
     [branch : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
         (opt-bounds-branch-instrs))]
     [copy : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
-        (compiler_optimize.opt-copy-instrs
+        (opt-test-copy-instrs
           (compiler_optimize.OptCopyEnv.Nil)
           (opt-bounds-copy-instrs)))]
     [dce : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-dce-instrs
-        (compiler_optimize.opt-collect-instrs-uses
+      (opt-test-dce-instrs
+        (opt-test-collect-instrs-uses
           (opt_i64_i64_map.with-capacity 64)
           (opt-bounds-dce-instrs))
         (opt-bounds-dce-instrs))]
@@ -11363,13 +11459,13 @@
           false)
         (opt-loop-bce-test-summaries symbols false false))]
     [index-cast : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
         (opt-bounds-index-cast-instrs))]
     [index-cast-redef : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-bounds-instrs
+      (opt-test-bounds-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptBoundsFacts.Nil)
         (compiler_optimize.OptBoundsCastEnv.Nil)
@@ -24164,7 +24260,7 @@
             (compiler_ir_types.CompilerIrInstrList.Nil))
           (compiler_ir_types.CompilerIrInstrList.Nil)))]
     [entry-tail : compiler_ir_types.CompilerIrInstrList
-      (compiler_optimize.opt-aggregate-instr-list-append
+      (compiler_optimize.opt-licm-unswitch-instrs-onto
         after-first
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
@@ -27541,7 +27637,7 @@
                       (compiler_ir_types.CompilerIrValue.Var 10)
                       (compiler_ir_types.CompilerIrValue.I64 9)
                       (compiler_ast_types.AstType.I64))
-                    (compiler_optimize.opt-aggregate-instr-list-append
+                    (compiler_optimize.opt-licm-unswitch-instrs-onto
                       (opt-licm-checked-root-barrier barrier-mode)
                       (opt-licm-checked-root-loop-tail))))))))
         (compiler_ir_types.compiler-ir-block-cons
@@ -30841,7 +30937,7 @@
   [compare-lhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.compiler-ir-block
     (compiler_ir_types.compiler-ir-label "body")
-    (compiler_optimize.opt-aggregate-instr-list-append
+    (compiler_optimize.opt-licm-unswitch-instrs-onto
       prefix
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -30861,7 +30957,7 @@
               (compiler_ir_types.CompilerIrValue.Var 9)
               stride
               (compiler_ast_types.AstType.U8))
-            (compiler_optimize.opt-aggregate-instr-list-append
+            (compiler_optimize.opt-licm-unswitch-instrs-onto
               extra
               (compiler_ir_types.compiler-ir-instr-cons
                 (compiler_ir_types.CompilerIrInstr.BinOp

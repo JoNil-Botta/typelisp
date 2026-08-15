@@ -509,8 +509,8 @@ decision|src/compiler_optimize_tests.tl|optimizer self-test/fixture companion sp
 case|selfhost_compiler_optimize|src/compiler_optimize.tl|assembly|skip|direct
 contains|_tl_optimize_program:
 contains|_tl_optimize_program_with_level:
-contains|_tl_opt_fold_instrs:
-contains|_tl_opt_strength_instrs:
+contains|_tl_opt_fold_instrs_bang:
+contains|_tl_opt_strength_instrs_bang:
 contains|_tl_opt_cfg_dominators:
 contains|_tl_opt_verify_function:
 end

@@ -43271,31 +43271,30 @@
           (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
         [(option_i64.None) (OptCseResult.Result table instr)])]))
 
-;; Keep only the copies introduced by the Slice Word CSE above. Load analysis
-;; needs those mappings before it sees the dependent Gep, so the Gep inherits
-;; the canonical Slice data root. Feeding the general copy environment into
-;; load CSE would change the established scheduling for unrelated values: a
-;; local load hit would become a dead Mov before cross-block GVN can erase it.
-(define (opt-slice-word-copy-update
-  [env : OptCopyEnv]
-  [original : ir.CompilerIrInstr]
-  [rewritten : ir.CompilerIrInstr]) : OptCopyEnv
-  (match original
-    [(ir.CompilerIrInstr.Word dst _ _ _)
-      (match rewritten
-        [(ir.CompilerIrInstr.Mov moved-dst _ _)
-          (if (= moved-dst dst)
-            (opt-copy-update-env env rewritten)
-            (opt-copy-invalidate-var env dst))]
-        [_ (opt-copy-invalidate-var env dst)])]
-    [(ir.CompilerIrInstr.AddrOf dst source)
-      (opt-copy-invalidate-var (opt-copy-invalidate-var env dst) source)]
-    [(ir.CompilerIrInstr.StorePtr _ _ _) (OptCopyEnv.Nil)]
-    [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
-    [_
-      (match (opt-instr-def-var original)
-        [(option_i64.Some dst) (opt-copy-invalidate-var env dst)]
-        [(option_i64.None) env])]))
+(define (opt-slice-word-copy-value?
+  [hs : OptLoadHeaderSet]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var) (opt-load-slice-word-var? hs var)]
+    [_ false]))
+
+;; Only the consumers that establish the repeated Slice guard/load key need
+;; pre-load copy substitution. General copies retain the old load-then-copy
+;; scheduling, so unrelated local load hits remain available for GVN to erase
+;; instead of becoming dead Movs in the pre-SSA block pass.
+(define (opt-slice-word-copy-use?
+  [hs : OptLoadHeaderSet]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (or
+        (opt-slice-word-copy-value? hs base)
+        (opt-slice-word-copy-value? hs offset))]
+    [(ir.CompilerIrInstr.BoundsCheck index length _)
+      (or
+        (opt-slice-word-copy-value? hs index)
+        (opt-slice-word-copy-value? hs length))]
+    [_ false]))
 
 (define (opt-load-copy-instr-seq-rewrite!
   [type-segment-bases : i64]
@@ -43309,46 +43308,36 @@
     [load-state : OptLoadCseState state]
     [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
     [word-state : OptExprTable (OptExprTable.Nil)]
-    [word-copy-state : OptCopyEnv (OptCopyEnv.Nil)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (while (< index count)
-      (let
-        [original : ir.CompilerIrInstr
-          (ir.compiler-ir-instr-seq-ref instrs index)]
-        (match (opt-slice-word-cse-instr
-          type-segment-bases
-          hs
-          word-state
-          original)
-          [(OptCseResult.Result next-word word-rewritten)
-            ;; Only a repeated Slice Word is substituted before load analysis.
-            ;; General copies retain the old load-then-copy scheduling.
-            (let
-              [word-copy-rewritten : ir.CompilerIrInstr
-                (opt-copy-subst-instr word-copy-state word-rewritten)]
-              (match (opt-load-cse-dispatch
-                type-segment-bases
-                hs
-                false
-                sources
-                call-memory
-                load-state
-                word-copy-rewritten)
-                [(OptLoadCseResult.Result next-load loaded)
-                  (match (opt-copy-instr copy-state loaded)
-                    [(OptCopyResult.Result next-copy rewritten)
-                      (begin
-                        (ir.compiler-ir-instr-seq-set! instrs index rewritten)
-                        (set! load-state next-load)
-                        (set! copy-state next-copy)
-                        (set! word-state next-word)
-                        (set!
-                          word-copy-state
-                          (opt-slice-word-copy-update
-                            word-copy-state
-                            original
-                            word-rewritten))
-                        (set! index (+ index 1)))])]))])))))
+      (match (opt-slice-word-cse-instr
+        type-segment-bases
+        hs
+        word-state
+        (ir.compiler-ir-instr-seq-ref instrs index))
+        [(OptCseResult.Result next-word word-rewritten)
+          (let
+            [load-input : ir.CompilerIrInstr
+              (if (opt-slice-word-copy-use? hs word-rewritten)
+                (opt-copy-subst-instr copy-state word-rewritten)
+                word-rewritten)]
+            (match (opt-load-cse-dispatch
+              type-segment-bases
+              hs
+              false
+              sources
+              call-memory
+              load-state
+              load-input)
+              [(OptLoadCseResult.Result next-load loaded)
+                (match (opt-copy-instr copy-state loaded)
+                  [(OptCopyResult.Result next-copy rewritten)
+                    (begin
+                      (ir.compiler-ir-instr-seq-set! instrs index rewritten)
+                      (set! load-state next-load)
+                      (set! copy-state next-copy)
+                      (set! word-state next-word)
+                      (set! index (+ index 1)))])]))]))))
 
 ;; --- fold pre-scan -------------------------------------------------------------
 ;;
@@ -92481,8 +92470,9 @@
 ;; (OptLoadHeaderSet) marking vars that are array/string descriptor handles at
 ;; EVERY def site (multi-def vars with disagreeing types are poisoned -- the
 ;; block-local pass runs pre-SSA). Code 1 is an ordinary descriptor handle, 2
-;; is poisoned, and 3 is a by-value native Slice parameter. Both 1 and 3 are
-;; header-typed; only 3 has stable register-group Word extractions.
+;; is poisoned, 3 is a by-value native Slice parameter, and 4 is a Word result
+;; extracted from such a parameter. Both 1 and 3 are header-typed; only 3 has
+;; stable register-group Word extractions. Code 4 only narrows copy scheduling.
 (defenum OptLoadHeaderSet
   (Sparse opt_i64_i64_map.Map)
   (Dense (__tl_dyn-array i64)))
@@ -92604,6 +92594,17 @@
       (if (or (< var 0) (>= var (array-length items)))
         false
         (= (array-ref items var) 3))]))
+
+(define (opt-load-slice-word-var? [set : OptLoadHeaderSet] [var : i64]) : bool
+  (match set
+    [(OptLoadHeaderSet.Sparse map)
+      (match (opt_i64_i64_map.get (& map) var)
+        [(opt_i64_i64_map.LookupFound value) (= value 4)]
+        [(opt_i64_i64_map.LookupMissing) false])]
+    [(OptLoadHeaderSet.Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        false
+        (= (array-ref items var) 4))]))
 
 ;; A checked reference to an array/string descriptor addresses that descriptor
 ;; directly, so its parameter var is a header base for GEP/load classification
@@ -92738,6 +92739,13 @@
         set
         dst
         (opt-licm-array-header-type? type-segment-bases to-ty))]
+    [(ir.CompilerIrInstr.Word dst source _ _)
+      (match source
+        [(ir.CompilerIrValue.Var source-var)
+          (if (opt-load-slice-var? set source-var)
+            (opt-load-header-set-mark-code set dst 4)
+            (opt-load-header-set-mark set dst false))]
+        [_ (opt-load-header-set-mark set dst false)])]
     [(ir.CompilerIrInstr.AddrOf dst source)
       (opt-load-header-set-mark-unstable
         (opt-load-header-set-mark set dst false)

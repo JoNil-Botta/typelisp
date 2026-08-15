@@ -78,6 +78,16 @@
   (Ok char i64)
   (Err String))
 
+;; Small dynamic capability shared by the explicit compile-job entry points
+;; and the standalone compatibility surface. The explicit variant borrows the
+;; wrapper's descriptor for the synchronous scan. Interning follows that borrow
+;; through reference-taking helpers, so a source token never copies the large
+;; InternCompatState descriptor and the borrow cannot escape the wrapper call.
+(defenum LexerInternOwner
+  (:lifetimes intern-state)
+  (Active)
+  (State (& intern-state ci.InternCompatState)))
+
 (define (ok? [message : String]) : bool
   (string.eq message ""))
 
@@ -118,13 +128,31 @@
       [(and (>= code 42) (<= code 63)) (and (!= code 44) (!= code 59))]
       [else (or (= code 33) (and (>= code 37) (<= code 38)) (= code 95))])))
 
+(define (lexer-intern-source-slice-id
+  [owner : (LexerInternOwner intern-state)]
+  [src : String]
+  [start : i64]
+  [len : i64]) : ci.InternId
+  (match owner
+    [(Active) (ci.intern-source-slice-id src start len)]
+    [(State state)
+      (ci.intern-compat-state-source-slice-id-ready-ref state src start len)]))
+
 ;; The lexer is also used by standalone tools that do not initialize the
-;; compiler builtin-ID catalog. Keep the direct builtin fast path when it is
-;; available, but derive the lone-colon identity from source otherwise.
-(define (colon-intern-id [src : String] [start : i64]) : ci.InternId
-  (if (ci.intern-renderable-id? cbi.compiler-builtin-id-fix-colon)
-    (ci.intern-id-from-renderable cbi.compiler-builtin-id-fix-colon)
-    (ci.intern-source-slice-id src start 1)))
+;; compiler builtin-ID catalog. The active adapter keeps the direct builtin
+;; fast path. An explicit owner must resolve ':' in its own table because a
+;; process-global builtin ID may belong to a different compile job.
+(define (colon-intern-id
+  [owner : (LexerInternOwner intern-state)]
+  [src : String]
+  [start : i64]) : ci.InternId
+  (match owner
+    [(Active)
+      (if (ci.intern-renderable-id? cbi.compiler-builtin-id-fix-colon)
+        (ci.intern-id-from-renderable cbi.compiler-builtin-id-fix-colon)
+        (ci.intern-source-slice-id src start 1))]
+    [(State state)
+      (ci.intern-compat-state-source-slice-id-ready-ref state src start 1)]))
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool
@@ -639,10 +667,11 @@
 ;; path uses this through `result`; `spanned-result` uses a direct
 ;; scanner that records line/column positions while tokenizing. Returns the
 ;; token count (excluding the trailing `token.Token.End`).
-(define (into-spanned-result
+(define (into-spanned-result-with-intern-owner
   [src : String]
   [toks : (__tl_dyn-array token.Token)]
-  [starts : (__tl_dyn-array i64)]) : ResultLexIntoSpanned
+  [starts : (__tl_dyn-array i64)]
+  [owner : (LexerInternOwner intern-state)]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -729,7 +758,8 @@
                     (let
                       [text : String (unescape-string-literal src start end)]
                       [string-id : ci.InternId
-                        (ci.intern-source-slice-id
+                        (lexer-intern-source-slice-id
+                          owner
                           text
                           0
                           (string.string-length text))]
@@ -776,14 +806,14 @@
                     (set!
                       (array-ref toks count)
                       (token.Token.Sym
-                        (ci.intern-source-slice-id src i (- end i))))
+                        (lexer-intern-source-slice-id owner src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end))
                   (begin
                     (set! (array-ref starts count) i)
                     (set!
                       (array-ref toks count)
-                      (token.Token.Sym (colon-intern-id src i)))
+                      (token.Token.Sym (colon-intern-id owner src i)))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))))]
             [(is-symbol-char c)
@@ -794,7 +824,7 @@
                   (set!
                     (array-ref toks count)
                     (token.Token.Sym
-                      (ci.intern-source-slice-id src i (- end i))))
+                      (lexer-intern-source-slice-id owner src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))]
             [else
@@ -838,7 +868,9 @@
 ;; the guard at the top of the loop reserves room for this iteration's token AND
 ;; the trailing `token.Token.End`, so every `array-set!` below is in range
 ;; without a per-write capacity test.
-(define (into-spanned-tokens-result [src : String]) : ResultLexIntoSpanned
+(define (into-spanned-tokens-result-with-intern-owner
+  [src : String]
+  [owner : (LexerInternOwner intern-state)]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -971,7 +1003,8 @@
                       (let
                         [text : String (unescape-string-literal src start end)]
                         [string-id : ci.InternId
-                          (ci.intern-source-slice-id
+                          (lexer-intern-source-slice-id
+                            owner
                             text
                             0
                             (string.string-length text))]
@@ -1040,7 +1073,7 @@
                         (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new
                           (token.Token.Sym
-                            (ci.intern-source-slice-id src i (- end i)))
+                            (lexer-intern-source-slice-id owner src i (- end i)))
                           line
                           col))
                       (set! count (+ count 1))
@@ -1050,7 +1083,7 @@
                       (set!
                         (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new
-                          (token.Token.Sym (colon-intern-id src i))
+                          (token.Token.Sym (colon-intern-id owner src i))
                           line
                           col))
                       (set! count (+ count 1))
@@ -1064,7 +1097,7 @@
                       (array-ref lex-spanned-token-buffer count)
                       (token.spanned-token-new
                         (token.Token.Sym
-                          (ci.intern-source-slice-id src i (- end i)))
+                          (lexer-intern-source-slice-id owner src i (- end i)))
                         line
                         col))
                     (set! count (+ count 1))
@@ -1093,18 +1126,37 @@
 ;; plus the `token.Token.End` sentinel), lex into it, then return that exact
 ;; array. The trailing `token.Token.End` marks
 ;; the logical end even though the backing array may be larger.
-(define (result [src : String]) : ResultTokens
+(define (result-with-intern-owner
+  [src : String]
+  [owner : (LexerInternOwner intern-state)]) : ResultTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
     [toks : (__tl_dyn-array token.Token) (__tl_make-array token.Token cap)]
     [starts : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
-    (match (into-spanned-result src toks starts)
+    (match (into-spanned-result-with-intern-owner src toks starts owner)
       [(ResultLexIntoSpanned.Ok _) (ResultTokens.Ok toks)]
       [(ResultLexIntoSpanned.Err err)
         (ResultTokens.Err (token.source-error-message err))])))
 
+;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
+(define (result [src : String]) : ResultTokens
+  (result-with-intern-owner src LexerInternOwner.Active))
+
+(define (result-with-intern-state
+  [src : String]
+  [intern-state : ci.InternCompatState]) : ResultTokens
+  (begin
+    (ci.intern-compat-state-ensure-ready! intern-state)
+    (result-with-intern-owner src (LexerInternOwner.State (& intern-state)))))
+
 (define (lex [src : String]) : (__tl_dyn-array token.Token)
   (match (result src)
+    [(ResultTokens.Ok toks) toks]
+    [(ResultTokens.Err message) (io.panic message)]))
+
+(define (with-intern-state [src : String] [intern-state : ci.InternCompatState]) : (__tl_dyn-array
+    token.Token)
+  (match (result-with-intern-state src intern-state)
     [(ResultTokens.Ok toks) toks]
     [(ResultTokens.Err message) (io.panic message)]))
 
@@ -1369,11 +1421,26 @@
 ;; spanned-token buffer and hand back that buffer; slot `count` holds the
 ;; trailing `token.Token.End`. The buffer identity can change during the scan
 ;; (growth), so it is re-read from the global here rather than captured before.
-(define (spanned-result [src : String]) : ResultSpannedTokens
-  (match (into-spanned-tokens-result src)
+(define (spanned-result-with-intern-owner
+  [src : String]
+  [owner : (LexerInternOwner intern-state)]) : ResultSpannedTokens
+  (match (into-spanned-tokens-result-with-intern-owner src owner)
     [(ResultLexIntoSpanned.Ok _)
       (ResultSpannedTokens.Ok (global-shared-view lex-spanned-token-buffer))]
     [(ResultLexIntoSpanned.Err err) (ResultSpannedTokens.Err err)]))
+
+;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
+(define (spanned-result [src : String]) : ResultSpannedTokens
+  (spanned-result-with-intern-owner src LexerInternOwner.Active))
+
+(define (spanned-result-with-intern-state
+  [src : String]
+  [intern-state : ci.InternCompatState]) : ResultSpannedTokens
+  (begin
+    (ci.intern-compat-state-ensure-ready! intern-state)
+    (spanned-result-with-intern-owner
+      src
+      (LexerInternOwner.State (& intern-state)))))
 
 (define (percent-symbol-ok?) : bool
   (match (result "(% n 16)")
@@ -1752,6 +1819,124 @@
         (set! ok false))
       ok)))
 
+(define (lexer-intern-owner-isolation-ok?) : bool
+  (let
+    [active-decoy-id : i64 (ci.intern-source-slice "lexer-active-decoy" 0 18)]
+    [active-table-before : i64 (ci.intern-active-table-id)]
+    [active-generation-before : i64 (ci.intern-generation)]
+    [active-len-before : i64 (ci.intern-pool-len)]
+    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [source : String "(alpha : pkg/module.name \"payload\")"]
+    [ids-a : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [ids-b : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [len-a : i64 0]
+    [len-b : i64 0]
+    [len-b-after-spanned : i64 0]
+    (begin
+      (match (result-with-intern-state source state-a)
+        [(ResultTokens.Err _) (return false)]
+        [(ResultTokens.Ok tokens)
+          (begin
+            (unless
+              (and
+                (= (token.tag (array-ref tokens 0)) (token.tag-lparen))
+                (= (token.tag (array-ref tokens 5)) (token.tag-rparen))
+                (= (token.tag (array-ref tokens 6)) (token.tag-end)))
+              (return false))
+            (set!
+              (array-ref ids-a 0)
+              (ci.intern-id-value (token.sym-id (array-ref tokens 1))))
+            (set!
+              (array-ref ids-a 1)
+              (ci.intern-id-value (token.sym-id (array-ref tokens 2))))
+            (set!
+              (array-ref ids-a 2)
+              (ci.intern-id-value (token.sym-id (array-ref tokens 3))))
+            (set!
+              (array-ref ids-a 3)
+              (ci.intern-id-value (token.str-id (array-ref tokens 4))))
+            (set! len-a (ci.intern-compat-state-pool-len state-a)))])
+      (match (result-with-intern-state source state-b)
+        [(ResultTokens.Err _) (return false)]
+        [(ResultTokens.Ok tokens)
+          (begin
+            (set!
+              (array-ref ids-b 0)
+              (ci.intern-id-value (token.sym-id (array-ref tokens 1))))
+            (set!
+              (array-ref ids-b 1)
+              (ci.intern-id-value (token.sym-id (array-ref tokens 2))))
+            (set!
+              (array-ref ids-b 2)
+              (ci.intern-id-value (token.sym-id (array-ref tokens 3))))
+            (set!
+              (array-ref ids-b 3)
+              (ci.intern-id-value (token.str-id (array-ref tokens 4))))
+            (set! len-b (ci.intern-compat-state-pool-len state-b)))])
+      (unless
+        (and
+          (= (array-ref ids-a 0) (array-ref ids-b 0))
+          (= (array-ref ids-a 1) (array-ref ids-b 1))
+          (= (array-ref ids-a 2) (array-ref ids-b 2))
+          (= (array-ref ids-a 3) (array-ref ids-b 3))
+          (= len-a len-b)
+          (string.eq
+            (ci.intern-compat-state-str state-a (array-ref ids-a 0))
+            "alpha")
+          (string.eq
+            (ci.intern-compat-state-str state-a (array-ref ids-a 1))
+            ":")
+          (string.eq
+            (ci.intern-compat-state-str state-a (array-ref ids-a 2))
+            "pkg/module.name")
+          (string.eq
+            (ci.intern-compat-state-str state-a (array-ref ids-a 3))
+            "payload")
+          (ci.intern-compat-state-qualified? state-a (array-ref ids-a 2))
+          (ci.intern-compat-state-dotted? state-a (array-ref ids-a 2))
+          (string.eq
+            (ci.intern-compat-state-str
+              state-a
+              (ci.intern-compat-state-dotted-final-id
+                state-a
+                (array-ref ids-a 2)))
+            "name"))
+        (return false))
+      (match (spanned-result-with-intern-state "spanned" state-b)
+        [(ResultSpannedTokens.Err _) (return false)]
+        [(ResultSpannedTokens.Ok spanned)
+          (let
+            [spanned-token : token.Token
+              (token.spanned-token-tok (array-ref spanned 0))]
+            [spanned-id : i64 (ci.intern-id-value (token.sym-id spanned-token))]
+            (begin
+              (unless
+                (and
+                  (= (token.tag spanned-token) (token.tag-sym))
+                  (string.eq
+                    (ci.intern-compat-state-str state-b spanned-id)
+                    "spanned")
+                  (=
+                    (token.tag (token.spanned-token-tok (array-ref spanned 1)))
+                    (token.tag-end)))
+                (return false))
+              (set!
+                len-b-after-spanned
+                (ci.intern-compat-state-pool-len state-b))))])
+      (match (result-with-intern-state "failure @" state-a)
+        [(ResultTokens.Ok _) (return false)]
+        [(ResultTokens.Err message)
+          (unless
+            (string.eq message "lexer: unexpected character")
+            (return false))])
+      (and
+        (= (ci.intern-compat-state-pool-len state-b) len-b-after-spanned)
+        (= (ci.intern-active-table-id) active-table-before)
+        (= (ci.intern-generation) active-generation-before)
+        (= (ci.intern-pool-len) active-len-before)
+        (string.eq (ci.intern-str active-decoy-id) "lexer-active-decoy")))))
+
 (define (span-self-test) : i64
   (match (spanned-result "(a\n  (b c))")
     [(ResultSpannedTokens.Ok s)
@@ -1810,6 +1995,9 @@
             unit
             (set! ok false))
           (if (quote-prefix-tokens-ok?)
+            unit
+            (set! ok false))
+          (if (lexer-intern-owner-isolation-ok?)
             unit
             (set! ok false))
           (if (spanned-token-buffer-arena-ownership-ok?)

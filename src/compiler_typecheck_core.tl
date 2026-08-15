@@ -96877,144 +96877,150 @@
 ;; Allocate both tables while an unrelated scratch arena is active, then prove
 ;; that A-only reset and generation invalidation leave B's lookup and counters
 ;; intact after that scratch arena has been destroyed.
-(test
-  lazy-import-state-isolation
-  (let
-    [caller : arena.Arena (arena.current)]
-    [installed-table-id : i64 (ci.intern-active-table-id)]
-    [installed-generation : i64 (ci.intern-generation)]
-    [job-a : TcJobState (tc-job-state-new)]
-    [job-b : TcJobState (tc-job-state-new)]
-    [state-a : TcMacroState (tc-job-state-macro-state job-a)]
-    [state-b : TcMacroState (tc-job-state-macro-state job-b)]
-    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [importer-a : i64 (ci.intern-compat-state-intern intern-a "importer")]
-    [alias-a : i64 (ci.intern-compat-state-intern intern-a "alias")]
-    [target-a : i64 (ci.intern-compat-state-intern intern-a "target-a")]
-    [importer-b : i64 (ci.intern-compat-state-intern intern-b "importer")]
-    [alias-b : i64 (ci.intern-compat-state-intern intern-b "alias")]
-    [_filler-b : i64 (ci.intern-compat-state-intern intern-b "filler")]
-    [target-b : i64 (ci.intern-compat-state-intern intern-b "target-b")]
-    [_bind-a : unit
-      (tc-macro-state-bind-source-names!
-        state-a
-        (ci.intern-source-name-session-handle-from-state intern-a))]
-    [_bind-b : unit
-      (tc-macro-state-bind-source-names!
-        state-b
-        (ci.intern-source-name-session-handle-from-state intern-b))]
-    [initially-lazy? : bool
-      (and
-        (=
-          (tc-macro-state-slot-address state-a tc-macro-state-slot-lazy-import)
-          0)
-        (=
-          (tc-macro-state-slot-address state-b tc-macro-state-slot-lazy-import)
-          0))]
-    [scratch : arena.Arena (arena.make)]
-    (begin
-      (unsafe
-        (arena.set! scratch))
-      (tc-lazy-import-stub-record-for-job!
-        job-a
-        importer-a
-        alias-a
-        target-a
-        true)
-      (tc-lazy-import-summary-macro-force-record-for-state! state-a)
-      (tc-lazy-import-summary-macro-force-record-for-state! state-a)
-      (tc-lazy-import-stub-record-for-job!
-        job-b
-        importer-b
-        alias-b
-        target-b
-        false)
-      (tc-lazy-import-summary-macro-force-record-for-state! state-b)
-      (unsafe
-        (arena.set! caller))
-      (unsafe
-        (arena.destroy scratch))
-      (let
-        [lazy-a : TcLazyImportState (tc-job-state-lazy-import job-a)]
-        [lazy-b : TcLazyImportState (tc-job-state-lazy-import job-b)]
-        [data-a : TcLazyImportStateData (tc-lazy-import-state-data lazy-a)]
-        [data-b : TcLazyImportStateData (tc-lazy-import-state-data lazy-b)]
-        [before-reset? : bool
-          (and
-            initially-lazy?
-            (not (= lazy-a.address lazy-b.address))
-            (= (array-length data-a.index-slots) tc-lazy-import-stub-capacity)
-            (= (array-length data-b.index-slots) tc-lazy-import-stub-capacity)
-            (= importer-a importer-b)
-            (= alias-a alias-b)
-            (not (= target-a target-b))
-            (= (tc-lazy-import-stub-count-for-state state-a) 1)
-            (= (tc-lazy-import-stub-count-for-state state-b) 1)
-            (= (tc-lazy-import-summary-backed-stub-count-for-state state-a) 1)
-            (= (tc-lazy-import-summary-backed-stub-count-for-state state-b) 0)
-            (= (tc-lazy-import-summary-macro-force-count-for-state state-a) 2)
-            (= (tc-lazy-import-summary-macro-force-count-for-state state-b) 1)
-            (match (tc-lazy-import-stub-target-id-for-state
+(cfg
+  test
+  (test
+    lazy-import-state-isolation
+    (let
+      [caller : arena.Arena (arena.current)]
+      [installed-table-id : i64 (ci.intern-active-table-id)]
+      [installed-generation : i64 (ci.intern-generation)]
+      [job-a : TcJobState (tc-job-state-new)]
+      [job-b : TcJobState (tc-job-state-new)]
+      [state-a : TcMacroState (tc-job-state-macro-state job-a)]
+      [state-b : TcMacroState (tc-job-state-macro-state job-b)]
+      [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [importer-a : i64 (ci.intern-compat-state-intern intern-a "importer")]
+      [alias-a : i64 (ci.intern-compat-state-intern intern-a "alias")]
+      [target-a : i64 (ci.intern-compat-state-intern intern-a "target-a")]
+      [importer-b : i64 (ci.intern-compat-state-intern intern-b "importer")]
+      [alias-b : i64 (ci.intern-compat-state-intern intern-b "alias")]
+      [_filler-b : i64 (ci.intern-compat-state-intern intern-b "filler")]
+      [target-b : i64 (ci.intern-compat-state-intern intern-b "target-b")]
+      [_bind-a : unit
+        (tc-macro-state-bind-source-names!
+          state-a
+          (ci.intern-source-name-session-handle-from-state intern-a))]
+      [_bind-b : unit
+        (tc-macro-state-bind-source-names!
+          state-b
+          (ci.intern-source-name-session-handle-from-state intern-b))]
+      [initially-lazy? : bool
+        (and
+          (=
+            (tc-macro-state-slot-address
               state-a
-              importer-a
-              alias-a)
-              [(TcMaybeNameId.Some target) (= target target-a)]
-              [(TcMaybeNameId.No) false])
-            (match (tc-lazy-import-stub-target-id-for-state
+              tc-macro-state-slot-lazy-import)
+            0)
+          (=
+            (tc-macro-state-slot-address
               state-b
-              importer-b
-              alias-b)
-              [(TcMaybeNameId.Some target) (= target target-b)]
-              [(TcMaybeNameId.No) false]))]
-        (begin
-          (tc-lazy-import-stubs-reset-for-job! job-a)
-          (let
-            [a-reset-b-intact? : bool
-              (and
-                (= (tc-lazy-import-stub-count-for-state state-a) 0)
-                (=
-                  (tc-lazy-import-summary-backed-stub-count-for-state state-a)
-                  0)
-                (=
-                  (tc-lazy-import-summary-macro-force-count-for-state state-a)
-                  0)
-                (match (tc-lazy-import-stub-target-id-for-state
-                  state-a
-                  importer-a
-                  alias-a)
-                  [(TcMaybeNameId.Some _) false]
-                  [(TcMaybeNameId.No) true])
-                (= (tc-lazy-import-stub-count-for-state state-b) 1)
-                (=
-                  (tc-lazy-import-summary-macro-force-count-for-state state-b)
-                  1)
-                (match (tc-lazy-import-stub-target-id-for-state
-                  state-b
-                  importer-b
-                  alias-b)
-                  [(TcMaybeNameId.Some target) (= target target-b)]
-                  [(TcMaybeNameId.No) false]))]
-            (begin
-              (tc-lazy-import-stub-record-for-job!
-                job-a
-                importer-a
-                alias-a
-                target-a
-                false)
-              (ci.intern-compat-state-reset! intern-a)
-              (tc-macro-state-bind-source-names!
+              tc-macro-state-slot-lazy-import)
+            0))]
+      [scratch : arena.Arena (arena.make)]
+      (begin
+        (unsafe
+          (arena.set! scratch))
+        (tc-lazy-import-stub-record-for-job!
+          job-a
+          importer-a
+          alias-a
+          target-a
+          true)
+        (tc-lazy-import-summary-macro-force-record-for-state! state-a)
+        (tc-lazy-import-summary-macro-force-record-for-state! state-a)
+        (tc-lazy-import-stub-record-for-job!
+          job-b
+          importer-b
+          alias-b
+          target-b
+          false)
+        (tc-lazy-import-summary-macro-force-record-for-state! state-b)
+        (unsafe
+          (arena.set! caller))
+        (unsafe
+          (arena.destroy scratch))
+        (let
+          [lazy-a : TcLazyImportState (tc-job-state-lazy-import job-a)]
+          [lazy-b : TcLazyImportState (tc-job-state-lazy-import job-b)]
+          [data-a : TcLazyImportStateData (tc-lazy-import-state-data lazy-a)]
+          [data-b : TcLazyImportStateData (tc-lazy-import-state-data lazy-b)]
+          [before-reset? : bool
+            (and
+              initially-lazy?
+              (not (= lazy-a.address lazy-b.address))
+              (= (array-length data-a.index-slots) tc-lazy-import-stub-capacity)
+              (= (array-length data-b.index-slots) tc-lazy-import-stub-capacity)
+              (= importer-a importer-b)
+              (= alias-a alias-b)
+              (not (= target-a target-b))
+              (= (tc-lazy-import-stub-count-for-state state-a) 1)
+              (= (tc-lazy-import-stub-count-for-state state-b) 1)
+              (= (tc-lazy-import-summary-backed-stub-count-for-state state-a) 1)
+              (= (tc-lazy-import-summary-backed-stub-count-for-state state-b) 0)
+              (= (tc-lazy-import-summary-macro-force-count-for-state state-a) 2)
+              (= (tc-lazy-import-summary-macro-force-count-for-state state-b) 1)
+              (match (tc-lazy-import-stub-target-id-for-state
                 state-a
-                (ci.intern-source-name-session-handle-from-state intern-a))
-              (if (and
-                before-reset?
-                a-reset-b-intact?
-                (= (tc-lazy-import-stub-count-for-state state-a) 0)
-                (= (tc-lazy-import-stub-count-for-state state-b) 1)
-                (= (ci.intern-active-table-id) installed-table-id)
-                (= (ci.intern-generation) installed-generation))
-                unit
-                (io.panic "typecheck: lazy import state isolation failed")))))))))
+                importer-a
+                alias-a)
+                [(TcMaybeNameId.Some target) (= target target-a)]
+                [(TcMaybeNameId.No) false])
+              (match (tc-lazy-import-stub-target-id-for-state
+                state-b
+                importer-b
+                alias-b)
+                [(TcMaybeNameId.Some target) (= target target-b)]
+                [(TcMaybeNameId.No) false]))]
+          (begin
+            (tc-lazy-import-stubs-reset-for-job! job-a)
+            (let
+              [a-reset-b-intact? : bool
+                (and
+                  (= (tc-lazy-import-stub-count-for-state state-a) 0)
+                  (=
+                    (tc-lazy-import-summary-backed-stub-count-for-state state-a)
+                    0)
+                  (=
+                    (tc-lazy-import-summary-macro-force-count-for-state state-a)
+                    0)
+                  (match (tc-lazy-import-stub-target-id-for-state
+                    state-a
+                    importer-a
+                    alias-a)
+                    [(TcMaybeNameId.Some _) false]
+                    [(TcMaybeNameId.No) true])
+                  (= (tc-lazy-import-stub-count-for-state state-b) 1)
+                  (=
+                    (tc-lazy-import-summary-macro-force-count-for-state state-b)
+                    1)
+                  (match (tc-lazy-import-stub-target-id-for-state
+                    state-b
+                    importer-b
+                    alias-b)
+                    [(TcMaybeNameId.Some target) (= target target-b)]
+                    [(TcMaybeNameId.No) false]))]
+              (begin
+                (tc-lazy-import-stub-record-for-job!
+                  job-a
+                  importer-a
+                  alias-a
+                  target-a
+                  false)
+                (ci.intern-compat-state-reset! intern-a)
+                (tc-macro-state-bind-source-names!
+                  state-a
+                  (ci.intern-source-name-session-handle-from-state intern-a))
+                (if (and
+                  before-reset?
+                  a-reset-b-intact?
+                  (= (tc-lazy-import-stub-count-for-state state-a) 0)
+                  (= (tc-lazy-import-stub-count-for-state state-b) 1)
+                  (= (ci.intern-active-table-id) installed-table-id)
+                  (= (ci.intern-generation) installed-generation))
+                  unit
+                  (io.panic "typecheck: lazy import state isolation failed"))))))))))
 
 (define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
   (cast

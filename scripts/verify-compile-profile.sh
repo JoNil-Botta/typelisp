@@ -370,7 +370,8 @@ assert_fired_decl_attribution_in() {
         _fda_walk_decl_fire_source_shared_expr_refs=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_source_shared_expr_refs") &&
         _fda_walk_decl_fire_source_shared_type_refs=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_source_shared_type_refs") &&
         _fda_walk_decl_fire_survivor_expr_nodes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_expr_nodes") &&
-        _fda_walk_decl_fire_survivor_type_nodes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_type_nodes") || {
+        _fda_walk_decl_fire_survivor_type_nodes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_type_nodes") &&
+        _fda_walk_decl_generation_rotations=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_generation_rotations") || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
         fail "missing fired-declaration attribution counter"
     }
@@ -384,7 +385,8 @@ assert_fired_decl_attribution_in() {
         [ "$_fda_walk_decl_fire_source_shared_expr_refs" -gt 0 ] &&
         [ "$_fda_walk_decl_fire_source_shared_type_refs" -gt 0 ] &&
         [ "$_fda_walk_decl_fire_survivor_expr_nodes" -gt 0 ] &&
-        [ "$_fda_walk_decl_fire_survivor_type_nodes" -gt 0 ] || {
+        [ "$_fda_walk_decl_fire_survivor_type_nodes" -gt 0 ] &&
+        [ "$_fda_walk_decl_generation_rotations" -gt 0 ] || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
         fail "fired-declaration survivor/non-output counters did not exercise the selfhost graph"
     }
@@ -414,6 +416,29 @@ assert_fired_decl_attribution_in() {
     [ "$_fda_unattributed" -le 4194304 ] || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
         fail "fired-declaration unattributed residual exceeds 4 MiB: $_fda_unattributed"
+    }
+
+    # #5893's batch-8 cadence measured non-output retention at 18.9% of
+    # superseded allocation on the Windows selfhost; batch 32 retained 36.1%.
+    # Keep a proportional ceiling so source growth cannot silently restore the
+    # old fixed-batch retention. The generation counter includes copy-out
+    # boundaries outside the declaration arena, hence the narrow 7..9 cadence
+    # band instead of an equality against eight.
+    _fda_nonoutput_limit=$((_fda_walk_decl_fire_superseded_alloc_bytes / 4))
+    [ "$_fda_walk_decl_fire_nonoutput_live_bytes" -le "$_fda_nonoutput_limit" ] || {
+        show_failure_logs "$_fda_stdout" "$_fda_stderr"
+        fail "fired-declaration non-output retention exceeds 25% of superseded allocation: live=$_fda_walk_decl_fire_nonoutput_live_bytes allocated=$_fda_walk_decl_fire_superseded_alloc_bytes"
+    }
+    _fda_walk_decl_generations=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_generations") || {
+        show_failure_logs "$_fda_stdout" "$_fda_stderr"
+        fail "missing fired-declaration generation count"
+    }
+    _fda_rotation_lower=$((_fda_walk_decl_generation_rotations * 7))
+    _fda_rotation_upper=$((_fda_walk_decl_generation_rotations * 9))
+    [ "$_fda_rotation_lower" -le "$_fda_walk_decl_generations" ] &&
+        [ "$_fda_rotation_upper" -ge "$_fda_walk_decl_generations" ] || {
+        show_failure_logs "$_fda_stdout" "$_fda_stderr"
+        fail "declaration-generation rotation cadence left the batch-8 band: generations=$_fda_walk_decl_generations rotations=$_fda_walk_decl_generation_rotations"
     }
 
 }
@@ -1818,6 +1843,7 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_nonoutput_live_bytes|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_residual_live_bytes|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_source_shared_expr_refs|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_generation_rotations|"
 assert_profile_counter_at_least_in \
     "$CHECK_STDERR" \
     "typecheck.macro.walk_hygiene_nodes_reused" \

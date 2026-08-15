@@ -33306,27 +33306,6 @@
         ;; valid as-is (no branch condition can have folded to a literal).
         (OptBlockCtxResult.Result blocks context true))]))
 
-;; Non-heavy pipeline entry point: identical to opt-sccp-blocks (nested
-;; cfg-simplify included) but sizes the lattice env by the function frame
-;; instead of walking the whole function for max-var.
-(define (opt-sccp-blocks-with-frame
-  [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
-  [blocks : ir.CompilerIrBlockList]
-  [frame : i64]) : ir.CompilerIrBlockList
-  (let
-    [context : OptCfgContext (opt-cfg-context-build blocks)]
-    (match (opt-sccp-analyze-with-frame
-      type-segment-bases
-      context
-      params
-      blocks
-      frame)
-      [(OptSccpState.State _ _ env _ _)
-        (if (opt-sccp-env-any-const? env 0)
-          (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
-          (opt-cfg-simplify-blocks blocks))])))
-
 (defenum OptSwitchIndexTag
   (No)
   (Some i64 i64))
@@ -35683,13 +35662,6 @@
                   (OptFunctionPassResult.Result next true)]
                 [(ResultCompilerOptimizeVerify.Err _)
                   (OptFunctionPassResult.Result func false)])))))]))
-
-(define (opt-bit-test-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-bit-test-function-pass func)
-    [(OptFunctionPassResult.Result next changed)
-      (if changed
-        next
-        func)]))
 
 (define (optimize-function-max-iterations) : i64
   2)
@@ -85778,16 +85750,6 @@
       (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
       (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
       roots)))
-
-(define (opt-call-memory-roots
-  [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
-  [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
-  (opt-call-memory-roots-with-sources
-    type-segment-bases
-    (opt-call-memory-sources params blocks)
-    params
-    blocks))
 
 ;; --- element-storage pointer classification ---------------------------------
 ;;

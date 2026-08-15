@@ -16924,58 +16924,6 @@
     5
     (opt-inline-dup-leaf-call-zero-instrs helper-name)))
 
-;; A cyclic body with no bounds check: the loop gate above lets a bounds-free
-;; callee through untouched, so this shape reaches the accessor admission and
-;; isolates its acyclic clause. (A cyclic body that DOES carry bounds is already
-;; refused one gate earlier, which would make the fixture vacuous.)
-(define (opt-inline-shared-cyclic-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
-  (compiler_ir_types.CompilerIrFunction.Function
-    callee-name
-    (opt-inline-switch-params)
-    (compiler_ast_types.AstType.I64)
-    4
-    (compiler_ir_types.compiler-ir-block-cons
-      (compiler_ir_types.compiler-ir-block
-        (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Jump
-            (compiler_ir_types.compiler-ir-label "loop"))
-          compiler_ir_types.CompilerIrInstrList.Nil))
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "loop")
-          (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.Switch
-              (compiler_ir_types.CompilerIrValue.Var 0)
-              0
-              (opt-inline-switch-cases
-                (compiler_ir_types.compiler-ir-label "zero")
-                (compiler_ir_types.compiler-ir-label "one"))
-              (compiler_ir_types.compiler-ir-label "loop"))
-            compiler_ir_types.CompilerIrInstrList.Nil))
-        (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.compiler-ir-block
-            (compiler_ir_types.compiler-ir-label "zero")
-            (opt-inline-dup-leaf-jump-zero-instrs))
-          (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.compiler-ir-block
-              (compiler_ir_types.compiler-ir-label "one")
-              (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.Jump
-                  (compiler_ir_types.compiler-ir-label "join"))
-                compiler_ir_types.CompilerIrInstrList.Nil))
-            (compiler_ir_types.compiler-ir-block-cons
-              (compiler_ir_types.compiler-ir-block
-                (compiler_ir_types.compiler-ir-label "join")
-                (compiler_ir_types.compiler-ir-instr-cons
-                  (opt-inline-switch-loop-phi-instr)
-                  (compiler_ir_types.compiler-ir-instr-cons
-                    (compiler_ir_types.CompilerIrInstr.Return
-                      (compiler_ir_types.CompilerIrMaybeValue.Some
-                        (compiler_ir_types.CompilerIrValue.Var 3)))
-                    compiler_ir_types.CompilerIrInstrList.Nil)))
-              compiler_ir_types.CompilerIrBlockList.Nil)))))))
-
 ;; The same cyclic body with one call in its `zero` case: refused by the
 ;; accessor's call-free pricing clause and by the hot loop leaf's.
 (define (opt-inline-shared-cyclic-calling-leaf

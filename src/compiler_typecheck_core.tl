@@ -86656,27 +86656,15 @@
       (if (tc-macro-walk-field macro-state macro-expand-scratch-enabled)
         (macro-expand-scratch-arena-get macro-state)
         enclosing)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [address : i64
-          (macro-segmented-program-view-new-current
-            prefix-rev
-            prefix-paths-rev
-            decls
-            paths)]
-        [storage-head : i64 (arena.tl_arena_current)]
-        (begin
-          (if (tc-macro-walk-field macro-state macro-expand-scratch-enabled)
-            (tc-macro-walk-set!
-              macro-state
-              macro-expand-scratch-arena
-              storage-head)
-            unit)
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          (tc-job-state-set-macro-program-view-address! state address))))))
+    [address : i64
+      (in-arena
+        (arena.Arena storage)
+        (macro-segmented-program-view-new-current
+          prefix-rev
+          prefix-paths-rev
+          decls
+          paths))]
+    (tc-job-state-set-macro-program-view-address! state address)))
 
 (define (macro-segmented-program-end! [state : TcJobState]) : unit
   (tc-job-state-set-macro-program-view-address! state 0))
@@ -86895,21 +86883,13 @@
   [middle-paths : ast.AstDeclPathList]) : unit
   (let
     [macro-state : TcMacroState (tc-job-state-macro-state state)]
-    [enclosing : i64 (arena.tl_arena_current)]
     [storage : i64 (macro-expand-scratch-arena-get macro-state)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
+    (in-arena
+      (arena.Arena storage)
       (macro-segmented-program-splice-current-in-scratch!
         state
         middle
-        middle-paths)
-      (tc-macro-walk-set!
-        macro-state
-        macro-expand-scratch-arena
-        (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set enclosing)))))
+        middle-paths))))
 
 (define (macro-segmented-program-decl-count [state : TcJobState]) : i64
   (let

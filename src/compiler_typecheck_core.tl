@@ -84583,66 +84583,63 @@
                 (or
                   (> required-layouts (array.length layouts.slots))
                   (> required-reflections (array.length reflections.slots)))]
-              [previous-arena : i64 (arena.tl_arena_current)]
               [_profile-start : unit
                 (cfg
                   compile-profile
                   (compiler-tc-walk-ctfe-extension-start!)
                   unit)]
-              [_switch-owner : unit
-                (unsafe
-                  (arena.tl_arena_set
-                    (tc-type-env-store-owner-current-head
-                      (tc-macro-walk-field
-                        state
-                        macro-expand-ctfe-env-owner-arena))))]
-              [grown-layouts : ctfe_support.CtfeLayoutInfoList
-                (ctfe_support.ctfe-layout-info-list-ensure-capacity
-                  layouts
-                  required-layouts)]
-              [grown-reflections : ctfe_support.CtfeReflectInfoList
-                (ctfe_support.ctfe-reflect-info-list-ensure-capacity
-                  reflections
-                  required-reflections)]
-              [next-layouts : ctfe_support.CtfeLayoutInfoList
-                (tc-ctfe-layouts-from-decls
-                  ctx
-                  decls
-                  module
-                  module-id
-                  grown-layouts)]
-              [next-reflections : ctfe_support.CtfeReflectInfoList
-                (ctfe_support.ctfe-reflections-from-decls
-                  decls
-                  module
-                  module-id
-                  grown-reflections)]
-              (begin
-                (tc-macro-walk-set!
-                  state
-                  macro-expand-ctfe-env-value
-                  (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
-                    next-layouts
-                    next-reflections
-                    (ctfe_support.ctfe-env-pools
-                      (tc-macro-walk-field state macro-expand-ctfe-env-value))
-                    (ctfe_support.ctfe-env-source-names
-                      (tc-macro-walk-field state macro-expand-ctfe-env-value))
-                    (tc-macro-ctfe-state state)))
-                (tc-type-env-store-restore-after-owner-alloc!
-                  previous-arena
+              (in-arena
+                (arena.Arena
                   (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))
-                (if grew?
-                  (cfg
-                    compile-profile
-                    (compiler-tc-walk-ctfe-extension-reject-note! 3)
-                    unit)
-                  unit)
-                (cfg
-                  compile-profile
-                  (compiler-tc-walk-ctfe-extension-finish!)
-                  unit)
-                CompilerCtfeSpliceExtensionResult.Extended))
+                (let
+                  [grown-layouts : ctfe_support.CtfeLayoutInfoList
+                    (ctfe_support.ctfe-layout-info-list-ensure-capacity
+                      layouts
+                      required-layouts)]
+                  [grown-reflections : ctfe_support.CtfeReflectInfoList
+                    (ctfe_support.ctfe-reflect-info-list-ensure-capacity
+                      reflections
+                      required-reflections)]
+                  [next-layouts : ctfe_support.CtfeLayoutInfoList
+                    (tc-ctfe-layouts-from-decls
+                      ctx
+                      decls
+                      module
+                      module-id
+                      grown-layouts)]
+                  [next-reflections : ctfe_support.CtfeReflectInfoList
+                    (ctfe_support.ctfe-reflections-from-decls
+                      decls
+                      module
+                      module-id
+                      grown-reflections)]
+                  (begin
+                    (tc-macro-walk-set!
+                      state
+                      macro-expand-ctfe-env-value
+                      (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
+                        next-layouts
+                        next-reflections
+                        (ctfe_support.ctfe-env-pools
+                          (tc-macro-walk-field
+                            state
+                            macro-expand-ctfe-env-value))
+                        (ctfe_support.ctfe-env-source-names
+                          (tc-macro-walk-field
+                            state
+                            macro-expand-ctfe-env-value))
+                        (tc-macro-ctfe-state state)))
+                    (if grew?
+                      (cfg
+                        compile-profile
+                        (compiler-tc-walk-ctfe-extension-reject-note! 3)
+                        unit)
+                      unit)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-walk-ctfe-extension-finish!)
+                      unit)
+                    CompilerCtfeSpliceExtensionResult.Extended))))
             (begin
               (cfg
                 compile-profile
@@ -84687,39 +84684,39 @@
             0)
             (tc-type-env-store-owner-root previous-arena)
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))]
-        [_switch-owner : unit
-          (unsafe
-            (arena.tl_arena_set
-              (tc-type-env-store-owner-current-head owner-arena)))]
-        (begin
-          (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-owner-arena
-            owner-arena)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-value
-            (tc-ctfe-env ctx))
-          (tc-type-env-store-restore-after-owner-alloc!
-            previous-arena
-            owner-arena)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-has-metadata
-            (tc-macro-walk-field state ctfe-needs-metadata))
-          (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-build-generation
-            (+
-              (tc-macro-walk-field state macro-expand-ctfe-env-build-generation)
-              1))
-          (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending false)
-          (cfg
-            compile-profile
-            (compiler-tc-walk-ctfe-build-finish! _rebuild?)
-            unit))))))
+        (in-arena
+          (arena.Arena owner-arena)
+          (begin
+            (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-owner-arena
+              owner-arena)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-value
+              (tc-ctfe-env ctx))
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-has-metadata
+              (tc-macro-walk-field state ctfe-needs-metadata))
+            (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-build-generation
+              (+
+                (tc-macro-walk-field
+                  state
+                  macro-expand-ctfe-env-build-generation)
+                1))
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-rebuild-pending
+              false)
+            (cfg
+              compile-profile
+              (compiler-tc-walk-ctfe-build-finish! _rebuild?)
+              unit)))))))
 
 (define (compiler-typecheck-ctfe-env-rebuild-for-splice!
   [ctx : TcContext]

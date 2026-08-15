@@ -22205,30 +22205,29 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcLazyImportStateData)
-          (array.make-array TcLazyImportStateData 1)]
-        [_init : unit
-          (set!
-            (array-ref cell 0)
-            (tc-lazy-import-state-data-new (tc-type-env-store-owner-root owner)))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcLazyImportStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-lazy-import
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcLazyImportStateData)
+              (array.make-array TcLazyImportStateData 1)]
+            [_init : unit
+              (set!
+                (array-ref cell 0)
+                (tc-lazy-import-state-data-new
+                  (tc-type-env-store-owner-root owner)))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast (array-data cell) : (Ptr TcLazyImportStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-lazy-import
+                next)
+              next)))))))
 
 (define (tc-macro-state-lazy-import [state : TcMacroState]) : TcLazyImportState
   (TcLazyImportState
@@ -22261,29 +22260,26 @@
     (if (= (array-length data.index-slots) tc-lazy-import-stub-capacity)
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 data.owner-arena]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        (begin
-          (set!
-            data.module-ids
-            (array.make-array i64 tc-lazy-import-stub-capacity))
-          (set!
-            data.alias-ids
-            (array.make-array i64 tc-lazy-import-stub-capacity))
-          (set!
-            data.target-ids
-            (array.make-array i64 tc-lazy-import-stub-capacity))
-          (set!
-            data.summary-backed
-            (array.make-array bool tc-lazy-import-stub-capacity))
-          (set!
-            data.index-slots
-            (array.make-array i64 tc-lazy-import-stub-capacity))
-          (tc-lazy-import-state-data-set! state data)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+        (in-arena
+          (arena.Arena owner)
+          (begin
+            (set!
+              data.module-ids
+              (array.make-array i64 tc-lazy-import-stub-capacity))
+            (set!
+              data.alias-ids
+              (array.make-array i64 tc-lazy-import-stub-capacity))
+            (set!
+              data.target-ids
+              (array.make-array i64 tc-lazy-import-stub-capacity))
+            (set!
+              data.summary-backed
+              (array.make-array bool tc-lazy-import-stub-capacity))
+            (set!
+              data.index-slots
+              (array.make-array i64 tc-lazy-import-stub-capacity))
+            (tc-lazy-import-state-data-set! state data)))))))
 
 (define (tc-lazy-import-stub-storage-ensure-for-job! [state : TcJobState]) : unit
   (tc-lazy-import-stub-storage-ensure-for-state!

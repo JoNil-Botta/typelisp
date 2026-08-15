@@ -70,7 +70,8 @@
     compiler_ir_types.CompilerSourceSpans
     compiler_ast_types.AstNodePoolContext
     profile_state.CompilerProfileState
-    compiler_backend.CompilerBackendState)
+    compiler_backend.CompilerBackendState
+    compiler_typecheck_core.TcJobState)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
 (define compiler-driver-pending-retired-source-arena : i64
@@ -261,6 +262,19 @@
 (define (compiler-driver-state-reset-typecheck! [state : CompilerDriverState]) : unit
   (compiler_typecheck_core.tc-job-state-reset-file-state!
     (compiler-driver-state-typecheck state)))
+
+;; An intern reset publishes a new generation before the loader can record the
+;; next entry's lazy import aliases. Bind that empty-generation snapshot now;
+;; the post-load bind refreshes its source-count boundary without changing the
+;; generation. Otherwise loader-produced aliases inherit the previous entry's
+;; provenance and are discarded at the post-load bind.
+(define (compiler-driver-state-bind-owned-source-names!
+  [state : CompilerDriverState]) : unit
+  (compiler_typecheck_core.tc-macro-state-bind-source-names!
+    (compiler_typecheck_core.tc-job-state-macro-state
+      (compiler-driver-state-typecheck state))
+    (ci.intern-source-name-session-handle-from-state
+      (compiler-driver-state-owned-interns state))))
 
 (define (compiler-driver-state-prefix-cache-enable!
   [state : CompilerDriverState]) : unit
@@ -579,7 +593,8 @@
         spans
         retained
         (compiler-driver-state-profile state)
-        (compiler-driver-state-backend state)))))
+        (compiler-driver-state-backend state)
+        (compiler-driver-state-typecheck state)))))
 
 (define (compiler-driver-state-clear-pool-backed-caches-for-state!
   [state : CompilerDriverState]) : unit
@@ -771,7 +786,8 @@
     spans
     (compiler_ast_types.ast-node-pool-context-capture-active)
     profile-state
-    backend-state))
+    backend-state
+    (compiler_typecheck_core.tc-serial-job-state)))
 
 (define (compiler-driver-lowered-from-active-pools-and-profile-state
   [program : compiler_ir_types.CompilerIrProgram]
@@ -805,13 +821,15 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [pools : compiler_ast_types.AstNodePoolContext]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverLowered
+  [backend-state : compiler_backend.CompilerBackendState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverLowered
   (ResultCompilerDriverLowered.Ok
     program
     spans
     (compiler_ast_types.ast-node-pool-context-snapshot pools)
     profile-state
-    backend-state))
+    backend-state
+    typecheck-state))
 
 (define (compiler-driver-runtime-prelude-cache-lookup-with-state
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -919,6 +937,7 @@
         (compiler_load.compiler-load-session-state-reset-interns-with-state!
           state.load-session
           (array-ref state.intern-state 0))
+        (compiler-driver-state-bind-owned-source-names! state)
         (compiler-driver-state-reset-typecheck! state)
         (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
         ;; Builtin/CTFE ids and lowerer arenas are state-owned: reset/release
@@ -955,6 +974,7 @@
         (compiler_load.compiler-load-session-state-reset-interns-with-state!
           state.load-session
           (array-ref state.intern-state 0))
+        (compiler-driver-state-bind-owned-source-names! state)
         (compiler-driver-state-reset-typecheck! state)
         (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
         ;; State-owned builtin/CTFE reset and lowerer-arena release, exactly as
@@ -992,6 +1012,7 @@
           (compiler_load.compiler-load-session-state-reset-interns-with-state!
             state.load-session
             (array-ref state.intern-state 0))
+          (compiler-driver-state-bind-owned-source-names! state)
           (compiler-driver-state-reset-typecheck! state)
           (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
           (compiler-driver-state-reset-builtins! state)
@@ -1807,7 +1828,8 @@
     false
     (profile_state.compiler-profile-state-new)
     (compiler_backend.compiler-backend-state-new
-      (ci.intern-compat-state-capture-active))))
+      (ci.intern-compat-state-capture-active))
+    (compiler_typecheck_core.tc-serial-job-state)))
 
 ;; The lowered IR functions live in a dedicated arena
 ;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
@@ -1825,10 +1847,18 @@
 ;; macro/typecheck scratch state through codegen. The lower scratch arena is also
 ;; function-local: escaped IR lives outside it, so it can be released before
 ;; optimize/backend instead of overlapping with backend assembly buffers.
-(define (compiler-driver-release-typecheck-caches-after-lower!) : unit
+(define (compiler-driver-release-typecheck-caches-after-lower-for-job!
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : unit
   (begin
-    (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
+    (compiler_typecheck_core.compiler-typecheck-reset-file-state-for-job!
+      typecheck-state)
     (compiler_lower.lower-scratch-arena-release!)))
+
+;; Serial compatibility adapter. State-owned compiler entrypoints carry their
+;; typecheck job through ResultCompilerDriverLowered and use the explicit form.
+(define (compiler-driver-release-typecheck-caches-after-lower!) : unit
+  (compiler-driver-release-typecheck-caches-after-lower-for-job!
+    (compiler_typecheck_core.tc-serial-job-state)))
 
 ;; Package builds may run TLci, direct-object, and doctest passes after an
 ;; assembly emit while keeping the loaded AST alive. A full file-state reset
@@ -1849,12 +1879,14 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriver
+  [backend-state : compiler_backend.CompilerBackendState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriver
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
-      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-release-typecheck-caches-after-lower-for-job!
+        typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
@@ -1936,12 +1968,14 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverBuffer
+  [backend-state : compiler_backend.CompilerBackendState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverBuffer
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
-      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-release-typecheck-caches-after-lower-for-job!
+        typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
@@ -2030,12 +2064,14 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverObject
+  [backend-state : compiler_backend.CompilerBackendState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverObject
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverObject.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
-      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-release-typecheck-caches-after-lower-for-job!
+        typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
@@ -2147,7 +2183,8 @@
       emit-entry
       crt-entry
       profile-state
-      backend-state)))
+      backend-state
+      (compiler_typecheck_core.tc-serial-job-state))))
 
 (define (compiler-driver-emit-lowered-package-runtime-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -2160,12 +2197,14 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverPackageRuntime
+  [backend-state : compiler_backend.CompilerBackendState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverPackageRuntime
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverPackageRuntime.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
-      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-release-typecheck-caches-after-lower-for-job!
+        typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
@@ -2328,12 +2367,14 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverPic
+  [backend-state : compiler_backend.CompilerBackendState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverPic
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverPic.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
-      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-release-typecheck-caches-after-lower-for-job!
+        typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
@@ -2550,7 +2591,8 @@
         spans
         pools
         profile-state
-        backend-state)
+        backend-state
+        typecheck-state)
       (let
         [_profile-program-start : unit
           (cfg
@@ -2608,7 +2650,8 @@
               emit-entry
               crt-entry
               profile-state
-              backend-state))]
+              backend-state
+              typecheck-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -2635,7 +2678,8 @@
         spans
         pools
         profile-state
-        backend-state)
+        backend-state
+        typecheck-state)
       (let
         [_profile-program-start : unit
           (cfg
@@ -2693,7 +2737,8 @@
               emit-entry
               false
               profile-state
-              backend-state))]
+              backend-state
+              typecheck-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -2721,7 +2766,8 @@
         spans
         pools
         profile-state
-        backend-state)
+        backend-state
+        typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -2749,7 +2795,8 @@
               emit-entry
               crt-entry
               profile-state
-              backend-state))]
+              backend-state
+              typecheck-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -2776,7 +2823,8 @@
         spans
         pools
         profile-state
-        backend-state)
+        backend-state
+        typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -2803,7 +2851,8 @@
               emit-entry
               crt-entry
               profile-state
-              backend-state))]
+              backend-state
+              typecheck-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -2831,7 +2880,8 @@
         spans
         pools
         profile-state
-        backend-state)
+        backend-state
+        typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -2859,7 +2909,8 @@
               emit-entry
               crt-entry
               profile-state
-              backend-state))]
+              backend-state
+              typecheck-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -4027,7 +4078,8 @@
                         spans
                         result-pools
                         (compiler-driver-state-profile state)
-                        (compiler-driver-state-backend state)))))]
+                        (compiler-driver-state-backend state)
+                        (compiler-driver-state-typecheck state)))))]
               [(compiler_lower.ResultCompilerLower.Err diag)
                 (begin
                   ;; A lower-phase failure can leave the state's checked pool
@@ -4263,7 +4315,8 @@
                         spans
                         result-pools
                         (compiler-driver-state-profile state)
-                        (compiler-driver-state-backend state)))))]
+                        (compiler-driver-state-backend state)
+                        (compiler-driver-state-typecheck state)))))]
               [(compiler_lower.ResultCompilerLower.Err diag)
                 (begin
                   ;; See the matching note in
@@ -4725,12 +4778,14 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [opt-level : i64]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriver
+  [profile-state : profile_state.CompilerProfileState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriver
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (begin
-      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-release-typecheck-caches-after-lower-for-job!
+        typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
@@ -4757,7 +4812,8 @@
         spans
         pools
         profile-state
-        _backend-state)
+        _backend-state
+        typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -4778,7 +4834,8 @@
               emit-program
               emit-spans
               opt-level
-              profile-state))]
+              profile-state
+              typecheck-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -4863,12 +4920,14 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [opt-level : i64]
   [dump-pass : String]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriver
+  [profile-state : profile_state.CompilerProfileState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriver
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (begin
-      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-release-typecheck-caches-after-lower-for-job!
+        typecheck-state)
       (compiler-driver-retire-frontend-arena!)
       (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
@@ -4898,7 +4957,8 @@
         spans
         pools
         profile-state
-        _backend-state)
+        _backend-state
+        typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -4920,7 +4980,8 @@
               emit-spans
               opt-level
               dump-pass
-              profile-state))]
+              profile-state
+              typecheck-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)

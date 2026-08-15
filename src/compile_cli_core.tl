@@ -1989,7 +1989,8 @@
       (tc_core.tc-agg-size-cache-storage-ensure!)
       (tc_core.tc-agg-align-cache-storage-ensure!)
       (tc_core.tc-agg-regwords-cache-storage-ensure!)
-      (tc_core.tc-lazy-import-stub-storage-ensure!)
+      (tc_core.tc-lazy-import-stub-storage-ensure-for-job!
+        (compiler_driver_core.compiler-driver-state-typecheck state))
       (tc_core.tc-agg-layout-cache-table-storage-ensure!)
       (tc_core.macro-unqualified-import-cache-storage-ensure!
         (tc_core.tc-job-state-macro-state

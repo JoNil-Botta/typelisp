@@ -13043,17 +13043,14 @@
   [state : TcMacroState]
   [root : i64]) : unit
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
     (begin
       (set! data.hygiene-cache-arena-root root)
       (set! data.hygiene-cache-arena root)
-      (unsafe
-        (arena.tl_arena_set root))
-      (set! data.hygiene-cache-arena-mark (arena.tl_region_mark))
-      (tc-macro-module-env-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set previous)))))
+      (in-arena
+        (arena.Arena root)
+        (set! data.hygiene-cache-arena-mark (arena.tl_region_mark)))
+      (tc-macro-module-env-state-data-set! state data))))
 
 (define (tc-hygiene-module-env-cache-arena-handle [state : TcMacroState]) : i64
   (let
@@ -16872,38 +16869,22 @@
         ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
         ;; survives the scratch arenas active during per-decl typechecking.
         (let
-          [prev-arena : i64 (arena.tl_arena_current)]
-          [_switched : unit
-            (unsafe
-              (arena.tl_arena_set
-                (tc-hygiene-module-env-cache-arena-handle state)))]
           [current : TcMacroModuleEnvStateData
             (tc-macro-module-env-state-data state)]
-          (match (tc-module-local-env-cached-id
-            ctx
-            current.hygiene-active-top-env
-            module
-            module-id
-            current.hygiene-module-env-cache)
-            [(ResultTcModuleLocalEnv.Ok def-env next-cache)
-              (let
-                [cache-head : i64 (arena.tl_arena_current)]
+          (in-arena
+            (arena.Arena (tc-hygiene-module-env-cache-arena-handle state))
+            (match (tc-module-local-env-cached-id
+              ctx
+              current.hygiene-active-top-env
+              module
+              module-id
+              current.hygiene-module-env-cache)
+              [(ResultTcModuleLocalEnv.Ok def-env next-cache)
                 (begin
-                  (set! current.hygiene-cache-arena cache-head)
                   (set! current.hygiene-module-env-cache next-cache)
                   (tc-macro-module-env-state-data-set! state current)
-                  (unsafe
-                    (arena.tl_arena_set prev-arena))
-                  (ResultTcEnv.Ok def-env)))]
-            [(ResultTcModuleLocalEnv.Err message)
-              (let
-                [cache-head : i64 (arena.tl_arena_current)]
-                (begin
-                  (set! current.hygiene-cache-arena cache-head)
-                  (tc-macro-module-env-state-data-set! state current)
-                  (unsafe
-                    (arena.tl_arena_set prev-arena))
-                  (ResultTcEnv.Err message)))])))
+                  (ResultTcEnv.Ok def-env))]
+              [(ResultTcModuleLocalEnv.Err message) (ResultTcEnv.Err message)]))))
       (ResultTcEnv.Err
         "typecheck: macro hygiene definition context unavailable"))))
 
@@ -85237,18 +85218,10 @@
   [decls : ast.AstDeclList]) : unit
   (if (tc-macro-walk-field state macro-expand-scratch-enabled)
     (let
-      [enclosing : i64 (arena.tl_arena_current)]
       [scratch : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (macro-live-prescan-ensure-current! state decls)
-        (tc-macro-walk-set!
-          state
-          macro-expand-scratch-arena
-          (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set enclosing))))
+      (in-arena
+        (arena.Arena scratch)
+        (macro-live-prescan-ensure-current! state decls)))
     (macro-live-prescan-ensure-current! state decls)))
 
 (define (macro-live-prescan-ensure!

@@ -79,27 +79,14 @@
   (Err String))
 
 ;; One-word dynamic capability shared by the explicit compile-job entry points
-;; and the standalone compatibility surface. Address zero is the named serial
-;; adapter; a nonzero address points at the explicit entry point's stack-local
-;; state descriptor for the duration of the synchronous scan. Keeping only the
-;; address here avoids copying the large InternCompatState descriptor per token.
-(defstruct LexerInternOwner
-  (state-address i64))
-
-(define (lexer-intern-owner-active) : LexerInternOwner
-  (LexerInternOwner 0))
-
-(defmacro (lexer-intern-owner-for-state [place : Expr]) : Expr
-  `(LexerInternOwner
-    (cast
-      (unsafe
-        (ptr->int (ptr-cast (ptr-addr-of ,place) : (Ptr u8))))
-      : i64)))
-
-(define (lexer-intern-owner-state [owner : LexerInternOwner]) : ci.InternCompatState
-  (unsafe
-    (ptr-read
-      (int->ptr (cast owner.state-address : u64) : (Ptr ci.InternCompatState)))))
+;; and the standalone compatibility surface. The explicit variant borrows the
+;; wrapper's descriptor for the synchronous scan. Interning follows that borrow
+;; through reference-taking helpers, so a source token never copies the large
+;; InternCompatState descriptor and the borrow cannot escape the wrapper call.
+(defenum LexerInternOwner
+  (:lifetimes intern-state)
+  (Active)
+  (State (& intern-state ci.InternCompatState)))
 
 (define (ok? [message : String]) : bool
   (string.eq message ""))
@@ -142,35 +129,30 @@
       [else (or (= code 33) (and (>= code 37) (<= code 38)) (= code 95))])))
 
 (define (lexer-intern-source-slice-id
-  [owner : LexerInternOwner]
+  [owner : (LexerInternOwner intern-state)]
   [src : String]
   [start : i64]
   [len : i64]) : ci.InternId
-  (if (= owner.state-address 0)
-    (ci.intern-source-slice-id src start len)
-    (ci.intern-compat-state-source-slice-id
-      (lexer-intern-owner-state owner)
-      src
-      start
-      len)))
+  (match owner
+    [(Active) (ci.intern-source-slice-id src start len)]
+    [(State state)
+      (ci.intern-compat-state-source-slice-id-ready-ref state src start len)]))
 
 ;; The lexer is also used by standalone tools that do not initialize the
 ;; compiler builtin-ID catalog. The active adapter keeps the direct builtin
 ;; fast path. An explicit owner must resolve ':' in its own table because a
 ;; process-global builtin ID may belong to a different compile job.
 (define (colon-intern-id
-  [owner : LexerInternOwner]
+  [owner : (LexerInternOwner intern-state)]
   [src : String]
   [start : i64]) : ci.InternId
-  (if (= owner.state-address 0)
-    (if (ci.intern-renderable-id? cbi.compiler-builtin-id-fix-colon)
-      (ci.intern-id-from-renderable cbi.compiler-builtin-id-fix-colon)
-      (ci.intern-source-slice-id src start 1))
-    (ci.intern-compat-state-source-slice-id
-      (lexer-intern-owner-state owner)
-      src
-      start
-      1)))
+  (match owner
+    [(Active)
+      (if (ci.intern-renderable-id? cbi.compiler-builtin-id-fix-colon)
+        (ci.intern-id-from-renderable cbi.compiler-builtin-id-fix-colon)
+        (ci.intern-source-slice-id src start 1))]
+    [(State state)
+      (ci.intern-compat-state-source-slice-id-ready-ref state src start 1)]))
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool
@@ -689,7 +671,7 @@
   [src : String]
   [toks : (__tl_dyn-array token.Token)]
   [starts : (__tl_dyn-array i64)]
-  [owner : LexerInternOwner]) : ResultLexIntoSpanned
+  [owner : (LexerInternOwner intern-state)]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -888,7 +870,7 @@
 ;; without a per-write capacity test.
 (define (into-spanned-tokens-result-with-intern-owner
   [src : String]
-  [owner : LexerInternOwner]) : ResultLexIntoSpanned
+  [owner : (LexerInternOwner intern-state)]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -1144,7 +1126,9 @@
 ;; plus the `token.Token.End` sentinel), lex into it, then return that exact
 ;; array. The trailing `token.Token.End` marks
 ;; the logical end even though the backing array may be larger.
-(define (result-with-intern-owner [src : String] [owner : LexerInternOwner]) : ResultTokens
+(define (result-with-intern-owner
+  [src : String]
+  [owner : (LexerInternOwner intern-state)]) : ResultTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
     [toks : (__tl_dyn-array token.Token) (__tl_make-array token.Token cap)]
@@ -1156,12 +1140,14 @@
 
 ;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
 (define (result [src : String]) : ResultTokens
-  (result-with-intern-owner src (lexer-intern-owner-active)))
+  (result-with-intern-owner src LexerInternOwner.Active))
 
 (define (result-with-intern-state
   [src : String]
   [intern-state : ci.InternCompatState]) : ResultTokens
-  (result-with-intern-owner src (lexer-intern-owner-for-state intern-state)))
+  (begin
+    (ci.intern-compat-state-ensure-ready! intern-state)
+    (result-with-intern-owner src (LexerInternOwner.State (& intern-state)))))
 
 (define (lex [src : String]) : (__tl_dyn-array token.Token)
   (match (result src)
@@ -1437,7 +1423,7 @@
 ;; (growth), so it is re-read from the global here rather than captured before.
 (define (spanned-result-with-intern-owner
   [src : String]
-  [owner : LexerInternOwner]) : ResultSpannedTokens
+  [owner : (LexerInternOwner intern-state)]) : ResultSpannedTokens
   (match (into-spanned-tokens-result-with-intern-owner src owner)
     [(ResultLexIntoSpanned.Ok _)
       (ResultSpannedTokens.Ok (global-shared-view lex-spanned-token-buffer))]
@@ -1445,14 +1431,16 @@
 
 ;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
 (define (spanned-result [src : String]) : ResultSpannedTokens
-  (spanned-result-with-intern-owner src (lexer-intern-owner-active)))
+  (spanned-result-with-intern-owner src LexerInternOwner.Active))
 
 (define (spanned-result-with-intern-state
   [src : String]
   [intern-state : ci.InternCompatState]) : ResultSpannedTokens
-  (spanned-result-with-intern-owner
-    src
-    (lexer-intern-owner-for-state intern-state)))
+  (begin
+    (ci.intern-compat-state-ensure-ready! intern-state)
+    (spanned-result-with-intern-owner
+      src
+      (LexerInternOwner.State (& intern-state)))))
 
 (define (percent-symbol-ok?) : bool
   (match (result "(% n 16)")

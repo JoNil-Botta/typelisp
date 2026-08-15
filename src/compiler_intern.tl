@@ -1431,28 +1431,40 @@
     (set! (array-ref state.reset-generation 0) (intern-generation-allocate!))
     (set! (array-ref state.map-ready 0) true)))
 
+(define (intern-compat-state-persistent-substring-ref
+  [state : (& state InternCompatState)]
+  [text : String]
+  [start : i64]
+  [len : i64]) : String
+  (in-arena
+    (arena.Arena (array-ref state.persistent-arena 0))
+    (intern-substring text start len)))
+
 (define (intern-compat-state-persistent-substring
   [state : InternCompatState]
   [text : String]
   [start : i64]
   [len : i64]) : String
-  (in-arena
-    (arena.Arena (intern-compat-state-persistent-arena state))
-    (intern-substring text start len)))
+  (intern-compat-state-persistent-substring-ref (& state) text start len))
 
-(define (intern-compat-state-persistent-copy
-  [state : InternCompatState]
+(define (intern-compat-state-persistent-copy-ref
+  [state : (& state InternCompatState)]
   [text : String]) : String
-  (if (= (tl_arena_current) (intern-compat-state-persistent-arena state))
+  (if (= (tl_arena_current) (array-ref state.persistent-arena 0))
     text
-    (intern-compat-state-persistent-substring
+    (intern-compat-state-persistent-substring-ref
       state
       text
       0
       (intern-private-string-length text))))
 
-(define (intern-compat-state-record-qualified-metadata!
+(define (intern-compat-state-persistent-copy
   [state : InternCompatState]
+  [text : String]) : String
+  (intern-compat-state-persistent-copy-ref (& state) text))
+
+(define (intern-compat-state-record-qualified-metadata-ref!
+  [state : (& state InternCompatState)]
   [id : i64]
   [name : String]) : unit
   (let
@@ -1487,13 +1499,15 @@
         (intern-id-slot-encode
           (if (< dot 0)
             -1
-            (intern-compat-state-intern state (intern-substring name 0 dot)))))
+            (intern-compat-state-intern-ready-ref
+              state
+              (intern-substring name 0 dot)))))
       (set!
         (array-ref state.pool-dotted-prefix-id-slots id)
         (intern-id-slot-encode
           (if (< last-dot 0)
             -1
-            (intern-compat-state-intern
+            (intern-compat-state-intern-ready-ref
               state
               (intern-substring name 0 last-dot)))))
       (if (< slash 0)
@@ -1507,7 +1521,7 @@
             (intern-id-slot-encode
               (if (< dot 0)
                 id
-                (intern-compat-state-intern
+                (intern-compat-state-intern-ready-ref
                   state
                   (intern-substring name (+ dot 1) (- n (+ dot 1))))))))
         (let
@@ -1517,85 +1531,96 @@
             (set!
               (array-ref state.pool-module-id-slots id)
               (intern-id-slot-encode
-                (intern-compat-state-intern
+                (intern-compat-state-intern-ready-ref
                   state
                   (intern-substring name 0 slash))))
             (set!
               (array-ref state.pool-base-id-slots id)
               (intern-id-slot-encode
-                (intern-compat-state-intern
+                (intern-compat-state-intern-ready-ref
                   state
                   (intern-substring name base-start (- n base-start)))))))))))
+
+(define (intern-compat-state-record-qualified-metadata!
+  [state : InternCompatState]
+  [id : i64]
+  [name : String]) : unit
+  (intern-compat-state-record-qualified-metadata-ref! (& state) id name))
 
 ;; State-owned interning mirrors the compatibility table without installing it
 ;; into process globals. Compile-job setup and reset paths use this API while
 ;; the legacy parser/typecheck/lower call graph is migrated incrementally.
+(define (intern-compat-state-intern-ready-ref
+  [state : (& state InternCompatState)]
+  [name : String]) : i64
+  (let
+    [capacity : i64 (array-length state.map-id-slots)]
+    [hash : i64 (intern-hash name)]
+    [cursor : i64 (intern-bucket hash capacity)]
+    [steps : i64 0]
+    [out : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< steps capacity))
+        (let
+          [stored-id : InternSlotId (array-ref state.map-id-slots cursor)]
+          (if (= stored-id.encoded (cast 0 : u32))
+            (let
+              [id : i64 (array-ref state.pool-count 0)]
+              (if (> id (array-ref state.generated-next-id 0))
+                (intern-pool-capacity-abort)
+                (let
+                  [persistent-name : String
+                    (intern-compat-state-persistent-copy-ref state name)]
+                  (begin
+                    (set! (array-ref state.pool-slots id) persistent-name)
+                    (set!
+                      (array-ref state.map-id-slots cursor)
+                      (intern-id-slot-encode id))
+                    (set! (array-ref state.map-hash-slots cursor) hash)
+                    (set! (array-ref state.pool-count 0) (+ id 1))
+                    (intern-compat-state-record-qualified-metadata-ref!
+                      state
+                      id
+                      persistent-name)
+                    (set! out id)
+                    (set! done true)))))
+            (let
+              [slot-id : i64 (intern-id-slot-decode stored-id)]
+              [slot-hash : i64 (array-ref state.map-hash-slots cursor)]
+              [slot-key : String (array-ref state.pool-slots slot-id)]
+              (if (and
+                (= slot-hash hash)
+                (intern-private-string-eq slot-key name))
+                (begin
+                  (set! out slot-id)
+                  (set! done true))
+                (begin
+                  (set! cursor (intern-bucket (+ cursor 1) capacity))
+                  (set! steps (+ steps 1))))))))
+      out)))
+
+(define (intern-compat-state-ensure-ready! [state : InternCompatState]) : unit
+  (if (array-ref state.map-ready 0)
+    unit
+    (intern-compat-state-reset! state)))
+
 (define (intern-compat-state-intern [state : InternCompatState] [name : String]) : i64
   (begin
-    (if (array-ref state.map-ready 0)
-      unit
-      (intern-compat-state-reset! state))
-    (let
-      [capacity : i64 (array-length state.map-id-slots)]
-      [hash : i64 (intern-hash name)]
-      [cursor : i64 (intern-bucket hash capacity)]
-      [steps : i64 0]
-      [out : i64 -1]
-      [done : bool false]
-      (begin
-        (while (and (not done) (< steps capacity))
-          (let
-            [stored-id : InternSlotId (array-ref state.map-id-slots cursor)]
-            (if (intern-id-slot-empty? stored-id)
-              (let
-                [id : i64 (intern-compat-state-pool-len state)]
-                (if (> id (array-ref state.generated-next-id 0))
-                  (intern-pool-capacity-abort)
-                  (let
-                    [persistent-name : String
-                      (intern-compat-state-persistent-copy state name)]
-                    (begin
-                      (set! (array-ref state.pool-slots id) persistent-name)
-                      (set!
-                        (array-ref state.map-id-slots cursor)
-                        (intern-id-slot-encode id))
-                      (set! (array-ref state.map-hash-slots cursor) hash)
-                      (set! (array-ref state.pool-count 0) (+ id 1))
-                      (intern-compat-state-record-qualified-metadata!
-                        state
-                        id
-                        persistent-name)
-                      (set! out id)
-                      (set! done true)))))
-              (let
-                [slot-id : i64 (intern-id-slot-decode stored-id)]
-                [slot-hash : i64 (array-ref state.map-hash-slots cursor)]
-                [slot-key : String (array-ref state.pool-slots slot-id)]
-                (if (and
-                  (= slot-hash hash)
-                  (intern-private-string-eq slot-key name))
-                  (begin
-                    (set! out slot-id)
-                    (set! done true))
-                  (begin
-                    (set! cursor (intern-bucket (+ cursor 1) capacity))
-                    (set! steps (+ steps 1))))))))
-        out))))
+    (intern-compat-state-ensure-ready! state)
+    (intern-compat-state-intern-ready-ref (& state) name)))
 
 ;; State-owned source-slice interning. This is the explicit lexer boundary:
 ;; hits compare against the caller's source bytes without allocating, while
 ;; misses copy exactly one spelling into the supplied owner's persistent arena.
 ;; Unlike the active-table compatibility API, no process intern scalar or table
 ;; selector is read or published here.
-(define (intern-compat-state-intern-slice
-  [state : InternCompatState]
+(define (intern-compat-state-intern-slice-ready-ref
+  [state : (& state InternCompatState)]
   [text : String]
   [start : i64]
   [len : i64]) : i64
   (begin
-    (if (array-ref state.map-ready 0)
-      unit
-      (intern-compat-state-reset! state))
     (cfg compile-profile (intern-profile-note-slice len))
     (let
       [capacity : i64 (array-length state.map-id-slots)]
@@ -1608,14 +1633,14 @@
         (while (and (not done) (< steps capacity))
           (let
             [stored-id : InternSlotId (array-ref state.map-id-slots cursor)]
-            (if (intern-id-slot-empty? stored-id)
+            (if (= stored-id.encoded (cast 0 : u32))
               (let
-                [id : i64 (intern-compat-state-pool-len state)]
+                [id : i64 (array-ref state.pool-count 0)]
                 (if (> id (array-ref state.generated-next-id 0))
                   (intern-pool-capacity-abort)
                   (let
                     [persistent-name : String
-                      (intern-compat-state-persistent-substring
+                      (intern-compat-state-persistent-substring-ref
                         state
                         text
                         start
@@ -1632,7 +1657,7 @@
                         (intern-id-slot-encode id))
                       (set! (array-ref state.map-hash-slots cursor) hash)
                       (set! (array-ref state.pool-count 0) (+ id 1))
-                      (intern-compat-state-record-qualified-metadata!
+                      (intern-compat-state-record-qualified-metadata-ref!
                         state
                         id
                         persistent-name)
@@ -1661,8 +1686,17 @@
                     (set! steps (+ steps 1))))))))
         out))))
 
-(define (intern-compat-state-source-slice-id
+(define (intern-compat-state-intern-slice
   [state : InternCompatState]
+  [text : String]
+  [start : i64]
+  [len : i64]) : i64
+  (begin
+    (intern-compat-state-ensure-ready! state)
+    (intern-compat-state-intern-slice-ready-ref (& state) text start len)))
+
+(define (intern-compat-state-source-slice-id-ready-ref
+  [state : (& state InternCompatState)]
   [text : String]
   [start : i64]
   [len : i64]) : InternId
@@ -1677,7 +1711,16 @@
           intern-profile-source-symbol-bytes-count
           (+ intern-profile-source-symbol-bytes-count len))))
     (intern-id-from-renderable
-      (intern-compat-state-intern-slice state text start len))))
+      (intern-compat-state-intern-slice-ready-ref state text start len))))
+
+(define (intern-compat-state-source-slice-id
+  [state : InternCompatState]
+  [text : String]
+  [start : i64]
+  [len : i64]) : InternId
+  (begin
+    (intern-compat-state-ensure-ready! state)
+    (intern-compat-state-source-slice-id-ready-ref (& state) text start len)))
 
 (define (intern-compat-state-lookup [state : InternCompatState] [name : String]) : InternLookup
   (if (array-ref state.map-ready 0)

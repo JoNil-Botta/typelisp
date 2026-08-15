@@ -40279,23 +40279,19 @@
 
 (define (tc-clone-root-collection-use! [retained : ast.AstProgram]) : unit
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
     [arena-handle : i64 (arena.tl_arena_make)]
-    [_switch : unit
-      (unsafe
-        (arena.tl_arena_set arena-handle))]
-    [selected : tc_i64_i64_map.Map
-      (tc-clone-root-collection-selected-from-program retained)]
     (begin
-      (set! tc-clone-root-collection-selected selected)
+      (in-arena
+        (arena.Arena arena-handle)
+        (set!
+          tc-clone-root-collection-selected
+          (tc-clone-root-collection-selected-from-program retained)))
       (set!
         tc-clone-root-collection-roots
         (clone_support.CloneRootEntries.Empty))
       (set! tc-clone-root-collection-current-decl false)
-      (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-      (set! tc-clone-root-collection-active true)
-      (unsafe
-        (arena.tl_arena_set prev-arena)))))
+      (set! tc-clone-root-collection-arena arena-handle)
+      (set! tc-clone-root-collection-active true))))
 
 (define (tc-clone-root-collection-select-decl!
   [decl : ast.AstDecl]
@@ -40339,46 +40335,41 @@
     tc-clone-root-collection-current-decl)
     (match (tc-context-program ctx)
       [(ast.AstProgram.Program decls-box)
-        (let
-          [prev-arena : i64 (arena.tl_arena_current)]
-          [_switch : unit
-            (unsafe
-              (arena.tl_arena_set tc-clone-root-collection-arena))]
-          [resolved : ast.AstType
-            (tc-type-without-regions (tc-resolve-type ctx ty))]
-          (begin
-            (cfg
-              (any
-                compiler-surface-producer
-                compiler-build-identity
-                embedded-stdlib-tlci)
-              (tc-clone-root-collection-record-surface-roots!
-                (if (surface_facts.surface-typecheck-facts-recording?)
-                  (clone_support.clone-root-add-type
-                    (tc-context-pools ctx)
-                    (__tl-box-place decls-box)
-                    (tc-clone-able-set ctx)
-                    (clone_support.CloneRootEntries.Empty)
-                    resolved
-                    cbi.compiler-builtin-id-fix-empty)
-                  (clone_support.CloneRootEntries.Empty)))
-              unit)
-            ;; Resolve the nominal closure while `ty` and all nested type-pool
-            ;; ids are still live in this function's semantic scratch scope.
-            ;; Retaining the shallow AstType until the declaration walk ends
-            ;; would leave those nested ids pointing past a pool rewind.
-            (set!
-              tc-clone-root-collection-roots
-              (clone_support.clone-root-add-type
-                (tc-context-pools ctx)
-                (__tl-box-place decls-box)
-                (tc-clone-able-set ctx)
-                (tc-global-shared-view tc-clone-root-collection-roots)
-                resolved
-                cbi.compiler-builtin-id-fix-empty))
-            (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-            (unsafe
-              (arena.tl_arena_set prev-arena))))])
+        (in-arena
+          (arena.Arena tc-clone-root-collection-arena)
+          (let
+            [resolved : ast.AstType
+              (tc-type-without-regions (tc-resolve-type ctx ty))]
+            (begin
+              (cfg
+                (any
+                  compiler-surface-producer
+                  compiler-build-identity
+                  embedded-stdlib-tlci)
+                (tc-clone-root-collection-record-surface-roots!
+                  (if (surface_facts.surface-typecheck-facts-recording?)
+                    (clone_support.clone-root-add-type
+                      (tc-context-pools ctx)
+                      (__tl-box-place decls-box)
+                      (tc-clone-able-set ctx)
+                      (clone_support.CloneRootEntries.Empty)
+                      resolved
+                      cbi.compiler-builtin-id-fix-empty)
+                    (clone_support.CloneRootEntries.Empty)))
+                unit)
+              ;; Resolve the nominal closure while `ty` and all nested type-pool
+              ;; ids are still live in this function's semantic scratch scope.
+              ;; Retaining the shallow AstType until the declaration walk ends
+              ;; would leave those nested ids pointing past a pool rewind.
+              (set!
+                tc-clone-root-collection-roots
+                (clone_support.clone-root-add-type
+                  (tc-context-pools ctx)
+                  (__tl-box-place decls-box)
+                  (tc-clone-able-set ctx)
+                  (tc-global-shared-view tc-clone-root-collection-roots)
+                  resolved
+                  cbi.compiler-builtin-id-fix-empty)))))])
     unit))
 
 (define (tc-clone-root-collection-copy-roots
@@ -40429,10 +40420,8 @@
       [call-indices : (__tl_dyn-array i64) facts.clone-call-indices]
       [count : i64 (array-length decl-keys)]
       [index : i64 0]
-      [previous-arena : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set tc-clone-root-collection-arena))
+      (in-arena
+        (arena.Arena tc-clone-root-collection-arena)
         (while (< index count)
           (let
             [call-index : i64 (array-ref call-indices index)]
@@ -40464,10 +40453,7 @@
                               root-key)))
                         (set! cursor (- cursor 1))))))
                 unit)
-              (set! index end))))
-        (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set previous-arena))))
+              (set! index end))))))
     unit))
 
 (define (tc-clone-able-cache-reset!) : unit

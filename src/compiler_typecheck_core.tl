@@ -49921,35 +49921,35 @@
       [count : i64 decls.len]
       [decl-offset : i64 decls.offset]
       [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-      [prev-arena : i64 (arena.tl_arena_current)]
       [index-arena : i64 (arena.tl_arena_make)]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set index-arena))]
-      [positions : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8192)]
-      [module-id : i64 (csym.compiler-symbol-root-module-id)]
-      [position : i64 0]
       (begin
-        (while (< position count)
+        (in-arena
+          (arena.Arena index-arena)
           (let
-            [decl : ast.AstDecl (array-ref decl-slots (+ decl-offset position))]
+            [positions : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8192)]
+            [module-id : i64 (csym.compiler-symbol-root-module-id)]
+            [position : i64 0]
             (begin
-              (match decl
-                [(ast.AstDecl.Module next-module) (set! module-id next-module)]
-                [_
-                  (tc-program-enum-index-bind-decl!
-                    (&mut positions)
-                    module-id
-                    decl
-                    position)])
-              (set! position (+ position 1)))))
-        (set! tc-program-enum-index-positions positions)
+              (while (< position count)
+                (let
+                  [decl : ast.AstDecl
+                    (array-ref decl-slots (+ decl-offset position))]
+                  (begin
+                    (match decl
+                      [(ast.AstDecl.Module next-module)
+                        (set! module-id next-module)]
+                      [_
+                        (tc-program-enum-index-bind-decl!
+                          (&mut positions)
+                          module-id
+                          decl
+                          position)])
+                    (set! position (+ position 1)))))
+              (set! tc-program-enum-index-positions positions))))
         (set! tc-program-enum-index-decl-count count)
         (set! tc-program-enum-index-decl-offset decl-offset)
         (set! tc-program-enum-index-generation (ci.intern-generation))
-        (set! tc-program-enum-index-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set prev-arena))
+        (set! tc-program-enum-index-arena index-arena)
         (set! tc-program-enum-index-ready true)))))
 
 (define (tc-program-enum-variants-from-indexed-decl

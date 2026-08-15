@@ -148,8 +148,10 @@ Inline stdlib coverage:
   evaluation; exact correctly-rounded f64/f32 vectors; subnormal boundaries;
   shared trigonometric argument reduction; sin/cos/tan special values; signed
   zero, infinities, and NaN behavior.
-  `math_sqrt_non_float_reject.tl`, `math_exp_non_float_reject.tl`, and
-  `math_log_non_float_reject.tl` keep the generic macros restricted to f64/f32.
+  `math_sqrt_non_float_reject.tl`, `math_exp_non_float_reject.tl`,
+  `math_log_non_float_reject.tl`, `math_pow_non_float_reject.tl`, and
+  `math_pow_mismatched_types_reject.tl` keep the generic macros restricted to
+  f64/f32 and require both power operands to use the same precision.
   `tests/integration/stdlib_math_ieee.tl` runs the foundation and square-root
   surface natively on both Linux and Windows; the assembly-shape gate proves
   public f64/f32 probes contain `sqrtsd`/`sqrtss` with no call.
@@ -164,7 +166,11 @@ Inline stdlib coverage:
   against MPFR-256 results across CORE-MATH hard cases, overflow and gradual
   underflow thresholds, deterministic samples, signed zero, infinities, and
   NaNs. `scripts/generate-math-exp-vectors.sh` independently regenerates or
-  verifies the checked-in results without consulting host libm.
+  verifies the checked-in results without consulting host libm. The power
+  decision-table and deterministic sampled vectors embedded in `math.tl` are
+  independently checked against MPFR-800 by
+  `scripts/generate-math-pow-vectors.sh`; its `--emit` mode regenerates the
+  checked corpus as six input/result arrays without consulting host libm.
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
   collision behavior, hash range normalization, string edge cases, and

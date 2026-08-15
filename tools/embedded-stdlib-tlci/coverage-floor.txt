@@ -21,9 +21,8 @@
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
 #
-# Issue #6551 reconstructs unresolved lifetime-parameterized nominal type
-# templates through the named host ABI, moving
-# stdlib.text_buf_family/borrowed off its registration shell. Coverage rises
-# from 105 to 106 of 107 entries without interpreted arms.
-native-entries-min 106
+# Issue #5230 adds the native stdlib.math/pow macro. The catalog grows from 107
+# to 108 entries and native coverage rises from 106 to 107; the sole remaining
+# shell is still stdlib.text_buf/append! (#6550).
+native-entries-min 107
 interpreted-arms-max 0

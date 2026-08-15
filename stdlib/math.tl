@@ -1973,7 +1973,7 @@
   (logc-bits u64)
   (logctail-bits u64))
 
-;: Return the exact musl pow_log_data.c constants for interval index.
+;: Return the exact musl pow_data.c constants for interval index.
 (define (math-pow-f64-table-entry [index : i64]) : MathPowLogF64TableEntry
   (cond
     [(= index 0)
@@ -2628,7 +2628,7 @@
 ;: a positive finite x, pre-normalized with the sign bit as exponent for
 ;: subnormals. Mirrors musl pow.c `log_inline` on the non-FMA path: OFF is
 ;: 0x3fe6955500000000, the table is 128-way, and the degree-eight polynomial
-;: uses the scaled coefficients from pow_log_data.c.
+;: uses the scaled coefficients from pow_data.c.
 (define (math-pow-f64-log [ix : u64]) : MathPowLogF64Result
   (let
     [tmp : u64 (- ix (cast 0x3fe6955500000000 : u64))]
@@ -2933,12 +2933,12 @@
       (math-pow-f64-main ix y iy sign-bias))))
 
 ;: Internal binary32 pow log2 constants for one table interval. The upstream
-;: powf_log2_data.c entries are doubles, so the fields stay in the `u64` ABI.
+;: powf_data.c entries are doubles, so the fields stay in the `u64` ABI.
 (defstruct MathPowLogF32TableEntry
   (invc-bits u64)
   (logc-bits u64))
 
-;: Return the exact musl powf_log2_data.c constants for interval index.
+;: Return the exact musl powf_data.c constants for interval index.
 (define (math-powf-table-entry [index : i64]) : MathPowLogF32TableEntry
   (cond
     [(= index 0)
@@ -5020,7 +5020,7 @@
       (fail))))
 
 ;; Power decision-table vectors: expectations are the analytic IEEE-754
-;; results, cross-checked against MPFR (mpmath 1.4.1 at 800 bits).
+;; results, cross-checked directly against MPFR at 800-bit precision.
 (test
   math-pow-f64-special
   (let
@@ -6007,8 +6007,8 @@
         unit
         (fail)))))
 
-;; Sampled power vectors: expected bits are correctly rounded MPFR
-;; (mpmath 1.4.1, 800-bit) results; inputs come from a deterministic
+;; Sampled power vectors: expected bits are correctly rounded MPFR-800
+;; results; inputs come from a deterministic
 ;; fixed-seed LCG over interesting bit-pattern buckets (near one, wide
 ;; exponents, subnormal and huge bases, negative bases with integral
 ;; exponents, and the overflow/underflow boundaries). Assertions allow

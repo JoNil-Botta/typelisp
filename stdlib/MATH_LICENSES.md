@@ -14,8 +14,8 @@ table data derive from musl's `log.c`, `logf.c`, `log_data.c`, and
 `chi`/`clo` reduction path.
 
 The `f64-pow` and `f32-pow` implementations, coefficient bit patterns, and
-table data derive from musl's `pow.c`, `powf.c`, `pow_log_data.c`, and
-`powf_log2_data.c` at that revision, reusing the shared `exp_data.c` and
+table data derive from musl's `pow.c`, `powf.c`, `pow_data.c`, and
+`powf_data.c` at that revision, reusing the shared `exp_data.c` and
 `exp2f_data.c` tables. The ports use the documented non-FMA, non-TOINT
 evaluation paths.
 
@@ -24,12 +24,6 @@ These Arm-authored files carry:
 > Copyright (c) 2017-2018, Arm Limited.
 >
 > SPDX-License-Identifier: MIT
-
-The pow sources at that revision carry the newer Arm notice:
-
-> Copyright (c) 2018-2026, Arm Limited.
->
-> SPDX-License-Identifier: MIT OR Apache-2.0 WITH LLVM-exception
 
 The `f64-sin`/`f64-cos`/`f64-tan` and binary32 counterparts also derive from
 musl's `sin.c`, `cos.c`, `tan.c`, float variants, `__sin.c`, `__cos.c`,

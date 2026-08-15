@@ -141,26 +141,21 @@
         (if (and
           (not compiler-opt-debug-suppressed?)
           (compiler-opt-debug-pass-selected? pass))
-          (let
-            [pass-arena : i64 (arena.tl_arena_current)]
-            (unsafe
-              (begin
-                (arena.tl_arena_set compiler-opt-debug-dump-arena)
-                (set!
-                  compiler-opt-debug-dump-buf
-                  (text_buf.append
-                    (if (text_buf.empty? (clone compiler-opt-debug-dump-buf))
-                      (clone compiler-opt-debug-dump-buf)
-                      (text_buf.append (clone compiler-opt-debug-dump-buf) "\n"))
-                    (str_cat.str-cat
-                      "after "
-                      pass
-                      " @"
-                      (ir.compiler-ir-symbol-text name)
-                      "\n"
-                      (ir.compiler-ir-function-render type-segment-bases func))))
-                (set! compiler-opt-debug-dump-arena (arena.tl_arena_current))
-                (arena.tl_arena_set pass-arena))))
+          (in-arena
+            (arena.Arena compiler-opt-debug-dump-arena)
+            (set!
+              compiler-opt-debug-dump-buf
+              (text_buf.append
+                (if (text_buf.empty? (clone compiler-opt-debug-dump-buf))
+                  (clone compiler-opt-debug-dump-buf)
+                  (text_buf.append (clone compiler-opt-debug-dump-buf) "\n"))
+                (str_cat.str-cat
+                  "after "
+                  pass
+                  " @"
+                  (ir.compiler-ir-symbol-text name)
+                  "\n"
+                  (ir.compiler-ir-function-render type-segment-bases func)))))
           unit)
         func)]))
 
@@ -74408,17 +74403,9 @@
   [funcs : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
   (if (= carrier 0)
     funcs
-    (let
-      [home : i64 (arena.tl_arena_current)]
-      [_enter : unit
-        (unsafe
-          (arena.tl_arena_set carrier))]
-      [carried : ir.CompilerIrFunctionList
-        (ir.compiler-ir-clone-function-list pools funcs)]
-      [_leave : unit
-        (unsafe
-          (arena.tl_arena_set home))]
-      carried)))
+    (in-arena
+      (arena.Arena carrier)
+      (ir.compiler-ir-clone-function-list pools funcs))))
 
 ;; Both optimizer-input arenas report under the same mid-phase label: each is
 ;; read at its high-water mark and destroyed before the "optimize" phase

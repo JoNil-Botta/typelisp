@@ -42245,31 +42245,12 @@
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     (if (= data.string-arena 0)
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (arena.tl_arena_make_small)]
         (begin
           (set! data.string-arena owner)
           (tc-inlay-hint-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set previous))
           data.string-arena))
       data.string-arena)))
-
-(define (tc-inlay-hint-string-arena-finish-for-state!
-  [state : TcInlayHintState]
-  [previous : i64]
-  [owner : i64]) : unit
-  (let
-    [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
-    [head : i64 (arena.tl_arena_current)]
-    (begin
-      (set! data.string-arena head)
-      (tc-inlay-hint-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            head
-            previous))))))
 
 ;; Destroying any segment of the chain frees the complete generation arena.
 (define (tc-inlay-hint-string-arena-release-for-state!
@@ -42343,16 +42324,14 @@
   (let
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     [slot : i64 (% data.count tc-inlay-hint-capacity)]
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (tc-inlay-hint-string-arena-ensure-for-state! state)]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
     (begin
-      (set! (array-ref data.lines slot) line)
-      (set! (array-ref data.cols slot) col)
-      (set! (array-ref data.types slot) (string.copy (& ty)))
-      (tc-inlay-hint-string-arena-finish-for-state! state previous owner)
+      (in-arena
+        (arena.Arena owner)
+        (begin
+          (set! (array-ref data.lines slot) line)
+          (set! (array-ref data.cols slot) col)
+          (set! (array-ref data.types slot) (string.copy (& ty)))))
       (let
         [latest : TcInlayHintStateData (tc-inlay-hint-state-data state)]
         (begin
@@ -110894,8 +110873,6 @@
           (set! data.fn-arena scratch)
           (set! data.fn-return-arena return-arena)
           (tc-scratch-arena-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set return-arena))
           scratch))
       (begin
         (set! data.fn-return-arena return-arena)
@@ -111005,8 +110982,6 @@
           (set! data.decl-arena scratch)
           (set! data.decl-return-arena return-arena)
           (tc-scratch-arena-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set return-arena))
           scratch))
       (begin
         (set! data.decl-return-arena return-arena)

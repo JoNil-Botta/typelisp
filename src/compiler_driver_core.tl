@@ -2396,17 +2396,9 @@
   [state : CompilerDriverState]
   [diag : (Box compiler_diagnostic.CompilerDiagnostic)]) : (Box
     compiler_diagnostic.CompilerDiagnostic)
-  (let
-    [active-arena : i64 (arena.tl_arena_current)]
-    [_use-surface : unit
-      (compiler-driver-restore-arena-owner-current!
-        (compiler-driver-state-surface-arena state))]
-    [owned-diag : (Box compiler_diagnostic.CompilerDiagnostic)
-      (box (compiler_diagnostic.compiler-diagnostic-copy (__tl-box-place diag)))]
-    (begin
-      (unsafe
-        (arena.tl_arena_set active-arena))
-      owned-diag)))
+  (in-arena
+    (arena.Arena (compiler-driver-state-surface-arena state))
+    (box (compiler_diagnostic.compiler-diagnostic-copy (__tl-box-place diag)))))
 
 (define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
   (and

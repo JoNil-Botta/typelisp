@@ -76,32 +76,6 @@
         handle
         root))))
 
-(define (lower-name-arena-owner-current-head [handle : i64]) : i64
-  (let
-    [root : i64 (lower-name-arena-owner-root handle)]
-    (if (= root 0)
-      0
-      (let
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (if (= head 0)
-          root
-          head)))))
-
-(define (lower-name-arena-restore-after-owner-alloc!
-  [previous-arena : i64]
-  [owner : i64]) : unit
-  ;; If the caller was already in this owner, allocation may have advanced its
-  ;; head and that new head must remain active. Otherwise resume the unrelated
-  ;; caller owner at its own current head.
-  (if (=
-    (lower-name-arena-owner-root previous-arena)
-    (lower-name-arena-owner-root owner))
-    unit
-    (unsafe
-      (arena.tl_arena_set (lower-name-arena-owner-current-head previous-arena)))))
-
 (define (lower-name-store-new) : LowerNameStore
   (begin
     (cfg
@@ -135,35 +109,34 @@
     [count : i64 store.segment-count]
     [capacity : i64 (array-length store.segments)]
     [owner : i64 store.arena]
-    [previous-arena : i64 (arena.tl_arena_current)]
     (begin
       (cfg
         compile-profile
         (set!
           compiler-lower-profile-name-env-store-grows
           (+ compiler-lower-profile-name-env-store-grows 1)))
-      (unsafe
-        (arena.tl_arena_set (lower-name-arena-owner-current-head owner)))
-      (if (< count capacity)
-        unit
-        (let
-          [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
-            (__tl_make-array
-              (__tl_dyn-array LowerNameBinding)
-              (if (< capacity 1)
-                4
-                (* capacity 2)))]
-          (begin
-            (lower-name-store-segments-copy-range!
-              (&mut bigger)
-              (& store.segments)
-              count)
-            (set! store.segments bigger))))
-      (set!
-        (array-ref store.segments count)
-        (__tl_make-array LowerNameBinding 16))
-      (set! store.segment-count (+ count 1))
-      (lower-name-arena-restore-after-owner-alloc! previous-arena owner))))
+      (in-arena
+        (arena.Arena owner)
+        (begin
+          (if (< count capacity)
+            unit
+            (let
+              [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
+                (__tl_make-array
+                  (__tl_dyn-array LowerNameBinding)
+                  (if (< capacity 1)
+                    4
+                    (* capacity 2)))]
+              (begin
+                (lower-name-store-segments-copy-range!
+                  (&mut bigger)
+                  (& store.segments)
+                  count)
+                (set! store.segments bigger))))
+          (set!
+            (array-ref store.segments count)
+            (__tl_make-array LowerNameBinding 16))
+          (set! store.segment-count (+ count 1)))))))
 
 (define (lower-name-store-ensure-index!
   [store : (&mut store LowerNameStore)]
@@ -6959,7 +6932,6 @@
       ;; (same idiom as tc-hygiene-module-env-cache-arena): allocating them
       ;; in whatever arena happens to be active would leave the state fields
       ;; dangling when that scratch arena is destroyed.
-      [prev-arena : i64 (arena.tl_arena_current)]
       [index-arena : i64
         (compiler-lower-state-read lower-state i64 module-decl-index-arena)]
       [_make-arena : unit
@@ -6972,112 +6944,107 @@
               module-decl-index-arena
               index-arena))
           unit)]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set index-arena))]
-      [modules : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 512)]
-      [module-count : i64 0]
-      [counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-      [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-      [ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-      [positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-      [cur-module-id : i64 empty-module-id]
-      [i : i64 0]
-      [running : i64 0]
-      (begin
-        ;; Pass 1: assign a dense slot per module id and count its decls.
-        (while (< i count)
+      (in-arena
+        (arena.Arena index-arena)
+        (let
+          [modules : lower_i64_i64_map.Map
+            (lower_i64_i64_map.with-capacity 512)]
+          [module-count : i64 0]
+          [counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+          [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+          [ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+          [positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+          [cur-module-id : i64 empty-module-id]
+          [i : i64 0]
+          [running : i64 0]
           (begin
-            (match (array-ref decl-slots (+ decl-offset i))
-              [(ast.AstDecl.Module next-module)
-                (set! cur-module-id next-module)]
-              [_
-                (let
-                  [slot : i64
-                    (match (lower_i64_i64_map.get (& modules) cur-module-id)
-                      [(lower_i64_i64_map.LookupFound found-slot) found-slot]
-                      [(lower_i64_i64_map.LookupMissing)
-                        (let
-                          [new-slot : i64 module-count]
-                          (begin
-                            (lower_i64_i64_map.insert-ref!
-                              (&mut modules)
-                              cur-module-id
-                              new-slot)
-                            (set! module-count (+ module-count 1))
-                            new-slot))])]
-                  (set! (array-ref counts slot) (+ (array-ref counts slot) 1)))])
-            (set! i (+ i 1))))
-        ;; Prefix sums: starts fixed, ends double as fill cursors below.
-        (set! i 0)
-        (while (< i module-count)
-          (begin
-            (set! (array-ref starts i) running)
-            (set! (array-ref ends i) running)
-            (set! running (+ running (array-ref counts i)))
-            (set! i (+ i 1))))
-        ;; Pass 2: fill program-order positions per module slot.
-        (set! cur-module-id empty-module-id)
-        (set! i 0)
-        (while (< i count)
-          (begin
-            (match (array-ref decl-slots (+ decl-offset i))
-              [(ast.AstDecl.Module next-module)
-                (set! cur-module-id next-module)]
-              [_
-                (match (lower_i64_i64_map.get (& modules) cur-module-id)
-                  [(lower_i64_i64_map.LookupFound slot)
+            ;; Pass 1: assign a dense slot per module id and count its decls.
+            (while (< i count)
+              (begin
+                (match (array-ref decl-slots (+ decl-offset i))
+                  [(ast.AstDecl.Module next-module)
+                    (set! cur-module-id next-module)]
+                  [_
                     (let
-                      [cursor : i64 (array-ref ends slot)]
-                      (begin
-                        (set! (array-ref positions cursor) i)
-                        (set! (array-ref ends slot) (+ cursor 1))))]
-                  [(lower_i64_i64_map.LookupMissing) unit])])
-            (set! i (+ i 1))))
-        (compiler-lower-state-write!
-          lower-state
-          lower_i64_i64_map.Map
-          module-decl-index-modules
-          modules)
-        (compiler-lower-state-write!
-          lower-state
-          (__tl_dyn-array i64)
-          module-decl-index-starts
-          starts)
-        (compiler-lower-state-write!
-          lower-state
-          (__tl_dyn-array i64)
-          module-decl-index-ends
-          ends)
-        (compiler-lower-state-write!
-          lower-state
-          (__tl_dyn-array i64)
-          module-decl-index-positions
-          positions)
-        (compiler-lower-state-write!
-          lower-state
-          i64
-          module-decl-index-decl-count
-          count)
-        (compiler-lower-state-write!
-          lower-state
-          i64
-          module-decl-index-decl-offset
-          decl-offset)
-        ;; The arena head advances as it grows; re-capture it so reset!
-        ;; destroys the whole chain, then restore the caller's arena.
-        (compiler-lower-state-write!
-          lower-state
-          i64
-          module-decl-index-arena
-          (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set prev-arena))
-        (compiler-lower-state-write!
-          lower-state
-          bool
-          module-decl-index-ready
-          true)))))
+                      [slot : i64
+                        (match (lower_i64_i64_map.get (& modules) cur-module-id)
+                          [(lower_i64_i64_map.LookupFound found-slot)
+                            found-slot]
+                          [(lower_i64_i64_map.LookupMissing)
+                            (let
+                              [new-slot : i64 module-count]
+                              (begin
+                                (lower_i64_i64_map.insert-ref!
+                                  (&mut modules)
+                                  cur-module-id
+                                  new-slot)
+                                (set! module-count (+ module-count 1))
+                                new-slot))])]
+                      (set!
+                        (array-ref counts slot)
+                        (+ (array-ref counts slot) 1)))])
+                (set! i (+ i 1))))
+            ;; Prefix sums: starts fixed, ends double as fill cursors below.
+            (set! i 0)
+            (while (< i module-count)
+              (begin
+                (set! (array-ref starts i) running)
+                (set! (array-ref ends i) running)
+                (set! running (+ running (array-ref counts i)))
+                (set! i (+ i 1))))
+            ;; Pass 2: fill program-order positions per module slot.
+            (set! cur-module-id empty-module-id)
+            (set! i 0)
+            (while (< i count)
+              (begin
+                (match (array-ref decl-slots (+ decl-offset i))
+                  [(ast.AstDecl.Module next-module)
+                    (set! cur-module-id next-module)]
+                  [_
+                    (match (lower_i64_i64_map.get (& modules) cur-module-id)
+                      [(lower_i64_i64_map.LookupFound slot)
+                        (let
+                          [cursor : i64 (array-ref ends slot)]
+                          (begin
+                            (set! (array-ref positions cursor) i)
+                            (set! (array-ref ends slot) (+ cursor 1))))]
+                      [(lower_i64_i64_map.LookupMissing) unit])])
+                (set! i (+ i 1))))
+            (compiler-lower-state-write!
+              lower-state
+              lower_i64_i64_map.Map
+              module-decl-index-modules
+              modules)
+            (compiler-lower-state-write!
+              lower-state
+              (__tl_dyn-array i64)
+              module-decl-index-starts
+              starts)
+            (compiler-lower-state-write!
+              lower-state
+              (__tl_dyn-array i64)
+              module-decl-index-ends
+              ends)
+            (compiler-lower-state-write!
+              lower-state
+              (__tl_dyn-array i64)
+              module-decl-index-positions
+              positions)
+            (compiler-lower-state-write!
+              lower-state
+              i64
+              module-decl-index-decl-count
+              count)
+            (compiler-lower-state-write!
+              lower-state
+              i64
+              module-decl-index-decl-offset
+              decl-offset)
+            (compiler-lower-state-write!
+              lower-state
+              bool
+              module-decl-index-ready
+              true)))))))
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
 (define (lower-module-decl-index-slot
@@ -65040,21 +65007,11 @@
 
 (define (lower-function-list-escape-to-ir-arena
   [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
-  (let
-    [enclosing : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set (lower-ir-arena-get)))
-      (let
-        [escaped : ir.CompilerIrFunctionList
-          (ir.compiler-ir-clone-function-list
-            (ast.ast-node-pool-reader-context-current)
-            functions)]
-        (begin
-          (set! lower-ir-arena (arena.tl_arena_current))
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          escaped)))))
+  (in-arena
+    (arena.Arena (lower-ir-arena-get))
+    (ir.compiler-ir-clone-function-list
+      (ast.ast-node-pool-reader-context-current)
+      functions)))
 
 (define (lower-function-escaping
   [ctx : tc_core.TcContext]

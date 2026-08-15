@@ -66,13 +66,12 @@
     (begin
       (unsafe
         (arena.tl_arena_set owner))
-      ;; Advance this owner beyond its root before constructing the store. The
-      ;; store retains the owner root while the raw helper exposes its current
-      ;; physical head when a later segment is allocated.
+      ;; Advance this owner beyond its root before constructing the store. Arena
+      ;; handles are stable roots (#6285): growth keeps the public handle valid,
+      ;; and add-segment! allocates through in-arena on that root.
       (compiler-driver-smoke-runtime-alloc 67108800)
       (compiler-driver-smoke-runtime-alloc 8)
       (let
-        [head : i64 (compiler_lower.lower-name-arena-owner-current-head owner)]
         [store : (Box compiler_lower.LowerNameStore)
           (box (compiler_lower.lower-name-store-new))]
         [store-owner : i64 (__tl-project-field (__tl-box-place store) arena)]
@@ -87,20 +86,13 @@
                 (compiler_lower.lower-name-arena-owner-root
                   (arena.tl_arena_current))
                 (compiler_lower.lower-name-arena-owner-root home))]
-            [owner-head : i64
-              (compiler_lower.lower-name-arena-owner-current-head owner)]
             [segment-count : i64
               (__tl-project-field (__tl-box-place store) segment-count)]
             (begin
               (unsafe
                 (arena.tl_arena_set home)
                 (arena.tl_arena_destroy owner))
-              (and
-                (not (= head owner))
-                (= store-owner owner)
-                (= owner-head head)
-                home-restored?
-                (= segment-count 2)))))))))
+              (and (= store-owner owner) home-restored? (= segment-count 2)))))))))
 
 (define (lower-symbol-smoke-extern-metadata
   [link-id : i64]

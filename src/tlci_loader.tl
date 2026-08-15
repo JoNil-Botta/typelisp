@@ -1362,25 +1362,19 @@
           "tlci loader: macro entry table outside mapped image")]
       [else
         (let
-          [previous-arena : i64 (arena.tl_arena_current)]
           [index-arena : i64 (arena.tl_arena_make_small)]
-          (begin
-            (unsafe
-              (arena.tl_arena_set index-arena))
-            (let
-              [result : ResultTlciLoadedImage
-                (tlci-loader-build-macro-index loaded index-arena)]
+          [result : ResultTlciLoadedImage
+            (in-arena
+              (arena.Arena index-arena)
+              (tlci-loader-build-macro-index loaded index-arena))]
+          (match result
+            [(ResultTlciLoadedImage.Err message)
               (begin
                 (unsafe
-                  (arena.tl_arena_set previous-arena))
-                (match result
-                  [(ResultTlciLoadedImage.Err message)
-                    (begin
-                      (unsafe
-                        (arena.tl_arena_destroy index-arena))
-                      (ResultTlciLoadedImage.Err message))]
-                  [(ResultTlciLoadedImage.Ok indexed)
-                    (ResultTlciLoadedImage.Ok indexed)])))))])))
+                  (arena.tl_arena_destroy index-arena))
+                (ResultTlciLoadedImage.Err message))]
+            [(ResultTlciLoadedImage.Ok indexed)
+              (ResultTlciLoadedImage.Ok indexed)]))])))
 
 (define (tlci-loader-validate-macro-entries [loaded : TlciLoadedImage]) : ResultTlciLoaderUnit
   (match (tlci-loader-index-macro-entries loaded)

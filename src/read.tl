@@ -154,16 +154,6 @@
 (define (sexpr-node-pool-base-arena-handle-value) : i64
   sexpr-node-pool-base-arena)
 
-(define (sp-node-pool-restore-arena-after-base-alloc!
-  [previous-arena : i64]
-  [base-arena : i64]
-  [head-arena : i64]) : unit
-  (unsafe
-    (arena.tl_arena_set
-      (if (= previous-arena base-arena)
-        head-arena
-        previous-arena))))
-
 ;; Source symbols remain ids from lexer through reader and parser. Consumers
 ;; request display text explicitly only when diagnostics or data formats need it.
 ;: Preserve the lexer-assigned id across the reader/parser boundary.
@@ -205,32 +195,25 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [previous-arena : i64 (arena.tl_arena_current)]
     [base-arena : i64 sp-node-pool-base-arena]
     [storage-root : i64
       (if (= base-arena 0)
         (arena.tl_arena_make)
         base-arena)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set storage-root))]
-    [new-slots : (__tl_dyn-array SpannedSexpr)
-      (__tl_make-array SpannedSexpr new-cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (sp-node-pool-restore-arena-after-base-alloc!
-        previous-arena
-        base-arena
-        head-arena)]
-    [len : i64 sp-node-pool-count]
-    [i : i64 0]
-    (begin
-      (while (< i len)
+    (in-arena
+      (arena.Arena storage-root)
+      (let
+        [new-slots : (__tl_dyn-array SpannedSexpr)
+          (__tl_make-array SpannedSexpr new-cap)]
+        [len : i64 sp-node-pool-count]
+        [i : i64 0]
         (begin
-          (set! (array-ref new-slots i) (array-ref sp-node-pool-slots i))
-          (set! i (+ i 1))))
-      (set! sp-node-pool-base-arena head-arena)
-      (set! sp-node-pool-slots new-slots))))
+          (while (< i len)
+            (begin
+              (set! (array-ref new-slots i) (array-ref sp-node-pool-slots i))
+              (set! i (+ i 1))))
+          (set! sp-node-pool-base-arena storage-root)
+          (set! sp-node-pool-slots new-slots))))))
 
 (define (sexpr-node-pool-grow!) : unit
   (let
@@ -239,31 +222,24 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [previous-arena : i64 (arena.tl_arena_current)]
     [base-arena : i64 sexpr-node-pool-base-arena]
     [storage-root : i64
       (if (= base-arena 0)
         (arena.tl_arena_make)
         base-arena)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set storage-root))]
-    [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (sp-node-pool-restore-arena-after-base-alloc!
-        previous-arena
-        base-arena
-        head-arena)]
-    [len : i64 sexpr-node-pool-count]
-    [i : i64 0]
-    (begin
-      (while (< i len)
+    (in-arena
+      (arena.Arena storage-root)
+      (let
+        [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
+        [len : i64 sexpr-node-pool-count]
+        [i : i64 0]
         (begin
-          (set! (array-ref new-slots i) (array-ref sexpr-node-pool-slots i))
-          (set! i (+ i 1))))
-      (set! sexpr-node-pool-base-arena head-arena)
-      (set! sexpr-node-pool-slots new-slots))))
+          (while (< i len)
+            (begin
+              (set! (array-ref new-slots i) (array-ref sexpr-node-pool-slots i))
+              (set! i (+ i 1))))
+          (set! sexpr-node-pool-base-arena storage-root)
+          (set! sexpr-node-pool-slots new-slots))))))
 
 (define (sp-builder-grow!) : unit
   (let
@@ -272,31 +248,24 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [previous-arena : i64 (arena.tl_arena_current)]
     [base-arena : i64 sp-node-pool-base-arena]
     [storage-root : i64
       (if (= base-arena 0)
         (arena.tl_arena_make)
         base-arena)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set storage-root))]
-    [new-slots : (__tl_dyn-array SpannedSexpr)
-      (__tl_make-array SpannedSexpr new-cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (sp-node-pool-restore-arena-after-base-alloc!
-        previous-arena
-        base-arena
-        head-arena)]
-    [i : i64 0]
-    (begin
-      (while (< i sp-builder-count)
+    (in-arena
+      (arena.Arena storage-root)
+      (let
+        [new-slots : (__tl_dyn-array SpannedSexpr)
+          (__tl_make-array SpannedSexpr new-cap)]
+        [i : i64 0]
         (begin
-          (set! (array-ref new-slots i) (array-ref sp-builder-slots i))
-          (set! i (+ i 1))))
-      (set! sp-node-pool-base-arena head-arena)
-      (set! sp-builder-slots new-slots))))
+          (while (< i sp-builder-count)
+            (begin
+              (set! (array-ref new-slots i) (array-ref sp-builder-slots i))
+              (set! i (+ i 1))))
+          (set! sp-node-pool-base-arena storage-root)
+          (set! sp-builder-slots new-slots))))))
 
 (define (sexpr-builder-grow!) : unit
   (let
@@ -305,30 +274,23 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [previous-arena : i64 (arena.tl_arena_current)]
     [base-arena : i64 sexpr-node-pool-base-arena]
     [storage-root : i64
       (if (= base-arena 0)
         (arena.tl_arena_make)
         base-arena)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set storage-root))]
-    [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (sp-node-pool-restore-arena-after-base-alloc!
-        previous-arena
-        base-arena
-        head-arena)]
-    [i : i64 0]
-    (begin
-      (while (< i sexpr-builder-count)
+    (in-arena
+      (arena.Arena storage-root)
+      (let
+        [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
+        [i : i64 0]
         (begin
-          (set! (array-ref new-slots i) (array-ref sexpr-builder-slots i))
-          (set! i (+ i 1))))
-      (set! sexpr-node-pool-base-arena head-arena)
-      (set! sexpr-builder-slots new-slots))))
+          (while (< i sexpr-builder-count)
+            (begin
+              (set! (array-ref new-slots i) (array-ref sexpr-builder-slots i))
+              (set! i (+ i 1))))
+          (set! sexpr-node-pool-base-arena storage-root)
+          (set! sexpr-builder-slots new-slots))))))
 
 (define (sp-node-push [node : SpannedSexpr]) : i64
   (begin

@@ -497,6 +497,129 @@
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
               (and positive malformed-ok))))))))
 
+(define (comptime-host-smoke-result-var-args?
+  [expected-name : String]
+  [expected-first : String]
+  [expected-second : String]
+  [expected-count : i64]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Type
+        (compiler_ast_types.AstType.VarArgs name lifetimes-box))
+      (let
+        [lifetimes : compiler_ast_types.AstLifetimeList
+          (__tl-box-place lifetimes-box)]
+        (and
+          (= name (ci.intern expected-name))
+          (=
+            (compiler_ast_types.ast-lifetime-list-len (& lifetimes))
+            expected-count)
+          (=
+            (compiler_ast_types.ast-lifetime-list-get
+              (& lifetimes)
+              0
+              (compiler_ast_types.ast-lifetime-fallback))
+            (ci.intern expected-first))
+          (or
+            (= expected-count 1)
+            (=
+              (compiler_ast_types.ast-lifetime-list-get
+                (& lifetimes)
+                1
+                (compiler_ast_types.ast-lifetime-fallback))
+              (ci.intern expected-second)))))]
+    [_ false]))
+
+;; Lifetime-parameterized unresolved nominal templates preserve exact name ids
+;; and lifetime order. Malformed counts and empty fields fail without
+;; publishing a result, even when another value is already on the stack.
+(define (comptime-host-smoke-type-var-args-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
+    [one : String "Borrowed\ntext"]
+    [many : String "LifetimePair\nleft\nright"]
+    [truncated : String "Broken\nonly"]
+    (begin
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        0
+        8
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [one-ok : bool
+          (and
+            (=
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-var-args
+                comptime-host-smoke-cookie
+                1
+                (comptime-host-smoke-name-ptr one)
+                (string.string-length one))
+              tlci_core.tlci-host-callback-status-ok)
+            (comptime-host-smoke-commit-result!)
+            (comptime-host-smoke-result-var-args? "Borrowed" "text" "" 1))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+            pools
+            operands
+            0
+            8
+            comptime-host-smoke-cookie
+            (compiler_ctfe.ctfe-reflect-info-list-empty))
+          (let
+            [many-ok : bool
+              (and
+                (=
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-var-args
+                    comptime-host-smoke-cookie
+                    2
+                    (comptime-host-smoke-name-ptr many)
+                    (string.string-length many))
+                  tlci_core.tlci-host-callback-status-ok)
+                (comptime-host-smoke-commit-result!)
+                (comptime-host-smoke-result-var-args?
+                  "LifetimePair"
+                  "left"
+                  "right"
+                  2))]
+            (begin
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+                pools
+                operands
+                0
+                8
+                comptime-host-smoke-cookie
+                (compiler_ctfe.ctfe-reflect-info-list-empty))
+              (let
+                [seed-status : i64
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-scalar
+                    comptime-host-smoke-cookie
+                    0
+                    0
+                    0)]
+                [malformed-status : i64
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-var-args
+                    comptime-host-smoke-cookie
+                    2
+                    (comptime-host-smoke-name-ptr truncated)
+                    (string.string-length truncated))]
+                [malformed-ok : bool
+                  (and
+                    (= seed-status tlci_core.tlci-host-callback-status-ok)
+                    (=
+                      malformed-status
+                      tlci_core.tlci-host-callback-status-bad-request)
+                    (not
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))]
+                (begin
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+                  (and one-ok many-ok malformed-ok))))))))))
+
 (define (comptime-host-smoke-result-array-take?
   [pools : compiler_ast_types.AstNodePoolContext]
   [target : i64]
@@ -2049,6 +2172,8 @@
       (io.panic "comptime host smoke: type-slice callback")]
     [(not (comptime-host-smoke-type-tuple-ok?))
       (io.panic "comptime host smoke: type-tuple callback")]
+    [(not (comptime-host-smoke-type-var-args-ok?))
+      (io.panic "comptime host smoke: type-var-args callback")]
     [(not (comptime-host-smoke-array-take-ok?))
       (io.panic "comptime host smoke: array-take callback")]
     [(not (comptime-host-smoke-expr-typed-binding-ok?))

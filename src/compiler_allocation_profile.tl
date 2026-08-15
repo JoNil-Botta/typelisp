@@ -7,7 +7,7 @@
 (import stdlib.io)
 (import stdlib.string)
 
-(define compiler-allocation-profile-output-arena : i64
+(define compiler-allocation-profile-active : i64
   0)
 (define compiler-allocation-profile-entry-arena : i64
   0)
@@ -22,25 +22,23 @@
   [arena-handle : i64]) : i64
   (match action
     [0
-      (if (= compiler-allocation-profile-output-arena 0)
+      (if (= compiler-allocation-profile-active 0)
         0
         1)]
     [1
       (begin
-        (if (= compiler-allocation-profile-output-arena 0)
+        (if (= compiler-allocation-profile-active 0)
           (begin
             (set!
               compiler-allocation-profile-entry-arena
               (arena.tl_arena_current))
-            (set!
-              compiler-allocation-profile-output-arena
-              (arena.tl_arena_make))
+            (set! compiler-allocation-profile-active 1)
             (io.print-error
               "compile-allocation-profile|phase|owner|arena_root|bump_bytes|committed_bytes|reserved_bytes|segments\n"))
           unit)
         0)]
     [2
-      (if (= compiler-allocation-profile-output-arena 0)
+      (if (= compiler-allocation-profile-active 0)
         0
         (let
           [root-candidate : i64
@@ -148,43 +146,26 @@
                     cursor
                     (unsafe
                       (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 4)))))))
-            (let
-              [home : i64 (arena.tl_arena_current)]
+            (with-scratch
               (begin
-                (unsafe
-                  (arena.tl_arena_set compiler-allocation-profile-output-arena))
-                (let
-                  [mark : i64 (arena.tl_region_mark)]
-                  (begin
-                    (io.print-error "compile-allocation-profile|")
-                    (io.print-error phase)
-                    (io.print-error "|")
-                    (io.print-error owner)
-                    (io.print-error "|")
-                    (io.print-error (string.int->string root))
-                    (io.print-error "|")
-                    (io.print-error (string.int->string used))
-                    (io.print-error "|")
-                    (io.print-error (string.int->string committed))
-                    (io.print-error "|")
-                    (io.print-error (string.int->string reserved))
-                    (io.print-error "|")
-                    (io.print-error (string.int->string segments))
-                    (io.print-error "\n")
-                    (unsafe
-                      (arena.tl_region_reset mark))))
-                (unsafe
-                  (arena.tl_arena_set home))))
-            0)))]
+                (io.print-error "compile-allocation-profile|")
+                (io.print-error phase)
+                (io.print-error "|")
+                (io.print-error owner)
+                (io.print-error "|")
+                (io.print-error (string.int->string root))
+                (io.print-error "|")
+                (io.print-error (string.int->string used))
+                (io.print-error "|")
+                (io.print-error (string.int->string committed))
+                (io.print-error "|")
+                (io.print-error (string.int->string reserved))
+                (io.print-error "|")
+                (io.print-error (string.int->string segments))
+                (io.print-error "\n")
+                0)))))]
     [_
       (begin
-        (if (= compiler-allocation-profile-output-arena 0)
-          unit
-          (let
-            [scratch : i64 compiler-allocation-profile-output-arena]
-            (begin
-              (set! compiler-allocation-profile-output-arena 0)
-              (set! compiler-allocation-profile-entry-arena 0)
-              (unsafe
-                (arena.tl_arena_destroy scratch)))))
+        (set! compiler-allocation-profile-active 0)
+        (set! compiler-allocation-profile-entry-arena 0)
         0)]))

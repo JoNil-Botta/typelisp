@@ -1376,20 +1376,17 @@
 
 (define (spanned-token-buffer-arena-ownership-ok?) : bool
   (let
-    [home : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
     [required : i64 (+ (array-length lex-spanned-token-buffer) 1)]
     [witness : token.SpannedToken
       (token.spanned-token-new token.Token.LBracket 7 11)]
     (begin
-      (unsafe
-        (arena.set! scratch))
-      (set! (array-ref lex-spanned-token-buffer 0) witness)
-      (spanned-token-buffer-grow-to! required 1)
-      (unsafe
+      (in-arena
+        scratch
         (begin
-          (arena.set! home)
-          (arena.destroy scratch)))
+          (set! (array-ref lex-spanned-token-buffer 0) witness)
+          (spanned-token-buffer-grow-to! required 1)))
+      (arena.destroy-safe! scratch)
       (and
         (>= (array-length lex-spanned-token-buffer) required)
         (spanned-token-buffer-grow-preserves-records?)

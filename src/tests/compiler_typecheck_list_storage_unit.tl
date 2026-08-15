@@ -50,6 +50,10 @@
       ;; Append a scratch-owned string to an outer store, discard the scratch,
       ;; then grow through unrelated siblings. The retained child must keep its
       ;; owner-arena copy rather than a stale source pointer.
+      ;; Keep the manual arena protocol here: the checker cannot express that
+      ;; `tc-string-list-cons` returns storage copied into its persistent store,
+      ;; and this test specifically verifies that ownership boundary after the
+      ;; source arena is destroyed.
       (unsafe
         (arena.set! scratch))
       (set!

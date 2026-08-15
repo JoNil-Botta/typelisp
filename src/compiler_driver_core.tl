@@ -4535,26 +4535,6 @@
     [(compiler_lower.ResultCompilerLower.Err diag)
       (ResultCompilerDriverLowered.Err diag)]))
 
-(define (compiler-driver-emit-package-loaded-object-image
-  [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverObject
-  (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
-    input-path
-    (compiler-driver-lower-package-loaded input-path target mode decls paths)
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    crt-entry))
-
 (define (compiler-driver-emit-package-loaded-runtime
   [input-path : String]
   [target : compiler_backend.CompilerBackendTarget]

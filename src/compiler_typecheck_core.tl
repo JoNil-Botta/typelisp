@@ -40429,13 +40429,16 @@
       (begin
         (set! tc-clone-root-collection-current-decl selected)
         (cfg
-          (any compiler-surface-producer embedded-stdlib-tlci)
+          (any
+            compiler-surface-producer
+            compiler-build-identity
+            embedded-stdlib-tlci)
           (surface_facts.surface-typecheck-facts-recording-select-decl! key)
           unit)))
     unit))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (tc-clone-root-collection-record-surface-roots!
     [roots : clone_support.CloneRootEntries]) : unit
     (let
@@ -40464,7 +40467,10 @@
             (tc-type-without-regions (tc-resolve-type ctx ty))]
           (begin
             (cfg
-              (any compiler-surface-producer embedded-stdlib-tlci)
+              (any
+                compiler-surface-producer
+                compiler-build-identity
+                embedded-stdlib-tlci)
               (tc-clone-root-collection-record-surface-roots!
                 (if (surface_facts.surface-typecheck-facts-recording?)
                   (clone_support.clone-root-add-type
@@ -112822,7 +112828,7 @@
 ;; Serial/test compatibility adapter. Production jobs pass both explicit state
 ;; values to the entry above.
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
     [program : ast.AstProgram]
     [paths : ast.AstDeclPathList]
@@ -113008,7 +113014,10 @@
     (begin
       (surface_facts.surface-typecheck-facts-clear!)
       (cfg
-        (any compiler-surface-producer embedded-stdlib-tlci)
+        (any
+          compiler-surface-producer
+          compiler-build-identity
+          embedded-stdlib-tlci)
         (surface_facts.surface-typecheck-facts-recording-abort!)
         unit)
       (tc-unbound-suggestion-snapshot-reset!)

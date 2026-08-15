@@ -1753,7 +1753,7 @@
 (define (smoke-noop-int-cast-mov-self-test) : i64
   (let
     [rewritten : ir.CompilerIrInstrList
-      (opt.opt-fold-instrs
+      (compiler_optimize_tests.opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptConstEnv.Nil)
         (smoke-noop-int-cast-mov-instrs))]
@@ -1895,7 +1895,7 @@
 (define (smoke-object-bounds-self-test) : i64
   (let
     [object-array : ir.CompilerIrInstrList
-      (opt.opt-bounds-instrs
+      (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Nil)
@@ -1904,7 +1904,7 @@
           (ir.CompilerIrValue.I64 1)
           (ast.AstType.I64)))]
     [object-string : ir.CompilerIrInstrList
-      (opt.opt-bounds-instrs
+      (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Nil)
@@ -1913,7 +1913,7 @@
           (ir.CompilerIrValue.I64 8)
           (ast.AstType.U8)))]
     [object-mismatch : ir.CompilerIrInstrList
-      (opt.opt-bounds-instrs
+      (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Nil)
@@ -1922,19 +1922,19 @@
           (ir.CompilerIrValue.I64 1)
           (ast.AstType.I64)))]
     [object-call : ir.CompilerIrInstrList
-      (opt.opt-bounds-instrs
+      (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Nil)
         (smoke-bounds-object-call-barrier))]
     [object-store : ir.CompilerIrInstrList
-      (opt.opt-bounds-instrs
+      (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Nil)
         (smoke-bounds-object-store-barrier (ir.CompilerIrValue.Var 10)))]
     [object-element-store : ir.CompilerIrInstrList
-      (opt.opt-bounds-instrs
+      (compiler_optimize_tests.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.OptBoundsFacts.Nil)
         (opt.OptBoundsCastEnv.Nil)

@@ -12565,6 +12565,396 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
+;; #6306. A same-home float Phi is filtered from the parallel-copy list, but
+;; its %xmm2 family already contains the final incoming value. The following
+;; spilled copy prefers %xmm2 as its scalar staging register and must preserve
+;; the whole aliased physical family around that load/store pair.
+(define (compiler-backend-phi-xmm-stage-same-home-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        (compiler_abi.compiler-abi-xmm-register-id 2)))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Register
+          (compiler_abi.compiler-abi-xmm-register-id 2)))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Spill -24))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            3
+            (compiler_regalloc.CompilerRegLocation.Spill -16))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
+
+(define (compiler-backend-phi-xmm-stage-same-home-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.F64
+            (compiler-backend-test-f64-bits "1.0"))
+          (compiler_ast_types.AstType.F64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            2
+            (compiler_ir_types.CompilerIrValue.F64
+              (compiler-backend-test-f64-bits "2.0"))
+            (compiler_ast_types.AstType.F64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))
+            compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              compiler_ir_types.CompilerIrPhiInputList.Nil)
+            (compiler_ast_types.AstType.F64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              3
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "entry")
+                compiler_ir_types.CompilerIrPhiInputList.Nil)
+              (compiler_ast_types.AstType.F64))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; An emitted destination variant: the literal Phi places its value in %xmm2
+;; before the spilled copy stages. This catches protection based only on the
+;; remaining (drained) copy list.
+(define (compiler-backend-phi-xmm-stage-placed-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        (compiler_abi.compiler-abi-xmm-register-id 2)))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Spill -16))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Spill -24))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
+
+(define (compiler-backend-phi-xmm-stage-placed-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.F64
+            (compiler-backend-test-f64-bits "2.0"))
+          (compiler_ast_types.AstType.F64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            0
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.F64
+                (compiler-backend-test-f64-bits "1.0"))
+              (compiler_ir_types.compiler-ir-label "entry")
+              compiler_ir_types.CompilerIrPhiInputList.Nil)
+            (compiler_ast_types.AstType.F64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              1
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "entry")
+                compiler_ir_types.CompilerIrPhiInputList.Nil)
+              (compiler_ast_types.AstType.F64))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-phi-xmm-stage-safe-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Spill -24))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Spill -16))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
+
+(define (compiler-backend-phi-xmm-stage-safe-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.F64
+            (compiler-backend-test-f64-bits "2.0"))
+          (compiler_ast_types.AstType.F64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              compiler_ir_types.CompilerIrPhiInputList.Nil)
+            (compiler_ast_types.AstType.F64))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-phi-xmm-stage-fused-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        (compiler_abi.compiler-abi-xmm-register-id 2)))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Register
+          (compiler_abi.compiler-abi-xmm-register-id 2)))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Spill -24))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            3
+            (compiler_regalloc.CompilerRegLocation.Spill -16))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              4
+              (compiler_regalloc.CompilerRegLocation.Spill -32))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
+
+(define (compiler-backend-phi-xmm-stage-fused-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "join"))
+        compiler_ir_types.CompilerIrInstrList.Nil))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              compiler_ir_types.CompilerIrPhiInputList.Nil)
+            (compiler_ast_types.AstType.F64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              3
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "entry")
+                compiler_ir_types.CompilerIrPhiInputList.Nil)
+              (compiler_ast_types.AstType.F64))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-phi-xmm-stage-edge-asm
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [vars : i64]
+  [mode : compiler_backend.CompilerBackendMode]) : compiler_backend.ResultCompilerBackend
+  (let
+    [program-index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [backend-state : compiler_backend.CompilerBackendState
+      program-index.backend-state]
+    (begin
+      (compiler_backend.compiler-backend-set-current-mode!
+        (compiler_backend.compiler-backend-state-function-state backend-state)
+        mode)
+      (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (compiler_backend.compiler-backend-state-function-state backend-state)
+        -128)
+      (compiler_backend.compiler-backend-function-scratch-fixture-set-cycle-temp-base-offset!
+        (compiler_backend.compiler-backend-state-function-state backend-state)
+        -512)
+      (compiler_backend.compiler-backend-emit-phi-edge-copies
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        blocks
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler_ir_types.compiler-ir-label "entry")
+        program-index
+        vars
+        ""
+        ""
+        ""))))
+
+(define (compiler-backend-phi-xmm-stage-bracket-shape?
+  [asm : String]
+  [save : String]
+  [restore : String]) : bool
+  (and
+    (compiler_backend.compiler-backend-string-contains? asm save)
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "    movsd -24(%rbp), %xmm2\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "    movsd %xmm2, -16(%rbp)\n")
+    (compiler_backend.compiler-backend-string-contains? asm restore)
+    (= (compiler_backend.compiler-backend-string-count asm "-128(%rbp)") 2)
+    (not (compiler_backend.compiler-backend-string-contains? asm "-512(%rbp)"))))
+
+(define (compiler-backend-phi-xmm-stage-preserved-ok?) : bool
+  (match (compiler-backend-phi-xmm-stage-edge-asm
+    (compiler-backend-phi-xmm-stage-same-home-assignments)
+    (compiler-backend-phi-xmm-stage-same-home-blocks)
+    4
+    (compiler_backend.CompilerBackendMode.Scalar))
+    [(compiler_backend.ResultCompilerBackend.Ok scalar)
+      (match (compiler-backend-phi-xmm-stage-edge-asm
+        (compiler-backend-phi-xmm-stage-same-home-assignments)
+        (compiler_ir_types.compiler-ir-block-list-compact
+          (compiler-backend-phi-xmm-stage-same-home-blocks))
+        4
+        (compiler_backend.CompilerBackendMode.Avx2))
+        [(compiler_backend.ResultCompilerBackend.Ok avx2)
+          (match (compiler-backend-phi-xmm-stage-edge-asm
+            (compiler-backend-phi-xmm-stage-same-home-assignments)
+            (compiler-backend-phi-xmm-stage-same-home-blocks)
+            4
+            (compiler_backend.CompilerBackendMode.Avx512))
+            [(compiler_backend.ResultCompilerBackend.Ok avx512)
+              (match (compiler-backend-phi-xmm-stage-edge-asm
+                (compiler-backend-phi-xmm-stage-placed-assignments)
+                (compiler-backend-phi-xmm-stage-placed-blocks)
+                3
+                (compiler_backend.CompilerBackendMode.Scalar))
+                [(compiler_backend.ResultCompilerBackend.Ok placed)
+                  (match (compiler-backend-phi-xmm-stage-edge-asm
+                    (compiler-backend-phi-xmm-stage-safe-assignments)
+                    (compiler-backend-phi-xmm-stage-safe-blocks)
+                    2
+                    (compiler_backend.CompilerBackendMode.Scalar))
+                    [(compiler_backend.ResultCompilerBackend.Ok safe)
+                      (let
+                        [placed-value : i64
+                          (compiler_backend.compiler-backend-string-find-from
+                            placed
+                            "    movsd .L_tl_f64_"
+                            0)]
+                        [placed-save : i64
+                          (compiler_backend.compiler-backend-string-find-from
+                            placed
+                            "    movdqu %xmm2, -128(%rbp)\n"
+                            0)]
+                        (and
+                          (compiler-backend-phi-xmm-stage-bracket-shape?
+                            scalar
+                            "    movdqu %xmm2, -128(%rbp)\n"
+                            "    movdqu -128(%rbp), %xmm2\n")
+                          (compiler-backend-phi-xmm-stage-bracket-shape?
+                            avx2
+                            "    vmovdqu %ymm2, -128(%rbp)\n"
+                            "    vmovdqu -128(%rbp), %ymm2\n")
+                          (compiler-backend-phi-xmm-stage-bracket-shape?
+                            avx512
+                            "    vmovdqu64 %zmm2, -128(%rbp)\n"
+                            "    vmovdqu64 -128(%rbp), %zmm2\n")
+                          (>= placed-value 0)
+                          (>= placed-save 0)
+                          (< placed-value placed-save)
+                          (compiler-backend-phi-xmm-stage-bracket-shape?
+                            placed
+                            "    movdqu %xmm2, -128(%rbp)\n"
+                            "    movdqu -128(%rbp), %xmm2\n")
+                          (compiler_backend.compiler-backend-string-contains?
+                            safe
+                            "    movsd -24(%rbp), %xmm2\n    movsd %xmm2, -16(%rbp)\n")
+                          (not
+                            (compiler_backend.compiler-backend-string-contains?
+                              safe
+                              "movdqu"))))]
+                    [(compiler_backend.ResultCompilerBackend.Err _) false])]
+                [(compiler_backend.ResultCompilerBackend.Err _) false])]
+            [(compiler_backend.ResultCompilerBackend.Err _) false])]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Mov+Jump fusion substitutes var4 for the pre-fusion var2 source, then runs
+;; the dense target scan. The raw same-home Phi must still protect %xmm2.
+(define (compiler-backend-phi-xmm-fused-stage-preserved-ok?) : bool
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-list-compact
+        (compiler-backend-phi-xmm-stage-fused-blocks))]
+    [program-index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [backend-state : compiler_backend.CompilerBackendState
+      program-index.backend-state]
+    (begin
+      (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (compiler_backend.compiler-backend-state-function-state backend-state)
+        -128)
+      (match (compiler_backend.compiler-backend-emit-mov-phi-copy-edge
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler-backend-phi-xmm-stage-fused-assignments)
+        blocks
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler_ir_types.compiler-ir-label "entry")
+        2
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        program-index
+        5
+        ""
+        "")
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movdqu %xmm2, -128(%rbp)\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movsd -32(%rbp), %xmm2\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movsd %xmm2, -16(%rbp)\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movdqu -128(%rbp), %xmm2\n"))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
+
 (define (compiler-backend-phi-group-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
@@ -43403,6 +43793,123 @@
                 compiler_ir_types.CompilerIrInstrList.Nil))
             compiler_ir_types.CompilerIrBlockList.Nil))))))
 
+;; Model the occupancy gap of a rotated back edge directly: the %xmm2 family is
+;; free at the latch emission point and occupied at the header entry even though
+;; layout placed the semantic back edge forward in emitted order. A missing
+;; target point is independently conservative.
+(define (compiler-backend-phi-xmm-back-edge-gap-preserved-ok?) : bool
+  (let
+    [program-index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [backend-state : compiler_backend.CompilerBackendState
+      program-index.backend-state]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Spill -16))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Spill -24))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              2
+              (compiler_regalloc.CompilerRegLocation.Register
+                (compiler_abi.compiler-abi-xmm-register-id 2)))
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
+    [starts : (__tl_dyn-array i64) (make-array i64 3)]
+    [ends : (__tl_dyn-array i64) (make-array i64 3)]
+    [edge-point : i64 8]
+    [target-point : i64 26]
+    (begin
+      (compiler_regalloc.compiler-reg-fill-i64-array starts -1)
+      (compiler_regalloc.compiler-reg-fill-i64-array ends -1)
+      (set! (array-ref starts 2) target-point)
+      (set! (array-ref ends 2) target-point)
+      (match (compiler_backend.compiler-backend-scavenge-assignments-build
+        assignments
+        3)
+        [(compiler_backend.CompilerBackendScavengeAssignments
+            assignment-index
+            plan-mask)
+          (compiler_backend.compiler-backend-set-scavenge-ctx-ready!
+            (compiler_backend.compiler-backend-state-function-state
+              backend-state)
+            starts
+            ends
+            assignment-index
+            plan-mask
+            (compiler_backend.compiler-backend-scavenge-occupancy-build
+              starts
+              ends
+              assignment-index
+              3)
+            3)])
+      (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+        backend-state
+        4)
+      (compiler_backend.compiler-backend-function-state-set-current-phi-target-point!
+        backend-state
+        target-point)
+      (compiler_backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
+        backend-state
+        0)
+      (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        (compiler_backend.compiler-backend-state-function-state backend-state)
+        -128)
+      (match (compiler_backend.compiler-backend-emit-phi-source-load-store
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        assignments
+        0
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.F64)
+        program-index
+        backend-state)
+        [(compiler_backend.ResultCompilerBackend.Ok back-edge)
+          (let
+            [back-edge-proven? : bool
+              (compiler_backend.compiler-backend-phi-staged-copy-proven?
+                backend-state
+                "%xmm2")]
+            (begin
+              (compiler_backend.compiler-backend-function-state-set-current-phi-target-point!
+                backend-state
+                -1)
+              (match (compiler_backend.compiler-backend-emit-phi-source-load-store
+                (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+                assignments
+                0
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.F64)
+                program-index
+                backend-state)
+                [(compiler_backend.ResultCompilerBackend.Ok unknown-edge)
+                  (and
+                    (=
+                      (compiler_backend.compiler-backend-function-state-emission-point
+                        (compiler_backend.compiler-backend-state-function-state
+                          backend-state))
+                      edge-point)
+                    (not back-edge-proven?)
+                    (not
+                      (compiler_backend.compiler-backend-phi-staged-copy-proven?
+                        backend-state
+                        "%xmm2"))
+                    (compiler-backend-phi-xmm-stage-bracket-shape?
+                      back-edge
+                      "    movdqu %xmm2, -128(%rbp)\n"
+                      "    movdqu -128(%rbp), %xmm2\n")
+                    (compiler-backend-phi-xmm-stage-bracket-shape?
+                      unknown-edge
+                      "    movdqu %xmm2, -128(%rbp)\n"
+                      "    movdqu -128(%rbp), %xmm2\n"))]
+                [(compiler_backend.ResultCompilerBackend.Err _) false])))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false]))))
+
 (define (compiler-backend-phi-rotated-back-edge-ok?) : bool
   (let
     [backend-state : compiler_backend.CompilerBackendState
@@ -46331,6 +46838,9 @@ b_keep:
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-forward-edge-unbracket-ok?)
         (compiler-backend-phi-planned-live-through-preserved-ok?)
+        (compiler-backend-phi-xmm-stage-preserved-ok?)
+        (compiler-backend-phi-xmm-fused-stage-preserved-ok?)
+        (compiler-backend-phi-xmm-back-edge-gap-preserved-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
         (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
         (compiler-backend-phi-float-cycle-copy-ok?)
@@ -46560,6 +47070,9 @@ b_keep:
     (compiler-backend-phi-parallel-copy-ok?)
     (compiler-backend-phi-forward-edge-unbracket-ok?)
     (compiler-backend-phi-planned-live-through-preserved-ok?)
+    (compiler-backend-phi-xmm-stage-preserved-ok?)
+    (compiler-backend-phi-xmm-fused-stage-preserved-ok?)
+    (compiler-backend-phi-xmm-back-edge-gap-preserved-ok?)
     (compiler-backend-phi-group-cycle-copy-ok?)
     (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
     (compiler-backend-phi-float-cycle-copy-ok?))

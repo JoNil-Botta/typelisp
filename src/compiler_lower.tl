@@ -21,7 +21,7 @@
 (import compiler_float as cfloat)
 (import compiler_intern as ci)
 (cfg
-  embedded-stdlib-tlci
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_package_surface_producer as package_surface))
 (import stdlib.hashmap)
 (import stdlib.hash)
@@ -67888,7 +67888,10 @@
                   (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
             [_finish-package-surface : unit
               (cfg
-                embedded-stdlib-tlci
+                (any
+                  compiler-surface-producer
+                  compiler-build-identity
+                  embedded-stdlib-tlci)
                 (match summary
                   [(tc_core.CompilerTypecheckSummary values functions externs)
                     (package_surface.package-surface-capture-finish!
@@ -68063,7 +68066,10 @@
           (begin
             (tc_core.tc-clone-root-collection-abort!)
             (cfg
-              embedded-stdlib-tlci
+              (any
+                compiler-surface-producer
+                compiler-build-identity
+                embedded-stdlib-tlci)
               (package_surface.package-surface-capture-abort!
                 "package surface: checked compilation was partial")
               unit)
@@ -68074,7 +68080,10 @@
           (begin
             (tc_core.tc-clone-root-collection-abort!)
             (cfg
-              embedded-stdlib-tlci
+              (any
+                compiler-surface-producer
+                compiler-build-identity
+                embedded-stdlib-tlci)
               (package_surface.package-surface-capture-abort!
                 "package surface: checked compilation failed")
               unit)
@@ -68167,7 +68176,10 @@
   [intern-state : ci.InternCompatState]) : ResultCompilerLower
   (begin
     (cfg
-      embedded-stdlib-tlci
+      (any
+        compiler-surface-producer
+        compiler-build-identity
+        embedded-stdlib-tlci)
       (package_surface.package-surface-capture-expanded! program paths pools)
       unit)
     (cfg compile-profile (compiler-lower-profile-name-reset))
@@ -68330,7 +68342,10 @@
           [(spec.ResultSpecProgramWithPaths.Err diag)
             (begin
               (cfg
-                embedded-stdlib-tlci
+                (any
+                  compiler-surface-producer
+                  compiler-build-identity
+                  embedded-stdlib-tlci)
                 (package_surface.package-surface-capture-abort!
                   "package surface: specialization failed")
                 unit)

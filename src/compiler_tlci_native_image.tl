@@ -37,8 +37,6 @@
 
 (define compiler-tlci-native-import-cap : i64
   256)
-(define compiler-tlci-native-fixup-cap : i64
-  1024)
 
 (define (compiler-tlci-native-align [offset : i64] [align : i64]) : i64
   (compiler_object_elf.compiler-object-elf-align-offset offset align))
@@ -54,6 +52,26 @@
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectDataRecordList
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data _) data]))
+
+;; Every absolute SymbolAddress data record becomes exactly one load-base
+;; fixup. Size the output from the object rather than imposing a fixed ceiling:
+;; large native declaration generators can legitimately carry more than the
+;; historical 1024 records. Refs #6551.
+(define (compiler-tlci-native-data-fixup-count
+  [records : cobj.CompilerObjectDataRecordList]) : i64
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [fixups : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (cobj.compiler-object-data-record-list-ref records index)
+            [(cobj.CompilerObjectDataRecord.SymbolAddress _)
+              (set! fixups (+ fixups 1))]
+            [_ unit])
+          (set! index (+ index 1))))
+      fixups)))
 
 ;; Section base offsets for one layout run, passed by value.
 (defstruct CompilerTlciNativeBases
@@ -645,7 +663,7 @@
                     (set! ok false)
                     (let
                       [slot : i64 (array-ref fixup-count 0)]
-                      (if (>= slot compiler-tlci-native-fixup-cap)
+                      (if (>= slot (array-length fixup-offsets))
                         (begin
                           (compiler-tlci-native-fail!
                             error
@@ -724,8 +742,11 @@
       (array.make-array i64 compiler-tlci-native-import-cap)]
     [import-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [error : (__tl_dyn-array String) (__tl_make-array "")]
-    [fixup-offsets : (__tl_dyn-array i64)
-      (array.make-array i64 compiler-tlci-native-fixup-cap)]
+    [fixup-cap : i64
+      (+
+        (compiler-tlci-native-data-fixup-count rodata-records)
+        (compiler-tlci-native-data-fixup-count data-records))]
+    [fixup-offsets : (__tl_dyn-array i64) (array.make-array i64 fixup-cap)]
     [fixup-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [builder : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity bss-base)]

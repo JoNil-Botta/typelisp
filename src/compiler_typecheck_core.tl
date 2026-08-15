@@ -1281,21 +1281,14 @@
   (begin
     (if tc-serial-job-state-ready
       unit
-      (let
-        [previous-arena : i64 (arena.tl_arena_current)]
-        (begin
-          (if (= tc-serial-job-state-arena 0)
-            (set! tc-serial-job-state-arena (arena.tl_arena_make_small))
-            unit)
-          (unsafe
-            (arena.tl_arena_set tc-serial-job-state-arena))
-          (set! (array-ref tc-serial-job-state-cell 0) (tc-job-state-new))
-          ;; Large table allocation can grow and replace the current arena
-          ;; segment, so retain the updated handle before restoring the caller.
-          (set! tc-serial-job-state-arena (arena.tl_arena_current))
-          (unsafe
-            (arena.tl_arena_set previous-arena))
-          (set! tc-serial-job-state-ready true))))
+      (begin
+        (if (= tc-serial-job-state-arena 0)
+          (set! tc-serial-job-state-arena (arena.tl_arena_make_small))
+          unit)
+        (in-arena
+          (arena.Arena tc-serial-job-state-arena)
+          (set! (array-ref tc-serial-job-state-cell 0) (tc-job-state-new)))
+        (set! tc-serial-job-state-ready true)))
     (array-ref tc-serial-job-state-cell 0)))
 
 (define (tc-serial-job-state-reset-if-ready!) : unit
@@ -1799,9 +1792,8 @@
         (if (> source-limit 0)
           source-limit
           1)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
+      (in-arena
+        (arena.Arena storage)
         (let
           [data : TcBodyStateData (tc-body-state-data-value state)]
           (begin
@@ -1819,11 +1811,8 @@
             (set!
               data.type-fact-closure-codes
               (array.make-array i64 (tc-body-type-fact-initial-capacity)))
-            (set! data.type-fact-storage-arena (arena.tl_arena_current))
             (set! data.type-fact-count 0)
-            (tc-body-state-data-set! state data)
-            (unsafe
-              (arena.tl_arena_set enclosing))))))))
+            (tc-body-state-data-set! state data)))))))
 
 (define (tc-body-type-fact-grow-copy!
   [dst-types : (__tl_dyn-array ast.AstType)]
@@ -1854,10 +1843,8 @@
       (if (< old-cap 1)
         (tc-body-type-fact-initial-capacity)
         (* old-cap 2))]
-    [enclosing : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set data.type-fact-storage-arena))
+    (in-arena
+      (arena.Arena data.type-fact-storage-arena)
       (let
         [next-types : (__tl_dyn-array ast.AstType)
           (array.make-array ast.AstType new-cap)]
@@ -1877,10 +1864,7 @@
           (set! data.type-fact-types next-types)
           (set! data.type-fact-closure-codes next-closure-codes)
           (set! data.type-fact-expr-ids next-expr-ids)
-          (set! data.type-fact-storage-arena (arena.tl_arena_current))
-          (tc-body-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set enclosing)))))))
+          (tc-body-state-data-set! state data))))))
 
 (define (tc-body-type-fact-clear-recorded-index! [state : TcBodyState]) : unit
   (let
@@ -8867,19 +8851,17 @@
         (tc-type-env-binding-segment-capacity)
         required)]
     [owner : i64 store.owner-arena]
-    [previous-arena : i64 (arena.tl_arena_current)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
-      (unsafe
-        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-      (let
-        [bigger : (__tl_dyn-array TcTypeEnvBinding)
-          (array.make-array TcTypeEnvBinding next-capacity)]
-        (begin
-          (set! store.bindings bigger)
-          (set! store.binding-capacity next-capacity)
-          (set! store.binding-len 0)))
-      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [bigger : (__tl_dyn-array TcTypeEnvBinding)
+            (array.make-array TcTypeEnvBinding next-capacity)]
+          (begin
+            (set! store.bindings bigger)
+            (set! store.binding-capacity next-capacity)
+            (set! store.binding-len 0)))))))
 
 (define (tc-type-env-store-grow-caches!
   [store : (&mut store TcTypeEnvStore)]
@@ -8890,19 +8872,17 @@
         (tc-type-env-cache-segment-capacity)
         required)]
     [owner : i64 store.owner-arena]
-    [previous-arena : i64 (arena.tl_arena_current)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
-      (unsafe
-        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-      (let
-        [bigger : (__tl_dyn-array TcTypeEnvCache)
-          (array.make-array TcTypeEnvCache next-capacity)]
-        (begin
-          (set! store.caches bigger)
-          (set! store.cache-capacity next-capacity)
-          (set! store.cache-len 0)))
-      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [bigger : (__tl_dyn-array TcTypeEnvCache)
+            (array.make-array TcTypeEnvCache next-capacity)]
+          (begin
+            (set! store.caches bigger)
+            (set! store.cache-capacity next-capacity)
+            (set! store.cache-len 0)))))))
 
 (define (tc-type-env-store-write-cache!
   [store : (&mut store TcTypeEnvStore)]
@@ -9275,13 +9255,7 @@
   [map : (&mut map tc_i64_i64_map.Map)]
   [owner : i64]) : unit
   (if (tc-topenv-membership-map-needs-grow? (& map))
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-        (tc_i64_i64_map.grow! map)
-        (tc-type-env-store-restore-after-owner-alloc! previous owner)))
+    (in-arena (arena.Arena owner) (tc_i64_i64_map.grow! map))
     unit))
 
 (define (tc-topenv-membership-renderable-overflow-flags-for
@@ -13011,27 +12985,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroModuleEnvStateData)
-          (array.make-array TcMacroModuleEnvStateData 1)]
-        [_init : unit (set! (array-ref cell 0) (tc-macro-module-env-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcMacroModuleEnvStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-module-env
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroModuleEnvStateData)
+              (array.make-array TcMacroModuleEnvStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-module-env-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroModuleEnvStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-module-env
+                next)
+              next)))))))
 
 (define (tc-macro-module-env-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -13413,23 +13388,13 @@
     [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
     (if (> (array.length data.block-spans) 0)
       unit
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 data.fixed-storage-arena]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
+      (in-arena
+        (arena.Arena data.fixed-storage-arena)
         (begin
           (set! data.block-spans (array.make-array ast.AstSourceSpan 128))
           (set! data.block-paths (array.make-array String 128))
           (set! data.block-used (array.make-array bool 128))
-          (set! data.fixed-storage-arena (arena.tl_arena_current))
-          (tc-unused-unsafe-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                data.fixed-storage-arena
-                previous))))))))
+          (tc-unused-unsafe-state-data-set! state data))))))
 
 (define (tc-unused-unsafe-tracking-reset!
   [state : TcUnusedUnsafeState]
@@ -13566,27 +13531,19 @@
     [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
     [old-cap : i64 (array.length data.block-spans)]
     [new-cap : i64 (* old-cap 2)]
-    [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 data.fixed-storage-arena]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [new-spans : (__tl_dyn-array ast.AstSourceSpan)
-      (array.make-array ast.AstSourceSpan new-cap)]
-    [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
-    [new-used : (__tl_dyn-array bool) (array.make-array bool new-cap)]
-    (begin
-      (tc-unused-unsafe-grow-copy data new-spans new-paths new-used 0)
-      (set! data.block-spans new-spans)
-      (set! data.block-paths new-paths)
-      (set! data.block-used new-used)
-      (set! data.fixed-storage-arena (arena.tl_arena_current))
-      (tc-unused-unsafe-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            data.fixed-storage-arena
-            previous))))))
+    (in-arena
+      (arena.Arena data.fixed-storage-arena)
+      (let
+        [new-spans : (__tl_dyn-array ast.AstSourceSpan)
+          (array.make-array ast.AstSourceSpan new-cap)]
+        [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
+        [new-used : (__tl_dyn-array bool) (array.make-array bool new-cap)]
+        (begin
+          (tc-unused-unsafe-grow-copy data new-spans new-paths new-used 0)
+          (set! data.block-spans new-spans)
+          (set! data.block-paths new-paths)
+          (set! data.block-used new-used)
+          (tc-unused-unsafe-state-data-set! state data))))))
 
 (define (tc-unused-unsafe-push
   [state : TcUnusedUnsafeState]
@@ -16025,30 +15982,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroHelperStateData)
-          (array.make-array TcMacroHelperStateData 1)]
-        [_init : unit
-          (set!
-            (array-ref cell 0)
-            (TcMacroHelperStateData false (tc-empty-env) false))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcMacroHelperStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-helper
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroHelperStateData)
+              (array.make-array TcMacroHelperStateData 1)]
+            [_init : unit
+              (set!
+                (array-ref cell 0)
+                (TcMacroHelperStateData false (tc-empty-env) false))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast (array-data cell) : (Ptr TcMacroHelperStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-helper
+                next)
+              next)))))))
 
 (define (tc-macro-helper-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast state 1 tc-macro-helper-state-address-initialize))
@@ -17285,27 +17240,22 @@
       (begin
         (while (< next-capacity required)
           (set! next-capacity (* next-capacity 2)))
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.owner-arena]
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-            (let
-              [next : (__tl_dyn-array TcNameIdListNode)
-                (array.make-array TcNameIdListNode next-capacity)]
-              [index : i64 0]
-              (begin
-                (while (< index data.len)
-                  (let
-                    [node : TcNameIdListNode (array-ref old index)]
-                    (begin
-                      (set!
-                        (array-ref next index)
-                        (TcNameIdListNode node.value node.parent))
-                      (set! index (+ index 1)))))
-                (set! data.nodes next)))
-            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [next : (__tl_dyn-array TcNameIdListNode)
+              (array.make-array TcNameIdListNode next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index data.len)
+                (let
+                  [node : TcNameIdListNode (array-ref old index)]
+                  (begin
+                    (set!
+                      (array-ref next index)
+                      (TcNameIdListNode node.value node.parent))
+                    (set! index (+ index 1)))))
+              (set! data.nodes next))))))))
 
 (define (tc-name-id-list-store-push!
   [address : i64]
@@ -17963,27 +17913,22 @@
       (begin
         (while (< next-capacity required)
           (set! next-capacity (* next-capacity 2)))
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.owner-arena]
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-            (let
-              [next : (__tl_dyn-array TcLifetimeSubstNode)
-                (array.make-array TcLifetimeSubstNode next-capacity)]
-              [index : i64 0]
-              (begin
-                (while (< index data.len)
-                  (let
-                    [node : TcLifetimeSubstNode (array-ref old index)]
-                    (begin
-                      (set!
-                        (array-ref next index)
-                        (TcLifetimeSubstNode node.from node.to node.parent))
-                      (set! index (+ index 1)))))
-                (set! data.nodes next)))
-            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [next : (__tl_dyn-array TcLifetimeSubstNode)
+              (array.make-array TcLifetimeSubstNode next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index data.len)
+                (let
+                  [node : TcLifetimeSubstNode (array-ref old index)]
+                  (begin
+                    (set!
+                      (array-ref next index)
+                      (TcLifetimeSubstNode node.from node.to node.parent))
+                    (set! index (+ index 1)))))
+              (set! data.nodes next))))))))
 
 (define (tc-lifetime-subst-store-push!
   [address : i64]
@@ -20783,27 +20728,24 @@
       (if (< old-capacity 1)
         16
         (* old-capacity 2))]
-    [previous-arena : i64 (arena.tl_arena_current)]
-    [owner : i64 (tc-macro-state-owner-arena state)]
-    [_owner : unit
-      (unsafe
-        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-    [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
-      (array.make-array ast.AstNodePoolContext next-capacity)]
-    [next-ids : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
-    [next-exprs : (__tl_dyn-array ast.AstExpr)
-      (array.make-array ast.AstExpr next-capacity)]
-    (begin
-      (tc-dotted-macro-journal-grow-copy!
-        state
-        (&mut next-pools)
-        (&mut next-ids)
-        (&mut next-exprs)
-        0)
-      (tc-macro-walk-set! state dotted-macro-journal-pools next-pools)
-      (tc-macro-walk-set! state dotted-macro-journal-ids next-ids)
-      (tc-macro-walk-set! state dotted-macro-journal-exprs next-exprs)
-      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
+    (in-arena
+      (arena.Arena (tc-macro-state-owner-arena state))
+      (let
+        [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
+          (array.make-array ast.AstNodePoolContext next-capacity)]
+        [next-ids : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+        [next-exprs : (__tl_dyn-array ast.AstExpr)
+          (array.make-array ast.AstExpr next-capacity)]
+        (begin
+          (tc-dotted-macro-journal-grow-copy!
+            state
+            (&mut next-pools)
+            (&mut next-ids)
+            (&mut next-exprs)
+            0)
+          (tc-macro-walk-set! state dotted-macro-journal-pools next-pools)
+          (tc-macro-walk-set! state dotted-macro-journal-ids next-ids)
+          (tc-macro-walk-set! state dotted-macro-journal-exprs next-exprs))))))
 
 (define (tc-dotted-macro-journal-active-pools) : ast.AstNodePoolContext
   (if (ast.ast-node-pool-compat-context-active?)
@@ -40429,13 +40371,16 @@
       (begin
         (set! tc-clone-root-collection-current-decl selected)
         (cfg
-          (any compiler-surface-producer embedded-stdlib-tlci)
+          (any
+            compiler-surface-producer
+            compiler-build-identity
+            embedded-stdlib-tlci)
           (surface_facts.surface-typecheck-facts-recording-select-decl! key)
           unit)))
     unit))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (tc-clone-root-collection-record-surface-roots!
     [roots : clone_support.CloneRootEntries]) : unit
     (let
@@ -40464,7 +40409,10 @@
             (tc-type-without-regions (tc-resolve-type ctx ty))]
           (begin
             (cfg
-              (any compiler-surface-producer embedded-stdlib-tlci)
+              (any
+                compiler-surface-producer
+                compiler-build-identity
+                embedded-stdlib-tlci)
               (tc-clone-root-collection-record-surface-roots!
                 (if (surface_facts.surface-typecheck-facts-recording?)
                   (clone_support.clone-root-add-type
@@ -61945,27 +61893,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroAbstractStateData)
-          (array.make-array TcMacroAbstractStateData 1)]
-        [_init : unit (set! (array-ref cell 0) (tc-macro-abstract-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcMacroAbstractStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-abstract
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroAbstractStateData)
+              (array.make-array TcMacroAbstractStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-abstract-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroAbstractStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-abstract
+                next)
+              next)))))))
 
 (define (tc-macro-abstract-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -62137,28 +62086,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroProofReuseStateData)
-          (array.make-array TcMacroProofReuseStateData 1)]
-        [_init : unit
-          (set! (array-ref cell 0) (tc-macro-proof-reuse-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcMacroProofReuseStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-proof-reuse
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroProofReuseStateData)
+              (array.make-array TcMacroProofReuseStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-proof-reuse-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroProofReuseStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-proof-reuse
+                next)
+              next)))))))
 
 (define (tc-macro-proof-reuse-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -62336,27 +62285,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroIdentityStateData)
-          (array.make-array TcMacroIdentityStateData 1)]
-        [_init : unit (set! (array-ref cell 0) (tc-macro-identity-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcMacroIdentityStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-identity
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroIdentityStateData)
+              (array.make-array TcMacroIdentityStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-identity-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroIdentityStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-identity
+                next)
+              next)))))))
 
 (define (tc-macro-identity-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -62383,15 +62333,8 @@
 
 (define (tc-macro-owner-text-copy [state : TcMacroState] [text : String]) : String
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (tc-macro-state-owner-arena state)]
-    [_switch : unit
-      (unsafe
-        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-    [copied : String (string.copy (& text))]
-    (begin
-      (tc-type-env-store-restore-after-owner-alloc! previous owner)
-      copied)))
+    (in-arena (arena.Arena owner) (string.copy (& text)))))
 
 (define (tc-macro-identity-reset-for-state! [state : TcMacroState]) : unit
   (let
@@ -62414,30 +62357,28 @@
       (= data.owner-reset-generation reset-generation))
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [_allocate : unit
-          (if (>= data.capacity 16)
-            unit
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [_allocate : unit
+              (if (>= data.capacity 16)
+                unit
+                (begin
+                  (set! data.capacity 16)
+                  (set! data.keys (array.make-array String data.capacity))
+                  (set! data.slots (array.make-array i64 data.capacity))))]
+            [index : i64 0]
             (begin
-              (set! data.capacity 16)
-              (set! data.keys (array.make-array String data.capacity))
-              (set! data.slots (array.make-array i64 data.capacity))))]
-        [index : i64 0]
-        (begin
-          (while (< index data.capacity)
-            (begin
-              (set! (array-ref data.slots index) 0)
-              (set! index (+ index 1))))
-          (set! data.count 0)
-          (set! data.owner-table-id table-id)
-          (set! data.owner-reset-generation reset-generation)
-          (set! data.ready true)
-          (tc-macro-identity-state-data-set! state data)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+              (while (< index data.capacity)
+                (begin
+                  (set! (array-ref data.slots index) 0)
+                  (set! index (+ index 1))))
+              (set! data.count 0)
+              (set! data.owner-table-id table-id)
+              (set! data.owner-reset-generation reset-generation)
+              (set! data.ready true)
+              (tc-macro-identity-state-data-set! state data))))))))
 
 (define (tc-macro-identity-rehash-one!
   [keys : (__tl_dyn-array String)]
@@ -62456,30 +62397,28 @@
   (let
     [data : TcMacroIdentityStateData (tc-macro-identity-state-data state)]
     [next-capacity : i64 (* data.capacity 2)]
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (tc-macro-state-owner-arena state)]
-    [_switch : unit
-      (unsafe
-        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-    [next-keys : (__tl_dyn-array String)
-      (array.make-array String next-capacity)]
-    [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
-    [index : i64 0]
-    (begin
-      (while (< index data.count)
+    (in-arena
+      (arena.Arena owner)
+      (let
+        [next-keys : (__tl_dyn-array String)
+          (array.make-array String next-capacity)]
+        [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+        [index : i64 0]
         (begin
-          (set! (array-ref next-keys index) (array-ref data.keys index))
-          (tc-macro-identity-rehash-one!
-            next-keys
-            (&mut next-slots)
-            next-capacity
-            index)
-          (set! index (+ index 1))))
-      (set! data.keys next-keys)
-      (set! data.slots next-slots)
-      (set! data.capacity next-capacity)
-      (tc-macro-identity-state-data-set! state data)
-      (tc-type-env-store-restore-after-owner-alloc! previous owner))))
+          (while (< index data.count)
+            (begin
+              (set! (array-ref next-keys index) (array-ref data.keys index))
+              (tc-macro-identity-rehash-one!
+                next-keys
+                (&mut next-slots)
+                next-capacity
+                index)
+              (set! index (+ index 1))))
+          (set! data.keys next-keys)
+          (set! data.slots next-slots)
+          (set! data.capacity next-capacity)
+          (tc-macro-identity-state-data-set! state data))))))
 
 (define (tc-macro-identity-lookup-for-state
   [state : TcMacroState]
@@ -62593,16 +62532,13 @@
     requested-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
       [owner : i64 (tc-macro-state-owner-arena state)]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-      [storage : (__tl_dyn-array String)
-        (array.make-array String requested-capacity)]
-      (begin
-        (tc-macro-proof-set! state qualified-keys storage)
-        (tc-type-env-store-restore-after-owner-alloc! previous owner)))))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [storage : (__tl_dyn-array String)
+            (array.make-array String requested-capacity)]
+          (tc-macro-proof-set! state qualified-keys storage))))))
 
 (define (record-count-for-state [state : TcMacroState] [macro-key : String]) : unit
   (if (= (string.string-length macro-key) 0)
@@ -62712,28 +62648,26 @@
     additional-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
       [owner : i64 (tc-macro-state-owner-arena state)]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-      [function-storage : (__tl_dyn-array String)
-        (array.make-array String additional-capacity)]
-      [local-storage : (__tl_dyn-array String)
-        (array.make-array String additional-capacity)]
-      [identity-storage : (__tl_dyn-array i64)
-        (array.make-array i64 additional-capacity)]
-      [module-storage : (__tl_dyn-array i64)
-        (array.make-array i64 additional-capacity)]
-      [decl-storage : (__tl_dyn-array ast.AstDecl)
-        (array.make-array ast.AstDecl additional-capacity)]
-      (begin
-        (tc-macro-proof-set! state function-names function-storage)
-        (tc-macro-proof-set! state local-names local-storage)
-        (tc-macro-proof-set! state storage-identity-vars identity-storage)
-        (tc-macro-proof-set! state storage-module-vars module-storage)
-        (tc-macro-proof-set! state augmented-decls decl-storage)
-        (tc-type-env-store-restore-after-owner-alloc! previous owner)))))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [function-storage : (__tl_dyn-array String)
+            (array.make-array String additional-capacity)]
+          [local-storage : (__tl_dyn-array String)
+            (array.make-array String additional-capacity)]
+          [identity-storage : (__tl_dyn-array i64)
+            (array.make-array i64 additional-capacity)]
+          [module-storage : (__tl_dyn-array i64)
+            (array.make-array i64 additional-capacity)]
+          [decl-storage : (__tl_dyn-array ast.AstDecl)
+            (array.make-array ast.AstDecl additional-capacity)]
+          (begin
+            (tc-macro-proof-set! state function-names function-storage)
+            (tc-macro-proof-set! state local-names local-storage)
+            (tc-macro-proof-set! state storage-identity-vars identity-storage)
+            (tc-macro-proof-set! state storage-module-vars module-storage)
+            (tc-macro-proof-set! state augmented-decls decl-storage)))))))
 
 (define (map-ready-cell-for-state [state : TcMacroState]) : unit
   (let
@@ -62930,29 +62864,28 @@
     store-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
       [owner : i64 (tc-macro-state-owner-arena state)]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-      [identities : (__tl_dyn-array i64) (array.make-array i64 store-capacity)]
-      [counts : (__tl_dyn-array i64) (array.make-array i64 store-capacity)]
-      [types : (__tl_dyn-array String)
-        (array.make-array String (* store-capacity expected-count))]
-      [kinds : (__tl_dyn-array String)
-        (array.make-array String (* store-capacity expected-count))]
-      [scratch-keys : (__tl_dyn-array String)
-        (array.make-array String expected-count)]
-      [scratch-kinds : (__tl_dyn-array String)
-        (array.make-array String expected-count)]
-      (begin
-        (tc-macro-proof-set! state identity-bytes identities)
-        (tc-macro-proof-set! state operand-count counts)
-        (tc-macro-proof-set! state declared-types types)
-        (tc-macro-proof-set! state macro-type-kinds kinds)
-        (tc-macro-proof-set! state expected-key scratch-keys)
-        (tc-macro-proof-set! state expected-kind scratch-kinds)
-        (tc-type-env-store-restore-after-owner-alloc! previous owner)))))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [identities : (__tl_dyn-array i64)
+            (array.make-array i64 store-capacity)]
+          [counts : (__tl_dyn-array i64) (array.make-array i64 store-capacity)]
+          [types : (__tl_dyn-array String)
+            (array.make-array String (* store-capacity expected-count))]
+          [kinds : (__tl_dyn-array String)
+            (array.make-array String (* store-capacity expected-count))]
+          [scratch-keys : (__tl_dyn-array String)
+            (array.make-array String expected-count)]
+          [scratch-kinds : (__tl_dyn-array String)
+            (array.make-array String expected-count)]
+          (begin
+            (tc-macro-proof-set! state identity-bytes identities)
+            (tc-macro-proof-set! state operand-count counts)
+            (tc-macro-proof-set! state declared-types types)
+            (tc-macro-proof-set! state macro-type-kinds kinds)
+            (tc-macro-proof-set! state expected-key scratch-keys)
+            (tc-macro-proof-set! state expected-kind scratch-kinds)))))))
 
 (define (running-identity-for-state [state : TcMacroState]) : unit
   (let
@@ -63045,21 +62978,20 @@
     type-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
       [owner : i64 (tc-macro-state-owner-arena state)]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-      [locals : (__tl_dyn-array i64) (array.make-array i64 type-capacity)]
-      [next : (__tl_dyn-array i64) (array.make-array i64 type-capacity)]
-      [values : (__tl_dyn-array i64) (array.make-array i64 seed-capacity)]
-      [texts : (__tl_dyn-array String) (array.make-array String seed-capacity)]
-      (begin
-        (tc-macro-proof-set! state local-alias-names locals)
-        (tc-macro-proof-set! state next-locals next)
-        (tc-macro-proof-set! state uniform-values values)
-        (tc-macro-proof-set! state inject-texts texts)
-        (tc-type-env-store-restore-after-owner-alloc! previous owner)))))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [locals : (__tl_dyn-array i64) (array.make-array i64 type-capacity)]
+          [next : (__tl_dyn-array i64) (array.make-array i64 type-capacity)]
+          [values : (__tl_dyn-array i64) (array.make-array i64 seed-capacity)]
+          [texts : (__tl_dyn-array String)
+            (array.make-array String seed-capacity)]
+          (begin
+            (tc-macro-proof-set! state local-alias-names locals)
+            (tc-macro-proof-set! state next-locals next)
+            (tc-macro-proof-set! state uniform-values values)
+            (tc-macro-proof-set! state inject-texts texts)))))))
 
 (define (tc-macro-proof-compare-reset-for-state! [state : TcMacroState]) : unit
   (begin
@@ -65021,23 +64953,20 @@
     (if (= (array-length abstract.proof-macro-keys) abstract.proof-capacity)
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        (begin
-          (set!
-            abstract.proof-macro-keys
-            (array.make-array i64 abstract.proof-capacity))
-          (set!
-            abstract.proof-param-keys
-            (array.make-array i64 abstract.proof-capacity))
-          (set!
-            abstract.proof-kind-masks
-            (array.make-array i64 abstract.proof-capacity))
-          (tc-macro-abstract-state-data-set! state abstract)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+        (in-arena
+          (arena.Arena owner)
+          (begin
+            (set!
+              abstract.proof-macro-keys
+              (array.make-array i64 abstract.proof-capacity))
+            (set!
+              abstract.proof-param-keys
+              (array.make-array i64 abstract.proof-capacity))
+            (set!
+              abstract.proof-kind-masks
+              (array.make-array i64 abstract.proof-capacity))
+            (tc-macro-abstract-state-data-set! state abstract)))))))
 
 (define (tc-macro-abstract-proof-find
   [state : TcMacroState]
@@ -67300,27 +67229,22 @@
       (begin
         (while (< next-capacity required)
           (set! next-capacity (* next-capacity 2)))
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.owner-arena]
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-            (let
-              [next : (__tl_dyn-array TcMovePathSegmentNode)
-                (array.make-array TcMovePathSegmentNode next-capacity)]
-              [index : i64 0]
-              (begin
-                (while (< index data.len)
-                  (let
-                    [node : TcMovePathSegmentNode (array-ref old index)]
-                    (begin
-                      (set!
-                        (array-ref next index)
-                        (TcMovePathSegmentNode node.parent node.kind node.value))
-                      (set! index (+ index 1)))))
-                (set! data.nodes next)))
-            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [next : (__tl_dyn-array TcMovePathSegmentNode)
+              (array.make-array TcMovePathSegmentNode next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index data.len)
+                (let
+                  [node : TcMovePathSegmentNode (array-ref old index)]
+                  (begin
+                    (set!
+                      (array-ref next index)
+                      (TcMovePathSegmentNode node.parent node.kind node.value))
+                    (set! index (+ index 1)))))
+              (set! data.nodes next))))))))
 
 (define (tc-move-path-segments-node
   [segments : TcMovePathSegments]
@@ -84277,24 +84201,25 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroWalkStateData)
-          (array.make-array TcMacroWalkStateData 1)]
-        [_init : unit (set! (array-ref cell 0) (tc-macro-walk-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcMacroWalkStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set! state tc-macro-state-slot-walk next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroWalkStateData)
+              (array.make-array TcMacroWalkStateData 1)]
+            [_init : unit (set! (array-ref cell 0) (tc-macro-walk-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast (array-data cell) : (Ptr TcMacroWalkStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-walk
+                next)
+              next)))))))
 
 (define (tc-macro-walk-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast state 3 tc-macro-walk-state-address-initialize))
@@ -84344,26 +84269,23 @@
       (ci.intern-source-name-session-handle-session source-names)]
     (if (= address 0)
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array ci.InternSourceNameSession)
-          (array.make-array ci.InternSourceNameSession 1)]
-        [next-address : i64
-          (begin
-            (set! (array-ref cell 0) next)
-            (cast
-              (unsafe
-                (ptr->int
-                  (ptr-cast
-                    (array-data cell)
-                    : (Ptr ci.InternSourceNameSession))))
-              : i64))]
-        (begin
-          (tc-macro-state-slot-address-set! state 13 next-address)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array ci.InternSourceNameSession)
+              (array.make-array ci.InternSourceNameSession 1)]
+            [next-address : i64
+              (begin
+                (set! (array-ref cell 0) next)
+                (cast
+                  (unsafe
+                    (ptr->int
+                      (ptr-cast
+                        (array-data cell)
+                        : (Ptr ci.InternSourceNameSession))))
+                  : i64))]
+            (tc-macro-state-slot-address-set! state 13 next-address))))
       ;; Slot 13 names a record allocated once in the job owner. Every bind is
       ;; authoritative: same-generation interning can grow the source-name
       ;; arrays and replace their snapshots. Refreshing the record in place
@@ -89029,30 +88951,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroGeneratedModuleStateData)
-          (array.make-array TcMacroGeneratedModuleStateData 1)]
-        [_init : unit
-          (set! (array-ref cell 0) (tc-macro-generated-module-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast
-                  (array-data cell)
-                  : (Ptr TcMacroGeneratedModuleStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-generated-module
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroGeneratedModuleStateData)
+              (array.make-array TcMacroGeneratedModuleStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-generated-module-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroGeneratedModuleStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-generated-module
+                next)
+              next)))))))
 
 (define (tc-macro-generated-module-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -89097,36 +89017,34 @@
       (= memo.owner-reset-generation reset-generation))
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [_allocate : unit
-          (if (= (array-length memo.keys) memo.capacity)
-            unit
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [_allocate : unit
+              (if (= (array-length memo.keys) memo.capacity)
+                unit
+                (begin
+                  (set! memo.keys (array.make-array i64 memo.capacity))
+                  (set!
+                    memo.catalog-entries
+                    (array.make-array
+                      MacroGeneratedModuleCatalogEntry
+                      memo.capacity))))]
+            [i : i64 0]
             (begin
-              (set! memo.keys (array.make-array i64 memo.capacity))
-              (set!
-                memo.catalog-entries
-                (array.make-array
-                  MacroGeneratedModuleCatalogEntry
-                  memo.capacity))))]
-        [i : i64 0]
-        (begin
-          (while (< i memo.capacity)
-            (begin
-              (set! (array-ref memo.keys i) 0)
-              (set!
-                (array-ref memo.catalog-entries i)
-                (MacroGeneratedModuleCatalogEntry.Empty))
-              (set! i (+ i 1))))
-          (set! memo.count 0)
-          (set! memo.owner-table-id table-id)
-          (set! memo.owner-reset-generation reset-generation)
-          (set! memo.ready true)
-          (tc-macro-generated-module-state-data-set! state memo)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+              (while (< i memo.capacity)
+                (begin
+                  (set! (array-ref memo.keys i) 0)
+                  (set!
+                    (array-ref memo.catalog-entries i)
+                    (MacroGeneratedModuleCatalogEntry.Empty))
+                  (set! i (+ i 1))))
+              (set! memo.count 0)
+              (set! memo.owner-table-id table-id)
+              (set! memo.owner-reset-generation reset-generation)
+              (set! memo.ready true)
+              (tc-macro-generated-module-state-data-set! state memo))))))))
 
 (define (macro-generated-module-memo-bucket
   [state : TcMacroState]
@@ -89339,30 +89257,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroGeneratedDeclsStateData)
-          (array.make-array TcMacroGeneratedDeclsStateData 1)]
-        [_init : unit
-          (set! (array-ref cell 0) (tc-macro-generated-decls-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast
-                  (array-data cell)
-                  : (Ptr TcMacroGeneratedDeclsStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-generated-decls
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroGeneratedDeclsStateData)
+              (array.make-array TcMacroGeneratedDeclsStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-generated-decls-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroGeneratedDeclsStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-generated-decls
+                next)
+              next)))))))
 
 (define (tc-macro-generated-decls-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -89407,30 +89323,30 @@
       (= memo.owner-reset-generation reset-generation))
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [_allocate : unit
-          (if (= (array-length memo.keys) memo.capacity)
-            unit
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [_allocate : unit
+              (if (= (array-length memo.keys) memo.capacity)
+                unit
+                (begin
+                  (set! memo.keys (array.make-array i64 memo.capacity))
+                  (set!
+                    memo.decls
+                    (array.make-array ast.AstDeclList memo.capacity))))]
+            [i : i64 0]
             (begin
-              (set! memo.keys (array.make-array i64 memo.capacity))
-              (set! memo.decls (array.make-array ast.AstDeclList memo.capacity))))]
-        [i : i64 0]
-        (begin
-          (while (< i memo.capacity)
-            (begin
-              (set! (array-ref memo.keys i) 0)
-              (set! (array-ref memo.decls i) (ast.ast-decl-list-new))
-              (set! i (+ i 1))))
-          (set! memo.count 0)
-          (set! memo.owner-table-id table-id)
-          (set! memo.owner-reset-generation reset-generation)
-          (set! memo.ready true)
-          (tc-macro-generated-decls-state-data-set! state memo)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+              (while (< i memo.capacity)
+                (begin
+                  (set! (array-ref memo.keys i) 0)
+                  (set! (array-ref memo.decls i) (ast.ast-decl-list-new))
+                  (set! i (+ i 1))))
+              (set! memo.count 0)
+              (set! memo.owner-table-id table-id)
+              (set! memo.owner-reset-generation reset-generation)
+              (set! memo.ready true)
+              (tc-macro-generated-decls-state-data-set! state memo))))))))
 
 (define (macro-generated-decls-memo-bucket
   [state : TcMacroState]
@@ -91853,15 +91769,9 @@
     (while (not (tc-name-id-list-empty? cursor))
       (begin
         (if (tc_i64_i64_map.needs-grow? set)
-          (let
-            [previous : i64 (arena.tl_arena_current)]
-            [owner : i64 (tc-macro-state-owner-arena state)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set
-                  (tc-type-env-store-owner-current-head owner)))
-              (tc_i64_i64_map.grow! set)
-              (tc-type-env-store-restore-after-owner-alloc! previous owner)))
+          (in-arena
+            (arena.Arena (tc-macro-state-owner-arena state))
+            (tc_i64_i64_map.grow! set))
           unit)
         (tc_i64_i64_map.insert-ref! set (tc-name-id-list-head cursor) 1)
         (set! cursor (tc-name-id-list-rest cursor))))))
@@ -92049,28 +91959,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroSurfaceCallStateData)
-          (array.make-array TcMacroSurfaceCallStateData 1)]
-        [_init : unit
-          (set! (array-ref cell 0) (tc-macro-surface-call-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcMacroSurfaceCallStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-surface-call
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroSurfaceCallStateData)
+              (array.make-array TcMacroSurfaceCallStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-surface-call-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroSurfaceCallStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-surface-call
+                next)
+              next)))))))
 
 (define (tc-macro-surface-call-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -92115,31 +92025,29 @@
       (= cache.owner-reset-generation reset-generation))
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [i : i64 0]
-        (begin
-          (if (= (array.length cache.module-keys) 0)
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [i : i64 0]
             (begin
-              (set! cache.module-keys (array.make-array i64 cache.capacity))
-              (set! cache.base-keys (array.make-array i64 cache.capacity))
-              (set!
-                cache.values
-                (array.make-array MacroMaybeDecl cache.capacity)))
-            unit)
-          (while (< i cache.capacity)
-            (begin
-              (set! (array-ref cache.module-keys i) 0)
-              (set! i (+ i 1))))
-          (set! cache.count 0)
-          (set! cache.owner-table-id table-id)
-          (set! cache.owner-reset-generation reset-generation)
-          (set! cache.ready true)
-          (tc-macro-surface-call-state-data-set! state cache)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+              (if (= (array.length cache.module-keys) 0)
+                (begin
+                  (set! cache.module-keys (array.make-array i64 cache.capacity))
+                  (set! cache.base-keys (array.make-array i64 cache.capacity))
+                  (set!
+                    cache.values
+                    (array.make-array MacroMaybeDecl cache.capacity)))
+                unit)
+              (while (< i cache.capacity)
+                (begin
+                  (set! (array-ref cache.module-keys i) 0)
+                  (set! i (+ i 1))))
+              (set! cache.count 0)
+              (set! cache.owner-table-id table-id)
+              (set! cache.owner-reset-generation reset-generation)
+              (set! cache.ready true)
+              (tc-macro-surface-call-state-data-set! state cache))))))))
 
 (define (macro-surface-call-decl-cache-bucket [module-id : i64] [base-id : i64]) : i64
   (bit-and (+ (* module-id 2654435761) (* base-id 40503)) 8191))
@@ -93614,30 +93522,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroHygieneProducedStateData)
-          (array.make-array TcMacroHygieneProducedStateData 1)]
-        [_init : unit
-          (set! (array-ref cell 0) (tc-macro-hygiene-produced-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast
-                  (array-data cell)
-                  : (Ptr TcMacroHygieneProducedStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-hygiene-produced
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroHygieneProducedStateData)
+              (array.make-array TcMacroHygieneProducedStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-hygiene-produced-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroHygieneProducedStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-hygiene-produced
+                next)
+              next)))))))
 
 (define (tc-macro-hygiene-produced-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -96262,28 +96168,28 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroImportIndexStateData)
-          (array.make-array TcMacroImportIndexStateData 1)]
-        [_init : unit
-          (set! (array-ref cell 0) (tc-macro-import-index-state-new))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast (array-data cell) : (Ptr TcMacroImportIndexStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-import-index
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroImportIndexStateData)
+              (array.make-array TcMacroImportIndexStateData 1)]
+            [_init : unit
+              (set! (array-ref cell 0) (tc-macro-import-index-state-new))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroImportIndexStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-import-index
+                next)
+              next)))))))
 
 (define (tc-macro-import-index-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -96383,16 +96289,14 @@
     (if (= (array-length data.unqualified-module-keys) 65536)
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-          (set! data.unqualified-module-keys (array.make-array i64 65536))
-          (set! data.unqualified-name-keys (array.make-array i64 65536))
-          (set! data.unqualified-values (array.make-array i64 65536))
-          (tc-macro-import-index-state-data-set! state data)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+        (in-arena
+          (arena.Arena owner)
+          (begin
+            (set! data.unqualified-module-keys (array.make-array i64 65536))
+            (set! data.unqualified-name-keys (array.make-array i64 65536))
+            (set! data.unqualified-values (array.make-array i64 65536))
+            (tc-macro-import-index-state-data-set! state data)))))))
 
 (define (tc-unused-unsafe-storage-lifetime-fill!
   [state : TcUnusedUnsafeState]
@@ -97796,31 +97700,29 @@
       (= (array-ref data.control 17) reset-generation))
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
         [i : i64 0]
-        (begin
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-          (if (= (array-length data.flat-module-keys) 0)
-            (begin
-              (set! data.flat-module-keys (array.make-array i64 1024))
-              (set!
-                data.flat-values
-                (array.make-array MacroFlatImportTargetList 1024)))
-            unit)
-          (while (< i 1024)
-            (begin
-              (set! (array-ref data.flat-module-keys i) 0)
-              (set! i (+ i 1))))
-          (set! (array-ref data.control 15) 0)
-          (set! (array-ref data.control 16) table-id)
-          (set! (array-ref data.control 17) reset-generation)
-          (set! (array-ref data.control 18) 1)
-          (set! (array-ref data.control 19) 0)
-          (set! (array-ref data.control 20) 0)
-          (tc-macro-import-index-state-data-set! state data)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+        (in-arena
+          (arena.Arena owner)
+          (begin
+            (if (= (array-length data.flat-module-keys) 0)
+              (begin
+                (set! data.flat-module-keys (array.make-array i64 1024))
+                (set!
+                  data.flat-values
+                  (array.make-array MacroFlatImportTargetList 1024)))
+              unit)
+            (while (< i 1024)
+              (begin
+                (set! (array-ref data.flat-module-keys i) 0)
+                (set! i (+ i 1))))
+            (set! (array-ref data.control 15) 0)
+            (set! (array-ref data.control 16) table-id)
+            (set! (array-ref data.control 17) reset-generation)
+            (set! (array-ref data.control 18) 1)
+            (set! (array-ref data.control 19) 0)
+            (set! (array-ref data.control 20) 0)
+            (tc-macro-import-index-state-data-set! state data)))))))
 
 (define (macro-flat-import-target-cache-ensure! [state : TcMacroState]) : unit
   (let
@@ -98182,31 +98084,29 @@
       (= (array-ref data.control 2) reset-generation))
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
         [i : i64 0]
-        (begin
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-          (if (= (array-length data.alias-module-keys) 0)
-            (begin
-              (set! data.alias-module-keys (array.make-array i64 16384))
-              (set! data.alias-qualifier-keys (array.make-array i64 16384))
-              (set! data.alias-values (array.make-array i64 16384)))
-            unit)
-          (while (< i 16384)
-            (begin
-              (set! (array-ref data.alias-module-keys i) 0)
-              (set! i (+ i 1))))
-          (set! (array-ref data.control 0) 0)
-          (set! (array-ref data.control 1) table-id)
-          (set! (array-ref data.control 2) reset-generation)
-          (set! (array-ref data.control 3) 1)
-          (set! (array-ref data.control 4) 0)
-          (set! (array-ref data.control 5) 0)
-          (set! (array-ref data.control 6) 0)
-          (tc-macro-import-index-state-data-set! state data)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+        (in-arena
+          (arena.Arena owner)
+          (begin
+            (if (= (array-length data.alias-module-keys) 0)
+              (begin
+                (set! data.alias-module-keys (array.make-array i64 16384))
+                (set! data.alias-qualifier-keys (array.make-array i64 16384))
+                (set! data.alias-values (array.make-array i64 16384)))
+              unit)
+            (while (< i 16384)
+              (begin
+                (set! (array-ref data.alias-module-keys i) 0)
+                (set! i (+ i 1))))
+            (set! (array-ref data.control 0) 0)
+            (set! (array-ref data.control 1) table-id)
+            (set! (array-ref data.control 2) reset-generation)
+            (set! (array-ref data.control 3) 1)
+            (set! (array-ref data.control 4) 0)
+            (set! (array-ref data.control 5) 0)
+            (set! (array-ref data.control 6) 0)
+            (tc-macro-import-index-state-data-set! state data)))))))
 
 (define (macro-alias-cache-ensure! [state : TcMacroState]) : unit
   (let
@@ -98917,32 +98817,30 @@
     (if (> address 0)
       address
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        [cell : (__tl_dyn-array TcMacroResultIdentityStateData)
-          (array.make-array TcMacroResultIdentityStateData 1)]
-        [_init : unit
-          (set!
-            (array-ref cell 0)
-            (TcMacroResultIdentityStateData -1 -1 -1 -1 -1))]
-        [next : i64
-          (cast
-            (unsafe
-              (ptr->int
-                (ptr-cast
-                  (array-data cell)
-                  : (Ptr TcMacroResultIdentityStateData))))
-            : i64)]
-        (begin
-          (tc-macro-state-slot-address-set!
-            state
-            tc-macro-state-slot-result-identity
-            next)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
-          next)))))
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcMacroResultIdentityStateData)
+              (array.make-array TcMacroResultIdentityStateData 1)]
+            [_init : unit
+              (set!
+                (array-ref cell 0)
+                (TcMacroResultIdentityStateData -1 -1 -1 -1 -1))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast
+                      (array-data cell)
+                      : (Ptr TcMacroResultIdentityStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-result-identity
+                next)
+              next)))))))
 
 (define (tc-macro-result-identity-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -104623,20 +104521,17 @@
     (if (= (array-length data.macro-cache-module-ids) data.macro-cache-capacity)
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
         [owner : i64 (tc-macro-state-owner-arena state)]
-        [_switch : unit
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-        (begin
-          (set!
-            data.macro-cache-module-ids
-            (array.make-array i64 data.macro-cache-capacity))
-          (set!
-            data.macro-cache-values
-            (array.make-array TcTypeEnv data.macro-cache-capacity))
-          (tc-macro-module-env-state-data-set! state data)
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+        (in-arena
+          (arena.Arena owner)
+          (begin
+            (set!
+              data.macro-cache-module-ids
+              (array.make-array i64 data.macro-cache-capacity))
+            (set!
+              data.macro-cache-values
+              (array.make-array TcTypeEnv data.macro-cache-capacity))
+            (tc-macro-module-env-state-data-set! state data)))))))
 
 (define (tc-macro-module-env-cache-lookup
   [state : TcMacroState]
@@ -112822,7 +112717,7 @@
 ;; Serial/test compatibility adapter. Production jobs pass both explicit state
 ;; values to the entry above.
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
     [program : ast.AstProgram]
     [paths : ast.AstDeclPathList]
@@ -113008,7 +112903,10 @@
     (begin
       (surface_facts.surface-typecheck-facts-clear!)
       (cfg
-        (any compiler-surface-producer embedded-stdlib-tlci)
+        (any
+          compiler-surface-producer
+          compiler-build-identity
+          embedded-stdlib-tlci)
         (surface_facts.surface-typecheck-facts-recording-abort!)
         unit)
       (tc-unbound-suggestion-snapshot-reset!)

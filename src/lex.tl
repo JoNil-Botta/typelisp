@@ -1154,12 +1154,6 @@
     [(ResultTokens.Ok toks) toks]
     [(ResultTokens.Err message) (io.panic message)]))
 
-(define (with-intern-state [src : String] [intern-state : ci.InternCompatState]) : (__tl_dyn-array
-    token.Token)
-  (match (result-with-intern-state src intern-state)
-    [(ResultTokens.Ok toks) toks]
-    [(ResultTokens.Err message) (io.panic message)]))
-
 ;; ---- Spanned token stream ----------------------------------------------------
 ;; A position-bearing token stream parallel to `lex`/`result`. Each token is
 ;; paired with the 1-based line/column of its starting byte; the trailing

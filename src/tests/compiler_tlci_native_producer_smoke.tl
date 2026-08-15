@@ -1854,6 +1854,65 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+(define (producer-test-local-type-result-ok?
+  [pools : ast.AstNodePoolContext]
+  [operand : i64]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+      (match (producer-test-expr-get pools node)
+        [(ast.AstExpr.Cast inner ty-id)
+          (and
+            (= inner operand)
+            (match (ast.ast-node-pool-context-type-get pools ty-id)
+              [(ast.AstType.I64) true]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+;; Keep the type-position unquote branch pinned for both direct operands and
+;; session locals. This fixture binds the type operand once, then unquotes the
+;; local into a cast annotation. Refs #5606, #6551.
+(define (producer-test-dispatch-local-type?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [operand : i64
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "value")))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Type (ast.AstType.I64)))
+      (set!
+        (array-ref operands 1)
+        (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        2
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= dispatch.status tlci.tlci-host-callback-status-ok)
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                (producer-test-local-type-result-ok? pools operand))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; Dispatch the zero-operand declaration-generator fixture and retain its
 ;; result only through the compiler-owned handle table.
 (define (producer-test-dispatch-decls?
@@ -2049,6 +2108,38 @@
         [_ false])]
     [_ false]))
 
+(define (producer-test-typetpl-var-args-binding-ok?
+  [binding : ast.AstLetBinding]
+  [expected-name : String]
+  [expected-first : String]
+  [expected-second : String]
+  [expected-count : i64]) : bool
+  (match binding
+    [(ast.AstLetBinding.Binding _ (ast.AstMaybeType.Some ty) _)
+      (match ty
+        [(ast.AstType.VarArgs name lifetimes-box)
+          (let
+            [lifetimes : ast.AstLifetimeList (__tl-box-place lifetimes-box)]
+            (and
+              (= name (ci.intern expected-name))
+              (= (ast.ast-lifetime-list-len (& lifetimes)) expected-count)
+              (=
+                (ast.ast-lifetime-list-get
+                  (& lifetimes)
+                  0
+                  (ast.ast-lifetime-fallback))
+                (ci.intern expected-first))
+              (or
+                (= expected-count 1)
+                (=
+                  (ast.ast-lifetime-list-get
+                    (& lifetimes)
+                    1
+                    (ast.ast-lifetime-fallback))
+                  (ci.intern expected-second)))))]
+        [_ false])]
+    [_ false]))
+
 (define (producer-test-typetpl-result-ok? [pools : ast.AstNodePoolContext]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
@@ -2057,7 +2148,7 @@
           (match (__tl-box-place let-box)
             [(ast.AstLet.Let bindings _)
               (and
-                (= (ast.ast-let-binding-list-len (& bindings)) 6)
+                (= (ast.ast-let-binding-list-len (& bindings)) 8)
                 (producer-test-typetpl-ptr-binding-ok?
                   pools
                   (ast.ast-let-binding-list-get
@@ -2094,7 +2185,25 @@
                   (ast.ast-let-binding-list-get
                     (& bindings)
                     5
-                    (ast.ast-let-binding-fallback))))])]
+                    (ast.ast-let-binding-fallback)))
+                (producer-test-typetpl-var-args-binding-ok?
+                  (ast.ast-let-binding-list-get
+                    (& bindings)
+                    6
+                    (ast.ast-let-binding-fallback))
+                  "LifetimeOne"
+                  "text"
+                  ""
+                  1)
+                (producer-test-typetpl-var-args-binding-ok?
+                  (ast.ast-let-binding-list-get
+                    (& bindings)
+                    7
+                    (ast.ast-let-binding-fallback))
+                  "LifetimePair"
+                  "left"
+                  "right"
+                  2))])]
         [_ false])]
     [_ false]))
 
@@ -3639,6 +3748,7 @@
 (defmacro (qqvar [value : Expr]) : Expr `some.nil)
 (defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))
 (defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))
+(defmacro (localtype [T : type] [value : Expr]) : Expr (let [U : type T] `(cast ,value : ,U)))
 (defmacro (modname [format : Module]) : Expr (comptime.expr-var (comptime.module-name format)))
 (defmacro (modhook [format : Module]) : Expr (comptime.module-hook format \"object-field\"))
 (defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))
@@ -3657,7 +3767,7 @@
 (defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))
 (defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))
 (defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))
-(defmacro (typetpl [value : Expr]) : Expr `(let [a : (Ptr u8) (ptr-cast (string-data ,value) : (Ptr u8))] [b : (__tl_dyn-array i64) ,value] [c : (& region str) ,value] [d : (Box i64) ,value] [e : (Array i64 4) ,value] [f : (Slice i64) ,value] (marker a b c d e f)))
+(defmacro (typetpl [value : Expr]) : Expr `(let [a : (Ptr u8) (ptr-cast (string-data ,value) : (Ptr u8))] [b : (__tl_dyn-array i64) ,value] [c : (& region str) ,value] [d : (Box i64) ,value] [e : (Array i64 4) ,value] [f : (Slice i64) ,value] [g : (LifetimeOne text) ,value] [h : (LifetimePair left right) ,value] (marker a b c d e f g h)))
 (defmacro (scan [text : Expr]) : Expr (if (comptime.expr-string? text) (let [s : String (comptime.expr-string-value text)] [n : i64 (string.string-length s)] (if (= (cast (string.string-ref s 0) : i64) 123) `(brace ,(comptime.expr-int n)) `(plain ,(comptime.expr-string (comptime.string-slice s 1 (- n 1)))))) (comptime.comptime-error \"scan: expects a string literal\")))
 (defmacro (clonepath [items : Expr ...]) : ExprList (let [T : Expr (comptime.expr-list-type-nth items 0)] [module-name : Expr (comptime.expr-var (comptime.expr-string-value (comptime.expr-list-nth items 1)))] (comptime.expr-list-cons `(module ,module-name) (match (type-kind T) [\"box\" (comptime.expr-list-cons `(marker ,(comptime.box-element-type T)) (comptime.expr-list-empty))] [_ (comptime.expr-list-empty)]))))
 "]
@@ -3722,13 +3832,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 39)
-                              (= captures.len 39)
+                              (= (array-length name-array) 40)
+                              (= captures.len 40)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                   0)
-                                38)
+                                39)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -3774,6 +3884,9 @@
                               (producer-test-dispatch-gen?
                                 (& loaded)
                                 "package.macros/gen")
+                              (producer-test-dispatch-local-type?
+                                (& loaded)
+                                "package.macros/localtype")
                               (producer-test-dispatch-module-name?
                                 (& loaded)
                                 "package.macros/modname"

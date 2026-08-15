@@ -3382,39 +3382,34 @@
     (if (> (array-length data.carry-safe-offsets) 0)
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64
+        [owner : arena.Arena
           (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [offsets : (__tl_dyn-array i64)
-          (array.make-array
-            i64
-            compiler-backend-peephole-carry-safe-initial-capacity)]
-        [lengths : (__tl_dyn-array i64)
-          (array.make-array
-            i64
-            compiler-backend-peephole-carry-safe-initial-capacity)]
-        [bytes : (__tl_dyn-array u8)
-          (array.make-array
-            u8
-            compiler-backend-peephole-carry-safe-initial-bytes-capacity)]
-        [i : i64 0]
-        (begin
-          (while (< i (array-length offsets))
+        (in-arena
+          owner
+          (let
+            [offsets : (__tl_dyn-array i64)
+              (array.make-array
+                i64
+                compiler-backend-peephole-carry-safe-initial-capacity)]
+            [lengths : (__tl_dyn-array i64)
+              (array.make-array
+                i64
+                compiler-backend-peephole-carry-safe-initial-capacity)]
+            [bytes : (__tl_dyn-array u8)
+              (array.make-array
+                u8
+                compiler-backend-peephole-carry-safe-initial-bytes-capacity)]
+            [i : i64 0]
             (begin
-              (set! (array-ref offsets i) -1)
-              (set! i (+ i 1))))
-          (set! data.carry-safe-offsets offsets)
-          (set! data.carry-safe-lengths lengths)
-          (set! data.carry-safe-bytes bytes)
-          (set! data.carry-safe-bytes-count 0)
-          (compiler-backend-stream-state-data-set! stream data)
-          (compiler-backend-state-lazy-table-arena-finish!
-            backend-state
-            previous
-            owner))))))
+              (while (< i (array-length offsets))
+                (begin
+                  (set! (array-ref offsets i) -1)
+                  (set! i (+ i 1))))
+              (set! data.carry-safe-offsets offsets)
+              (set! data.carry-safe-lengths lengths)
+              (set! data.carry-safe-bytes bytes)
+              (set! data.carry-safe-bytes-count 0)
+              (compiler-backend-stream-state-data-set! stream data))))))))
 
 (define (compiler-backend-peephole-carry-safe-table-grow!
   [backend-state : CompilerBackendState]
@@ -3432,55 +3427,50 @@
     (if (<= new-cap old-cap)
       false
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64
+        [owner : arena.Arena
           (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [offsets : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [lengths : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [bytes : (__tl_dyn-array u8) data.carry-safe-bytes]
-        [i : i64 0]
-        (begin
-          (while (< i new-cap)
+        (in-arena
+          owner
+          (let
+            [offsets : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [lengths : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [bytes : (__tl_dyn-array u8) data.carry-safe-bytes]
+            [i : i64 0]
             (begin
-              (set! (array-ref offsets i) -1)
-              (set! i (+ i 1))))
-          (set! i 0)
-          (while (< i old-cap)
-            (let
-              [off : i64 (array-ref old-offsets i)]
-              (begin
-                (when
-                  (>= off 0)
-                  (let
-                    [len : i64 (array-ref old-lengths i)]
-                    [hash : i64
-                      (ci.intern-hash-words
-                        (unsafe
-                          (ptr-cast (array-data bytes) : (Ptr u8)))
-                        off
-                        len)]
-                    [slot : i64 (bit-and hash (- new-cap 1))]
-                    (begin
-                      (while (>= (array-ref offsets slot) 0)
-                        (set!
-                          slot
-                          (if (= (+ slot 1) new-cap)
-                            0
-                            (+ slot 1))))
-                      (set! (array-ref offsets slot) off)
-                      (set! (array-ref lengths slot) len))))
-                (set! i (+ i 1)))))
-          (set! data.carry-safe-offsets offsets)
-          (set! data.carry-safe-lengths lengths)
-          (compiler-backend-stream-state-data-set! stream data)
-          (compiler-backend-state-lazy-table-arena-finish!
-            backend-state
-            previous
-            owner)
-          true)))))
+              (while (< i new-cap)
+                (begin
+                  (set! (array-ref offsets i) -1)
+                  (set! i (+ i 1))))
+              (set! i 0)
+              (while (< i old-cap)
+                (let
+                  [off : i64 (array-ref old-offsets i)]
+                  (begin
+                    (when
+                      (>= off 0)
+                      (let
+                        [len : i64 (array-ref old-lengths i)]
+                        [hash : i64
+                          (ci.intern-hash-words
+                            (unsafe
+                              (ptr-cast (array-data bytes) : (Ptr u8)))
+                            off
+                            len)]
+                        [slot : i64 (bit-and hash (- new-cap 1))]
+                        (begin
+                          (while (>= (array-ref offsets slot) 0)
+                            (set!
+                              slot
+                              (if (= (+ slot 1) new-cap)
+                                0
+                                (+ slot 1))))
+                          (set! (array-ref offsets slot) off)
+                          (set! (array-ref lengths slot) len))))
+                    (set! i (+ i 1)))))
+              (set! data.carry-safe-offsets offsets)
+              (set! data.carry-safe-lengths lengths)
+              (compiler-backend-stream-state-data-set! stream data)
+              true)))))))
 
 (define (compiler-backend-peephole-carry-safe-bytes-grow!
   [backend-state : CompilerBackendState]
@@ -3506,31 +3496,26 @@
       (if (< new-cap required)
         false
         (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64
+          [owner : arena.Arena
             (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-          [_set-owner : unit
-            (unsafe
-              (arena.tl_arena_set owner))]
-          [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
-          [i : i64 0]
-          (begin
-            (while (<
-              i
-              (compiler-backend-peephole-carry-safe-byte-count
-                data.carry-safe-bytes-count))
+          (in-arena
+            owner
+            (let
+              [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
+              [i : i64 0]
               (begin
-                (set! (array-ref bytes i) (array-ref old i))
-                (set! i (+ i 1))))
-            (set! data.carry-safe-bytes bytes)
-            (compiler-backend-stream-state-data-set! stream data)
-            (compiler-backend-state-lazy-table-arena-finish!
-              backend-state
-              previous
-              owner)
-            true))))))
+                (while (<
+                  i
+                  (compiler-backend-peephole-carry-safe-byte-count
+                    data.carry-safe-bytes-count))
+                  (begin
+                    (set! (array-ref bytes i) (array-ref old i))
+                    (set! i (+ i 1))))
+                (set! data.carry-safe-bytes bytes)
+                (compiler-backend-stream-state-data-set! stream data)
+                true))))))))
 
-;; Clear the table: mark every slot empty (offset -1) and rewind the arena.
+;; Clear the table logically: mark every slot empty and reset the byte cursor.
 (define (compiler-backend-peephole-carry-safe-reset-with-backend-state!
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : unit
@@ -15583,33 +15568,17 @@
 ;; Explicit per-job operand-render storage (Packet B1)
 ;; --------------------------------------------------------------------------
 (define (compiler-backend-state-lazy-table-arena-ensure!
-  [state : CompilerBackendState]) : i64
+  [state : CompilerBackendState]) : arena.Arena
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (if (= data.lazy-table-arena 0)
       (let
-        [owner : i64 (arena.tl_arena_make_small)]
+        [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
         (begin
-          (set! data.lazy-table-arena owner)
+          (set! data.lazy-table-arena (arena.raw-handle owner))
           (compiler-backend-state-data-set! state data)
           owner))
-      data.lazy-table-arena)))
-
-(define (compiler-backend-state-lazy-table-arena-finish!
-  [state : CompilerBackendState]
-  [previous : i64]
-  [owner : i64]) : unit
-  (let
-    [head : i64 (arena.tl_arena_current)]
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.lazy-table-arena head)
-      (compiler-backend-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            head
-            previous))))))
+      (arena.Arena data.lazy-table-arena))))
 
 (define (compiler-backend-state-slot-frame-cache-storage-ensure!
   [state : CompilerBackendState]) : unit
@@ -15630,28 +15599,27 @@
         compiler-backend-slot-cache-capacity))
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 (compiler-backend-state-lazy-table-arena-ensure! state)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [slot-values : (__tl_dyn-array String)
-          (array.make-array String compiler-backend-slot-cache-capacity)]
-        [slot-epochs : (__tl_dyn-array i64)
-          (array.make-array i64 compiler-backend-slot-cache-capacity)]
-        [frame-values : (__tl_dyn-array String)
-          (array.make-array String compiler-backend-slot-cache-capacity)]
-        [frame-epochs : (__tl_dyn-array i64)
-          (array.make-array i64 compiler-backend-slot-cache-capacity)]
-        (begin
-          (set! data.slot-cache-values slot-values)
-          (set! data.slot-cache-epochs slot-epochs)
-          (set! data.frame-offset-cache-values frame-values)
-          (set! data.frame-offset-cache-epochs frame-epochs)
-          ;; The arrays are allocated in the state owner arena, but `data` is
-          ;; a copied struct, so publish all four handles explicitly.
-          (compiler-backend-state-data-set! state data)
-          (compiler-backend-state-lazy-table-arena-finish! state previous owner))))))
+        [owner : arena.Arena
+          (compiler-backend-state-lazy-table-arena-ensure! state)]
+        (in-arena
+          owner
+          (let
+            [slot-values : (__tl_dyn-array String)
+              (array.make-array String compiler-backend-slot-cache-capacity)]
+            [slot-epochs : (__tl_dyn-array i64)
+              (array.make-array i64 compiler-backend-slot-cache-capacity)]
+            [frame-values : (__tl_dyn-array String)
+              (array.make-array String compiler-backend-slot-cache-capacity)]
+            [frame-epochs : (__tl_dyn-array i64)
+              (array.make-array i64 compiler-backend-slot-cache-capacity)]
+            (begin
+              (set! data.slot-cache-values slot-values)
+              (set! data.slot-cache-epochs slot-epochs)
+              (set! data.frame-offset-cache-values frame-values)
+              (set! data.frame-offset-cache-epochs frame-epochs)
+              ;; The arrays are allocated in the state owner arena, but `data`
+              ;; is a copied struct, so publish all four handles explicitly.
+              (compiler-backend-state-data-set! state data))))))))
 
 (define (compiler-backend-state-immediate-cache-storage-ensure!
   [state : CompilerBackendState]) : unit
@@ -15662,18 +15630,17 @@
       (= (array-length data.immediate-cache-epochs) 8192))
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 (compiler-backend-state-lazy-table-arena-ensure! state)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [values : (__tl_dyn-array String) (array.make-array String 8192)]
-        [epochs : (__tl_dyn-array i64) (array.make-array i64 8192)]
-        (begin
-          (set! data.immediate-cache-values values)
-          (set! data.immediate-cache-epochs epochs)
-          (compiler-backend-state-data-set! state data)
-          (compiler-backend-state-lazy-table-arena-finish! state previous owner))))))
+        [owner : arena.Arena
+          (compiler-backend-state-lazy-table-arena-ensure! state)]
+        (in-arena
+          owner
+          (let
+            [values : (__tl_dyn-array String) (array.make-array String 8192)]
+            [epochs : (__tl_dyn-array i64) (array.make-array i64 8192)]
+            (begin
+              (set! data.immediate-cache-values values)
+              (set! data.immediate-cache-epochs epochs)
+              (compiler-backend-state-data-set! state data))))))))
 
 (define (compiler-backend-state-slot-cache-epoch-bump!
   [state : CompilerBackendState]) : unit
@@ -15712,21 +15679,13 @@
           (if (= (array-ref epochs var-id) epoch)
             (array-ref values var-id)
             (let
-              [previous : i64 (arena.tl_arena_current)]
-              [owner : i64
-                (compiler-backend-state-lazy-table-arena-ensure! state)]
-              [_set-owner : unit
-                (unsafe
-                  (arena.tl_arena_set owner))]
               [text : String
-                (str_cat.str-cat
-                  (string.int->string (- 0 (* 8 (+ var-id 1))))
-                  "(%rbp)")]
+                (in-arena
+                  (compiler-backend-state-lazy-table-arena-ensure! state)
+                  (str_cat.str-cat
+                    (string.int->string (- 0 (* 8 (+ var-id 1))))
+                    "(%rbp)"))]
               (begin
-                (compiler-backend-state-lazy-table-arena-finish!
-                  state
-                  previous
-                  owner)
                 (set! (array-ref values var-id) text)
                 (set! (array-ref epochs var-id) epoch)
                 text)))))
@@ -15756,19 +15715,11 @@
             (if (= (array-ref epochs idx) epoch)
               (array-ref values idx)
               (let
-                [previous : i64 (arena.tl_arena_current)]
-                [owner : i64
-                  (compiler-backend-state-lazy-table-arena-ensure! state)]
-                [_set-owner : unit
-                  (unsafe
-                    (arena.tl_arena_set owner))]
                 [text : String
-                  (str_cat.str-cat (string.int->string offset) "(%rbp)")]
+                  (in-arena
+                    (compiler-backend-state-lazy-table-arena-ensure! state)
+                    (str_cat.str-cat (string.int->string offset) "(%rbp)"))]
                 (begin
-                  (compiler-backend-state-lazy-table-arena-finish!
-                    state
-                    previous
-                    owner)
                   (set! (array-ref values idx) text)
                   (set! (array-ref epochs idx) epoch)
                   text))))))
@@ -15817,18 +15768,11 @@
         (if (= (array-ref epochs idx) epoch)
           (array-ref values idx)
           (let
-            [previous : i64 (arena.tl_arena_current)]
-            [owner : i64
-              (compiler-backend-state-lazy-table-arena-ensure! state)]
-            [_set-owner : unit
-              (unsafe
-                (arena.tl_arena_set owner))]
-            [text : String (str_cat.str-cat "$" (string.int->string n))]
+            [text : String
+              (in-arena
+                (compiler-backend-state-lazy-table-arena-ensure! state)
+                (str_cat.str-cat "$" (string.int->string n)))]
             (begin
-              (compiler-backend-state-lazy-table-arena-finish!
-                state
-                previous
-                owner)
               (set! (array-ref values idx) text)
               (set! (array-ref epochs idx) epoch)
               text)))))
@@ -64823,30 +64767,27 @@
     (if (> (array-length data.sweep-sym-off) 0)
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64
+        [owner : arena.Arena
           (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [cap : i64 compiler-backend-sweep-initial-capacity]
-        (begin
-          (set! data.sweep-sym-off (array.make-array i64 cap))
-          (set! data.sweep-sym-len (array.make-array i64 cap))
-          (set! data.sweep-lo-arr (array.make-array i64 cap))
-          (set! data.sweep-hi-arr (array.make-array i64 cap))
-          (set! data.sweep-disp-arr (array.make-array i64 cap))
-          (set! data.sweep-win64-arr (array.make-array i64 cap))
-          (set! data.sweep-em-lo-arr (array.make-array i64 cap))
-          (set! data.sweep-em-hi-arr (array.make-array i64 cap))
-          (set!
-            data.sweep-sym-bytes
-            (array.make-array u8 compiler-backend-sweep-initial-bytes-capacity))
-          (compiler-backend-stream-state-data-set! stream data)
-          (compiler-backend-state-lazy-table-arena-finish!
-            backend-state
-            previous
-            owner))))))
+        (in-arena
+          owner
+          (let
+            [cap : i64 compiler-backend-sweep-initial-capacity]
+            (begin
+              (set! data.sweep-sym-off (array.make-array i64 cap))
+              (set! data.sweep-sym-len (array.make-array i64 cap))
+              (set! data.sweep-lo-arr (array.make-array i64 cap))
+              (set! data.sweep-hi-arr (array.make-array i64 cap))
+              (set! data.sweep-disp-arr (array.make-array i64 cap))
+              (set! data.sweep-win64-arr (array.make-array i64 cap))
+              (set! data.sweep-em-lo-arr (array.make-array i64 cap))
+              (set! data.sweep-em-hi-arr (array.make-array i64 cap))
+              (set!
+                data.sweep-sym-bytes
+                (array.make-array
+                  u8
+                  compiler-backend-sweep-initial-bytes-capacity))
+              (compiler-backend-stream-state-data-set! stream data))))))))
 
 (define (compiler-backend-sweep-table-grow!
   [backend-state : CompilerBackendState]
@@ -64862,47 +64803,50 @@
     (if (<= new-cap old-cap)
       false
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64
+        [owner : arena.Arena
           (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [sym-off : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [sym-len : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [lo-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [hi-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [disp-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [win64-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [em-lo-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [em-hi-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [i : i64 0]
-        (begin
-          (while (< i data.sweep-count)
+        (in-arena
+          owner
+          (let
+            [sym-off : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [sym-len : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [lo-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [hi-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [disp-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [win64-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [em-lo-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [em-hi-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [i : i64 0]
             (begin
-              (set! (array-ref sym-off i) (array-ref data.sweep-sym-off i))
-              (set! (array-ref sym-len i) (array-ref data.sweep-sym-len i))
-              (set! (array-ref lo-arr i) (array-ref data.sweep-lo-arr i))
-              (set! (array-ref hi-arr i) (array-ref data.sweep-hi-arr i))
-              (set! (array-ref disp-arr i) (array-ref data.sweep-disp-arr i))
-              (set! (array-ref win64-arr i) (array-ref data.sweep-win64-arr i))
-              (set! (array-ref em-lo-arr i) (array-ref data.sweep-em-lo-arr i))
-              (set! (array-ref em-hi-arr i) (array-ref data.sweep-em-hi-arr i))
-              (set! i (+ i 1))))
-          (set! data.sweep-sym-off sym-off)
-          (set! data.sweep-sym-len sym-len)
-          (set! data.sweep-lo-arr lo-arr)
-          (set! data.sweep-hi-arr hi-arr)
-          (set! data.sweep-disp-arr disp-arr)
-          (set! data.sweep-win64-arr win64-arr)
-          (set! data.sweep-em-lo-arr em-lo-arr)
-          (set! data.sweep-em-hi-arr em-hi-arr)
-          (compiler-backend-stream-state-data-set! stream data)
-          (compiler-backend-state-lazy-table-arena-finish!
-            backend-state
-            previous
-            owner)
-          true)))))
+              (while (< i data.sweep-count)
+                (begin
+                  (set! (array-ref sym-off i) (array-ref data.sweep-sym-off i))
+                  (set! (array-ref sym-len i) (array-ref data.sweep-sym-len i))
+                  (set! (array-ref lo-arr i) (array-ref data.sweep-lo-arr i))
+                  (set! (array-ref hi-arr i) (array-ref data.sweep-hi-arr i))
+                  (set!
+                    (array-ref disp-arr i)
+                    (array-ref data.sweep-disp-arr i))
+                  (set!
+                    (array-ref win64-arr i)
+                    (array-ref data.sweep-win64-arr i))
+                  (set!
+                    (array-ref em-lo-arr i)
+                    (array-ref data.sweep-em-lo-arr i))
+                  (set!
+                    (array-ref em-hi-arr i)
+                    (array-ref data.sweep-em-hi-arr i))
+                  (set! i (+ i 1))))
+              (set! data.sweep-sym-off sym-off)
+              (set! data.sweep-sym-len sym-len)
+              (set! data.sweep-lo-arr lo-arr)
+              (set! data.sweep-hi-arr hi-arr)
+              (set! data.sweep-disp-arr disp-arr)
+              (set! data.sweep-win64-arr win64-arr)
+              (set! data.sweep-em-lo-arr em-lo-arr)
+              (set! data.sweep-em-hi-arr em-hi-arr)
+              (compiler-backend-stream-state-data-set! stream data)
+              true)))))))
 
 (define (compiler-backend-sweep-bytes-grow!
   [backend-state : CompilerBackendState]
@@ -64925,26 +64869,21 @@
       (if (< new-cap required)
         false
         (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64
+          [owner : arena.Arena
             (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-          [_set-owner : unit
-            (unsafe
-              (arena.tl_arena_set owner))]
-          [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
-          [i : i64 0]
-          (begin
-            (while (< i data.sweep-sym-bytes-count)
+          (in-arena
+            owner
+            (let
+              [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
+              [i : i64 0]
               (begin
-                (set! (array-ref bytes i) (array-ref old i))
-                (set! i (+ i 1))))
-            (set! data.sweep-sym-bytes bytes)
-            (compiler-backend-stream-state-data-set! stream data)
-            (compiler-backend-state-lazy-table-arena-finish!
-              backend-state
-              previous
-              owner)
-            true))))))
+                (while (< i data.sweep-sym-bytes-count)
+                  (begin
+                    (set! (array-ref bytes i) (array-ref old i))
+                    (set! i (+ i 1))))
+                (set! data.sweep-sym-bytes bytes)
+                (compiler-backend-stream-state-data-set! stream data)
+                true))))))))
 
 (define (compiler-backend-sweep-reset! [stream : CompilerBackendStreamState]) : unit
   (let
@@ -65537,21 +65476,16 @@
         (if (= new-cap (array-length old))
           true
           (let
-            [previous : i64 (arena.tl_arena_current)]
-            [owner : i64
+            [owner : arena.Arena
               (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-            [_set-owner : unit
-              (unsafe
-                (arena.tl_arena_set owner))]
-            [bits : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-            (begin
-              (set! data.sweep-coverage-bits bits)
-              (compiler-backend-stream-state-data-set! stream data)
-              (compiler-backend-state-lazy-table-arena-finish!
-                backend-state
-                previous
-                owner)
-              true)))))))
+            (in-arena
+              owner
+              (let
+                [bits : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+                (begin
+                  (set! data.sweep-coverage-bits bits)
+                  (compiler-backend-stream-state-data-set! stream data)
+                  true)))))))))
 
 (define (compiler-backend-sweep-region-records!
   [backend-state : CompilerBackendState]
@@ -76648,35 +76582,30 @@
     (if (> (array-length data.owner-global-offsets) 0)
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64
+        [owner : arena.Arena
           (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [offsets : (__tl_dyn-array i64)
-          (array.make-array
-            i64
-            compiler-backend-peephole-owner-global-initial-capacity)]
-        [lengths : (__tl_dyn-array i64)
-          (array.make-array
-            i64
-            compiler-backend-peephole-owner-global-initial-capacity)]
-        [bytes : (__tl_dyn-array u8)
-          (array.make-array
-            u8
-            compiler-backend-peephole-owner-global-initial-bytes-capacity)]
-        (begin
-          (set! data.owner-global-offsets offsets)
-          (set! data.owner-global-lengths lengths)
-          (set! data.owner-global-bytes bytes)
-          (set! data.owner-global-bytes-count 0)
-          (set! data.owner-global-generation 1)
-          (compiler-backend-stream-state-data-set! stream data)
-          (compiler-backend-state-lazy-table-arena-finish!
-            backend-state
-            previous
-            owner))))))
+        (in-arena
+          owner
+          (let
+            [offsets : (__tl_dyn-array i64)
+              (array.make-array
+                i64
+                compiler-backend-peephole-owner-global-initial-capacity)]
+            [lengths : (__tl_dyn-array i64)
+              (array.make-array
+                i64
+                compiler-backend-peephole-owner-global-initial-capacity)]
+            [bytes : (__tl_dyn-array u8)
+              (array.make-array
+                u8
+                compiler-backend-peephole-owner-global-initial-bytes-capacity)]
+            (begin
+              (set! data.owner-global-offsets offsets)
+              (set! data.owner-global-lengths lengths)
+              (set! data.owner-global-bytes bytes)
+              (set! data.owner-global-bytes-count 0)
+              (set! data.owner-global-generation 1)
+              (compiler-backend-stream-state-data-set! stream data))))))))
 
 (define (compiler-backend-peephole-owner-global-table-grow!
   [backend-state : CompilerBackendState]
@@ -76694,62 +76623,57 @@
     (if (<= new-cap old-cap)
       false
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64
+        [owner : arena.Arena
           (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
-        [offsets : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [lengths : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [bytes : (__tl_dyn-array u8) data.owner-global-bytes]
-        [generation : i64 data.owner-global-generation]
-        [i : i64 0]
-        (begin
-          (while (< i old-cap)
-            (let
-              [entry : i64 (array-ref old-offsets i)]
-              (begin
-                (when
-                  (compiler-backend-peephole-owner-global-entry-live?
-                    generation
-                    entry)
-                  (let
-                    [off : i64
-                      (compiler-backend-peephole-owner-global-entry-offset
-                        entry)]
-                    [len : i64 (array-ref old-lengths i)]
-                    [hash : i64
-                      (ci.intern-hash-words
-                        (unsafe
-                          (ptr-cast (array-data bytes) : (Ptr u8)))
-                        off
-                        len)]
-                    [slot : i64 (bit-and hash (- new-cap 1))]
-                    (begin
-                      (while (compiler-backend-peephole-owner-global-entry-live?
+        (in-arena
+          owner
+          (let
+            [offsets : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [lengths : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            [bytes : (__tl_dyn-array u8) data.owner-global-bytes]
+            [generation : i64 data.owner-global-generation]
+            [i : i64 0]
+            (begin
+              (while (< i old-cap)
+                (let
+                  [entry : i64 (array-ref old-offsets i)]
+                  (begin
+                    (when
+                      (compiler-backend-peephole-owner-global-entry-live?
                         generation
-                        (array-ref offsets slot))
-                        (set!
-                          slot
-                          (if (= (+ slot 1) new-cap)
-                            0
-                            (+ slot 1))))
-                      (set!
-                        (array-ref offsets slot)
-                        (compiler-backend-peephole-owner-global-entry-pack
-                          generation
-                          off))
-                      (set! (array-ref lengths slot) len))))
-                (set! i (+ i 1)))))
-          (set! data.owner-global-offsets offsets)
-          (set! data.owner-global-lengths lengths)
-          (compiler-backend-stream-state-data-set! stream data)
-          (compiler-backend-state-lazy-table-arena-finish!
-            backend-state
-            previous
-            owner)
-          true)))))
+                        entry)
+                      (let
+                        [off : i64
+                          (compiler-backend-peephole-owner-global-entry-offset
+                            entry)]
+                        [len : i64 (array-ref old-lengths i)]
+                        [hash : i64
+                          (ci.intern-hash-words
+                            (unsafe
+                              (ptr-cast (array-data bytes) : (Ptr u8)))
+                            off
+                            len)]
+                        [slot : i64 (bit-and hash (- new-cap 1))]
+                        (begin
+                          (while (compiler-backend-peephole-owner-global-entry-live?
+                            generation
+                            (array-ref offsets slot))
+                            (set!
+                              slot
+                              (if (= (+ slot 1) new-cap)
+                                0
+                                (+ slot 1))))
+                          (set!
+                            (array-ref offsets slot)
+                            (compiler-backend-peephole-owner-global-entry-pack
+                              generation
+                              off))
+                          (set! (array-ref lengths slot) len))))
+                    (set! i (+ i 1)))))
+              (set! data.owner-global-offsets offsets)
+              (set! data.owner-global-lengths lengths)
+              (compiler-backend-stream-state-data-set! stream data)
+              true)))))))
 
 (define (compiler-backend-peephole-owner-global-bytes-grow!
   [backend-state : CompilerBackendState]
@@ -76775,26 +76699,21 @@
       (if (< new-cap required)
         false
         (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64
+          [owner : arena.Arena
             (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-          [_set-owner : unit
-            (unsafe
-              (arena.tl_arena_set owner))]
-          [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
-          [i : i64 0]
-          (begin
-            (while (< i data.owner-global-bytes-count)
+          (in-arena
+            owner
+            (let
+              [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
+              [i : i64 0]
               (begin
-                (set! (array-ref bytes i) (array-ref old i))
-                (set! i (+ i 1))))
-            (set! data.owner-global-bytes bytes)
-            (compiler-backend-stream-state-data-set! stream data)
-            (compiler-backend-state-lazy-table-arena-finish!
-              backend-state
-              previous
-              owner)
-            true))))))
+                (while (< i data.owner-global-bytes-count)
+                  (begin
+                    (set! (array-ref bytes i) (array-ref old i))
+                    (set! i (+ i 1))))
+                (set! data.owner-global-bytes bytes)
+                (compiler-backend-stream-state-data-set! stream data)
+                true))))))))
 
 (define (compiler-backend-peephole-owner-global-reset-with-backend-state!
   [backend-state : CompilerBackendState]
@@ -84147,11 +84066,40 @@
         backend-state
         stream)]
     [carry-restored-caller? : bool (arena.eq? (arena.current) scratch)]
+    [lazy-root : i64 (compiler-backend-state-lazy-table-arena backend-state)]
+    [carry-table-grew? : bool
+      (compiler-backend-peephole-carry-safe-table-grow! backend-state stream)]
+    [carry-bytes-grew? : bool
+      (compiler-backend-peephole-carry-safe-bytes-grow!
+        backend-state
+        stream
+        (+ compiler-backend-peephole-carry-safe-initial-bytes-capacity 1))]
+    [carry-growth-restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [_owner : unit
       (compiler-backend-peephole-owner-global-reset-with-backend-state!
         backend-state
         stream)]
     [owner-restored-caller? : bool (arena.eq? (arena.current) scratch)]
+    [owner-table-grew? : bool
+      (compiler-backend-peephole-owner-global-table-grow! backend-state stream)]
+    [owner-bytes-grew? : bool
+      (compiler-backend-peephole-owner-global-bytes-grow!
+        backend-state
+        stream
+        (+ compiler-backend-peephole-owner-global-initial-bytes-capacity 1))]
+    [owner-growth-restored-caller? : bool (arena.eq? (arena.current) scratch)]
+    [_sweep : unit
+      (compiler-backend-sweep-storage-ensure! backend-state stream)]
+    [sweep-table-grew? : bool
+      (compiler-backend-sweep-table-grow! backend-state stream)]
+    [sweep-bytes-grew? : bool
+      (compiler-backend-sweep-bytes-grow!
+        backend-state
+        stream
+        (+ compiler-backend-sweep-initial-bytes-capacity 1))]
+    [sweep-coverage-grew? : bool
+      (compiler-backend-sweep-coverage-ensure! backend-state stream 65)]
+    [sweep-restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [slot-render : String
       (compiler-backend-slot-with-backend-state backend-state 0)]
     [slot-restored-caller? : bool (arena.eq? (arena.current) scratch)]
@@ -84161,44 +84109,64 @@
     [immediate-render : String
       (compiler-backend-state-immediate-render backend-state 17)]
     [immediate-restored-caller? : bool (arena.eq? (arena.current) scratch)]
-    [initial-capacities? : bool
+    [lazy-root-stable? : bool
+      (= lazy-root (compiler-backend-state-lazy-table-arena backend-state))]
+    [grown-capacities? : bool
       (and
         (=
           (array-length
             (__tl-project-field
               (compiler-backend-stream-state-data stream)
               carry-safe-offsets))
-          compiler-backend-peephole-carry-safe-initial-capacity)
+          (* 4 compiler-backend-peephole-carry-safe-initial-capacity))
         (=
           (array-length
             (__tl-project-field
               (compiler-backend-stream-state-data stream)
               carry-safe-lengths))
-          compiler-backend-peephole-carry-safe-initial-capacity)
+          (* 4 compiler-backend-peephole-carry-safe-initial-capacity))
         (=
           (array-length
             (__tl-project-field
               (compiler-backend-stream-state-data stream)
               carry-safe-bytes))
-          compiler-backend-peephole-carry-safe-initial-bytes-capacity)
+          (* 4 compiler-backend-peephole-carry-safe-initial-bytes-capacity))
         (=
           (array-length
             (__tl-project-field
               (compiler-backend-stream-state-data stream)
               owner-global-offsets))
-          compiler-backend-peephole-owner-global-initial-capacity)
+          (* 2 compiler-backend-peephole-owner-global-initial-capacity))
         (=
           (array-length
             (__tl-project-field
               (compiler-backend-stream-state-data stream)
               owner-global-lengths))
-          compiler-backend-peephole-owner-global-initial-capacity)
+          (* 2 compiler-backend-peephole-owner-global-initial-capacity))
         (=
           (array-length
             (__tl-project-field
               (compiler-backend-stream-state-data stream)
               owner-global-bytes))
-          compiler-backend-peephole-owner-global-initial-bytes-capacity)
+          (* 2 compiler-backend-peephole-owner-global-initial-bytes-capacity))
+        (=
+          (array-length
+            (__tl-project-field
+              (compiler-backend-stream-state-data stream)
+              sweep-sym-off))
+          (* 4 compiler-backend-sweep-initial-capacity))
+        (=
+          (array-length
+            (__tl-project-field
+              (compiler-backend-stream-state-data stream)
+              sweep-sym-bytes))
+          (* 4 compiler-backend-sweep-initial-bytes-capacity))
+        (=
+          (array-length
+            (__tl-project-field
+              (compiler-backend-stream-state-data stream)
+              sweep-coverage-bits))
+          128)
         (=
           (compiler-backend-state-slot-cache-capacity backend-state)
           compiler-backend-slot-cache-capacity)
@@ -84212,8 +84180,7 @@
     (begin
       (unsafe
         (arena.set! caller))
-      (unsafe
-        (arena.destroy scratch))
+      (arena.destroy-safe! scratch)
       (set!
         (array-ref
           (__tl-project-field
@@ -84228,6 +84195,20 @@
             owner-global-bytes)
           0)
         3)
+      (set!
+        (array-ref
+          (__tl-project-field
+            (compiler-backend-stream-state-data stream)
+            sweep-sym-off)
+          0)
+        29)
+      (set!
+        (array-ref
+          (__tl-project-field
+            (compiler-backend-stream-state-data stream)
+            sweep-coverage-bits)
+          0)
+        31)
       (set!
         (array-ref
           (__tl-project-field
@@ -84266,6 +84247,20 @@
                   owner-global-bytes)
                 0)
               3)
+            (=
+              (array-ref
+                (__tl-project-field
+                  (compiler-backend-stream-state-data stream)
+                  sweep-sym-off)
+                0)
+              29)
+            (=
+              (array-ref
+                (__tl-project-field
+                  (compiler-backend-stream-state-data stream)
+                  sweep-coverage-bits)
+                0)
+              31)
             (string.eq slot-render "-8(%rbp)")
             (string.eq frame-render "-16(%rbp)")
             (string.eq immediate-render "$17")
@@ -84300,11 +84295,22 @@
           (and
             initially-lazy?
             carry-restored-caller?
+            carry-table-grew?
+            carry-bytes-grew?
+            carry-growth-restored-caller?
             owner-restored-caller?
+            owner-table-grew?
+            owner-bytes-grew?
+            owner-growth-restored-caller?
+            sweep-table-grew?
+            sweep-bytes-grew?
+            sweep-coverage-grew?
+            sweep-restored-caller?
             slot-restored-caller?
             frame-restored-caller?
             immediate-restored-caller?
-            initial-capacities?
+            lazy-root-stable?
+            grown-capacities?
             survived?))))))
 
 (define (compiler-backend-forwarded-addr-of-register-home-refused-ok?) : bool

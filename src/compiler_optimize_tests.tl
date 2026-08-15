@@ -1239,7 +1239,7 @@
       (and
         (= found-path-id path-id)
         (opt-source-span-line-col-ok? span line col))]
-    [_ false]))
+    [(compiler_ir_types.CompilerMaybeSourceLocation.No) false]))
 
 (define (opt-test-symbol [name : String]) : i64
   (begin

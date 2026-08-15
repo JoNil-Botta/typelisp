@@ -56175,10 +56175,14 @@
           (TcMaybeNameId.No))])
     (TcMaybeNameId.No)))
 
+;; Variant registries retain declaration-spelled payload types. Resolve them in
+;; the enum owner's module just as binding does before recursively deciding
+;; whether the payload pattern covers the whole variant.
 (define (tc-variant-pattern-irrefutable-id?
   [ctx : TcContext]
   [enum-id : i64]
   [variant-id : i64]
+  [enum-lifetimes : ast.AstLifetimeList]
   [args : ast.AstPatternList]) : bool
   (let
     [handle : i64
@@ -56188,12 +56192,28 @@
         variant-id
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? handle)
-      (match (csym.compiler-registries-variant-fields-indexed
-        (tc-context-symbols ctx)
-        handle)
-        [(parser.ResultAstTypeList.Ok fields)
-          (tc-pattern-list-irrefutable? ctx args fields)]
-        [(parser.ResultAstTypeList.Err _) false])
+      (let
+        [owner-id : i64 (tc-variant-owner-id-or ctx handle -1)]
+        (if (and
+          (>= owner-id 0)
+          (or
+            (tc-nominal-name-id-eq? owner-id enum-id)
+            (tc-nominal-name-id-canonical-eq? ctx owner-id enum-id)))
+          (match (csym.compiler-registries-variant-fields-indexed
+            (tc-context-symbols ctx)
+            handle)
+            [(parser.ResultAstTypeList.Ok fields)
+              (match (tc-variant-pattern-payload-types
+                ctx
+                owner-id
+                (csym.compiler-registry-handle-owner-index handle)
+                enum-lifetimes
+                fields)
+                [(ResultTcVariantPayloadTypes.Ok payload-fields)
+                  (tc-pattern-list-irrefutable? ctx args payload-fields)]
+                [(ResultTcVariantPayloadTypes.Err _) false])]
+            [(parser.ResultAstTypeList.Err _) false])
+          false))
       false)))
 
 (define (tc-struct-pattern-irrefutable?
@@ -56294,10 +56314,11 @@
                       ctx
                       enum-name
                       variant-id
+                      (ast.ast-lifetime-list-new)
                       args)]
                   [(TcMaybeNameId.No) false])]
               [(parser.ResultAstVariantDefList.Err _) false])]
-          [(ast.AstType.EnumArgs enum-name _)
+          [(ast.AstType.EnumArgs enum-name lifetimes)
             (match (tc-context-enum-variants-id
               ctx
               enum-name
@@ -56313,6 +56334,7 @@
                       ctx
                       enum-name
                       variant-id
+                      (__tl-box-place lifetimes)
                       args)]
                   [(TcMaybeNameId.No) false])]
               [(parser.ResultAstVariantDefList.Err _) false])]
@@ -56373,7 +56395,8 @@
   [ctx : TcContext]
   [pattern : ast.AstPattern]
   [enum-id : i64]
-  [variant-id : i64]) : bool
+  [variant-id : i64]
+  [enum-lifetimes : ast.AstLifetimeList]) : bool
   (match pattern
     [(ast.AstPattern.Wildcard) true]
     [(ast.AstPattern.Binding name)
@@ -56383,33 +56406,52 @@
         [args : ast.AstPatternList (__tl-box-place args-box)]
         (and
           (tc-variant-name-matches-id? ctx enum-id name variant-id)
-          (tc-variant-pattern-irrefutable-id? ctx enum-id variant-id args)))]
+          (tc-variant-pattern-irrefutable-id?
+            ctx
+            enum-id
+            variant-id
+            enum-lifetimes
+            args)))]
     [_ false]))
 
 (define (tc-match-arms-cover-variant?
   [ctx : TcContext]
   [arms : ast.AstMatchArmList]
   [enum-id : i64]
-  [variant-id : i64]) : bool
-  (tc-match-arms-cover-variant-at? ctx (& arms) enum-id variant-id 0))
+  [variant-id : i64]
+  [enum-lifetimes : ast.AstLifetimeList]) : bool
+  (tc-match-arms-cover-variant-at?
+    ctx
+    (& arms)
+    enum-id
+    variant-id
+    enum-lifetimes
+    0))
 
 (define (tc-match-arms-cover-variant-at?
   [ctx : TcContext]
   [arms : (& arms ast.AstMatchArmList)]
   [enum-id : i64]
   [variant-id : i64]
+  [enum-lifetimes : ast.AstLifetimeList]
   [index : i64]) : bool
   (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern _)
-        (if (tc-pattern-covers-variant? ctx pattern enum-id variant-id)
+        (if (tc-pattern-covers-variant?
+          ctx
+          pattern
+          enum-id
+          variant-id
+          enum-lifetimes)
           true
           (tc-match-arms-cover-variant-at?
             ctx
             arms
             enum-id
             variant-id
+            enum-lifetimes
             (+ index 1)))])))
 
 (define (tc-match-missing-variant-message [variant-name : String]) : String
@@ -56456,13 +56498,21 @@
 (define (tc-enum-variants-exhaustive-ok
   [ctx : TcContext]
   [enum-id : i64]
+  [enum-lifetimes : ast.AstLifetimeList]
   [variants : ast.AstVariantDefList]
   [arms : ast.AstMatchArmList]) : ResultTcUnit
-  (tc-enum-variants-exhaustive-ok-at ctx enum-id (& variants) arms 0))
+  (tc-enum-variants-exhaustive-ok-at
+    ctx
+    enum-id
+    enum-lifetimes
+    (& variants)
+    arms
+    0))
 
 (define (tc-enum-variants-exhaustive-ok-at
   [ctx : TcContext]
   [enum-id : i64]
+  [enum-lifetimes : ast.AstLifetimeList]
   [variants : (& variants ast.AstVariantDefList)]
   [arms : ast.AstMatchArmList]
   [index : i64]) : ResultTcUnit
@@ -56473,10 +56523,11 @@
       index
       (ast.ast-variant-def-fallback))
       [(ast.AstVariantDef.Def name _ _)
-        (if (tc-match-arms-cover-variant? ctx arms enum-id name)
+        (if (tc-match-arms-cover-variant? ctx arms enum-id name enum-lifetimes)
           (tc-enum-variants-exhaustive-ok-at
             ctx
             enum-id
+            enum-lifetimes
             variants
             arms
             (+ index 1))
@@ -56722,15 +56773,25 @@
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
         (match (tc-context-enum-variants-id ctx enum-name enum-name-str)
           [(parser.ResultAstVariantDefList.Ok variants)
-            (tc-enum-variants-exhaustive-ok ctx enum-name variants arms)]
+            (tc-enum-variants-exhaustive-ok
+              ctx
+              enum-name
+              (ast.ast-lifetime-list-new)
+              variants
+              arms)]
           [(parser.ResultAstVariantDefList.Err _)
             (ResultTcUnit.Err "typecheck: non-exhaustive match")]))]
-    [(ast.AstType.EnumArgs enum-name _)
+    [(ast.AstType.EnumArgs enum-name lifetimes)
       (let
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
         (match (tc-context-enum-variants-id ctx enum-name enum-name-str)
           [(parser.ResultAstVariantDefList.Ok variants)
-            (tc-enum-variants-exhaustive-ok ctx enum-name variants arms)]
+            (tc-enum-variants-exhaustive-ok
+              ctx
+              enum-name
+              (__tl-box-place lifetimes)
+              variants
+              arms)]
           [(parser.ResultAstVariantDefList.Err _)
             (ResultTcUnit.Err "typecheck: non-exhaustive match")]))]
     [(ast.AstType.Bool) (tc-match-bool-exhaustive-ok arms)]

@@ -902,28 +902,22 @@
       (if (< old-capacity 1)
         16
         (* old-capacity 2))]
-    [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 data.fixed-storage-arena]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [new-records : (__tl_dyn-array i64)
-      (array.make-array i64 (* new-capacity tc-macro-call-site-record-stride))]
-    [index : i64 0]
-    (begin
-      (while (< index (* data.len tc-macro-call-site-record-stride))
+    (in-arena
+      (arena.Arena data.fixed-storage-arena)
+      (let
+        [new-records : (__tl_dyn-array i64)
+          (array.make-array
+            i64
+            (* new-capacity tc-macro-call-site-record-stride))]
+        [index : i64 0]
         (begin
-          (set! (array-ref new-records index) (array-ref old-records index))
-          (set! index (+ index 1))))
-      (set! data.records new-records)
-      (set! data.capacity new-capacity)
-      (set! data.fixed-storage-arena (arena.tl_arena_current))
-      (tc-macro-call-site-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            data.fixed-storage-arena
-            previous))))))
+          (while (< index (* data.len tc-macro-call-site-record-stride))
+            (begin
+              (set! (array-ref new-records index) (array-ref old-records index))
+              (set! index (+ index 1))))
+          (set! data.records new-records)
+          (set! data.capacity new-capacity)
+          (tc-macro-call-site-state-data-set! state data))))))
 
 (define (tc-macro-call-site-record-key-eq?
   [data : TcMacroCallSiteStateData]
@@ -1030,24 +1024,14 @@
     (match (tc_i64_i64_map.get (& data.seen-sites) site-hash)
       [(tc_i64_i64_map.LookupFound _) unit]
       [(tc_i64_i64_map.LookupMissing)
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.fixed-storage-arena]
-          [_set-owner : unit
-            (unsafe
-              (arena.tl_arena_set owner))]
+        (in-arena
+          (arena.Arena data.fixed-storage-arena)
           (begin
             (tc_i64_i64_map.insert-ref!
               (&mut data.seen-sites)
               site-hash
               record-index)
-            (set! data.fixed-storage-arena (arena.tl_arena_current))
-            (tc-macro-call-site-state-data-set! state data)
-            (unsafe
-              (arena.tl_arena_set
-                (if (= previous owner)
-                  data.fixed-storage-arena
-                  previous)))))])))
+            (tc-macro-call-site-state-data-set! state data)))])))
 
 (define (tc-macro-call-site-state-record!
   [state : TcMacroCallSiteState]
@@ -42148,25 +42132,13 @@
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     (if (= (array-length data.lines) tc-inlay-hint-capacity)
       unit
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 data.fixed-storage-arena]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
+      (in-arena
+        (arena.Arena data.fixed-storage-arena)
         (begin
           (set! data.lines (array.make-array i64 tc-inlay-hint-capacity))
           (set! data.cols (array.make-array i64 tc-inlay-hint-capacity))
           (set! data.types (array.make-array String tc-inlay-hint-capacity))
-          ;; Arena allocation chains segments; retain the newest owner head so
-          ;; a later switch keeps allocating on the live chain.
-          (set! data.fixed-storage-arena (arena.tl_arena_current))
-          (tc-inlay-hint-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                data.fixed-storage-arena
-                previous))))))))
+          (tc-inlay-hint-state-data-set! state data))))))
 
 (define (tc-inlay-hint-string-arena-ensure-for-state!
   [state : TcInlayHintState]) : i64
@@ -87841,20 +87813,9 @@
   [state : TcMacroState]
   [decls : ast.AstDeclList]) : ast.AstProgram
   (if (tc-macro-walk-field state macro-expand-scratch-enabled)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [program : ast.AstProgram (ast.ast-program decls)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (tc-macro-walk-set! state macro-expand-scratch-arena storage-head)
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            program))))
+    (in-arena
+      (arena.Arena (macro-expand-scratch-arena-get state))
+      (ast.ast-program decls))
     (ast.ast-program decls)))
 
 (define (macro-paths-for-decls

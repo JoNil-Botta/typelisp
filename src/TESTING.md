@@ -216,7 +216,7 @@ names without compiling or running their harnesses.
 Package integration discovery skips the reserved
 `tests/diagnostics/**`, `tests/format_golden/**`, `tests/golden/**`,
 `tests/inline/**`, `tests/no-libc/**`, `tests/public-tools/**`,
-`tests/safety/**`, and `tests/spmd/**` fixture corpora. When
+`tests/safety/**`, `tests/spmd/**`, and `tests/tlci/**` fixture corpora. When
 `tests/integration/native-*.manifest` exists, package discovery also leaves
 `tests/integration/**` to the explicit integration runner. Dedicated
 verification scripts own those files.

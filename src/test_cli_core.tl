@@ -4367,7 +4367,10 @@
         (tltest-package-tests-subdir-prefix tests-prefix "safety"))
       (tltest-string-prefix?
         normalized
-        (tltest-package-tests-subdir-prefix tests-prefix "spmd")))))
+        (tltest-package-tests-subdir-prefix tests-prefix "spmd"))
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "tlci")))))
 
 (define (tltest-package-integration-source?
   [source : String]
@@ -4422,6 +4425,10 @@
         (tltest-package-integration-source?
           "repo/tests/spmd/masked_if_i64.tl"
           tests-prefix))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/tlci/corpus_emit.tl"
+          tests-prefix))
       (tltest-package-integration-source?
         "repo/tests/integration/hello.tl"
         tests-prefix)
@@ -4431,6 +4438,9 @@
         tests-prefix)
       (tltest-package-integration-source?
         "repo/tests/diagnostics_extra/example.tl"
+        tests-prefix)
+      (tltest-package-integration-source?
+        "repo/tests/tlci_extra/example.tl"
         tests-prefix))))
 
 (test

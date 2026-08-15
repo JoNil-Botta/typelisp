@@ -2276,6 +2276,8 @@
   [capacity : i64]
   [symbols : (__tl_dyn-array String)]
   [canonical-len : i64]
+  [owner : i64]
+  [scratch : i64]
   [record : CompilerSemanticRecord]) : i64
   (let
     [slot-index : i64
@@ -2293,14 +2295,21 @@
           (compiler-semantic-canonical-map-slot slots capacity parent-symbol)]
         [parent-slot : CompilerSemanticCanonicalBuildSlot
           (array-ref slots parent-slot-index)]
+        [_switch-to-scratch : unit
+          (unsafe
+            (arena.tl_arena_set scratch))]
         [key : String
           (if (and (>= record.symbol.local-ordinal 0) parent-slot.occupied)
             (compiler-semantic-canonical-local-key
               (array-ref symbols parent-slot.canonical-index)
               record)
             (compiler-semantic-canonical-top-key record))]
+        [_restore-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [owned-key : String (string.copy (& key))]
         (begin
-          (set! (array-ref symbols canonical-len) key)
+          (set! (array-ref symbols canonical-len) owned-key)
           (set!
             (array-ref slots slot-index)
             (CompilerSemanticCanonicalBuildSlot
@@ -2314,8 +2323,18 @@
   [record-len : i64]) : CompilerSemanticCanonicalBuildResult
   (let
     [capacity : i64 (compiler-semantic-canonical-map-capacity record-len)]
+    ;; Hash slots and framed-key construction are scratch-only. Each completed
+    ;; key is copied once into the source-index owner before scratch teardown.
+    [owner : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make)]
+    [_switch-to-scratch : unit
+      (unsafe
+        (arena.tl_arena_set scratch))]
     [slots : (__tl_dyn-array CompilerSemanticCanonicalBuildSlot)
       (array.make-array CompilerSemanticCanonicalBuildSlot capacity)]
+    [_restore-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
     [symbols : (__tl_dyn-array String) (array.make-array String record-len)]
     [canonical-len : i64 0]
     [record-index : i64 0]
@@ -2336,6 +2355,8 @@
                       capacity
                       symbols
                       canonical-len
+                      owner
+                      scratch
                       record)]
                   (if (= assigned canonical-len)
                     (set! canonical-len (+ canonical-len 1))
@@ -2352,6 +2373,8 @@
               capacity
               symbols
               canonical-len
+              owner
+              scratch
               record)]
           (begin
             (if (= assigned canonical-len)
@@ -2359,7 +2382,13 @@
               unit)
             (set! (array-ref records record-index).canonical-index assigned)
             (set! record-index (+ record-index 1)))))
-      (CompilerSemanticCanonicalBuildResult symbols canonical-len))))
+      (let
+        [result : CompilerSemanticCanonicalBuildResult
+          (CompilerSemanticCanonicalBuildResult symbols canonical-len)]
+        (begin
+          (unsafe
+            (arena.tl_arena_destroy scratch))
+          result)))))
 
 (define (compiler-semantic-binding-lookup
   [state : CompilerSemanticWalkState]

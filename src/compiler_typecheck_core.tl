@@ -8867,19 +8867,17 @@
         (tc-type-env-binding-segment-capacity)
         required)]
     [owner : i64 store.owner-arena]
-    [previous-arena : i64 (arena.tl_arena_current)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
-      (unsafe
-        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-      (let
-        [bigger : (__tl_dyn-array TcTypeEnvBinding)
-          (array.make-array TcTypeEnvBinding next-capacity)]
-        (begin
-          (set! store.bindings bigger)
-          (set! store.binding-capacity next-capacity)
-          (set! store.binding-len 0)))
-      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [bigger : (__tl_dyn-array TcTypeEnvBinding)
+            (array.make-array TcTypeEnvBinding next-capacity)]
+          (begin
+            (set! store.bindings bigger)
+            (set! store.binding-capacity next-capacity)
+            (set! store.binding-len 0)))))))
 
 (define (tc-type-env-store-grow-caches!
   [store : (&mut store TcTypeEnvStore)]
@@ -8890,19 +8888,17 @@
         (tc-type-env-cache-segment-capacity)
         required)]
     [owner : i64 store.owner-arena]
-    [previous-arena : i64 (arena.tl_arena_current)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
-      (unsafe
-        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-      (let
-        [bigger : (__tl_dyn-array TcTypeEnvCache)
-          (array.make-array TcTypeEnvCache next-capacity)]
-        (begin
-          (set! store.caches bigger)
-          (set! store.cache-capacity next-capacity)
-          (set! store.cache-len 0)))
-      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [bigger : (__tl_dyn-array TcTypeEnvCache)
+            (array.make-array TcTypeEnvCache next-capacity)]
+          (begin
+            (set! store.caches bigger)
+            (set! store.cache-capacity next-capacity)
+            (set! store.cache-len 0)))))))
 
 (define (tc-type-env-store-write-cache!
   [store : (&mut store TcTypeEnvStore)]
@@ -9275,13 +9271,7 @@
   [map : (&mut map tc_i64_i64_map.Map)]
   [owner : i64]) : unit
   (if (tc-topenv-membership-map-needs-grow? (& map))
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-        (tc_i64_i64_map.grow! map)
-        (tc-type-env-store-restore-after-owner-alloc! previous owner)))
+    (in-arena (arena.Arena owner) (tc_i64_i64_map.grow! map))
     unit))
 
 (define (tc-topenv-membership-renderable-overflow-flags-for
@@ -13413,23 +13403,13 @@
     [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
     (if (> (array.length data.block-spans) 0)
       unit
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 data.fixed-storage-arena]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
+      (in-arena
+        (arena.Arena data.fixed-storage-arena)
         (begin
           (set! data.block-spans (array.make-array ast.AstSourceSpan 128))
           (set! data.block-paths (array.make-array String 128))
           (set! data.block-used (array.make-array bool 128))
-          (set! data.fixed-storage-arena (arena.tl_arena_current))
-          (tc-unused-unsafe-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                data.fixed-storage-arena
-                previous))))))))
+          (tc-unused-unsafe-state-data-set! state data))))))
 
 (define (tc-unused-unsafe-tracking-reset!
   [state : TcUnusedUnsafeState]
@@ -13566,27 +13546,19 @@
     [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
     [old-cap : i64 (array.length data.block-spans)]
     [new-cap : i64 (* old-cap 2)]
-    [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 data.fixed-storage-arena]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [new-spans : (__tl_dyn-array ast.AstSourceSpan)
-      (array.make-array ast.AstSourceSpan new-cap)]
-    [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
-    [new-used : (__tl_dyn-array bool) (array.make-array bool new-cap)]
-    (begin
-      (tc-unused-unsafe-grow-copy data new-spans new-paths new-used 0)
-      (set! data.block-spans new-spans)
-      (set! data.block-paths new-paths)
-      (set! data.block-used new-used)
-      (set! data.fixed-storage-arena (arena.tl_arena_current))
-      (tc-unused-unsafe-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            data.fixed-storage-arena
-            previous))))))
+    (in-arena
+      (arena.Arena data.fixed-storage-arena)
+      (let
+        [new-spans : (__tl_dyn-array ast.AstSourceSpan)
+          (array.make-array ast.AstSourceSpan new-cap)]
+        [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
+        [new-used : (__tl_dyn-array bool) (array.make-array bool new-cap)]
+        (begin
+          (tc-unused-unsafe-grow-copy data new-spans new-paths new-used 0)
+          (set! data.block-spans new-spans)
+          (set! data.block-paths new-paths)
+          (set! data.block-used new-used)
+          (tc-unused-unsafe-state-data-set! state data))))))
 
 (define (tc-unused-unsafe-push
   [state : TcUnusedUnsafeState]
@@ -17285,27 +17257,22 @@
       (begin
         (while (< next-capacity required)
           (set! next-capacity (* next-capacity 2)))
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.owner-arena]
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-            (let
-              [next : (__tl_dyn-array TcNameIdListNode)
-                (array.make-array TcNameIdListNode next-capacity)]
-              [index : i64 0]
-              (begin
-                (while (< index data.len)
-                  (let
-                    [node : TcNameIdListNode (array-ref old index)]
-                    (begin
-                      (set!
-                        (array-ref next index)
-                        (TcNameIdListNode node.value node.parent))
-                      (set! index (+ index 1)))))
-                (set! data.nodes next)))
-            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [next : (__tl_dyn-array TcNameIdListNode)
+              (array.make-array TcNameIdListNode next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index data.len)
+                (let
+                  [node : TcNameIdListNode (array-ref old index)]
+                  (begin
+                    (set!
+                      (array-ref next index)
+                      (TcNameIdListNode node.value node.parent))
+                    (set! index (+ index 1)))))
+              (set! data.nodes next))))))))
 
 (define (tc-name-id-list-store-push!
   [address : i64]
@@ -17963,27 +17930,22 @@
       (begin
         (while (< next-capacity required)
           (set! next-capacity (* next-capacity 2)))
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.owner-arena]
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-            (let
-              [next : (__tl_dyn-array TcLifetimeSubstNode)
-                (array.make-array TcLifetimeSubstNode next-capacity)]
-              [index : i64 0]
-              (begin
-                (while (< index data.len)
-                  (let
-                    [node : TcLifetimeSubstNode (array-ref old index)]
-                    (begin
-                      (set!
-                        (array-ref next index)
-                        (TcLifetimeSubstNode node.from node.to node.parent))
-                      (set! index (+ index 1)))))
-                (set! data.nodes next)))
-            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [next : (__tl_dyn-array TcLifetimeSubstNode)
+              (array.make-array TcLifetimeSubstNode next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index data.len)
+                (let
+                  [node : TcLifetimeSubstNode (array-ref old index)]
+                  (begin
+                    (set!
+                      (array-ref next index)
+                      (TcLifetimeSubstNode node.from node.to node.parent))
+                    (set! index (+ index 1)))))
+              (set! data.nodes next))))))))
 
 (define (tc-lifetime-subst-store-push!
   [address : i64]
@@ -20783,27 +20745,24 @@
       (if (< old-capacity 1)
         16
         (* old-capacity 2))]
-    [previous-arena : i64 (arena.tl_arena_current)]
-    [owner : i64 (tc-macro-state-owner-arena state)]
-    [_owner : unit
-      (unsafe
-        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))]
-    [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
-      (array.make-array ast.AstNodePoolContext next-capacity)]
-    [next-ids : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
-    [next-exprs : (__tl_dyn-array ast.AstExpr)
-      (array.make-array ast.AstExpr next-capacity)]
-    (begin
-      (tc-dotted-macro-journal-grow-copy!
-        state
-        (&mut next-pools)
-        (&mut next-ids)
-        (&mut next-exprs)
-        0)
-      (tc-macro-walk-set! state dotted-macro-journal-pools next-pools)
-      (tc-macro-walk-set! state dotted-macro-journal-ids next-ids)
-      (tc-macro-walk-set! state dotted-macro-journal-exprs next-exprs)
-      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
+    (in-arena
+      (arena.Arena (tc-macro-state-owner-arena state))
+      (let
+        [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
+          (array.make-array ast.AstNodePoolContext next-capacity)]
+        [next-ids : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+        [next-exprs : (__tl_dyn-array ast.AstExpr)
+          (array.make-array ast.AstExpr next-capacity)]
+        (begin
+          (tc-dotted-macro-journal-grow-copy!
+            state
+            (&mut next-pools)
+            (&mut next-ids)
+            (&mut next-exprs)
+            0)
+          (tc-macro-walk-set! state dotted-macro-journal-pools next-pools)
+          (tc-macro-walk-set! state dotted-macro-journal-ids next-ids)
+          (tc-macro-walk-set! state dotted-macro-journal-exprs next-exprs))))))
 
 (define (tc-dotted-macro-journal-active-pools) : ast.AstNodePoolContext
   (if (ast.ast-node-pool-compat-context-active?)
@@ -67300,27 +67259,22 @@
       (begin
         (while (< next-capacity required)
           (set! next-capacity (* next-capacity 2)))
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.owner-arena]
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-            (let
-              [next : (__tl_dyn-array TcMovePathSegmentNode)
-                (array.make-array TcMovePathSegmentNode next-capacity)]
-              [index : i64 0]
-              (begin
-                (while (< index data.len)
-                  (let
-                    [node : TcMovePathSegmentNode (array-ref old index)]
-                    (begin
-                      (set!
-                        (array-ref next index)
-                        (TcMovePathSegmentNode node.parent node.kind node.value))
-                      (set! index (+ index 1)))))
-                (set! data.nodes next)))
-            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [next : (__tl_dyn-array TcMovePathSegmentNode)
+              (array.make-array TcMovePathSegmentNode next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index data.len)
+                (let
+                  [node : TcMovePathSegmentNode (array-ref old index)]
+                  (begin
+                    (set!
+                      (array-ref next index)
+                      (TcMovePathSegmentNode node.parent node.kind node.value))
+                    (set! index (+ index 1)))))
+              (set! data.nodes next))))))))
 
 (define (tc-move-path-segments-node
   [segments : TcMovePathSegments]

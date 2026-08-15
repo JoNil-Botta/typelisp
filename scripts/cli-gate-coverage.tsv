@@ -1,9 +1,9 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	495
-# count	total	all	annotations	495
+# count	total	all	rows	497
+# count	total	all	annotations	497
 # count	total	all	sources	3
-# count	total	all	source-sites	369
+# count	total	all	source-sites	371
 # count	total	all	expanded-cases	159
 # count	gate	public-tools	rows	314
 # count	gate	public-tools	source-sites	205
@@ -11,18 +11,18 @@
 # count	gate	selfhost-cli	rows	79
 # count	gate	selfhost-cli	source-sites	78
 # count	gate	selfhost-cli	expanded-cases	16
-# count	gate	stage1-wrapper	rows	102
-# count	gate	stage1-wrapper	source-sites	86
+# count	gate	stage1-wrapper	rows	104
+# count	gate	stage1-wrapper	source-sites	88
 # count	gate	stage1-wrapper	expanded-cases	18
 # count	host	all	rows	372
-# count	host	linux	rows	120
+# count	host	linux	rows	122
 # count	host	windows	rows	3
-# count	platform	linux	rows	492
+# count	platform	linux	rows	494
 # count	platform	windows	rows	375
 # count	kind	delegated	rows	9
 # count	kind	direct	rows	53
-# count	kind	wrapper	rows	433
-# count	process	compiler	rows	322
+# count	kind	wrapper	rows	435
+# count	process	compiler	rows	324
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -142,6 +142,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	stage1-wrapper-lint-missing	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	lint	directory-without-manifest	inherited	temporary-no-package-directory	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	contains:could-not-find-manifest	none	stage1-wrapper-lint-missing	-
 1	stage1-wrapper-lint-clean	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	lint <smoke.tl>	clean-source	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:0-findings	empty	none	stage1-wrapper-lint-clean	-
 1	stage1-wrapper-lint-clean-check	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	lint <smoke.tl> --check	clean-source-check-mode	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:0-findings	empty	none	stage1-wrapper-lint-clean-check	-
+1	stage1-wrapper-lint-dotted-compat	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	lint <lint_dotted_compat.tl> --prefer-dotted-field	legacy-internal-field-projection-compat	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:0-findings	empty	none	stage1-wrapper-lint-dotted-compat	-
+1	stage1-wrapper-lint-dotted-compat-check	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	lint <lint_dotted_compat.tl> --prefer-dotted-field --check	legacy-internal-field-projection-compat-check-mode	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:0-findings	empty	none	stage1-wrapper-lint-dotted-compat-check	-
 1	stage1-wrapper-lint-nested-let	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	lint <lint_bad.tl>	one-nested-let-finding	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:path,nested-let,merge-bindings,1-finding	empty	none	stage1-wrapper-lint-nested-let	-
 1	stage1-wrapper-lint-nested-let-check	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	lint <lint_bad.tl> --check	one-nested-let-finding-check-mode	inherited	repository	compiler	none	nonzero	contains:path,nested-let,1-finding	empty	none	stage1-wrapper-lint-nested-let-check	-
 1	stage1-wrapper-lint-multi	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	lint <smoke.tl> <lint_bad.tl>	ordered-clean-and-bad-files	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:both-paths,0-and-1-findings,in-input-order	empty	none	stage1-wrapper-lint-multi	-

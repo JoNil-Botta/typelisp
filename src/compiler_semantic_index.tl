@@ -28,7 +28,9 @@
 ;; Top-level symbols use local-ordinal -1 and their resolved compiler-symbol
 ;; handle index as declaration-ordinal. Lexical symbols use a deterministic
 ;; per-declaration local ordinal, so shadowed spellings remain distinct while
-;; definition and use records share one identity.
+;; definition and use records share one dense identity inside a snapshot. These
+;; numeric components are intentionally not a cross-snapshot contract; use the
+;; owned canonical-key API below when correlating independently checked sources.
 (defstruct CompilerSemanticSymbolId
   (module-id i64)
   (declaration-ordinal i64)
@@ -66,6 +68,10 @@
 
 (defstruct CompilerSemanticRecord
   (symbol CompilerSemanticSymbolId)
+  ;; Snapshot-local compact reference into `canonical-symbols`. The referenced
+  ;; key owns its bytes in the source index arena and remains comparable with a
+  ;; key obtained from any independently retained source index.
+  (canonical-index i64)
   (role CompilerSemanticRecordRole)
   (kind CompilerSemanticSymbolKind)
   (display-name String)
@@ -213,6 +219,10 @@
   (owner-arena i64)
   (records (__tl_dyn-array CompilerSemanticRecord))
   (len i64)
+  ;; One opaque, length-framed owned key per resolved symbol. Occurrences retain
+  ;; only `canonical-index`, avoiding repeated module/path/name strings.
+  (canonical-symbols (__tl_dyn-array String))
+  (canonical-symbol-len i64)
   ;; False identifies current-buffer records established by recovery. It never
   ;; denotes a caller-owned last-good snapshot.
   (complete bool)
@@ -248,6 +258,18 @@
 (defenum CompilerSemanticMaybeHandle
   (Some i64)
   (None))
+
+;; Transient open-addressed map used only while an owned index is built. The
+;; dense compiler identity is safe as a lookup key while the check is live;
+;; only the owned canonical strings are published.
+(defstruct CompilerSemanticCanonicalBuildSlot
+  (occupied bool)
+  (symbol CompilerSemanticSymbolId)
+  (canonical-index i64))
+
+(defstruct CompilerSemanticCanonicalBuildResult
+  (symbols (__tl_dyn-array String))
+  (len i64))
 
 ;; Snapshot heads share one append-only dense store. Each appended binding
 ;; remembers the previous head, so child and sibling walks can extend the same
@@ -286,6 +308,7 @@
 (define (compiler-semantic-record-fallback) : CompilerSemanticRecord
   (CompilerSemanticRecord
     (CompilerSemanticSymbolId 0 -1 -1)
+    -1
     CompilerSemanticRecordRole.Definition
     CompilerSemanticSymbolKind.Value
     ""
@@ -350,6 +373,8 @@
     0
     (array.make-array CompilerSemanticRecord 0)
     0
+    (array.make-array String 0)
+    0
     false
     (array.make-array CompilerSemanticSourcePathInfo 0)
     0
@@ -382,6 +407,8 @@
           (CompilerSemanticSourceIndex
             owner
             (array.make-array CompilerSemanticRecord 0)
+            0
+            (array.make-array String 0)
             0
             false
             (array.make-array CompilerSemanticSourcePathInfo 0)
@@ -870,6 +897,69 @@
   [index : (& index CompilerSemanticSourceIndex)]) : bool
   index.complete)
 
+(define (compiler-semantic-source-index-canonical-symbol-count
+  [index : (& index CompilerSemanticSourceIndex)]) : i64
+  index.canonical-symbol-len)
+
+;; Canonical keys are opaque and versioned. Equality is their only contract;
+;; consumers must not parse their length-framed representation.
+(define (compiler-semantic-source-index-canonical-key
+  [index : (& index CompilerSemanticSourceIndex)]
+  [canonical-index : i64]) : String
+  (if (and
+    (>= canonical-index 0)
+    (< canonical-index index.canonical-symbol-len))
+    (array-ref index.canonical-symbols canonical-index)
+    ""))
+
+(define (compiler-semantic-source-index-record-canonical-key
+  [index : (& index CompilerSemanticSourceIndex)]
+  [record : (& record CompilerSemanticRecord)]) : String
+  (compiler-semantic-source-index-canonical-key index record.canonical-index))
+
+(define (compiler-semantic-source-index-records-canonical-eq?
+  [left-index : (& left-index CompilerSemanticSourceIndex)]
+  [left-record : (& left-record CompilerSemanticRecord)]
+  [right-index : (& right-index CompilerSemanticSourceIndex)]
+  [right-record : (& right-record CompilerSemanticRecord)]) : bool
+  (and
+    (>= left-record.canonical-index 0)
+    (>= right-record.canonical-index 0)
+    (string.eq
+      (compiler-semantic-source-index-record-canonical-key
+        left-index
+        left-record)
+      (compiler-semantic-source-index-record-canonical-key
+        right-index
+        right-record))))
+
+(define (compiler-semantic-source-index-canonical-key-byte-count
+  [index : (& index CompilerSemanticSourceIndex)]) : i64
+  (let
+    [canonical-index : i64 0]
+    [bytes : i64 0]
+    (begin
+      (while (< canonical-index index.canonical-symbol-len)
+        (begin
+          (set!
+            bytes
+            (+
+              bytes
+              (string.string-length
+                (array-ref index.canonical-symbols canonical-index))))
+          (set! canonical-index (+ canonical-index 1))))
+      bytes)))
+
+;; Exact structural/key-payload proxy for the memory added by canonical
+;; identity, excluding allocator bookkeeping and padding in backing arrays.
+(define (compiler-semantic-source-index-canonical-byte-estimate
+  [index : (& index CompilerSemanticSourceIndex)]) : i64
+  (+
+    (* index.len (comptime (size-of (type i64))))
+    (+
+      (* index.canonical-symbol-len (comptime (size-of (type String))))
+      (compiler-semantic-source-index-canonical-key-byte-count index))))
+
 (define (compiler-semantic-source-index-release!
   [index : (&mut index CompilerSemanticSourceIndex)]) : unit
   (let
@@ -878,6 +968,7 @@
       (begin
         (set! index.owner-arena 0)
         (set! index.len 0)
+        (set! index.canonical-symbol-len 0)
         (set! index.complete false)
         (set! index.path-len 0)
         (set! index.module-len 0)
@@ -912,42 +1003,48 @@
       (+
         (* index.len (comptime (size-of (type CompilerSemanticRecord))))
         (+
-          (*
-            index.path-len
-            (comptime (size-of (type CompilerSemanticSourcePathInfo))))
-          (+
-            (*
-              index.module-len
-              (comptime (size-of (type CompilerSemanticModuleInfo))))
-            (+
-              (*
-                index.module-event-len
-                (comptime (size-of (type CompilerSemanticModuleEvent))))
-              (+
-                (*
-                  index.scope-event-len
-                  (comptime (size-of (type CompilerSemanticScopeEvent))))
-                (+
-                  (*
-                    index.binding-len
-                    (comptime (size-of (type CompilerSemanticBinding))))
-                  (+
-                    (*
-                      index.top-candidate-len
-                      (comptime
-                        (size-of (type CompilerSemanticTopCandidateRef))))
-                    (+
-                      (*
-                        index.top-candidate-len
-                        (comptime (size-of (type String))))
-                      (*
-                        index.top-candidate-len
-                        (comptime
-                          (size-of (type CompilerSemanticVisibleBinding))))))))))))]
+          (* index.canonical-symbol-len (comptime (size-of (type String))))
+          (compiler-semantic-source-index-canonical-key-byte-count index)))]
     [path-index : i64 0]
     [binding-index : i64 0]
     [candidate-index : i64 0]
     (begin
+      (set!
+        bytes
+        (+
+          bytes
+          (+
+            (*
+              index.path-len
+              (comptime (size-of (type CompilerSemanticSourcePathInfo))))
+            (+
+              (*
+                index.module-len
+                (comptime (size-of (type CompilerSemanticModuleInfo))))
+              (+
+                (*
+                  index.module-event-len
+                  (comptime (size-of (type CompilerSemanticModuleEvent))))
+                (+
+                  (*
+                    index.scope-event-len
+                    (comptime (size-of (type CompilerSemanticScopeEvent))))
+                  (*
+                    index.binding-len
+                    (comptime (size-of (type CompilerSemanticBinding))))))))))
+      (set!
+        bytes
+        (+
+          bytes
+          (+
+            (*
+              index.top-candidate-len
+              (comptime (size-of (type CompilerSemanticTopCandidateRef))))
+            (+
+              (* index.top-candidate-len (comptime (size-of (type String))))
+              (*
+                index.top-candidate-len
+                (comptime (size-of (type CompilerSemanticVisibleBinding))))))))
       (while (< path-index index.path-len)
         (begin
           (set!
@@ -2063,6 +2160,236 @@
     [(CompilerSemanticMaybeHandle.None)
       (CompilerSemanticSymbolId module-id fallback-ordinal -1)]))
 
+(define (compiler-semantic-canonical-kind-tag
+  [kind : CompilerSemanticSymbolKind]) : i64
+  (match kind
+    [(CompilerSemanticSymbolKind.Value) 1]
+    [(CompilerSemanticSymbolKind.Function) 2]
+    [(CompilerSemanticSymbolKind.Macro) 3]
+    [(CompilerSemanticSymbolKind.ExternValue) 4]
+    [(CompilerSemanticSymbolKind.ExternFunction) 5]
+    [(CompilerSemanticSymbolKind.Struct) 6]
+    [(CompilerSemanticSymbolKind.Enum) 7]
+    [(CompilerSemanticSymbolKind.Parameter) 8]
+    [(CompilerSemanticSymbolKind.Local) 9]))
+
+(define (compiler-semantic-canonical-namespace-tag
+  [kind : CompilerSemanticSymbolKind]) : i64
+  (match kind
+    [(CompilerSemanticSymbolKind.Macro) 3]
+    [(CompilerSemanticSymbolKind.Struct) 2]
+    [(CompilerSemanticSymbolKind.Enum) 2]
+    [_ 1]))
+
+;; Length framing makes the opaque key injective even when source identifiers,
+;; paths, or generator keys contain punctuation used by this representation.
+(define (compiler-semantic-canonical-key-field [value : String]) : String
+  (str_cat.str-cat (string.int->string (string.string-length value)) ":" value))
+
+(define (compiler-semantic-canonical-top-key [record : CompilerSemanticRecord]) : String
+  (let
+    [module-identity : String
+      (tc.macro-decl-module-display record.symbol.module-id)]
+    [source-owner : String
+      (if (string.eq module-identity "")
+        (cload.compiler-load-normalize-path record.span.path)
+        "")]
+    [namespace-tag : String
+      (string.int->string
+        (compiler-semantic-canonical-namespace-tag record.kind))]
+    [kind-tag : String
+      (string.int->string (compiler-semantic-canonical-kind-tag record.kind))]
+    (match record.provenance
+      [(CompilerSemanticProvenance.EditableSource)
+        (str_cat.str-cat
+          "tl-semantic-v1|d|"
+          (compiler-semantic-canonical-key-field module-identity)
+          (compiler-semantic-canonical-key-field source-owner)
+          (compiler-semantic-canonical-key-field namespace-tag)
+          (compiler-semantic-canonical-key-field kind-tag)
+          (compiler-semantic-canonical-key-field record.display-name)
+          "0:0:0:")]
+      [(CompilerSemanticProvenance.Generated generator item key)
+        (str_cat.str-cat
+          "tl-semantic-v1|d|"
+          (compiler-semantic-canonical-key-field module-identity)
+          (compiler-semantic-canonical-key-field source-owner)
+          (compiler-semantic-canonical-key-field namespace-tag)
+          (compiler-semantic-canonical-key-field kind-tag)
+          (compiler-semantic-canonical-key-field record.display-name)
+          (compiler-semantic-canonical-key-field generator)
+          (compiler-semantic-canonical-key-field item)
+          (compiler-semantic-canonical-key-field key))])))
+
+(define (compiler-semantic-canonical-local-key
+  [parent-key : String]
+  [record : CompilerSemanticRecord]) : String
+  (str_cat.str-cat
+    "tl-semantic-v1|l|"
+    (compiler-semantic-canonical-key-field parent-key)
+    (compiler-semantic-canonical-key-field
+      (string.int->string record.symbol.local-ordinal))
+    (compiler-semantic-canonical-key-field
+      (string.int->string (compiler-semantic-canonical-kind-tag record.kind)))))
+
+(define (compiler-semantic-canonical-map-capacity [record-len : i64]) : i64
+  (let
+    [target : i64
+      (if (< record-len 1)
+        1
+        (* record-len 2))]
+    [capacity : i64 1]
+    (begin
+      (while (< capacity target)
+        (set! capacity (* capacity 2)))
+      capacity)))
+
+(define (compiler-semantic-canonical-symbol-hash
+  [symbol : CompilerSemanticSymbolId]) : i64
+  (bit-xor
+    (* symbol.module-id 6364136223846793005)
+    (bit-xor
+      (* symbol.declaration-ordinal -7046029254386353131)
+      (* (+ symbol.local-ordinal 2) 2654435761))))
+
+(define (compiler-semantic-canonical-map-slot
+  [slots : (__tl_dyn-array CompilerSemanticCanonicalBuildSlot)]
+  [capacity : i64]
+  [symbol : CompilerSemanticSymbolId]) : i64
+  (let
+    [cursor : i64
+      (bit-and (compiler-semantic-canonical-symbol-hash symbol) (- capacity 1))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [slot : CompilerSemanticCanonicalBuildSlot (array-ref slots cursor)]
+          (if (or
+            (not slot.occupied)
+            (compiler-semantic-symbol-id-eq? slot.symbol symbol))
+            (set! done true)
+            (set! cursor (bit-and (+ cursor 1) (- capacity 1))))))
+      cursor)))
+
+(define (compiler-semantic-canonical-build-add!
+  [slots : (__tl_dyn-array CompilerSemanticCanonicalBuildSlot)]
+  [capacity : i64]
+  [symbols : (__tl_dyn-array String)]
+  [canonical-len : i64]
+  [owner : i64]
+  [scratch : i64]
+  [record : CompilerSemanticRecord]) : i64
+  (let
+    [slot-index : i64
+      (compiler-semantic-canonical-map-slot slots capacity record.symbol)]
+    [slot : CompilerSemanticCanonicalBuildSlot (array-ref slots slot-index)]
+    (if slot.occupied
+      slot.canonical-index
+      (let
+        [parent-symbol : CompilerSemanticSymbolId
+          (CompilerSemanticSymbolId
+            record.symbol.module-id
+            record.symbol.declaration-ordinal
+            -1)]
+        [parent-slot-index : i64
+          (compiler-semantic-canonical-map-slot slots capacity parent-symbol)]
+        [parent-slot : CompilerSemanticCanonicalBuildSlot
+          (array-ref slots parent-slot-index)]
+        [_switch-to-scratch : unit
+          (unsafe
+            (arena.tl_arena_set scratch))]
+        [key : String
+          (if (and (>= record.symbol.local-ordinal 0) parent-slot.occupied)
+            (compiler-semantic-canonical-local-key
+              (array-ref symbols parent-slot.canonical-index)
+              record)
+            (compiler-semantic-canonical-top-key record))]
+        [_restore-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [owned-key : String (string.copy (& key))]
+        (begin
+          (set! (array-ref symbols canonical-len) owned-key)
+          (set!
+            (array-ref slots slot-index)
+            (CompilerSemanticCanonicalBuildSlot
+              true
+              record.symbol
+              canonical-len))
+          canonical-len)))))
+
+(define (compiler-semantic-canonical-build
+  [records : (__tl_dyn-array CompilerSemanticRecord)]
+  [record-len : i64]) : CompilerSemanticCanonicalBuildResult
+  (let
+    [capacity : i64 (compiler-semantic-canonical-map-capacity record-len)]
+    ;; Hash slots and framed-key construction are scratch-only. Each completed
+    ;; key is copied once into the source-index owner before scratch teardown.
+    [owner : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make)]
+    [_switch-to-scratch : unit
+      (unsafe
+        (arena.tl_arena_set scratch))]
+    [slots : (__tl_dyn-array CompilerSemanticCanonicalBuildSlot)
+      (array.make-array CompilerSemanticCanonicalBuildSlot capacity)]
+    [_restore-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [symbols : (__tl_dyn-array String) (array.make-array String record-len)]
+    [canonical-len : i64 0]
+    [record-index : i64 0]
+    (begin
+      ;; Definitions establish owner-derived keys before any use is assigned.
+      ;; Top-level definitions precede their lexical definitions in the record
+      ;; stream, so locals can frame the already-owned declaration key.
+      (while (< record-index record-len)
+        (let
+          [record : CompilerSemanticRecord (array-ref records record-index)]
+          (begin
+            (match record.role
+              [(CompilerSemanticRecordRole.Definition)
+                (let
+                  [assigned : i64
+                    (compiler-semantic-canonical-build-add!
+                      slots
+                      capacity
+                      symbols
+                      canonical-len
+                      owner
+                      scratch
+                      record)]
+                  (if (= assigned canonical-len)
+                    (set! canonical-len (+ canonical-len 1))
+                    unit))]
+              [(CompilerSemanticRecordRole.Use) unit])
+            (set! record-index (+ record-index 1)))))
+      (set! record-index 0)
+      (while (< record-index record-len)
+        (let
+          [record : CompilerSemanticRecord (array-ref records record-index)]
+          [assigned : i64
+            (compiler-semantic-canonical-build-add!
+              slots
+              capacity
+              symbols
+              canonical-len
+              owner
+              scratch
+              record)]
+          (begin
+            (if (= assigned canonical-len)
+              (set! canonical-len (+ canonical-len 1))
+              unit)
+            (set! (array-ref records record-index).canonical-index assigned)
+            (set! record-index (+ record-index 1)))))
+      (let
+        [result : CompilerSemanticCanonicalBuildResult
+          (CompilerSemanticCanonicalBuildResult symbols canonical-len)]
+        (begin
+          (unsafe
+            (arena.tl_arena_destroy scratch))
+          result)))))
+
 (define (compiler-semantic-binding-lookup
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
@@ -2088,6 +2415,7 @@
     (&mut (__tl-box-place state.records))
     (CompilerSemanticRecord
       binding.symbol
+      -1
       CompilerSemanticRecordRole.Use
       binding.kind
       (string.copy (& binding.display-name))
@@ -2152,6 +2480,7 @@
                           module-id
                           (csym.compiler-symbol-handle-index handle)
                           -1)
+                        -1
                         CompilerSemanticRecordRole.Use
                         kind
                         (string.copy (& display-name))
@@ -2259,6 +2588,7 @@
             (&mut (__tl-box-place state.records))
             (CompilerSemanticRecord
               symbol
+              -1
               CompilerSemanticRecordRole.Definition
               kind
               (string.copy (& name))
@@ -4027,6 +4357,7 @@
       (&mut (__tl-box-place state.records))
       (CompilerSemanticRecord
         symbol
+        -1
         CompilerSemanticRecordRole.Use
         CompilerSemanticSymbolKind.Macro
         (string.copy (& display-name))
@@ -5088,6 +5419,7 @@
                               (&mut (__tl-box-place walk-state.records))
                               (CompilerSemanticRecord
                                 symbol
+                                -1
                                 CompilerSemanticRecordRole.Definition
                                 kind
                                 (string.copy (& name))
@@ -5117,6 +5449,10 @@
             entry-path
             entry-source)
           (let
+            [canonical-build : CompilerSemanticCanonicalBuildResult
+              (compiler-semantic-canonical-build
+                (__tl-project-field (__tl-box-place walk-state.records) items)
+                (__tl-project-field (__tl-box-place walk-state.records) len))]
             [visibility-storage : CompilerSemanticVisibilityBuildStorage
               (__tl-box-place walk-state.visibility-storage)]
             [path-count : i64 (__tl-box-place visibility-storage.path-len)]
@@ -5200,6 +5536,8 @@
                         (__tl-project-field
                           (__tl-box-place walk-state.records)
                           len)
+                        canonical-build.symbols
+                        canonical-build.len
                         complete
                         paths-out
                         path-count
@@ -5353,6 +5691,8 @@
                 source-index.owner-arena
                 source-index.records
                 source-index.len
+                source-index.canonical-symbols
+                source-index.canonical-symbol-len
                 false
                 source-index.paths
                 source-index.path-len
@@ -6345,6 +6685,17 @@
                       (compiler-semantic-source-index-get
                         (& second)
                         second-param-index)]
+                    [second-generated-index : i64
+                      (compiler-semantic-source-index-find-record
+                        (& second)
+                        ""
+                        "generated-value"
+                        CompilerSemanticRecordRole.Definition
+                        -1)]
+                    [second-generated : CompilerSemanticRecord
+                      (compiler-semantic-source-index-get
+                        (& second)
+                        second-generated-index)]
                     [second-symbol : CompilerSemanticSymbolId
                       second-answer.symbol]
                     [invalid-keeps-first : bool
@@ -6502,6 +6853,11 @@
                         (compiler-semantic-symbol-id-eq?
                           pattern-definition.symbol
                           pattern-use.symbol)
+                        (compiler-semantic-source-index-records-canonical-eq?
+                          (& first)
+                          (& pattern-definition)
+                          (& first)
+                          (& pattern-use))
                         (compiler-semantic-record-span-text-eq?
                           source
                           pattern-definition
@@ -6520,9 +6876,15 @@
                           answer-symbol.declaration-ordinal
                           second-symbol.declaration-ordinal)
                         (>= second-param-index 0)
+                        (>= second-generated-index 0)
                         (compiler-semantic-symbol-id-eq?
                           param-definition.symbol
                           second-param.symbol)
+                        (compiler-semantic-source-index-records-canonical-eq?
+                          (& first)
+                          (& generated)
+                          (& second)
+                          (& second-generated))
                         (= answer-start second-answer.span.start-byte)
                         invalid-keeps-first
                         (compiler-check-semantic-index-base-visibility-ok?
@@ -8045,10 +8407,539 @@
     (compiler-check-semantic-index-partial-diagnostics-ok?)
     (compiler-check-semantic-index-partial-edge-cases-ok?)))
 
+(define (compiler-check-semantic-index-canonical-cross-snapshot-ok?) : bool
+  (let
+    [first-path : String "src/tests/semantic_canonical_entry_a.tl"]
+    [second-path : String "src/tests/semantic_canonical_entry_b.tl"]
+    [shared-path : String "src/tests/semantic/canonical/shared.tl"]
+    [noise-path : String "src/tests/semantic/canonical/noise.tl"]
+    [first-source : String
+      "(module semantic.canonical.entry_a)
+(import semantic.canonical.noise as noise)
+(import semantic.canonical.shared as chosen)
+(define (consume [local : i64]) : i64
+  (+
+    noise.shared-value
+    (chosen.function (chosen.macro chosen.shared-value))
+    local))"]
+    [second-source : String
+      "(module semantic.canonical.entry_b)
+(import semantic.canonical.shared as shared)
+(import semantic.canonical.noise as noise)
+(define (consume [local : i64]) : i64
+  (+
+    (shared.function (shared.macro shared.shared-value))
+    noise.shared-value
+    local))"]
+    [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
+    (match (compiler-check-source-index-with-roots
+      first-path
+      first-source
+      (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        (let
+          [first-shared-definition-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& first)
+              shared-path
+              "shared-value")]
+          [first-shared-use-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              first-path
+              "shared-value"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [first-noise-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& first)
+              noise-path
+              "shared-value")]
+          [first-local-index : i64
+            (compiler-semantic-source-index-find-record
+              (& first)
+              first-path
+              "local"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [first-function-definition-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& first)
+              shared-path
+              "function")]
+          [first-function-use-index : i64
+            (compiler-semantic-source-index-find-record
+              (& first)
+              first-path
+              "function"
+              CompilerSemanticRecordRole.Use
+              -1)]
+          [first-macro-definition-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& first)
+              shared-path
+              "macro")]
+          [first-macro-use-index : i64
+            (compiler-semantic-source-index-find-record
+              (& first)
+              first-path
+              "macro"
+              CompilerSemanticRecordRole.Use
+              -1)]
+          [first-type-definition-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& first)
+              shared-path
+              "SharedPair")]
+          (match (compiler-check-source-index-with-roots
+            second-path
+            second-source
+            (svec.new))
+            [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
+              (let
+                [second-shared-definition-index : i64
+                  (compiler-semantic-source-index-find-definition
+                    (& second)
+                    shared-path
+                    "shared-value")]
+                [second-shared-use-index : i64
+                  (compiler-semantic-source-index-find-name-occurrence
+                    (& second)
+                    second-path
+                    "shared-value"
+                    CompilerSemanticRecordRole.Use
+                    0)]
+                [second-local-index : i64
+                  (compiler-semantic-source-index-find-record
+                    (& second)
+                    second-path
+                    "local"
+                    CompilerSemanticRecordRole.Definition
+                    0)]
+                [second-function-definition-index : i64
+                  (compiler-semantic-source-index-find-definition
+                    (& second)
+                    shared-path
+                    "function")]
+                [second-function-use-index : i64
+                  (compiler-semantic-source-index-find-record
+                    (& second)
+                    second-path
+                    "function"
+                    CompilerSemanticRecordRole.Use
+                    -1)]
+                [second-macro-definition-index : i64
+                  (compiler-semantic-source-index-find-definition
+                    (& second)
+                    shared-path
+                    "macro")]
+                [second-macro-use-index : i64
+                  (compiler-semantic-source-index-find-record
+                    (& second)
+                    second-path
+                    "macro"
+                    CompilerSemanticRecordRole.Use
+                    -1)]
+                [second-type-definition-index : i64
+                  (compiler-semantic-source-index-find-definition
+                    (& second)
+                    shared-path
+                    "SharedPair")]
+                [first-shared-definition : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-shared-definition-index)]
+                [first-shared-use : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-shared-use-index)]
+                [first-noise : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-noise-index)]
+                [first-local : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-local-index)]
+                [second-shared-definition : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-shared-definition-index)]
+                [second-shared-use : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-shared-use-index)]
+                [second-local : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-local-index)]
+                [first-function-definition : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-function-definition-index)]
+                [first-function-use : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-function-use-index)]
+                [first-macro-definition : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-macro-definition-index)]
+                [first-macro-use : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-macro-use-index)]
+                [first-type-definition : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& first)
+                    first-type-definition-index)]
+                [second-function-definition : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-function-definition-index)]
+                [second-function-use : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-function-use-index)]
+                [second-macro-definition : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-macro-definition-index)]
+                [second-macro-use : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-macro-use-index)]
+                [second-type-definition : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-type-definition-index)]
+                [ok : bool
+                  (and
+                    (>= first-shared-definition-index 0)
+                    (>= first-shared-use-index 0)
+                    (>= first-noise-index 0)
+                    (>= first-local-index 0)
+                    (>= second-shared-definition-index 0)
+                    (>= second-shared-use-index 0)
+                    (>= second-local-index 0)
+                    (>= first-function-definition-index 0)
+                    (>= first-function-use-index 0)
+                    (>= first-macro-definition-index 0)
+                    (>= first-macro-use-index 0)
+                    (>= first-type-definition-index 0)
+                    (>= second-function-definition-index 0)
+                    (>= second-function-use-index 0)
+                    (>= second-macro-definition-index 0)
+                    (>= second-macro-use-index 0)
+                    (>= second-type-definition-index 0)
+                    ;; The deliberate load-order change proves the old dense
+                    ;; identity is not a cross-snapshot contract.
+                    (not
+                      (compiler-semantic-symbol-id-eq?
+                        first-shared-definition.symbol
+                        second-shared-definition.symbol))
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& first)
+                      (& first-shared-definition)
+                      (& second)
+                      (& second-shared-definition))
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& first)
+                      (& first-shared-definition)
+                      (& first)
+                      (& first-shared-use))
+                    (=
+                      first-shared-definition.canonical-index
+                      first-shared-use.canonical-index)
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& second)
+                      (& second-shared-definition)
+                      (& second)
+                      (& second-shared-use))
+                    (=
+                      second-shared-definition.canonical-index
+                      second-shared-use.canonical-index)
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& first)
+                      (& first-function-definition)
+                      (& second)
+                      (& second-function-definition))
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& first)
+                      (& first-function-definition)
+                      (& first)
+                      (& first-function-use))
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& second)
+                      (& second-function-definition)
+                      (& second)
+                      (& second-function-use))
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& first)
+                      (& first-macro-definition)
+                      (& second)
+                      (& second-macro-definition))
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& first)
+                      (& first-macro-definition)
+                      (& first)
+                      (& first-macro-use))
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& second)
+                      (& second-macro-definition)
+                      (& second)
+                      (& second-macro-use))
+                    (compiler-semantic-source-index-records-canonical-eq?
+                      (& first)
+                      (& first-type-definition)
+                      (& second)
+                      (& second-type-definition))
+                    (not
+                      (compiler-semantic-source-index-records-canonical-eq?
+                        (& first)
+                        (& first-shared-definition)
+                        (& first)
+                        (& first-noise)))
+                    (not
+                      (compiler-semantic-source-index-records-canonical-eq?
+                        (& first)
+                        (& first-local)
+                        (& second)
+                        (& second-local)))
+                    (<
+                      (compiler-semantic-source-index-canonical-symbol-count
+                        (& first))
+                      (compiler-semantic-source-index-len (& first)))
+                    (>
+                      (compiler-semantic-source-index-canonical-key-byte-count
+                        (& first))
+                      0))]
+                (begin
+                  (compiler-semantic-source-index-release! (&mut second))
+                  (compiler-semantic-source-index-release! (&mut first))
+                  (and
+                    ok
+                    (=
+                      owners-before
+                      (compiler-semantic-source-index-live-owner-count)))))]
+            [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+              (begin
+                (compiler-semantic-source-index-release! (&mut partial))
+                (compiler-semantic-source-index-release! (&mut first))
+                false)]
+            [(ResultCompilerCheckWithSemanticIndex.Err _)
+              (begin
+                (compiler-semantic-source-index-release! (&mut first))
+                false)]))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-canonical-shift-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_canonical_shift.tl"]
+    [first-source : String
+      "(module semantic.canonical.shift)
+(define steady : i64 1)"]
+    [second-source : String
+      "(module semantic.canonical.shift)
+;; A harmless edit moves the declaration without changing its owner.
+
+(define steady : i64 1)"]
+    (match (compiler-check-source-index-with-roots path first-source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        (match (compiler-check-source-index-with-roots
+          path
+          second-source
+          (svec.new))
+          [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
+            (let
+              [first-record : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  (compiler-semantic-source-index-find-definition
+                    (& first)
+                    path
+                    "steady"))]
+              [second-record : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& second)
+                  (compiler-semantic-source-index-find-definition
+                    (& second)
+                    path
+                    "steady"))]
+              [ok : bool
+                (and
+                  (!=
+                    first-record.span.start-byte
+                    second-record.span.start-byte)
+                  (compiler-semantic-source-index-records-canonical-eq?
+                    (& first)
+                    (& first-record)
+                    (& second)
+                    (& second-record)))]
+              (begin
+                (compiler-semantic-source-index-release! (&mut second))
+                (compiler-semantic-source-index-release! (&mut first))
+                ok))]
+          [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+            (begin
+              (compiler-semantic-source-index-release! (&mut partial))
+              (compiler-semantic-source-index-release! (&mut first))
+              false)]
+          [(ResultCompilerCheckWithSemanticIndex.Err _)
+            (begin
+              (compiler-semantic-source-index-release! (&mut first))
+              false)])]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-canonical-collision-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_canonical_collision.tl"]
+    [source : String
+      "(module semantic.canonical.collision)
+(define Same : i64 1)
+(defenum Same (Only))
+(define (left [local : i64]) : i64 local)
+(define (right [local : i64]) : i64 local)"]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [value-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "Same"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [type-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "Same"
+              CompilerSemanticRecordRole.Definition
+              1)]
+          [left-local-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "local"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [right-local-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "local"
+              CompilerSemanticRecordRole.Definition
+              1)]
+          [value : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& index) value-index)]
+          [type-record : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& index) type-index)]
+          [left-local : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& index) left-local-index)]
+          [right-local : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& index) right-local-index)]
+          [ok : bool
+            (and
+              (>= value-index 0)
+              (>= type-index 0)
+              (>= left-local-index 0)
+              (>= right-local-index 0)
+              (not
+                (compiler-semantic-source-index-records-canonical-eq?
+                  (& index)
+                  (& value)
+                  (& index)
+                  (& type-record)))
+              (not
+                (compiler-semantic-source-index-records-canonical-eq?
+                  (& index)
+                  (& left-local)
+                  (& index)
+                  (& right-local))))]
+          (begin
+            (compiler-semantic-source-index-release! (&mut index))
+            ok))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-canonical-rename-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_canonical_rename.tl"]
+    (match (compiler-check-source-index-with-roots
+      path
+      "(module semantic.canonical.rename)\n(define before : i64 1)"
+      (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        (match (compiler-check-source-index-with-roots
+          path
+          "(module semantic.canonical.rename)\n(define after : i64 1)"
+          (svec.new))
+          [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
+            (let
+              [first-record : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  (compiler-semantic-source-index-find-definition
+                    (& first)
+                    path
+                    "before"))]
+              [second-record : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& second)
+                  (compiler-semantic-source-index-find-definition
+                    (& second)
+                    path
+                    "after"))]
+              [ok : bool
+                (not
+                  (compiler-semantic-source-index-records-canonical-eq?
+                    (& first)
+                    (& first-record)
+                    (& second)
+                    (& second-record)))]
+              (begin
+                (compiler-semantic-source-index-release! (&mut second))
+                (compiler-semantic-source-index-release! (&mut first))
+                ok))]
+          [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+            (begin
+              (compiler-semantic-source-index-release! (&mut partial))
+              (compiler-semantic-source-index-release! (&mut first))
+              false)]
+          [(ResultCompilerCheckWithSemanticIndex.Err _)
+            (begin
+              (compiler-semantic-source-index-release! (&mut first))
+              false)])]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-canonical-ok?) : bool
+  (and
+    (compiler-check-semantic-index-canonical-cross-snapshot-ok?)
+    (compiler-check-semantic-index-canonical-shift-ok?)
+    (compiler-check-semantic-index-canonical-collision-ok?)
+    (compiler-check-semantic-index-canonical-rename-ok?)))
+
 (define (compiler-check-semantic-index-ok?) : bool
   (and
     (compiler-check-semantic-index-base-ok?)
     (compiler-check-semantic-index-macro-call-sites-ok?)
     (compiler-check-semantic-index-inferred-locals-ok?)
     (compiler-check-semantic-index-dense-scopes-ok?)
-    (compiler-check-semantic-index-partial-ok?)))
+    (compiler-check-semantic-index-partial-ok?)
+    (compiler-check-semantic-index-canonical-ok?)))

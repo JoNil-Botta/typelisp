@@ -317,7 +317,7 @@
         (compiler_driver_core.compiler-driver-target-cfgs
           (backend.CompilerBackendTarget.Linux)
           (parser.compiler-cfg-empty)))
-        [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _) true]
+        [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _ _) true]
         [(compiler_driver_core.ResultCompilerDriverLowered.Err _) false]))))
 
 (define (compiler-lower-smoke-macro-prepass-diagnostic-path-ok?) : bool
@@ -356,7 +356,7 @@
             (compiler_driver_core.compiler-driver-target-cfgs
               (backend.CompilerBackendTarget.Linux)
               (parser.compiler-cfg-empty)))
-            [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _)
+            [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _ _)
               false]
             [(compiler_driver_core.ResultCompilerDriverLowered.Err diag-box)
               (let

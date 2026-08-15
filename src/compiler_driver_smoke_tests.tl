@@ -772,14 +772,16 @@
         spans-a
         pools-a
         _profile-a
-        backend-state-a)
+        backend-state-a
+        _typecheck-a)
       (match lowered-b
         [(compiler_driver_core.ResultCompilerDriverLowered.Ok
             program-b
             spans-b
             pools-b
             _profile-b
-            backend-state-b)
+            backend-state-b
+            _typecheck-b)
           (let
             [intern-a : ci.InternCompatState
               (compiler_backend.compiler-backend-state-exact-intern
@@ -1019,7 +1021,8 @@
                 spans-a
                 pools-a
                 _profile-a
-                _backend-a)
+                _backend-a
+                _typecheck-a)
               (let
                 [pools-b : compiler_ast_types.AstNodePoolContext
                   (compiler_ast_types.ast-node-pool-context-clone-types-only
@@ -1043,6 +1046,8 @@
                       (compiler_driver_core.compiler-driver-state-profile
                         state-b)
                       (compiler_driver_core.compiler-driver-state-backend
+                        state-b)
+                      (compiler_driver_core.compiler-driver-state-typecheck
                         state-b)))))]
             [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
               (compiler-driver-reader-context-smoke-fail
@@ -1116,6 +1121,53 @@
                 (= actual target)]
               [(compiler_typecheck_core.TcMaybeNameId.No) false])))))))
 
+;; The lowered-result boundary must reset the job that produced the IR. Before
+;; the job traveled with ResultCompilerDriverLowered, this helper initialized
+;; and reset the unrelated serial adapter instead, retaining a second 2.16 MiB
+;; lazy-import table in every state-owned batch process.
+(define (compiler-driver-post-lower-typecheck-owner-ok?) : bool
+  (let
+    [state-a : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [state-b : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [job-a : compiler_typecheck_core.TcJobState
+      (compiler_driver_core.compiler-driver-state-typecheck state-a)]
+    [job-b : compiler_typecheck_core.TcJobState
+      (compiler_driver_core.compiler-driver-state-typecheck state-b)]
+    [macro-a : compiler_typecheck_core.TcMacroState
+      (compiler_typecheck_core.tc-job-state-macro-state job-a)]
+    [macro-b : compiler_typecheck_core.TcMacroState
+      (compiler_typecheck_core.tc-job-state-macro-state job-b)]
+    (begin
+      (compiler_driver_core.compiler-driver-state-install-pools! state-a)
+      (compiler_driver_core.compiler-driver-state-install-interns! state-a)
+      (compiler_driver_core.compiler-driver-state-reset-file-state! state-a)
+      (compiler_typecheck_core.tc-lazy-import-stub-record-for-job!
+        job-a
+        11
+        12
+        13
+        true)
+      (compiler_driver_core.compiler-driver-state-install-pools! state-b)
+      (compiler_driver_core.compiler-driver-state-install-interns! state-b)
+      (compiler_driver_core.compiler-driver-state-reset-file-state! state-b)
+      (compiler_typecheck_core.tc-lazy-import-stub-record-for-job!
+        job-b
+        11
+        12
+        14
+        false)
+      (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower-for-job!
+        job-a)
+      (and
+        (=
+          (compiler_typecheck_core.tc-lazy-import-stub-count-for-state macro-a)
+          0)
+        (=
+          (compiler_typecheck_core.tc-lazy-import-stub-count-for-state macro-b)
+          1)))))
+
 (define (compiler-driver-typecheck-cache-owner-smoke-ok?) : bool
   (let
     [state-a : compiler_driver_core.CompilerDriverState
@@ -1173,7 +1225,8 @@
             module-b
             name-b)
           72)
-        (compiler-driver-lazy-import-reset-source-names-ok?)))))
+        (compiler-driver-lazy-import-reset-source-names-ok?)
+        (compiler-driver-post-lower-typecheck-owner-ok?)))))
 
 ;; Base-transient A/B interleaving smoke (refs #4723). Builtin/CTFE id state
 ;; and lower scratch/IR arenas are owned by each driver state: a state-owned

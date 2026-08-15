@@ -3,11 +3,11 @@
 (define shared-value : i64
   41)
 
-(define (shared-function [value : i64]) : i64
+(define (function [value : i64]) : i64
   (+ shared-value value))
 
 (defstruct SharedPair
   (value i64))
 
-(defmacro (shared-macro [value : Expr]) : Expr
+(defmacro (macro [value : Expr]) : Expr
   value)

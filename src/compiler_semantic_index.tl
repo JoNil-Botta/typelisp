@@ -8391,7 +8391,7 @@
 (define (consume [local : i64]) : i64
   (+
     noise.shared-value
-    (chosen.shared-function (chosen.shared-macro chosen.shared-value))
+    (chosen.function (chosen.macro chosen.shared-value))
     local))"]
     [second-source : String
       "(module semantic.canonical.entry_b)
@@ -8399,7 +8399,7 @@
 (import semantic.canonical.noise as noise)
 (define (consume [local : i64]) : i64
   (+
-    (shared.shared-function (shared.shared-macro shared.shared-value))
+    (shared.function (shared.macro shared.shared-value))
     noise.shared-value
     local))"]
     [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
@@ -8437,24 +8437,24 @@
             (compiler-semantic-source-index-find-definition
               (& first)
               shared-path
-              "shared-function")]
+              "function")]
           [first-function-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
               first-path
-              "shared-function"
+              "function"
               CompilerSemanticRecordRole.Use
               -1)]
           [first-macro-definition-index : i64
             (compiler-semantic-source-index-find-definition
               (& first)
               shared-path
-              "shared-macro")]
+              "macro")]
           [first-macro-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
               first-path
-              "shared-macro"
+              "macro"
               CompilerSemanticRecordRole.Use
               -1)]
           [first-type-definition-index : i64
@@ -8491,24 +8491,24 @@
                   (compiler-semantic-source-index-find-definition
                     (& second)
                     shared-path
-                    "shared-function")]
+                    "function")]
                 [second-function-use-index : i64
                   (compiler-semantic-source-index-find-record
                     (& second)
                     second-path
-                    "shared-function"
+                    "function"
                     CompilerSemanticRecordRole.Use
                     -1)]
                 [second-macro-definition-index : i64
                   (compiler-semantic-source-index-find-definition
                     (& second)
                     shared-path
-                    "shared-macro")]
+                    "macro")]
                 [second-macro-use-index : i64
                   (compiler-semantic-source-index-find-record
                     (& second)
                     second-path
-                    "shared-macro"
+                    "macro"
                     CompilerSemanticRecordRole.Use
                     -1)]
                 [second-type-definition-index : i64

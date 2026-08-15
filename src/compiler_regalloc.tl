@@ -34144,9 +34144,9 @@
     ;; A call result becomes live at the end of the instruction. A preserved
     ;; scratch home may overlap ordinary live-through inputs, but restoring it
     ;; over the just-written result would silently discard the call result.
-    ;; Keep result homes hard-excluded. Indirect callees are also consumed
-    ;; throughout argument staging; the CallTarget role explicitly removes the
-    ;; exact callee home when that self-reuse is valid.
+    ;; Keep result homes hard-excluded. An indirect callee may also be saved
+    ;; before argument staging when its home overlaps an ABI destination; the
+    ;; CallTarget role explicitly removes its exact home when self-reuse is valid.
     [(ir.CompilerIrInstr.Call dst _ _ _)
       (compiler-reg-scratch-location-registers assignments dst)]
     [(ir.CompilerIrInstr.CallIndirect dst callee _ _)

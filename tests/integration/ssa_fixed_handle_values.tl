@@ -6,6 +6,48 @@
 (define (ssa-handle-twice [value : i64]) : i64
   (* value 2))
 
+(define (ssa-handle-first-f32
+  [a : f32]
+  [_b : f32]
+  [_c : f32]
+  [_d : f32]
+  [_e : f32]
+  [_f : f32]
+  [_g : f32]
+  [_h : f32]
+  [_i : f32]) : f32
+  a)
+
+(define (ssa-handle-ninth-f32
+  [_a : f32]
+  [_b : f32]
+  [_c : f32]
+  [_d : f32]
+  [_e : f32]
+  [_f : f32]
+  [_g : f32]
+  [_h : f32]
+  [i : f32]) : f32
+  i)
+
+(define (ssa-handle-choose-f32x9
+  [cond : bool]
+  [left : (-> f32 f32 f32 f32 f32 f32 f32 f32 f32 f32)]
+  [right : (-> f32 f32 f32 f32 f32 f32 f32 f32 f32 f32)]) : (->
+    f32
+    f32
+    f32
+    f32
+    f32
+    f32
+    f32
+    f32
+    f32
+    f32)
+  (if cond
+    left
+    right))
+
 (define (ssa-handle-choose-fn
   [cond : bool]
   [left : (-> i64 i64)]
@@ -80,6 +122,8 @@
       (ssa-handle-choose-fn true ssa-handle-inc ssa-handle-twice)]
     [chosen-false : (-> i64 i64)
       (ssa-handle-choose-fn false ssa-handle-inc ssa-handle-twice)]
+    [chosen-f32x9 : (-> f32 f32 f32 f32 f32 f32 f32 f32 f32 f32)
+      (ssa-handle-choose-f32x9 true ssa-handle-first-f32 ssa-handle-ninth-f32)]
     (if (and
       (= (chosen-true 3) 6)
       (= (chosen-false 3) 4)
@@ -92,6 +136,7 @@
       (= (ssa-handle-dyn-array-score true) 42)
       (= (ssa-handle-dyn-array-score false) 42)
       (= (ssa-handle-box-score true) 42)
-      (= (ssa-handle-box-score false) 42))
+      (= (ssa-handle-box-score false) 42)
+      (= (chosen-f32x9 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0) 1.0))
       42
       1)))

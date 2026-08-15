@@ -54944,6 +54944,33 @@
       backend-state)
     planned))
 
+(define (compiler-backend-indirect-call-callee-arg-overlap?
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [func : compiler_ir_types.CompilerIrValue]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [backend-state : CompilerBackendState]) : bool
+  (let
+    [home : String
+      (compiler-backend-value-register-home backend-state assignments func)]
+    [index : i64 1]
+    [overlap : bool false]
+    (begin
+      ;; Slot zero is the hidden closure environment. Conservatively scan the
+      ;; remaining GP argument bank whenever there is an explicit argument: a
+      ;; register-group can consume more than one slot, while float-only calls
+      ;; merely take this uncommon preservation path unnecessarily.
+      (while (and
+        (> (compiler-backend-call-args-count args) 0)
+        (< index (compiler-backend-call-register-count target))
+        (not overlap))
+        (begin
+          (match (compiler-backend-target-arg-reg target index)
+            [(ResultBackendReg.Ok reg) (set! overlap (string.eq home reg))]
+            [(ResultBackendReg.Err _) unit])
+          (set! index (+ index 1))))
+      overlap)))
+
 (define (compiler-backend-emit-indirect-call-with-arg-assignments
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -55046,16 +55073,25 @@
                             result-store)
                           "")))]
                   [_
-                    ;; Materialize the closure pointer before arg marshalling.
-                    ;; A register-resident callee may occupy the first explicit
-                    ;; argument register (the hidden environment uses slot zero),
-                    ;; so loading it afterward could observe the staged argument
-                    ;; instead. The planned target is live across the argument
-                    ;; moves and excludes their ABI registers.
+                    ;; Normally materialize the closure pointer after argument
+                    ;; marshalling, so the marshalling scratch remains free to
+                    ;; stage stack/group values. A register-resident callee can
+                    ;; itself occupy an explicit argument register, though. Save
+                    ;; that uncommon overlap to cycle-temp slot 1 before args
+                    ;; (slot 0 belongs to parallel arg moves), then reload it
+                    ;; afterward. This avoids making any GP scratch live across
+                    ;; the whole marshalling sequence.
                     (let
                       [scav-clo : String
                         (compiler-backend-scavenge-call-target-reg
                           planned-target
+                          backend-state)]
+                      [overlap : bool
+                        (compiler-backend-indirect-call-callee-arg-overlap?
+                          target
+                          assignments
+                          func
+                          args
                           backend-state)]
                       (match (compiler-backend-emit-load-value-with-plan
                         assignments
@@ -55063,11 +55099,8 @@
                         scav-clo
                         backend-state)
                         [(ResultCompilerBackend.Ok func-asm)
-                          (ResultCompilerBackend.Ok
-                            (str_cat.str-cat
-                              (compiler-backend-emit-call-space-sub call-space)
-                              func-asm
-                              args-asm
+                          (let
+                            [call-tail : String
                               (str_cat.str-cat
                                 "    movq 8("
                                 scav-clo
@@ -55080,7 +55113,39 @@
                                   (compiler-backend-emit-call-space-add
                                     call-space)
                                   result-store)
-                                "")))]
+                                "")]
+                            (if overlap
+                              (let
+                                [slot : String
+                                  (compiler-backend-cycle-temp-slot-with-backend-state
+                                    backend-state
+                                    1)]
+                                (ResultCompilerBackend.Ok
+                                  (str_cat.str-cat
+                                    (compiler-backend-emit-call-space-sub
+                                      call-space)
+                                    func-asm
+                                    (str_cat.str-cat
+                                      "    movq "
+                                      scav-clo
+                                      ", "
+                                      slot
+                                      "\n")
+                                    args-asm
+                                    (str_cat.str-cat
+                                      "    movq "
+                                      slot
+                                      ", "
+                                      scav-clo
+                                      "\n")
+                                    call-tail)))
+                              (ResultCompilerBackend.Ok
+                                (str_cat.str-cat
+                                  (compiler-backend-emit-call-space-sub
+                                    call-space)
+                                  args-asm
+                                  func-asm
+                                  call-tail))))]
                         [(ResultCompilerBackend.Err message)
                           (ResultCompilerBackend.Err
                             (box
@@ -55304,9 +55369,9 @@
 (define (compiler-backend-scavenge-call-target-reg
   [planned : String]
   [backend-state : CompilerBackendState]) : String
-  ;; Indirect call targets remain live throughout argument marshalling. Do not
-  ;; use pooled caller-arg candidates, and keep %r11 available for ABI/runtime
-  ;; clobber semantics instead of staging.
+  ;; The final target load follows argument marshalling, so it must not clobber
+  ;; any placed argument. Keep pooled caller-arg candidates unavailable and
+  ;; reserve %r11 for ABI/runtime clobber semantics.
   (if (string.eq planned "")
     (compiler-backend-scavenge-reg-here
       (compiler-backend-c-abi-stage-exclude-with "%r11")

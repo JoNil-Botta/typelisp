@@ -3013,30 +3013,20 @@
   [module : String]
   [module-id : i64]
   [summary : CompilerTypecheckSummary]) : bool
-  (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    (begin
-      (tc-prefix-snapshot-cache-ensure-for-state! state)
-      (unsafe
-        (arena.tl_arena_set
-          (tc-prefix-snapshot-cache-arena-handle-for-state state)))
+  (begin
+    (tc-prefix-snapshot-cache-ensure-for-state! state)
+    (in-arena
+      (arena.Arena (tc-prefix-snapshot-cache-arena-handle-for-state state))
       (let
         [persistent-key : String (string.copy (& key))]
         [persistent-module : String (string.copy (& module))]
-        [stored : bool
-          (tc-prefix-snapshot-cache-store-for-state
-            state
-            persistent-key
-            count
-            persistent-module
-            module-id
-            summary)]
-        [cache-head : i64 (arena.tl_arena_current)]
-        (begin
-          (set! (array-ref state.arena 0) cache-head)
-          (unsafe
-            (arena.tl_arena_set prev-arena))
-          stored)))))
+        (tc-prefix-snapshot-cache-store-for-state
+          state
+          persistent-key
+          count
+          persistent-module
+          module-id
+          summary)))))
 
 ;; Serial/test compatibility surface. These adapters are intentionally the only
 ;; prefix-cache APIs that consult the serial loader selector.
@@ -62163,7 +62153,6 @@
   [state : TcMacroState]
   [macro-key : (& macro-key str)]) : String
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64
       (if (= (tc-macro-proof-field state qualified-arena) 0)
         (begin
@@ -62173,21 +62162,7 @@
             (arena.tl_arena_make_small))
           (tc-macro-proof-field state qualified-arena))
         (tc-macro-proof-field state qualified-arena))]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [copied : String (string.copy macro-key)]
-    (begin
-      (let
-        [head : i64 (arena.tl_arena_current)]
-        (begin
-          (tc-macro-proof-set! state qualified-arena head)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                head
-                previous)))))
-      copied)))
+    (in-arena (arena.Arena owner) (string.copy macro-key))))
 
 (define (text-copy [text : (& text str)]) : String
   (text-copy-for-state (tc-job-state-macro-state (tc-serial-job-state)) text))

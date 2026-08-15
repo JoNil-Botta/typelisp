@@ -205,8 +205,9 @@
   (expr-list-empty))
 
 ;: Prepend `head` to an ordered expression argument list during macro CTFE.
-(define (expr-list-cons [head : Expr] [tail : ExprList]) : ExprList
-  (expr-list-cons head tail))
+(define (expr-list-cons [_head : Expr] [_tail : ExprList]) : ExprList
+  (comptime-error
+    "expr-list-cons CTFE intrinsic reached without compiler interception"))
 
 ;: Build an ordinary call expression from a callee expression and ordered arguments.
 (define (expr-call [callee : Expr] [args : ExprList]) : Expr
@@ -287,10 +288,11 @@
 ;: sequence primitive, so user macros can construct conditional chains without
 ;: recursively emitting macro calls.
 (define (expr-clause-list-fold-if
-  [items : ExprClauseList]
-  [missing-final : Expr]
-  [else-not-final : Expr]) : Expr
-  (expr-clause-list-fold-if items missing-final else-not-final))
+  [_items : ExprClauseList]
+  [_missing-final : Expr]
+  [_else-not-final : Expr]) : Expr
+  (comptime-error
+    "expr-clause-list-fold-if CTFE intrinsic reached without compiler interception"))
 
 ;: Build a wildcard match pattern during macro CTFE.
 (define (pattern-wildcard) : Pattern
@@ -316,8 +318,9 @@
   (pattern-list-empty))
 
 ;: Prepend a pattern to a pattern list.
-(define (pattern-list-cons [head : Pattern] [tail : PatternList]) : PatternList
-  (pattern-list-cons head tail))
+(define (pattern-list-cons [_head : Pattern] [_tail : PatternList]) : PatternList
+  (comptime-error
+    "pattern-list-cons CTFE intrinsic reached without compiler interception"))
 
 ;: Build `count` binding patterns named `prefix0` through `prefix<count - 1>`.
 (define (pattern-list-bindings [prefix : String] [count : i64]) : PatternList
@@ -332,8 +335,9 @@
   (match-arm-list-empty))
 
 ;: Prepend a match arm to a match arm list.
-(define (match-arm-list-cons [head : MatchArm] [tail : MatchArmList]) : MatchArmList
-  (match-arm-list-cons head tail))
+(define (match-arm-list-cons [_head : MatchArm] [_tail : MatchArmList]) : MatchArmList
+  (comptime-error
+    "match-arm-list-cons CTFE intrinsic reached without compiler interception"))
 
 ;: Build a match expression from a scrutinee expression and generated arms.
 (define (expr-match [scrutinee : Expr] [arms : MatchArmList]) : Expr
@@ -531,8 +535,9 @@
 ;: Convert clause first expressions into an expression list.
 ;: This remains intrinsic because conversion rebuilds bracket-clause syntax
 ;: expressions with compiler-owned provenance.
-(define (expr-clause-list->expr-list [items : ExprClauseList]) : ExprList
-  (expr-clause-list->expr-list items))
+(define (expr-clause-list->expr-list [_items : ExprClauseList]) : ExprList
+  (comptime-error
+    "expr-clause-list->expr-list CTFE intrinsic reached without compiler interception"))
 
 ;: Return the user-facing binding name from a binding clause.
 (define (expr-binding-clause-name [clause : ExprBindingClause]) : String

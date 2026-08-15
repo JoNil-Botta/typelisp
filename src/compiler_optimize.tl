@@ -1810,18 +1810,24 @@
     [(ir.CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
 
-(define (opt-fold-instrs
+(define (opt-fold-instrs!
   [type-segment-bases : i64]
   [env : OptConstEnv]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (opt-fold-instr type-segment-bases env instr)
-        [(OptInstrResult.Result new-env new-instr)
-          (ir.compiler-ir-instr-cons
-            new-instr
-            (opt-fold-instrs type-segment-bases new-env (__tl-box-place rest)))])]))
+  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [count : i64 instrs.len]
+    [state : OptConstEnv env]
+    [index : i64 0]
+    (while (< index count)
+      (match (opt-fold-instr
+        type-segment-bases
+        state
+        (clone (array-ref instrs.slots index)))
+        [(OptInstrResult.Result next-state rewritten)
+          (begin
+            (set! (array-ref instrs.slots index) rewritten)
+            (set! state next-state)
+            (set! index (+ index 1)))]))))
 
 (define (opt-strength-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match instr
@@ -1933,17 +1939,20 @@
     [(ir.CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
 
-(define (opt-strength-instrs
+(define (opt-strength-instrs!
   [env : OptConstEnv]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (opt-strength-instr env instr)
-        [(OptInstrResult.Result new-env new-instr)
-          (ir.compiler-ir-instr-cons
-            new-instr
-            (opt-strength-instrs new-env (__tl-box-place rest)))])]))
+  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [count : i64 instrs.len]
+    [state : OptConstEnv env]
+    [index : i64 0]
+    (while (< index count)
+      (match (opt-strength-instr state (clone (array-ref instrs.slots index)))
+        [(OptInstrResult.Result next-state rewritten)
+          (begin
+            (set! (array-ref instrs.slots index) rewritten)
+            (set! state next-state)
+            (set! index (+ index 1)))]))))
 
 ;; --- dead-code elimination ---------------------------------------------------
 ;;
@@ -2220,16 +2229,6 @@
     ;; `CompilerIrInstr.Alloc` has no operand uses; `CompilerIrInstr.Jump` has none either.
     [_ set]))
 
-(define (opt-collect-instrs-uses
-  [set : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrList]) : opt_i64_i64_map.Map
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) set]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (opt-collect-instrs-uses
-        (opt-collect-instr-uses set instr)
-        (__tl-box-place rest))]))
-
 (define (opt-collect-instr-seq-uses-from
   [set : opt_i64_i64_map.Map]
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
@@ -2248,6 +2247,23 @@
   [instrs : ir.CompilerIrInstrSeq]) : opt_i64_i64_map.Map
   (opt-collect-instr-seq-uses-from set instrs.slots 0 instrs.len))
 
+(define (opt-collect-instrs-uses
+  [set : opt_i64_i64_map.Map]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : opt_i64_i64_map.Map
+  (let
+    [state : opt_i64_i64_map.Map set]
+    [index : i64 0]
+    (begin
+      (while (< index instrs.len)
+        (begin
+          (set!
+            state
+            (opt-collect-instr-uses
+              state
+              (clone (array-ref instrs.slots index))))
+          (set! index (+ index 1))))
+      state)))
+
 ;; Division, modulo, and shift can trap at runtime (zero divisor, signed
 ;; MIN / -1, shift count out of range), so a BinOp using one of those operators
 ;; is NOT pure: dropping it as dead would elide the trap the safe-code contract
@@ -2263,12 +2279,6 @@
 (define (opt-instr-alloc-dst? [instr : ir.CompilerIrInstr] [dst : i64]) : bool
   (match instr
     [(ir.CompilerIrInstr.Alloc other _) (= other dst)]
-    [_ false]))
-
-(define (opt-next-adjacent-alloc? [next : ir.CompilerIrInstrList] [dst : i64]) : bool
-  (match next
-    [(ir.CompilerIrInstrList.Cons instr _)
-      (opt-instr-alloc-dst? instr (+ dst 1))]
     [_ false]))
 
 (define (opt-array-prev-adjacent-alloc?
@@ -2287,6 +2297,15 @@
   (if (>= (+ index 1) count)
     false
     (opt-instr-alloc-dst? (array-ref slots (+ index 1)) (+ dst 1))))
+
+(define (opt-array-next-adjacent-alloc-ref?
+  [slots : (& slots (__tl_dyn-array ir.CompilerIrInstr))]
+  [count : i64]
+  [index : i64]
+  [dst : i64]) : bool
+  (if (>= (+ index 1) count)
+    false
+    (opt-instr-alloc-dst? (clone (array-ref slots (+ index 1))) (+ dst 1))))
 
 ;; A pure temporary-producing instruction is dead when its result var is unused.
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
@@ -2346,36 +2365,44 @@
 
 (define (opt-dce-instrs-from
   [set : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrList]
-  [prev-alloc-dst : i64]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (let
-        [rest-list : ir.CompilerIrInstrList (__tl-box-place rest)]
-        (if (opt-instr-dead? set instr)
-          (opt-dce-instrs-from set rest-list -2)
-          (match instr
-            [(ir.CompilerIrInstr.Alloc dst _)
+  [slots : (& slots (__tl_dyn-array ir.CompilerIrInstr))]
+  [count : i64]
+  [index : i64]
+  [prev-alloc-dst : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
+  (if (>= index count)
+    unit
+    (let
+      [instr : ir.CompilerIrInstr (clone (array-ref slots index))]
+      (if (opt-instr-dead? set instr)
+        (opt-dce-instrs-from set slots count (+ index 1) -2 builder)
+        (match instr
+          [(ir.CompilerIrInstr.Alloc dst _)
+            (begin
               (if (and
                 (not (opt-used-contains set dst))
                 (not
                   (or
                     (= prev-alloc-dst (- dst 1))
-                    (opt-next-adjacent-alloc? rest-list dst))))
-                (opt-dce-instrs-from set rest-list dst)
-                (ir.compiler-ir-instr-cons
-                  instr
-                  (opt-dce-instrs-from set rest-list dst)))]
-            [_
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-dce-instrs-from set rest-list -2))])))]))
+                    (opt-array-next-adjacent-alloc-ref? slots count index dst))))
+                unit
+                (ir.compiler-ir-instr-builder-push! builder instr))
+              (opt-dce-instrs-from set slots count (+ index 1) dst builder))]
+          [_
+            (begin
+              (ir.compiler-ir-instr-builder-push! builder instr)
+              (opt-dce-instrs-from set slots count (+ index 1) -2 builder))])))))
 
-(define (opt-dce-instrs
+(define (opt-dce-instrs!
   [set : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (opt-dce-instrs-from set instrs -2))
+  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity instrs.len)]
+    (begin
+      (opt-dce-instrs-from set (& instrs.slots) instrs.len 0 -2 (&mut builder))
+      (set! instrs.slots builder.slots)
+      (set! instrs.len builder.len))))
 
 ;; `make-array` already returns zeroed memory, so a fresh use-count array needs
 ;; no initialising pass. The `opt-used-array-fill` helper existed only to run
@@ -4206,16 +4233,6 @@
             scan
             (+ index 1)
             candidates)]))))
-
-(define (opt-aggregate-instr-list-append
-  [left : ir.CompilerIrInstrList]
-  [right : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match left
-    [(ir.CompilerIrInstrList.Nil) right]
-    [(ir.CompilerIrInstrList.Cons head rest)
-      (ir.compiler-ir-instr-cons
-        head
-        (opt-aggregate-instr-list-append (__tl-box-place rest) right))]))
 
 (define (opt-aggregate-append-blocks!
   [blocks : ir.CompilerIrBlockList]
@@ -6457,26 +6474,6 @@
             (= atrap btrap))]
         [_ false])]))
 
-(define (opt-instr-list-eq
-  [type-segment-bases : i64]
-  [a : ir.CompilerIrInstrList]
-  [b : ir.CompilerIrInstrList]) : bool
-  (match a
-    [(ir.CompilerIrInstrList.Nil)
-      (match b
-        [(ir.CompilerIrInstrList.Nil) true]
-        [_ false])]
-    [(ir.CompilerIrInstrList.Cons ah at)
-      (match b
-        [(ir.CompilerIrInstrList.Cons bh bt)
-          (and
-            (opt-instr-eq type-segment-bases ah bh)
-            (opt-instr-list-eq
-              type-segment-bases
-              (__tl-box-place at)
-              (__tl-box-place bt)))]
-        [_ false])]))
-
 (define (opt-instr-seq-eq-from
   [type-segment-bases : i64]
   [a : ir.CompilerIrInstrSeq]
@@ -7021,18 +7018,24 @@
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]))
 
-(define (opt-cse-instrs
+(define (opt-cse-instrs!
   [type-segment-bases : i64]
   [table : OptExprTable]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (opt-cse-instr type-segment-bases table instr)
-        [(OptCseResult.Result new-table new-instr)
-          (ir.compiler-ir-instr-cons
-            new-instr
-            (opt-cse-instrs type-segment-bases new-table (__tl-box-place rest)))])]))
+  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [count : i64 instrs.len]
+    [state : OptExprTable table]
+    [index : i64 0]
+    (while (< index count)
+      (match (opt-cse-instr
+        type-segment-bases
+        state
+        (clone (array-ref instrs.slots index)))
+        [(OptCseResult.Result next-state rewritten)
+          (begin
+            (set! (array-ref instrs.slots index) rewritten)
+            (set! state next-state)
+            (set! index (+ index 1)))]))))
 
 ;; --- block-local copy propagation -------------------------------------------
 ;;
@@ -7568,15 +7571,20 @@
     [rewritten : ir.CompilerIrInstr (opt-copy-subst-instr env instr)]
     (OptCopyResult.Result (opt-copy-update-env env rewritten) rewritten)))
 
-(define (opt-copy-instrs [env : OptCopyEnv] [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (opt-copy-instr env instr)
-        [(OptCopyResult.Result new-env new-instr)
-          (ir.compiler-ir-instr-cons
-            new-instr
-            (opt-copy-instrs new-env (__tl-box-place rest)))])]))
+(define (opt-copy-instrs!
+  [env : OptCopyEnv]
+  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [count : i64 instrs.len]
+    [state : OptCopyEnv env]
+    [index : i64 0]
+    (while (< index count)
+      (match (opt-copy-instr state (clone (array-ref instrs.slots index)))
+        [(OptCopyResult.Result next-state rewritten)
+          (begin
+            (set! (array-ref instrs.slots index) rewritten)
+            (set! state next-state)
+            (set! index (+ index 1)))]))))
 
 ;; --- block-local redundant bounds-check elimination -------------------------
 ;;
@@ -7862,275 +7870,6 @@
     [(ir.CompilerIrInstr.Switch _ _ _ _) (OptBoundsFacts.Nil)]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (OptBoundsFacts.Nil)]))
 
-(define (opt-bounds-instrs-with-object
-  [type-segment-bases : i64]
-  [facts : OptBoundsFacts]
-  [lengths : OptObjectLengthFact]
-  [ptrs : OptObjectLengthFact]
-  [casts : OptBoundsCastEnv]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(ir.CompilerIrInstr.BoundsCheck index length _)
-          (let
-            [index-key : ir.CompilerIrValue (opt-bounds-cast-canon casts index)]
-            [length-key : ir.CompilerIrValue
-              (opt-bounds-length-value lengths length)]
-            (if (opt-bounds-contains facts index-key length-key)
-              (opt-bounds-instrs-with-object
-                type-segment-bases
-                facts
-                lengths
-                ptrs
-                casts
-                (__tl-box-place rest))
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs-with-object
-                  type-segment-bases
-                  (opt-bounds-add facts index-key length-key)
-                  lengths
-                  ptrs
-                  casts
-                  (__tl-box-place rest)))))]
-        [(ir.CompilerIrInstr.Gep dst base offset ty)
-          (let
-            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
-            [lengths2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var lengths dst)]
-            [ptrs2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var ptrs dst)]
-            [ptrs3 : OptObjectLengthFact
-              (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
-                (match base
-                  [(ir.CompilerIrValue.Var object-var)
-                    (opt-object-length-bind ptrs2 dst object-var)]
-                  [_ ptrs2])
-                ptrs2)]
-            (ir.compiler-ir-instr-cons
-              instr
-              (opt-bounds-instrs-with-object
-                type-segment-bases
-                facts2
-                lengths2
-                ptrs3
-                (opt-bounds-cast-unbind casts dst)
-                (__tl-box-place rest))))]
-        [(ir.CompilerIrInstr.Load dst src ty)
-          (let
-            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
-            [lengths2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var lengths dst)]
-            [ptrs2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var ptrs dst)]
-            [lengths3 : OptObjectLengthFact
-              (if (opt-type-eq type-segment-bases ty (ast.AstType.I64))
-                (match src
-                  [(ir.CompilerIrValue.Var ptr-var)
-                    (match (opt-object-length-lookup ptrs2 ptr-var)
-                      [(option_i64.Some object-var)
-                        (opt-object-length-bind lengths2 dst object-var)]
-                      [(option_i64.None) lengths2])]
-                  [_ lengths2])
-                lengths2)]
-            (ir.compiler-ir-instr-cons
-              instr
-              (opt-bounds-instrs-with-object
-                type-segment-bases
-                facts2
-                lengths3
-                ptrs2
-                (opt-bounds-cast-unbind casts dst)
-                (__tl-box-place rest))))]
-        [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-          (let
-            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
-            [lengths2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var lengths dst)]
-            [ptrs2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var ptrs dst)]
-            [lengths3 : OptObjectLengthFact
-              (if (and
-                (opt-type-eq type-segment-bases from-ty (ast.AstType.I64))
-                (opt-type-eq type-segment-bases to-ty (ast.AstType.U64)))
-                (match src
-                  [(ir.CompilerIrValue.Var length-var)
-                    (match (opt-object-length-lookup lengths2 length-var)
-                      [(option_i64.Some object-var)
-                        (opt-object-length-bind lengths2 dst object-var)]
-                      [(option_i64.None) lengths2])]
-                  [_ lengths2])
-                lengths2)]
-            (ir.compiler-ir-instr-cons
-              instr
-              (opt-bounds-instrs-with-object
-                type-segment-bases
-                facts2
-                lengths3
-                ptrs2
-                (opt-bounds-cast-update
-                  type-segment-bases
-                  casts
-                  dst
-                  src
-                  from-ty
-                  to-ty)
-                (__tl-box-place rest))))]
-        ;; An array element store cannot change any array's LENGTH (in TL a
-        ;; length slot is only ever written by make-array, and user code cannot
-        ;; obtain a raw pointer to it), so the (index, length-token) bounds facts
-        ;; survive it. Only a store whose target is a tracked length-slot pointer
-        ;; (the make-array length write) clears the facts; element stores -- which
-        ;; never alias a length slot -- keep object mode and its facts. This lets a
-        ;; read-then-write of the same slot (qs-swap) drop the write's check.
-        [(ir.CompilerIrInstr.StorePtr ptr _ _)
-          (match ptr
-            [(ir.CompilerIrValue.Var ptr-var)
-              (match (opt-object-length-lookup ptrs ptr-var)
-                [(option_i64.Some _)
-                  (ir.compiler-ir-instr-cons
-                    instr
-                    (opt-bounds-instrs
-                      type-segment-bases
-                      (OptBoundsFacts.Nil)
-                      casts
-                      (__tl-box-place rest)))]
-                [(option_i64.None)
-                  (ir.compiler-ir-instr-cons
-                    instr
-                    (opt-bounds-instrs-with-object
-                      type-segment-bases
-                      facts
-                      lengths
-                      ptrs
-                      casts
-                      (__tl-box-place rest)))])]
-            [_
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs
-                  type-segment-bases
-                  (OptBoundsFacts.Nil)
-                  casts
-                  (__tl-box-place rest)))])]
-        [_
-          (let
-            [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
-            [casts2 : OptBoundsCastEnv
-              (match (opt-instr-def-var instr)
-                [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
-                [(option_i64.None) casts])]
-            (match next-facts
-              [(OptBoundsFacts.Nil)
-                (ir.compiler-ir-instr-cons
-                  instr
-                  (opt-bounds-instrs
-                    type-segment-bases
-                    next-facts
-                    casts2
-                    (__tl-box-place rest)))]
-              [_
-                (match (opt-instr-def-var instr)
-                  [(option_i64.Some dst)
-                    (ir.compiler-ir-instr-cons
-                      instr
-                      (opt-bounds-instrs-with-object
-                        type-segment-bases
-                        next-facts
-                        (opt-object-length-invalidate-var lengths dst)
-                        (opt-object-length-invalidate-var ptrs dst)
-                        casts2
-                        (__tl-box-place rest)))]
-                  [(option_i64.None)
-                    (ir.compiler-ir-instr-cons
-                      instr
-                      (opt-bounds-instrs-with-object
-                        type-segment-bases
-                        next-facts
-                        lengths
-                        ptrs
-                        casts2
-                        (__tl-box-place rest)))])]))])]))
-
-(define (opt-bounds-instrs
-  [type-segment-bases : i64]
-  [facts : OptBoundsFacts]
-  [casts : OptBoundsCastEnv]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(ir.CompilerIrInstr.BoundsCheck index length _)
-          (let
-            [index-key : ir.CompilerIrValue (opt-bounds-cast-canon casts index)]
-            (if (opt-bounds-contains facts index-key length)
-              (opt-bounds-instrs
-                type-segment-bases
-                facts
-                casts
-                (__tl-box-place rest))
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs
-                  type-segment-bases
-                  (opt-bounds-add facts index-key length)
-                  casts
-                  (__tl-box-place rest)))))]
-        [(ir.CompilerIrInstr.Gep dst base offset ty)
-          (let
-            [next-facts : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
-            [casts2 : OptBoundsCastEnv (opt-bounds-cast-unbind casts dst)]
-            (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs-with-object
-                  type-segment-bases
-                  next-facts
-                  (OptObjectLengthFact.None)
-                  (match base
-                    [(ir.CompilerIrValue.Var object-var)
-                      (opt-object-length-bind
-                        (OptObjectLengthFact.None)
-                        dst
-                        object-var)]
-                    [_ (OptObjectLengthFact.None)])
-                  casts2
-                  (__tl-box-place rest)))
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs
-                  type-segment-bases
-                  next-facts
-                  casts2
-                  (__tl-box-place rest)))))]
-        [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-          (ir.compiler-ir-instr-cons
-            instr
-            (opt-bounds-instrs
-              type-segment-bases
-              (opt-bounds-update-facts facts instr)
-              (opt-bounds-cast-update
-                type-segment-bases
-                casts
-                dst
-                src
-                from-ty
-                to-ty)
-              (__tl-box-place rest)))]
-        [_
-          (ir.compiler-ir-instr-cons
-            instr
-            (opt-bounds-instrs
-              type-segment-bases
-              (opt-bounds-update-facts facts instr)
-              (match (opt-instr-def-var instr)
-                [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
-                [(option_i64.None) casts])
-              (__tl-box-place rest)))])]))
-
 (defenum OptBoundsSeqState
   (Plain OptBoundsFacts OptBoundsCastEnv)
   (Object
@@ -8345,6 +8084,52 @@
                 (OptBoundsSeqStep.Step
                   (OptBoundsSeqState.Object next-facts lengths ptrs next-casts)
                   true)])]))]))
+
+(define (opt-bounds-instrs!
+  [type-segment-bases : i64]
+  [facts : OptBoundsFacts]
+  [casts : OptBoundsCastEnv]
+  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
+  (let
+    [count : i64 instrs.len]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [state : OptBoundsSeqState (OptBoundsSeqState.Plain facts casts)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr (clone (array-ref instrs.slots index))]
+          [step : OptBoundsSeqStep
+            (match state
+              [(OptBoundsSeqState.Plain current-facts current-casts)
+                (opt-bounds-seq-step-plain
+                  type-segment-bases
+                  current-facts
+                  current-casts
+                  instr)]
+              [(OptBoundsSeqState.Object
+                  current-facts
+                  lengths
+                  ptrs
+                  current-casts)
+                (opt-bounds-seq-step-object
+                  type-segment-bases
+                  current-facts
+                  lengths
+                  ptrs
+                  current-casts
+                  instr)])]
+          (match step
+            [(OptBoundsSeqStep.Step next-state keep)
+              (begin
+                (if keep
+                  (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+                  unit)
+                (set! state next-state)
+                (set! index (+ index 1)))])))
+      (set! instrs.slots builder.slots)
+      (set! instrs.len builder.len))))
 
 (define (opt-bounds-instr-seq-rewrite!
   [type-segment-bases : i64]
@@ -11683,7 +11468,7 @@
 
 (defenum OptSsaDenseEntry
   (PhiSite i64 i64 ast.AstType i64)
-  (RenameBlock i64 ir.CompilerIrInstrList)
+  (RenameBlock i64 ir.CompilerIrInstrSeq)
   (BlockOut i64 OptSsaRenameEnv))
 
 (import (vector.vector OptSsaDenseEntry core) as opt_ssa_dense_vec)
@@ -11736,10 +11521,10 @@
 (define (opt-ssa-rename-blocks-count [blocks : OptSsaRenameBlocks]) : i64
   (opt_ssa_dense_vec.len (& blocks.items)))
 
-(define (opt-ssa-rename-blocks-prepend
+(define (opt-ssa-rename-blocks-prepend-owned
   [blocks : OptSsaRenameBlocks (:consume)]
   [label : i64]
-  [instrs : ir.CompilerIrInstrList]) : OptSsaRenameBlocks
+  [instrs : ir.CompilerIrInstrSeq]) : OptSsaRenameBlocks
   (let
     [items : opt_ssa_dense_vec.Vec blocks.items]
     (begin
@@ -11747,6 +11532,15 @@
         (&mut items)
         (OptSsaDenseEntry.RenameBlock label instrs))
       (OptSsaRenameBlocks items))))
+
+(define (opt-ssa-rename-blocks-prepend
+  [blocks : OptSsaRenameBlocks (:consume)]
+  [label : i64]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : OptSsaRenameBlocks
+  (opt-ssa-rename-blocks-prepend-owned
+    blocks
+    label
+    (ir.CompilerIrInstrSeq (clone instrs.slots) instrs.len)))
 
 (define (opt-ssa-rename-blocks-ref [blocks : OptSsaRenameBlocks] [index : i64]) : OptSsaDenseEntry
   (let
@@ -11801,7 +11595,7 @@
   (Result ir.CompilerIrInstr OptSsaRenameEnv i64))
 
 (defenum OptSsaBlockResult
-  (Result ir.CompilerIrInstrList OptSsaRenameEnv i64))
+  (Result ir.CompilerIrInstrSeq OptSsaRenameEnv i64))
 
 (define (opt-ssa-count [counts : opt_i64_i64_map.Map] [var : i64]) : i64
   (opt_i64_i64_map.get-value-or (& counts) var 0))
@@ -13201,25 +12995,30 @@
   [next-var : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptSsaBlockResult
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (OptSsaBlockResult.Result (ir.CompilerIrInstrList.Nil) env next-var)
-    (match (opt-ssa-rename-instr
-      facts
-      env
-      next-var
-      (ir.compiler-ir-instr-seq-ref instrs index))
-      [(OptSsaInstrResult.Result instr next-env instr-next)
-        (match (opt-ssa-rename-instr-seq-from
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    [state : OptSsaRenameEnv env]
+    [frame : i64 next-var]
+    [position : i64 index]
+    (begin
+      (while (< position count)
+        (match (opt-ssa-rename-instr
           facts
-          next-env
-          instr-next
-          instrs
-          (+ index 1))
-          [(OptSsaBlockResult.Result rest out-env out-next)
-            (OptSsaBlockResult.Result
-              (ir.compiler-ir-instr-cons instr rest)
-              out-env
-              out-next)])])))
+          state
+          frame
+          (ir.compiler-ir-instr-seq-ref instrs position))
+          [(OptSsaInstrResult.Result rewritten next-state next-frame)
+            (begin
+              (ir.compiler-ir-instr-builder-push! (&mut builder) rewritten)
+              (set! state next-state)
+              (set! frame next-frame)
+              (set! position (+ position 1)))]))
+      (OptSsaBlockResult.Result
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        state
+        frame))))
 
 (define (opt-ssa-rename-blocks-contains-from?
   [blocks : OptSsaRenameBlocks]
@@ -13239,23 +13038,23 @@
   [label : i64]) : bool
   (opt-ssa-rename-blocks-contains-from? blocks label 0))
 
-(define (opt-ssa-rename-blocks-lookup-from
+(define (opt-ssa-rename-blocks-lookup-index-from
   [blocks : OptSsaRenameBlocks]
   [label : i64]
-  [index : i64]) : ir.CompilerIrInstrList
+  [index : i64]) : i64
   (if (>= index (opt-ssa-rename-blocks-count blocks))
-    (ir.CompilerIrInstrList.Nil)
+    (- 0 1)
     (match (opt-ssa-rename-blocks-ref blocks index)
-      [(OptSsaDenseEntry.RenameBlock block-label instrs)
+      [(OptSsaDenseEntry.RenameBlock block-label _)
         (if (= block-label label)
-          instrs
-          (opt-ssa-rename-blocks-lookup-from blocks label (+ index 1)))]
+          index
+          (opt-ssa-rename-blocks-lookup-index-from blocks label (+ index 1)))]
       [_ (string.tl_oob_abort)])))
 
-(define (opt-ssa-rename-blocks-lookup
+(define (opt-ssa-rename-blocks-lookup-index
   [blocks : OptSsaRenameBlocks]
-  [label : i64]) : ir.CompilerIrInstrList
-  (opt-ssa-rename-blocks-lookup-from blocks label 0))
+  [label : i64]) : i64
+  (opt-ssa-rename-blocks-lookup-index-from blocks label 0))
 
 (define (opt-ssa-block-out-lookup-from
   [outs : OptSsaBlockOuts]
@@ -13276,13 +13075,13 @@
 (define (opt-ssa-rename-state-add-block
   [state : OptSsaRenameState]
   [label : i64]
-  [instrs : ir.CompilerIrInstrList]
+  [instrs : ir.CompilerIrInstrSeq]
   [env : OptSsaRenameEnv]
   [next-var : i64]) : OptSsaRenameState
   (match state
     [(OptSsaRenameState.State blocks outs _)
       (OptSsaRenameState.State
-        (opt-ssa-rename-blocks-prepend blocks label instrs)
+        (opt-ssa-rename-blocks-prepend-owned blocks label instrs)
         (opt-ssa-block-outs-prepend outs label env)
         next-var)]))
 
@@ -13543,12 +13342,14 @@
         [(ir.CompilerIrBlock.Block label _)
           (let
             ;; One builder per block, filled phis-then-body. The old shape built
-            ;; a cons chain for each half, joined them with
-            ;; `opt-aggregate-instr-list-append`, and then had
-            ;; `compiler-ir-block` walk the joined spine twice more (count, then
-            ;; fill-array) to rebuild the dense sequence it started from.
+            ;; a cons chain for each half, joined them with a recursive list
+            ;; append, and then had `compiler-ir-block` walk the joined spine
+            ;; twice more (count, then fill-array) to rebuild the dense sequence
+            ;; it started from.
             [builder : ir.CompilerIrInstrBuilder
               (ir.compiler-ir-instr-builder-new)]
+            [renamed-index : i64
+              (opt-ssa-rename-blocks-lookup-index renamed label)]
             (begin
               (opt-ssa-push-phis-for-label!
                 pred-map
@@ -13556,11 +13357,16 @@
                 sites
                 label
                 (&mut builder))
-              (opt-ssa-push-rewritten-preexisting-instrs!
-                facts
-                outs
-                (opt-ssa-rename-blocks-lookup renamed label)
-                (&mut builder))
+              (if (< renamed-index 0)
+                unit
+                (match (opt-ssa-rename-blocks-ref renamed renamed-index)
+                  [(OptSsaDenseEntry.RenameBlock _ instrs)
+                    (opt-ssa-push-rewritten-preexisting-instrs!
+                      facts
+                      outs
+                      instrs
+                      (&mut builder))]
+                  [_ (string.tl_oob_abort)]))
               (ir.compiler-ir-block-cons
                 (ir.CompilerIrBlock.Block
                   label
@@ -13627,26 +13433,25 @@
 (define (opt-ssa-push-rewritten-preexisting-instrs!
   [facts : OptSsaFacts]
   [outs : OptSsaBlockOuts]
-  [instrs : ir.CompilerIrInstrList]
+  [instrs : ir.CompilerIrInstrSeq]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) unit]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (begin
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (match instr
-            [(ir.CompilerIrInstr.Phi dst inputs ty)
-              (ir.CompilerIrInstr.Phi
-                dst
-                (opt-ssa-rewrite-preexisting-phi-inputs facts outs inputs ty)
-                ty)]
-            [_ instr]))
-        (opt-ssa-push-rewritten-preexisting-instrs!
-          facts
-          outs
-          (__tl-box-place rest)
-          (&mut builder)))]))
+  (let
+    [index : i64 0]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (match instr
+              [(ir.CompilerIrInstr.Phi dst inputs ty)
+                (ir.CompilerIrInstr.Phi
+                  dst
+                  (opt-ssa-rewrite-preexisting-phi-inputs facts outs inputs ty)
+                  ty)]
+              [_ instr]))
+          (set! index (+ index 1)))))))
 
 ;; A pre-existing phi whose DST is itself a rename candidate would need its
 ;; definition versioned per edge -- out of scope; skip construction (the
@@ -13800,11 +13605,9 @@
       (opt-cfg-block-exists? blocks preheader))
       blocks
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           preheader
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Jump entry)
-            (ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump entry)))
         blocks))))
 
 (define (opt-ssa-explicit-entry-available? [blocks : ir.CompilerIrBlockList]) : bool
@@ -20990,7 +20793,7 @@
                     (ir.compiler-ir-block-cons
                       (ir.compiler-ir-block label kept)
                       rest-blocks)
-                    (opt-aggregate-instr-list-append moved rest-moved)
+                    (opt-licm-unswitch-instrs-onto moved rest-moved)
                     final-hoisted
                     (or block-changed rest-changed))])])])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -21054,7 +20857,7 @@
         [(ir.CompilerIrInstrList.Nil) hoisted]
         [(ir.CompilerIrInstrList.Cons instr rest)
           (if (opt-cfg-terminator-instr? instr)
-            (opt-aggregate-instr-list-append hoisted instrs)
+            (opt-licm-unswitch-instrs-onto hoisted instrs)
             (ir.compiler-ir-instr-cons
               instr
               (opt-licm-insert-before-terminator hoisted (__tl-box-place rest))))])]))
@@ -21719,7 +21522,7 @@
   [loads : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
   (match loads
     [(ir.CompilerIrInstrList.Nil) hoisted]
-    [_ (opt-aggregate-instr-list-append hoisted loads)]))
+    [_ (opt-licm-unswitch-instrs-onto hoisted loads)]))
 
 (define (opt-licm-apply-loop
   [type-segment-bases : i64]
@@ -28070,7 +27873,7 @@
               [scaled-instrs : ir.CompilerIrInstrList
                 (if (= step 1)
                   offset-instrs
-                  (opt-aggregate-instr-list-append
+                  (opt-licm-unswitch-instrs-onto
                     offset-instrs
                     (ir.compiler-ir-instr-cons
                       (ir.CompilerIrInstr.BinOp
@@ -28084,7 +27887,7 @@
                 (if (= step 1)
                   offset-value
                   (ir.CompilerIrValue.Var mul-var))]
-              (opt-aggregate-instr-list-append
+              (opt-licm-unswitch-instrs-onto
                 scaled-instrs
                 (ir.compiler-ir-instr-cons
                   (ir.CompilerIrInstr.Gep
@@ -28906,7 +28709,7 @@
                               (OptBoolBranchConjBuild.No)]
                             [(OptBoolBranchConjBuild.Some right)
                               (OptBoolBranchConjBuild.Some
-                                (opt-aggregate-instr-list-append left right))])])))]
+                                (opt-licm-unswitch-instrs-onto left right))])])))]
                 [_
                   (if (array-ref emitted var)
                     (OptBoolBranchConjBuild.Some (ir.CompilerIrInstrList.Nil))
@@ -29310,7 +29113,7 @@
                                                 [source : ir.CompilerIrBlock
                                                   (ir.compiler-ir-block
                                                     source-label
-                                                    (opt-aggregate-instr-list-append
+                                                    (opt-licm-unswitch-instrs-onto
                                                       source-prefix
                                                       (ir.compiler-ir-instr-cons
                                                         first

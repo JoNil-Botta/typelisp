@@ -78,7 +78,7 @@
   (Ok char i64)
   (Err String))
 
-;; One-word dynamic capability shared by the explicit compile-job entry points
+;; Small dynamic capability shared by the explicit compile-job entry points
 ;; and the standalone compatibility surface. The explicit variant borrows the
 ;; wrapper's descriptor for the synchronous scan. Interning follows that borrow
 ;; through reference-taking helpers, so a source token never copies the large

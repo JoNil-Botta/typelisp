@@ -4388,21 +4388,11 @@
       [source-len : i64 (intern-pool-len)]
       [structural-local-id : i64 (intern-structural-local-id 7 source-id)]
       [structural-local-again-id : i64 (intern-structural-local-id 8 source-id)]
-      [home : i64 (tl_arena_current)]
-      [scratch : i64 (tl_arena_make)]
       [opaque-id : i64
-        (begin
-          (unsafe
-            (tl_arena_set scratch))
+        (with-scratch
           (let
             [temporary : String (intern-substring "xxhygiene/localyy" 2 13)]
-            [id : i64 (intern-generated-name temporary)]
-            (begin
-              (unsafe
-                (tl_arena_set home))
-              (unsafe
-                (tl_arena_destroy scratch))
-              id)))]
+            (intern-generated-name temporary)))]
       [opaque-again-id : i64 (intern-generated-name "hygiene/local")]
       [duplicate-display-id : i64
         (intern-generated-name
@@ -4652,21 +4642,11 @@
   (begin
     (intern-reset!)
     (let
-      [home : i64 (tl_arena_current)]
-      [scratch : i64 (tl_arena_make)]
       [id : i64
-        (begin
-          (unsafe
-            (tl_arena_set scratch))
+        (with-scratch
           (let
             [name : String (intern-substring "persist/entry" 0 13)]
-            [stored : i64 (intern name)]
-            (begin
-              (unsafe
-                (tl_arena_set home))
-              (unsafe
-                (tl_arena_destroy scratch))
-              stored)))]
+            (intern name)))]
       [again : i64 (intern "persist/entry")]
       [ok : bool
         (and
@@ -4695,6 +4675,10 @@
 (define (intern-compat-state-persistent-arena-growth-tests-ok?) : bool
   (let
     [home : i64 (tl_arena_current)]
+    ;; Keep this raw extent: `state` and `source` deliberately stay live across
+    ;; many helper calls, and their APIs cannot express that the independent
+    ;; persistent arena inside `state` outlives this scratch owner. The safe
+    ;; checker therefore rejects the test's intentional ownership proof.
     [scratch : i64 (tl_arena_make)]
     [state : InternCompatState
       (begin

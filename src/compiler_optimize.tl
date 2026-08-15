@@ -74440,41 +74440,39 @@
     funcs
     (if (= level 1)
       (let
-        [scratch : i64 (arena.tl_arena_make)]
+        [scratch : arena.Arena (arena.make)]
         [result : ir.CompilerIrFunctionList
           (optimize-function-list-level1-escaping-with-summaries
             pools
             type-segment-bases
             funcs
-            scratch
+            (arena.raw-handle scratch)
             summaries)]
         (begin
           (allocation_profile.compiler-allocation-profile-control!
             2
             "optimize"
             "optimizer-scratch"
-            scratch)
-          (unsafe
-            (arena.tl_arena_destroy scratch))
+            (arena.raw-handle scratch))
+          (arena.destroy-safe! scratch)
           result))
       (let
-        [scratch : i64 (arena.tl_arena_make)]
+        [scratch : arena.Arena (arena.make)]
         [result : ir.CompilerIrFunctionList
           (optimize-function-list-escaping-with-summaries
             pools
             type-segment-bases
             funcs
             level
-            scratch
+            (arena.raw-handle scratch)
             summaries)]
         (begin
           (allocation_profile.compiler-allocation-profile-control!
             2
             "optimize"
             "optimizer-scratch"
-            scratch)
-          (unsafe
-            (arena.tl_arena_destroy scratch))
+            (arena.raw-handle scratch))
+          (arena.destroy-safe! scratch)
           result)))))
 
 (define (optimize-function-level1-escaping-with-summaries
@@ -90211,6 +90209,12 @@
           ;; instead of riding the compiler-entry arena through the backend.
           (let
             [enclosing : i64 (arena.tl_arena_current)]
+            ;; Keep this direct-local owner raw. Level 2 destroys it before
+            ;; summary/function optimization after copying survivors to the
+            ;; carrier, while level 1 must retain it until that optimization
+            ;; has escaped its inputs. The checker merges those mutually
+            ;; exclusive destroy sites as a possible double move; delaying the
+            ;; level-2 destroy would restore the measured ~460 MiB peak.
             [inline-arena : i64 (arena.tl_arena_make)]
             [_enter-inline-arena : unit
               (unsafe
@@ -92334,13 +92338,13 @@
   (if (< level 2)
     functions
     (let
-      [scratch : i64 (arena.tl_arena_make)]
+      [scratch : arena.Arena (arena.make)]
       [result : ir.CompilerIrFunctionList
         (opt-late-function-list-escaping
           pools
           type-segment-bases
           functions
-          scratch)]
+          (arena.raw-handle scratch))]
       (begin
         ;; Every function in `result` is owned by the enclosing arena: escaped
         ;; by clone when a rewrite changed it, otherwise never copied out of
@@ -92349,9 +92353,8 @@
           2
           "optimize"
           "optimizer-late-scratch"
-          scratch)
-        (unsafe
-          (arena.tl_arena_destroy scratch))
+          (arena.raw-handle scratch))
+        (arena.destroy-safe! scratch)
         result))))
 
 (define (opt-scratch-reset-pre-ssa-function-with-context-result

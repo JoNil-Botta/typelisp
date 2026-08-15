@@ -69272,7 +69272,7 @@
   [crt-entry : bool]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (let
-    [scratch : i64 (arena.tl_arena_make)]
+    [scratch : arena.Arena (arena.make)]
     [result : ResultCompilerBackendBuffer
       (if (compiler-backend-assembly-stream-active?
         (compiler-backend-state-stream-state program-index.backend-state))
@@ -69291,7 +69291,7 @@
           span-index
           emit-entry
           crt-entry
-          scratch
+          (arena.raw-handle scratch)
           buf)
         (compiler-backend-emit-functions-buffer-raw-into
           type-segment-bases
@@ -69308,11 +69308,10 @@
           span-index
           emit-entry
           crt-entry
-          scratch
+          (arena.raw-handle scratch)
           buf))]
     (begin
-      (unsafe
-        (arena.tl_arena_destroy scratch))
+      (arena.destroy-safe! scratch)
       result)))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
@@ -80513,32 +80512,29 @@
     state
     (let
       [output-arena : arena.Arena (arena.current)]
-      [render-arena : arena.Arena (arena.make)]
+      [peepholed-asm : String ""]
       (begin
-        (unsafe
-          (arena.set! render-arena))
-        (let
-          [chunks : CompilerBackendPeepholeChunkArray
-            (compiler-backend-peephole-chunk-array state.group)]
-          [records : CompilerBackendPeepholeLineVec
-            (compiler-backend-peephole-asm-once-records-chunks
-              backend-state
-              stream
-              chunks
-              false)]
-          (begin
-            (unsafe
-              (arena.set! output-arena))
-            (let
-              [peepholed-asm : String
-                (compiler-backend-peephole-records-render records)]
-              (begin
-                (compiler-backend-peephole-records-retire! stream)
-                (unsafe
-                  (arena.destroy render-arena))
-                (CompilerBackendPeepholeChunkState
-                  (text_buf.append state.out peepholed-asm)
-                  (text_buf.empty))))))))))
+        (with-scratch
+          (let
+            [chunks : CompilerBackendPeepholeChunkArray
+              (compiler-backend-peephole-chunk-array state.group)]
+            [records : CompilerBackendPeepholeLineVec
+              (compiler-backend-peephole-asm-once-records-chunks
+                backend-state
+                stream
+                chunks
+                false)]
+            [rendered : String
+              (in-arena
+                output-arena
+                (compiler-backend-peephole-records-render records))]
+            (begin
+              (compiler-backend-peephole-records-retire! stream)
+              (set! peepholed-asm rendered)
+              unit)))
+        (CompilerBackendPeepholeChunkState
+          (text_buf.append state.out peepholed-asm)
+          (text_buf.empty))))))
 
 (define (compiler-backend-peephole-text-buf-once-in-arena
   [backend-state : CompilerBackendState]

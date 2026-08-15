@@ -470,19 +470,16 @@
 
 (define (sp-node-pool-arena-ownership-self-test) : i64
   (let
-    [home : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
     (begin
-      (unsafe
-        (arena.set! scratch))
-      (sp-node-pool-grow!)
-      (sexpr-node-pool-grow!)
-      (sp-builder-grow!)
-      (sexpr-builder-grow!)
-      (unsafe
+      (in-arena
+        scratch
         (begin
-          (arena.set! home)
-          (arena.destroy scratch)))
+          (sp-node-pool-grow!)
+          (sexpr-node-pool-grow!)
+          (sp-builder-grow!)
+          (sexpr-builder-grow!)))
+      (arena.destroy-safe! scratch)
       (sp-node-pool-reset!)
       (sexpr-node-pool-reset!)
       (let

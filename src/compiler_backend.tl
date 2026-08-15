@@ -23202,6 +23202,20 @@
       (compiler-backend-emergency-wrap asm backend-state))
     asm))
 
+;; Preserve an XMM-family staging register over one local phi copy. The
+;; emergency slot is distinct from the phi cycle-temp slots and saves the whole
+;; physical family (16/32/64 bytes in scalar/AVX2/AVX-512 mode), so a scalar
+;; movss/movsd stage cannot corrupt live vector lanes aliased by ymm/zmm.
+(define (compiler-backend-phi-xmm-local-preserve-asm
+  [reg : String]
+  [asm : String]
+  [backend-state : CompilerBackendState]) : String
+  (begin
+    (compiler-backend-emergency-add-id!
+      (compiler-backend-state-function-state backend-state)
+      (compiler_abi.compiler-abi-register-id-from-spelling reg))
+    (compiler-backend-emergency-wrap asm backend-state)))
+
 (define (compiler-backend-planned-or-scavenge-reg-here
   [planned : String]
   [exclude : (__tl_dyn-array String)]
@@ -40468,13 +40482,13 @@
     compiler-backend-function-i64-current-phi-target-point
     point))
 
-;; Pooled-register-home bit mask of every dst in the ORIGINAL phi-copy list of
-;; the edge being marshalled. -1 (every bit set) is the conservative default: with
-;; no list installed nothing can be proven free. This is the same exclusion the
-;; cycle-break Temp pick applies (see phi-temp-pick-reg): an already-drained copy
-;; has placed a final phi value in its dst register which must survive to the
-;; merge block entry, and the occupancy mask -- which models the allocation, not
-;; these transient marshalling values -- does not show it.
+;; Pooled-register-home bit mask of every destination in the ORIGINAL raw Phi
+;; list of the edge being marshalled. -1 (every bit set) is the conservative
+;; default: with no list installed nothing can be proven free. Unlike the
+;; filtered copy list, the raw list includes same-home Phis whose destination
+;; already contains its final value. An already-drained emitted copy likewise
+;; leaves a final value in its destination. Allocator occupancy models neither
+;; kind of transient edge-marshalling value.
 (define (compiler-backend-function-state-current-phi-dst-home-mask
   [backend-state : CompilerBackendState]) : i64
   (compiler-backend-function-state-i64
@@ -40518,8 +40532,8 @@
 ;;       entry is covered by the interval of every value live into it (the def
 ;;       dominates the edge and the use is ahead), so the query it now also runs
 ;;       answers the same as the point-local one.
-;;   (3) `reg` is not the home of ANY dst of this edge's copy list, so no drained
-;;       copy's placed phi value is sitting in it.
+;;   (3) `reg` is not the home of ANY raw Phi destination on this edge, so no
+;;       drained copy or filtered same-home Phi has placed its final value there.
 ;; With all three the value in `reg` at this point is dead, so the bracket saves
 ;; and restores a dead value. Dropping it leaves `movq SRC,%rX` / `movq %rX,DST`:
 ;; two instructions and two memory ops in a load->store chain, strictly fewer
@@ -41046,6 +41060,28 @@
           "\n"))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
+;; OR the pooled-register-home bits of one phi destination into a mask. A spill
+;; contributes 0. Register pairs contribute BOTH physical homes; a later scalar
+;; stage must not clobber either half of an already-placed group value.
+(define (compiler-backend-phi-dst-home-mask-for-var
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]) : i64
+  (match (compiler-backend-emit-assignment-lookup backend-state assignments dst)
+    [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+      (match location
+        [(compiler_regalloc.CompilerRegLocation.Register home)
+          (compiler-backend-scavenge-reg-bit
+            (compiler_abi.compiler-abi-register-spelling home))]
+        [(compiler_regalloc.CompilerRegLocation.RegisterPair lo hi)
+          (bit-or
+            (compiler-backend-scavenge-reg-bit
+              (compiler_abi.compiler-abi-register-spelling lo))
+            (compiler-backend-scavenge-reg-bit
+              (compiler_abi.compiler-abi-register-spelling hi)))]
+        [_ 0])]
+    [(compiler_regalloc.CompilerRegMaybeLocation.No) 0]))
+
 ;; OR the pooled-register-home bit of every copy's dst into a mask. A spilled dst
 ;; contributes 0; every register-homed dst, including ABI-special %rax/%rsi/%rdi,
 ;; contributes its ordinary scavenge bit and cannot be picked as the temp.
@@ -41065,13 +41101,52 @@
                 mask
                 (bit-or
                   mask
-                  (compiler-backend-scavenge-reg-bit
-                    (compiler-backend-var-register-home
-                      backend-state
-                      assignments
-                      dst))))])
+                  (compiler-backend-phi-dst-home-mask-for-var
+                    backend-state
+                    assignments
+                    dst)))])
           (set! i (+ i 1))))
       mask)))
+
+;; Compute the destination-home mask from every leading raw Phi, including
+;; same-home phis that leading-phi-copies-seq-from filters out before
+;; marshalling. The instruction sequence is shared by list and dense blocks and
+;; by ordinary and fused Mov+Jump edges.
+(define (compiler-backend-phi-leading-dst-home-mask-seq-from
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (let
+    [mask : i64 0]
+    [i : i64 index]
+    [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+    (begin
+      (while (< i n)
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)
+          [(compiler_ir_types.CompilerIrInstr.Phi dst _ _)
+            (begin
+              (set!
+                mask
+                (bit-or
+                  mask
+                  (compiler-backend-phi-dst-home-mask-for-var
+                    backend-state
+                    assignments
+                    dst)))
+              (set! i (+ i 1)))]
+          [_ (set! i n)]))
+      mask)))
+
+(define (compiler-backend-phi-leading-dst-home-mask-seq
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (compiler-backend-phi-leading-dst-home-mask-seq-from
+    backend-state
+    assignments
+    instrs
+    0))
 
 (define (compiler-backend-phi-temp-pick-reg-iter
   [function-state : CompilerBackendFunctionState]
@@ -41394,14 +41469,24 @@
         (ResultCompilerBackend.Ok
           (if (string.eq dst-home "")
             (if (compiler-backend-float-type? ty)
-              (str_cat.str-cat
-                load
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  reg
-                  ty
-                  backend-state))
+              (let
+                [copy : String
+                  (str_cat.str-cat
+                    load
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      assignments
+                      dst
+                      reg
+                      ty
+                      backend-state))]
+                (if (or
+                  (string.eq load "")
+                  (compiler-backend-phi-staged-copy-proven? backend-state reg))
+                  copy
+                  (compiler-backend-phi-xmm-local-preserve-asm
+                    reg
+                    copy
+                    backend-state)))
               ;; P34 #phi-empty-load: an EMPTY load means the loader elided a
               ;; same-register move -- the source value is ALREADY in `reg`. The
               ;; pair is then just the store, which reads `reg` and writes
@@ -41785,21 +41870,18 @@
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]
+  [dst-home-mask : i64]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [outer-active : bool]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (begin
-    ;; #phi-staged-copy: install this edge's dst-home mask once, at the single
-    ;; entry to the marshalling recursion, so every copy's staging proof can
-    ;; exclude registers holding placed phi values without rebuilding the mask
-    ;; per copy. The recursion re-enters -with-all, never this function.
+    ;; #phi-staged-copy: install the ORIGINAL raw-Phi destination-home mask once
+    ;; at the single entry to marshalling recursion. It includes same-home Phis
+    ;; filtered from `copies`; the recursion re-enters -with-all, never here.
     (compiler-backend-function-state-set-current-phi-dst-home-mask!
       backend-state
-      (compiler-backend-phi-copy-list-dst-home-mask
-        backend-state
-        assignments
-        copies))
+      dst-home-mask)
     (compiler-backend-emit-phi-copy-list-with-all
       type-segment-bases
       assignments
@@ -42053,6 +42135,10 @@
         type-segment-bases
         assignments
         copies
+        (compiler-backend-phi-leading-dst-home-mask-seq
+          program-index.backend-state
+          assignments
+          instrs)
         program-index
         vars
         false
@@ -42305,6 +42391,10 @@
                           copies
                           moved-dst
                           moved-src))
+                      (compiler-backend-phi-leading-dst-home-mask-seq
+                        program-index.backend-state
+                        assignments
+                        instrs)
                       program-index
                       vars
                       false
@@ -42387,6 +42477,10 @@
                         copies
                         moved-dst
                         moved-src))
+                    (compiler-backend-phi-leading-dst-home-mask-seq
+                      program-index.backend-state
+                      assignments
+                      instrs)
                     program-index
                     vars
                     false

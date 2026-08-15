@@ -92233,27 +92233,12 @@
             state
             target-module-id
             base-id)
-          (let
-            [enclosing : i64 (arena.tl_arena_current)]
-            [scratch : i64 (macro-expand-scratch-arena-get state)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set scratch))
-              (let
-                [out : MacroMaybeDecl
-                  (macro-surface-call-decl-fill-in-module
-                    state
-                    target-module-id
-                    base-id)]
-                [scratch-head : i64 (arena.tl_arena_current)]
-                (begin
-                  (tc-macro-walk-set!
-                    state
-                    macro-expand-scratch-arena
-                    scratch-head)
-                  (unsafe
-                    (arena.tl_arena_set enclosing))
-                  out)))))])))
+          (in-arena
+            (arena.Arena (macro-expand-scratch-arena-get state))
+            (macro-surface-call-decl-fill-in-module
+              state
+              target-module-id
+              base-id)))])))
 
 (define (macro-expr-uses-expr-type? [expr-bases : i64] [expr : ast.AstExpr]) : bool
   (or
@@ -97973,24 +97958,9 @@
   [current-module-id : i64]) : MacroFlatImportTargetList
   (if (not (macro-generation-any-live? state))
     (macro-flat-import-targets-into-current state decls current-module-id)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (let
-          [out : MacroFlatImportTargetList
-            (macro-flat-import-targets-into-current
-              state
-              decls
-              current-module-id)]
-          [scratch-head : i64 (arena.tl_arena_current)]
-          (begin
-            (tc-macro-walk-set! state macro-expand-scratch-arena scratch-head)
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))))
+    (in-arena
+      (arena.Arena (macro-expand-scratch-arena-get state))
+      (macro-flat-import-targets-into-current state decls current-module-id))))
 
 (define (macro-flat-import-targets-into-current
   [state : TcMacroState]

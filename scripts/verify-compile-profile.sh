@@ -2213,6 +2213,14 @@ verify_residual_route \
     "$ROOT/tests/integration/compile_profile_vector_core.tl" \
     "stdlib.vector/vector"
 
+# The borrowed TextBuf family is the production consumer for unresolved
+# lifetime-parameterized nominal type templates. Pin its exact identity to the
+# mapped native route and require byte-identical assembly from source CTFE.
+verify_residual_route \
+    text-buf-borrowed-lifetime-residual \
+    "$ROOT/tests/integration/stdlib_text_buf.tl" \
+    "stdlib.text_buf_family/borrowed"
+
 # Pin the module generator's public malformed-capability diagnostic on both
 # routes. Successful full/core expansion above covers both body branches; this
 # rejection catches computed-match/control-flow drift before syntax building.

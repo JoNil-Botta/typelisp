@@ -5,7 +5,6 @@
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
 (import stdlib.fs)
-(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.env)
 (import stdlib.io)
@@ -45,7 +44,7 @@
 (import tlci_core as tlci)
 (import compiler_tlci_native_producer)
 (cfg
-  embedded-stdlib-tlci
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_package_surface_producer as package_surface))
 (import sym_i64_env)
 
@@ -2754,7 +2753,9 @@
         target
         (compiler_parse_core.compiler-cfg-empty))]
     (if root-compiler
-      (compiler_parse_core.compiler-cfg-enable cfgs "compiler-build-identity")
+      (compiler_parse_core.compiler-cfg-enable
+        (compiler_parse_core.compiler-cfg-enable cfgs "compiler-build-identity")
+        "compiler-surface-producer")
       cfgs)))
 
 (define (build-ensure-package-output-dirs
@@ -4240,118 +4241,19 @@
   (Err String))
 
 (cfg
-  embedded-stdlib-tlci
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (defstruct BuildPackageTlciSourceInputs
     (source-set package_source_core.PackageSourceSet)
     (digest i64)))
 
 (cfg
-  embedded-stdlib-tlci
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (defenum ResultBuildPackageTlciSourceInputs
     (Ok BuildPackageTlciSourceInputs)
     (Err String)))
 
-(define (build-package-tlci-source-binding-rodata [digest : i64]) : tlci.ResultTlciAuxBytes
-  (let
-    [sections : (__tl_dyn-array tlci.TlciAuxSection)
-      (array.make-array tlci.TlciAuxSection 1)]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (tlci.tlci-package-source-binding-section digest))
-      (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections))))
-
-(define (build-package-tlci-text
-  [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]
-  [mode : backend.CompilerBackendMode]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [producer-identity : String]) : ResultBuildPackageTlciText
-  (if (not (tlci.tlci-producer-identity-valid? producer-identity))
-    (ResultBuildPackageTlciText.Err
-      "build: exact producer compiler identity is unavailable")
-    (match (package_source_core.package-source-discover-for
-      "build"
-      manifest-path
-      true)
-      [(package_source_core.ResultPackageSourceSet.Err message)
-        (ResultBuildPackageTlciText.Err message)]
-      [(package_source_core.ResultPackageSourceSet.Ok source-set)
-        (match (package_source_core.package-source-set-digest source-set)
-          [(package_source_core.ResultPackageSourceDigest.Err message)
-            (ResultBuildPackageTlciText.Err
-              (str_cat.str-cat
-                "build: failed to compute package source digest: "
-                message))]
-          [(package_source_core.ResultPackageSourceDigest.Ok digest)
-            (match (build-package-tlci-source-binding-rodata digest)
-              [(tlci.ResultTlciAuxBytes.Err message)
-                (ResultBuildPackageTlciText.Err
-                  (str_cat.str-cat
-                    "build: failed to pack package source binding: "
-                    message))]
-              [(tlci.ResultTlciAuxBytes.Ok rodata)
-                (let
-                  [collector : BuildPackageTlciCallableCollector
-                    (build-package-tlci-callable-collector
-                      source-set
-                      manifest
-                      mode
-                      decls
-                      paths)]
-                  [macro-collector : BuildPackageTlciMacroCollector
-                    (build-package-tlci-macro-collector
-                      source-set
-                      manifest
-                      decls
-                      paths)]
-                  [macro-names : (__tl_dyn-array String) macro-collector.names]
-                  (if (> (string.string-length collector.error) 0)
-                    (ResultBuildPackageTlciText.Err collector.error)
-                    (let
-                      [metadata : tlci.TlciMetadata
-                        (build-package-tlci-metadata manifest collector.items)]
-                      (if (= (array-length macro-names) 0)
-                        (match (tlci.tlci-emit-image
-                          (build-package-tlci-image
-                            metadata
-                            producer-identity
-                            rodata))
-                          [(tlci.ResultTlciBytes.Err message)
-                            (ResultBuildPackageTlciText.Err
-                              (str_cat.str-cat
-                                "build: failed to emit package tlci: "
-                                message))]
-                          [(tlci.ResultTlciBytes.Ok bytes)
-                            (ResultBuildPackageTlciText.Ok
-                              (tlci.tlci-bytes->string
-                                bytes
-                                0
-                                (array-length bytes)))])
-                        (match (compiler_tlci_native_producer.embedded-native-emit-package
-                          (tlci.tlci-metadata-emit metadata)
-                          producer-identity
-                          (cfg windows true false)
-                          rodata
-                          macro-names
-                          (& macro-collector.captures))
-                          [(compiler_tlci_native_producer.ResultProducerBytes.Err
-                              message)
-                            (ResultBuildPackageTlciText.Err
-                              (str_cat.str-cat
-                                "build: failed to emit package tlci: "
-                                message))]
-                          [(compiler_tlci_native_producer.ResultProducerBytes.Ok
-                              bytes)
-                            (ResultBuildPackageTlciText.Ok
-                              (tlci.tlci-bytes->string
-                                bytes
-                                0
-                                (array-length bytes)))])))))])])])))
-
 (cfg
-  embedded-stdlib-tlci
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-tlci-source-inputs
     [manifest-path : String]
     [producer-identity : String]) : ResultBuildPackageTlciSourceInputs
@@ -4376,7 +4278,7 @@
                 (BuildPackageTlciSourceInputs source-set digest))])]))))
 
 (cfg
-  embedded-stdlib-tlci
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-tlci-text-with-surface
     [manifest : load.CompilerPkgManifest]
     [mode : backend.CompilerBackendMode]
@@ -4439,39 +4341,6 @@
                   [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
                     (ResultBuildPackageTlciText.Ok
                       (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])))))])))
-
-;; This producer load is disposable; only the caller-owned TLCI text crosses
-;; the reset before the final lowering load.
-(define (build-package-tlci-text-loaded
-  [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]
-  [mode : backend.CompilerBackendMode]
-  [entry-path : String]
-  [stdlib-roots : cli_svec.Vec]
-  [manifest-dir : String]
-  [deps : load.CompilerPkgDeps]
-  [emit-entry : bool]
-  [compile-cfgs : sym_i64_env.SymI64Env]
-  [producer-identity : String]) : ResultBuildPackageTlciText
-  (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
-    entry-path
-    stdlib-roots
-    manifest-dir
-    deps
-    emit-entry
-    compile-cfgs)
-    [(load.ResultCompilerLoadWithPaths.Err diag)
-      (ResultBuildPackageTlciText.Err
-        (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (__tl-box-place diag)))]
-    [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (build-package-tlci-text
-        manifest-path
-        manifest
-        mode
-        decls
-        paths
-        producer-identity)]))
 
 (define (build-package-runtime-fingerprint-path [artifact-path : String]) : String
   (str_cat.str-cat artifact-path ".runtime-inputs"))
@@ -5933,58 +5802,8 @@
     [(ResultBuildPackagePreparedRuntime.Err message)
       (ResultBuildPackagePreparedRuntime.Err message)]))
 
-(define (build-package-finish-fresh-artifacts
-  [name : String]
-  [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
-  [producer-identity : String]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [owned-paths : ast.AstDeclPathList]
-  [output-dir : String]
-  [asm-path : String]
-  [obj-path : String]
-  [artifact-path : String]
-  [link-inputs : build_run_core.SourceToolLinkInputs]
-  [tlci-path : String]
-  [tlci-text : String]
-  [announce : bool]) : i64
-  (build-package-finish-prepared-runtime
-    name
-    kind
-    target
-    opt-level
-    profile
-    mode
-    producer-identity
-    emit-entry
-    crt-entry
-    decls
-    owned-paths
-    output-dir
-    asm-path
-    obj-path
-    artifact-path
-    link-inputs
-    tlci-path
-    tlci-text
-    (build-package-prepare-runtime
-      kind
-      target
-      opt-level
-      mode
-      emit-entry
-      crt-entry
-      decls
-      owned-paths)
-    announce))
-
 (cfg
-  embedded-stdlib-tlci
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-finish-fresh-artifacts-with-surface
     [manifest : load.CompilerPkgManifest]
     [source-inputs : BuildPackageTlciSourceInputs]
@@ -6160,7 +5979,7 @@
         "typecheck-prefix-inline-build-package")]))
 
 (cfg
-  embedded-stdlib-tlci
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-emit-one-with-surface
     [manifest-path : String]
     [manifest : load.CompilerPkgManifest]
@@ -6254,110 +6073,114 @@
                 tlci-path
                 announce))])])))
 
-(define (build-package-emit-one
-  [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]
-  [dep-libs : process.ProcessStringList]
-  [producer-identity : String]
-  [announce : bool]) : i64
-  (let
-    ;; Windows package DAG nodes are serial same-process compiles; keep only
-    ;; persistent cache floors between dependency and root emits.
-    [_ : unit
-      (cfg
-        windows
-        (compiler_driver_core.compiler-driver-reset-file-state!)
-        unit)]
-    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-    [compile-context : BuildPackageCompileContext
-      (build-package-compile-context manifest-dir manifest)]
-    [entry-path : String
-      (load.compiler-load-join-root-path manifest-dir manifest.entry)]
-    [name : String manifest.name]
-    [_spmd-package-name : unit (lower.lower-spmd-set-package-name! name)]
-    [_package-artifact-profile : unit
-      (load.compiler-load-set-package-artifact-profile!
-        (build-profile-name profile))]
-    [kind : load.CompilerPkgKind manifest.kind]
-    [asm-path : String
-      (build-package-asm-path-profile manifest-dir name profile)]
-    [obj-path : String
-      (build-package-obj-path-profile manifest-dir name profile target)]
-    [artifact-paths : BuildPackageArtifactPaths
-      (build-package-artifact-paths manifest-dir name kind profile target)]
-    [artifact-path : String
-      (build-package-runtime-artifact-path artifact-paths)]
-    [tlci-path : String (build-package-host-tlci-artifact-path artifact-paths)]
-    [_reset-file-state : unit
-      (compiler_driver_core.compiler-driver-reset-file-state!)]
-    [_dependency-catalogs : unit
-      (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
-        (load.compiler-load-serial-test-session-state)
-        manifest-dir
-        manifest.deps)]
-    (if (or
-      (> (string.string-length compile-context.error) 0)
-      (not (build-ensure-package-output-dirs manifest-dir name profile)))
-      (let
-        [message : String
-          (if (> (string.string-length compile-context.error) 0)
-            compile-context.error
-            (str_cat.str-cat
-              "build: failed to create package output directory "
-              (build-package-output-dir-profile manifest-dir name profile)))]
-        (begin
-          (io.print-error message)
-          1))
-      (let
-        [manifest-link-inputs : build_run_core.SourceToolLinkInputs
-          (build-package-manifest-link-inputs manifest.link manifest-dir target)]
-        [dep-link-inputs : build_run_core.SourceToolLinkInputs
-          (build_run_core.source-tool-link-inputs-from-archives dep-libs)]
-        [emit-entry : bool (build-package-kind-entry? kind)]
-        [inline-test-status : i64
-          (build-inline-test-typecheck-package-sources
-            manifest-path
-            stdlib-roots
-            manifest-dir
-            name
-            manifest.deps
-            (build-package-compile-cfgs target compile-context.root-compiler))]
-        [_reset-after-inline-tests : unit
-          (if (= inline-test-status 0)
-            (begin
-              (compiler_driver_core.compiler-driver-reset-file-state!)
-              (ci.intern-persistent-arena-reset!))
-            unit)]
-        (if (= inline-test-status 0)
-          (let
-            [pre-emit-doctest-status : i64
-              (build-package-run-doctest-worker-or-inline
-                name
-                entry-path
-                manifest-path
-                target
-                opt-level
-                profile
-                mode
-                lock-policy
-                manifest.deps
-                (load.compiler-pkg-deps-list manifest.deps)
-                stdlib-roots
-                manifest-dir
-                emit-entry)]
-            [_reset-after-pre-emit-doctests : unit
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-emit-one
+    [manifest-path : String]
+    [manifest : load.CompilerPkgManifest]
+    [target : backend.CompilerBackendTarget]
+    [opt-level : i64]
+    [profile : BuildProfile]
+    [mode : backend.CompilerBackendMode]
+    [lock-policy : BuildPackageLockPolicy]
+    [stdlib-roots : cli_svec.Vec]
+    [dep-libs : process.ProcessStringList]
+    [producer-identity : String]
+    [announce : bool]) : i64
+    (let
+      ;; Windows package DAG nodes are serial same-process compiles; keep only
+      ;; persistent cache floors between dependency and root emits.
+      [_ : unit
+        (cfg
+          windows
+          (compiler_driver_core.compiler-driver-reset-file-state!)
+          unit)]
+      [manifest-dir : String (load.compiler-load-dirname manifest-path)]
+      [compile-context : BuildPackageCompileContext
+        (build-package-compile-context manifest-dir manifest)]
+      [entry-path : String
+        (load.compiler-load-join-root-path manifest-dir manifest.entry)]
+      [name : String manifest.name]
+      [_spmd-package-name : unit (lower.lower-spmd-set-package-name! name)]
+      [_package-artifact-profile : unit
+        (load.compiler-load-set-package-artifact-profile!
+          (build-profile-name profile))]
+      [kind : load.CompilerPkgKind manifest.kind]
+      [asm-path : String
+        (build-package-asm-path-profile manifest-dir name profile)]
+      [obj-path : String
+        (build-package-obj-path-profile manifest-dir name profile target)]
+      [artifact-paths : BuildPackageArtifactPaths
+        (build-package-artifact-paths manifest-dir name kind profile target)]
+      [artifact-path : String
+        (build-package-runtime-artifact-path artifact-paths)]
+      [tlci-path : String
+        (build-package-host-tlci-artifact-path artifact-paths)]
+      [_reset-file-state : unit
+        (compiler_driver_core.compiler-driver-reset-file-state!)]
+      [_dependency-catalogs : unit
+        (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
+          (load.compiler-load-serial-test-session-state)
+          manifest-dir
+          manifest.deps)]
+      (if (or
+        (> (string.string-length compile-context.error) 0)
+        (not (build-ensure-package-output-dirs manifest-dir name profile)))
+        (let
+          [message : String
+            (if (> (string.string-length compile-context.error) 0)
+              compile-context.error
+              (str_cat.str-cat
+                "build: failed to create package output directory "
+                (build-package-output-dir-profile manifest-dir name profile)))]
+          (begin
+            (io.print-error message)
+            1))
+        (let
+          [manifest-link-inputs : build_run_core.SourceToolLinkInputs
+            (build-package-manifest-link-inputs
+              manifest.link
+              manifest-dir
+              target)]
+          [dep-link-inputs : build_run_core.SourceToolLinkInputs
+            (build_run_core.source-tool-link-inputs-from-archives dep-libs)]
+          [emit-entry : bool (build-package-kind-entry? kind)]
+          [inline-test-status : i64
+            (build-inline-test-typecheck-package-sources
+              manifest-path
+              stdlib-roots
+              manifest-dir
+              name
+              manifest.deps
+              (build-package-compile-cfgs target compile-context.root-compiler))]
+          [_reset-after-inline-tests : unit
+            (if (= inline-test-status 0)
               (begin
                 (compiler_driver_core.compiler-driver-reset-file-state!)
-                (ci.intern-persistent-arena-reset!))]
-            (if (= pre-emit-doctest-status 0)
-              (cfg
-                embedded-stdlib-tlci
+                (ci.intern-persistent-arena-reset!))
+              unit)]
+          (if (= inline-test-status 0)
+            (let
+              [pre-emit-doctest-status : i64
+                (build-package-run-doctest-worker-or-inline
+                  name
+                  entry-path
+                  manifest-path
+                  target
+                  opt-level
+                  profile
+                  mode
+                  lock-policy
+                  manifest.deps
+                  (load.compiler-pkg-deps-list manifest.deps)
+                  stdlib-roots
+                  manifest-dir
+                  emit-entry)]
+              [_reset-after-pre-emit-doctests : unit
+                (begin
+                  (compiler_driver_core.compiler-driver-reset-file-state!)
+                  (ci.intern-persistent-arena-reset!))]
+              (if (= pre-emit-doctest-status 0)
                 (build-package-emit-one-with-surface
                   manifest-path
                   manifest
@@ -6381,98 +6204,28 @@
                     target
                     compile-context.root-compiler)
                   announce)
-                (match (build-package-tlci-text-loaded
-                  manifest-path
-                  manifest
-                  mode
-                  entry-path
-                  stdlib-roots
-                  manifest-dir
-                  manifest.deps
-                  emit-entry
-                  (build-package-compile-cfgs
-                    target
-                    compile-context.root-compiler)
-                  producer-identity)
-                  [(ResultBuildPackageTlciText.Err message)
-                    (begin
-                      (io.print-error message)
-                      1)]
-                  [(ResultBuildPackageTlciText.Ok tlci-text)
-                    (begin
-                      ;; Producer-created intern ids must not remain live into
-                      ;; lowering; tlci-text is allocated in the caller arena.
-                      (compiler_driver_core.compiler-driver-reset-file-state!)
-                      (ci.intern-persistent-arena-reset!)
-                      (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
-                        entry-path
-                        stdlib-roots
-                        manifest-dir
-                        manifest.deps
-                        emit-entry
-                        (build-package-compile-cfgs
-                          target
-                          compile-context.root-compiler))
-                        [(load.ResultCompilerLoadWithPaths.Err diag)
-                          (begin
-                            (io.print-error
-                              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                                (__tl-box-place diag)))
-                            1)]
-                        [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-                          (let
-                            [owned-paths : ast.AstDeclPathList
-                              (load.compiler-load-package-owned-paths-for-decls
-                                name
-                                manifest-dir
-                                stdlib-roots
-                                entry-path
-                                decls
-                                paths)]
-                            [metadata-link-inputs : build_run_core.SourceToolLinkInputs
-                              (build_run_core.source-tool-link-inputs-from-decls
-                                decls
-                                (build_run_core.source-tool-link-inputs-empty))]
-                            ;; Merge order: manifest all-target/target inputs, source extern
-                            ;; metadata, then dependency archives (kept positional after the
-                            ;; requested libraries/args).
-                            [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                              (build_run_core.source-tool-link-inputs-merge
-                                (build_run_core.source-tool-link-inputs-merge
-                                  manifest-link-inputs
-                                  metadata-link-inputs)
-                                dep-link-inputs)]
-                            [crt-entry : bool
-                              (and
-                                emit-entry
-                                (build_run_core.source-tool-linux-crt-entry?
-                                  target
-                                  effective-link-inputs))]
-                            (build-package-finish-fresh-artifacts
-                              name
-                              kind
-                              target
-                              opt-level
-                              profile
-                              mode
-                              producer-identity
-                              emit-entry
-                              crt-entry
-                              decls
-                              owned-paths
-                              (build-package-output-dir-profile
-                                manifest-dir
-                                name
-                                profile)
-                              asm-path
-                              obj-path
-                              artifact-path
-                              effective-link-inputs
-                              tlci-path
-                              tlci-text
-                              announce))]))]))
-              pre-emit-doctest-status))
-          inline-test-status)))))
+                pre-emit-doctest-status))
+            inline-test-status))))))
+
+(cfg
+  (not
+    (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci))
+  (define (build-package-emit-one
+    [_manifest-path : String]
+    [_manifest : load.CompilerPkgManifest]
+    [_target : backend.CompilerBackendTarget]
+    [_opt-level : i64]
+    [_profile : BuildProfile]
+    [_mode : backend.CompilerBackendMode]
+    [_lock-policy : BuildPackageLockPolicy]
+    [_stdlib-roots : cli_svec.Vec]
+    [_dep-libs : process.ProcessStringList]
+    [_producer-identity : String]
+    [_announce : bool]) : i64
+    (begin
+      (io.print-error
+        "build: package emission requires checked frontend surface support")
+      1)))
 
 (define (build-package-dependency-catalog-finish [status : i64]) : i64
   (let

@@ -2,9 +2,15 @@
 ;; package surface producers and consumers.
 (import compiler_surface_binary as binary)
 (import compiler_surface_identity as surface_identity)
-(cfg (any compiler-surface-producer embedded-stdlib-tlci) (import stdlib.arena))
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import stdlib.arena))
+(cfg
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 
 (defstruct SurfaceTypecheckFacts
@@ -18,7 +24,7 @@
   (clone-call-indices (__tl_dyn-array i64)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (defenum ResultSurfaceTypecheckFactBytes
     (Ok (__tl_dyn-array u8))
     (Err String)))
@@ -34,25 +40,25 @@
   (message (__tl_dyn-array String)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (defstruct SurfaceCloneObservation
     (decl-key i64)
     (root-key i64)
     (call-index i64)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (defstruct SurfaceCloneObservationSeq
     (slots (__tl_dyn-array SurfaceCloneObservation))
     (len i64)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-clone-observation-seq-empty) : SurfaceCloneObservationSeq
     (SurfaceCloneObservationSeq (__tl_make-array SurfaceCloneObservation 0) 0)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-clone-observation-copy-range!
     [dst : (&mut dst (__tl_dyn-array SurfaceCloneObservation))]
     [src : (& src (__tl_dyn-array SurfaceCloneObservation))]
@@ -65,7 +71,7 @@
           (set! index (+ index 1)))))))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-clone-observation-seq-grow!
     [seq : (&mut seq SurfaceCloneObservationSeq)]) : unit
     (let
@@ -84,7 +90,7 @@
         (set! seq.slots bigger)))))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-clone-observation-seq-push!
     [seq : (&mut seq SurfaceCloneObservationSeq)]
     [observation : SurfaceCloneObservation]) : unit
@@ -149,24 +155,24 @@
   (surface-typecheck-facts-installed-shared-view))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define surface-typecheck-facts-recording-active : bool
     false))
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define surface-typecheck-facts-recording-arena : i64
     0))
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define surface-typecheck-facts-recording-decl-key : i64
     -1))
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define surface-typecheck-facts-recording-observations : SurfaceCloneObservationSeq
     (surface-clone-observation-seq-empty)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-observations-shared-view) : SurfaceCloneObservationSeq
     (cfg
       stage0-seed-bootstrap
@@ -175,16 +181,16 @@
         (ptr-read (ptr-addr-of surface-typecheck-facts-recording-observations))))))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define surface-typecheck-facts-recording-next-call : i64
     0))
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define surface-typecheck-facts-recording-current-call : i64
     -1))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-start! [arena-handle : i64]) : unit
     (begin
       (set! surface-typecheck-facts-recording-arena arena-handle)
@@ -197,14 +203,14 @@
       (set! surface-typecheck-facts-recording-active true))))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-select-decl! [decl-key : i64]) : unit
     (if surface-typecheck-facts-recording-active
       (set! surface-typecheck-facts-recording-decl-key decl-key)
       unit)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-start-clone-call!) : unit
     (if surface-typecheck-facts-recording-active
       (begin
@@ -217,7 +223,7 @@
       unit)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-note-clone-root! [root-key : i64]) : unit
     (if (and
       surface-typecheck-facts-recording-active
@@ -235,7 +241,7 @@
       unit)))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-finish
     [macro-prefix-decl-count : i64]
     [prefix-decl-count : i64]
@@ -283,7 +289,7 @@
           call-indices)))))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-abort!) : unit
     (begin
       (set! surface-typecheck-facts-recording-active false)
@@ -296,7 +302,7 @@
       (set! surface-typecheck-facts-recording-current-call -1))))
 
 (cfg
-  (any compiler-surface-producer embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording?) : bool
     surface-typecheck-facts-recording-active))
 
@@ -483,7 +489,11 @@
       1)))
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
   (define (surface-typecheck-facts-encode
     [facts : SurfaceTypecheckFacts]
     [source-count : i64]

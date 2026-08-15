@@ -12164,11 +12164,9 @@
       existing
       (let
         [owner : i64 (tc-chain-store-owner store-handle)]
-        [previous : i64 (arena.tl_arena_current)]
         [cell : i64
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+          (in-arena
+            (arena.Arena owner)
             (let
               [slots : (__tl_dyn-array TcChainIndex)
                 (array.make-array TcChainIndex 1)]
@@ -12181,7 +12179,6 @@
                     (ptr->int (ptr-cast (array-data slots) : (Ptr u8)))
                     : i64)))))]
         (begin
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
           (tc-chain-state-set! store-handle cell)
           cell)))))
 
@@ -12369,14 +12366,12 @@
       (let
         [state-addr : i64 (tc-chain-state-ensure! store-handle)]
         [owner : i64 (tc-chain-store-owner store-handle)]
-        [previous : i64 (arena.tl_arena_current)]
         [levels : i64 (tc-chain-jump-levels depth)]
-        (begin
-          ;; The jump and version arrays are reached from the index by node
-          ;; address, so they must live exactly as long as the node: allocate
-          ;; them in the store's owner arena, not the ambient one.
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+        ;; The jump and version arrays are reached from the index by node
+        ;; address, so they must live exactly as long as the node: allocate
+        ;; them in the store's owner arena, not the ambient one.
+        (in-arena
+          (arena.Arena owner)
           (let
             [jumps : (__tl_dyn-array i64)
               (if (= levels 0)
@@ -12406,7 +12401,6 @@
                           (tc-chain-jump-at (array-ref jumps (- k 1)) (- k 1)))
                         (set! k (+ k 1)))))))
               (tc-chain-node-set-fields! node-addr depth seq jumps prev)
-              (tc-type-env-store-restore-after-owner-alloc! previous owner)
               (tc-chain-register-layer!
                 store-handle
                 state-addr

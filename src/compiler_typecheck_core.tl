@@ -92637,23 +92637,6 @@
       unit)
     (tc-macro-walk-field state macro-hygiene-env-storage-arena)))
 
-(define (macro-hygiene-env-storage-restore!
-  [state : TcMacroState]
-  [previous : i64]
-  [storage : i64]) : unit
-  (let
-    [head : i64 (arena.tl_arena_current)]
-    (begin
-      ;; Large array growth can advance the arena to a new segment. Retain that
-      ;; newest head, and keep it active when the caller was already allocating
-      ;; in this owner, rather than restoring a stale pre-growth handle.
-      (tc-macro-walk-set! state macro-hygiene-env-storage-arena head)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous storage)
-            head
-            previous))))))
-
 (define (macro-hygiene-env-grow-copy!
   [dst-kinds : (__tl_dyn-array i64)]
   [dst-keys : (__tl_dyn-array i64)]
@@ -92694,14 +92677,11 @@
           (if (< old-capacity 1)
             64
             (* old-capacity 2))]
-        [previous-arena : i64 (arena.tl_arena_current)]
         [storage : i64 (macro-hygiene-env-storage-handle state)]
-        (begin
-          ;; Snapshots can cross every scratch rewind involved in an expansion.
-          ;; Allocate initial storage and every growth in one retained arena, then
-          ;; restore the caller's active owner.
-          (unsafe
-            (arena.tl_arena_set storage))
+        ;; Snapshots can cross every scratch rewind involved in an expansion, so
+        ;; initial storage and every growth live in one retained arena.
+        (in-arena
+          (arena.Arena storage)
           (let
             [next-kinds : (__tl_dyn-array i64)
               (array.make-array i64 next-capacity)]
@@ -92726,8 +92706,7 @@
               (tc-macro-walk-set! state macro-hygiene-env-kinds next-kinds)
               (tc-macro-walk-set! state macro-hygiene-env-keys next-keys)
               (tc-macro-walk-set! state macro-hygiene-env-values next-values)
-              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents)
-              (macro-hygiene-env-storage-restore! state previous-arena storage))))))))
+              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents))))))))
 
 (define (macro-hygiene-env-push
   [kind : i64]
@@ -93434,18 +93413,11 @@
         (begin
           (while (< capacity needed)
             (set! capacity (* capacity 2)))
-          (let
-            [previous-arena : i64 (arena.tl_arena_current)]
-            [owner : i64 (tc-macro-state-owner-arena state)]
+          (in-arena
+            (arena.Arena (tc-macro-state-owner-arena state))
             (begin
-              (unsafe
-                (arena.tl_arena_set
-                  (tc-type-env-store-owner-current-head owner)))
               (set! produced.refcounts (array.make-array i64 capacity))
-              (tc-macro-hygiene-produced-state-data-set! state produced)
-              (tc-type-env-store-restore-after-owner-alloc!
-                previous-arena
-                owner))))))))
+              (tc-macro-hygiene-produced-state-data-set! state produced))))))))
 
 (define (macro-hygiene-produced-note-id!
   [produced : TcMacroHygieneProducedStateData]

@@ -262,6 +262,19 @@
   (compiler_typecheck_core.tc-job-state-reset-file-state!
     (compiler-driver-state-typecheck state)))
 
+;; An intern reset publishes a new generation before the loader can record the
+;; next entry's lazy import aliases. Bind that empty-generation snapshot now;
+;; the post-load bind refreshes its source-count boundary without changing the
+;; generation. Otherwise loader-produced aliases inherit the previous entry's
+;; provenance and are discarded at the post-load bind.
+(define (compiler-driver-state-bind-reset-source-names!
+  [state : CompilerDriverState]) : unit
+  (compiler_typecheck_core.tc-macro-state-bind-source-names!
+    (compiler_typecheck_core.tc-job-state-macro-state
+      (compiler-driver-state-typecheck state))
+    (ci.intern-source-name-session-handle-from-state
+      (compiler-driver-state-owned-interns state))))
+
 (define (compiler-driver-state-prefix-cache-enable!
   [state : CompilerDriverState]) : unit
   (compiler_typecheck_core.tc-prefix-snapshot-cache-enable-for-state!
@@ -919,6 +932,7 @@
         (compiler_load.compiler-load-session-state-reset-interns-with-state!
           state.load-session
           (array-ref state.intern-state 0))
+        (compiler-driver-state-bind-reset-source-names! state)
         (compiler-driver-state-reset-typecheck! state)
         (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
         ;; Builtin/CTFE ids and lowerer arenas are state-owned: reset/release
@@ -955,6 +969,7 @@
         (compiler_load.compiler-load-session-state-reset-interns-with-state!
           state.load-session
           (array-ref state.intern-state 0))
+        (compiler-driver-state-bind-reset-source-names! state)
         (compiler-driver-state-reset-typecheck! state)
         (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
         ;; State-owned builtin/CTFE reset and lowerer-arena release, exactly as
@@ -992,6 +1007,7 @@
           (compiler_load.compiler-load-session-state-reset-interns-with-state!
             state.load-session
             (array-ref state.intern-state 0))
+          (compiler-driver-state-bind-reset-source-names! state)
           (compiler-driver-state-reset-typecheck! state)
           (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
           (compiler-driver-state-reset-builtins! state)

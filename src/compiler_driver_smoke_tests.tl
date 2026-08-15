@@ -1060,6 +1060,62 @@
       42
       1)))
 
+;; A batch reset advances the owned intern generation before the next loader
+;; pass. Lazy aliases recorded by that loader must already carry the new
+;; generation when the post-load source-name snapshot refreshes its count.
+(define (compiler-driver-lazy-import-reset-source-names-ok?) : bool
+  (let
+    [state : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [job-state : compiler_typecheck_core.TcJobState
+      (compiler_driver_core.compiler-driver-state-typecheck state)]
+    [macro-state : compiler_typecheck_core.TcMacroState
+      (compiler_typecheck_core.tc-job-state-macro-state job-state)]
+    [intern-state : ci.InternCompatState
+      (compiler_driver_core.compiler-driver-state-owned-interns state)]
+    (begin
+      (compiler_driver_core.compiler-driver-state-install-pools! state)
+      (compiler_driver_core.compiler-driver-state-install-interns! state)
+      (compiler_driver_core.compiler-driver-state-reset-file-state! state)
+      (let
+        [generation : i64 (ci.intern-compat-state-generation intern-state)]
+        [importer : i64
+          (ci.intern-compat-state-intern intern-state "driver.lazy.entry")]
+        [alias : i64
+          (ci.intern-compat-state-intern intern-state "driver-lazy-alias")]
+        [target : i64
+          (ci.intern-compat-state-intern intern-state "driver.lazy.target")]
+        (begin
+          (compiler_typecheck_core.tc-lazy-import-stub-record-for-job!
+            job-state
+            importer
+            alias
+            target
+            true)
+          ;; Parsing grows the same-generation source-name table. Model the
+          ;; driver's post-load refresh and require its freshly recorded alias
+          ;; to survive.
+          (compiler_typecheck_core.tc-macro-state-bind-source-names!
+            macro-state
+            (ci.intern-source-name-session-handle-from-state intern-state))
+          (and
+            (=
+              generation
+              (ci.intern-source-name-session-handle-reset-generation
+                (compiler_typecheck_core.tc-macro-state-source-names
+                  macro-state)))
+            (=
+              (compiler_typecheck_core.tc-lazy-import-stub-count-for-state
+                macro-state)
+              1)
+            (match (compiler_typecheck_core.tc-lazy-import-stub-target-id-for-state
+              macro-state
+              importer
+              alias)
+              [(compiler_typecheck_core.TcMaybeNameId.Some actual)
+                (= actual target)]
+              [(compiler_typecheck_core.TcMaybeNameId.No) false])))))))
+
 (define (compiler-driver-typecheck-cache-owner-smoke-ok?) : bool
   (let
     [state-a : compiler_driver_core.CompilerDriverState
@@ -1116,7 +1172,8 @@
             (ci.intern-compat-state-generation intern-b)
             module-b
             name-b)
-          72)))))
+          72)
+        (compiler-driver-lazy-import-reset-source-names-ok?)))))
 
 ;; Base-transient A/B interleaving smoke (refs #4723). Builtin/CTFE id state
 ;; and lower scratch/IR arenas are owned by each driver state: a state-owned

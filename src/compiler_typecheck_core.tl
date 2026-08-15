@@ -5966,24 +5966,14 @@
         macro-name
         arity
         elapsed-ms)
-      (let
-        [enclosing : i64 (arena.tl_arena_current)]
-        [scratch : i64 (macro-expand-scratch-arena-get state)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set scratch))
-          (compiler-tc-macro-profile-record-in!
-            (&mut compiler-tc-macro-profile-entries)
-            macro-id
-            macro-name
-            arity
-            elapsed-ms)
-          (tc-macro-walk-set!
-            state
-            macro-expand-scratch-arena
-            (arena.tl_arena_current))
-          (unsafe
-            (arena.tl_arena_set enclosing)))))))
+      (in-arena
+        (arena.Arena (macro-expand-scratch-arena-get state))
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-id
+          macro-name
+          arity
+          elapsed-ms)))))
 
 (cfg
   compile-profile
@@ -85742,26 +85732,17 @@
         (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
       [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
       [display : String (macro-decl-name-display macro-name-id module-id)]
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 data.fixed-storage-arena]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (tc_i64_i64_map.insert-ref!
-          (&mut data.definition-paths)
-          (ci.intern display)
-          (ci.intern path))
-        ;; Hash-table growth must remain owned by the job state. Indexing also
-        ;; runs inside per-declaration generations, which are destroyed after
-        ;; each splice; retaining their current arena would leave stale slots.
-        (set! data.fixed-storage-arena (arena.tl_arena_current))
-        (tc-macro-call-site-state-data-set! state data)
-        (unsafe
-          (arena.tl_arena_set
-            (if (= previous owner)
-              data.fixed-storage-arena
-              previous)))))))
+      ;; Hash-table growth must remain owned by the job state. Indexing also
+      ;; runs inside per-declaration generations, which are destroyed after
+      ;; each splice; retaining their current arena would leave stale slots.
+      (in-arena
+        (arena.Arena data.fixed-storage-arena)
+        (begin
+          (tc_i64_i64_map.insert-ref!
+            (&mut data.definition-paths)
+            (ci.intern display)
+            (ci.intern path))
+          (tc-macro-call-site-state-data-set! state data))))))
 
 (define (macro-definition-path-id
   [ctx : TcContext]

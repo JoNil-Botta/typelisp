@@ -394,42 +394,35 @@
 
 (define (compiler-semantic-source-index-empty-owned) : CompilerSemanticSourceIndex
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
     (begin
       (set!
         compiler-semantic-source-index-live-owners
         (+ compiler-semantic-source-index-live-owners 1))
-      (unsafe
-        (arena.tl_arena_set owner))
-      (let
-        [result : CompilerSemanticSourceIndex
-          (CompilerSemanticSourceIndex
-            owner
-            (array.make-array CompilerSemanticRecord 0)
-            0
-            (array.make-array String 0)
-            0
-            false
-            (array.make-array CompilerSemanticSourcePathInfo 0)
-            0
-            (array.make-array CompilerSemanticModuleInfo 0)
-            0
-            (array.make-array CompilerSemanticModuleEvent 0)
-            0
-            (array.make-array CompilerSemanticScopeEvent 0)
-            0
-            0
-            (array.make-array CompilerSemanticBinding 0)
-            0
-            (array.make-array CompilerSemanticTopCandidateRef 0)
-            (array.make-array String 0)
-            (array.make-array CompilerSemanticVisibleBinding 0)
-            0)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set previous))
-          result)))))
+      (in-arena
+        (arena.Arena owner)
+        (CompilerSemanticSourceIndex
+          owner
+          (array.make-array CompilerSemanticRecord 0)
+          0
+          (array.make-array String 0)
+          0
+          false
+          (array.make-array CompilerSemanticSourcePathInfo 0)
+          0
+          (array.make-array CompilerSemanticModuleInfo 0)
+          0
+          (array.make-array CompilerSemanticModuleEvent 0)
+          0
+          (array.make-array CompilerSemanticScopeEvent 0)
+          0
+          0
+          (array.make-array CompilerSemanticBinding 0)
+          0
+          (array.make-array CompilerSemanticTopCandidateRef 0)
+          (array.make-array String 0)
+          (array.make-array CompilerSemanticVisibleBinding 0)
+          0)))))
 
 (define (compiler-semantic-binding-snapshot-empty) : CompilerSemanticBindingSnapshot
   (CompilerSemanticBindingSnapshot -1))
@@ -5121,450 +5114,463 @@
   [entry-source : String]
   [complete : bool]) : CompilerSemanticSourceIndex
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
     (begin
       (set!
         compiler-semantic-source-index-live-owners
         (+ compiler-semantic-source-index-live-owners 1))
-      (unsafe
-        (arena.tl_arena_set owner))
-      (let
-        [decls : ast.AstDeclList
-          (match (tc.tc-context-program ctx)
-            [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)])]
-        [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-        [symbol-count : i64
-          (csym.compiler-symbols-decl-count (tc.tc-context-symbols ctx))]
-        [path-capacity : i64 (+ decl-count 4)]
-        [module-capacity : i64 (+ decl-count 4)]
-        [paths-out : (__tl_dyn-array CompilerSemanticSourcePathInfo)
-          (array.make-array CompilerSemanticSourcePathInfo path-capacity)]
-        [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
-          (array.make-array CompilerSemanticModuleInfo module-capacity)]
-        [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
-          (array.make-array CompilerSemanticModuleEvent (+ (* decl-count 2) 8))]
-        [decl-record-indices : (__tl_dyn-array i64)
-          (array.make-array i64 symbol-count)]
-        [walk-state : CompilerSemanticWalkState
-          (CompilerSemanticWalkState
-            ctx
-            env
-            ""
-            ""
-            -1
-            cbi.compiler-builtin-id-fix-empty
-            -1
-            false
-            CompilerSemanticProvenance.EditableSource
-            (box
-              (compiler-semantic-record-vec-new
-                (* (ast.ast-decl-list-len (& decls)) 2)))
-            (box
-              (compiler-semantic-binding-vec-new
-                (* (ast.ast-decl-list-len (& decls)) 2)))
-            complete
-            -1
-            -1
-            (box
-              (CompilerSemanticVisibilityBuildStorage
-                paths-out
-                (box 0)
-                modules-out
-                (box 0)
-                module-events-out
-                (box 0)
-                (box
-                  (compiler-semantic-scope-event-vec-new (+ (* decl-count 2) 8)))
-                (box 0)
-                (box 0)
-                (box 1)
-                (box 1)))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [decls : ast.AstDeclList
+            (match (tc.tc-context-program ctx)
+              [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)])]
+          [decl-count : i64 (ast.ast-decl-list-len (& decls))]
+          [symbol-count : i64
+            (csym.compiler-symbols-decl-count (tc.tc-context-symbols ctx))]
+          [path-capacity : i64 (+ decl-count 4)]
+          [module-capacity : i64 (+ decl-count 4)]
+          [paths-out : (__tl_dyn-array CompilerSemanticSourcePathInfo)
+            (array.make-array CompilerSemanticSourcePathInfo path-capacity)]
+          [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
+            (array.make-array CompilerSemanticModuleInfo module-capacity)]
+          [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
             (array.make-array
-              i64
-              (ast.ast-node-pool-context-expr-len (tc.tc-context-pools ctx)))
-            (box 0))]
-        [index : i64 0]
-        [cached-path : String ""]
-        [cached-source : String ""]
-        [form-search-start : i64 0]
-        (begin
-          (while (< index (ast.ast-decl-list-len (& decls)))
-            (let
-              [decl : ast.AstDecl
-                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-              [path : String
-                (ast.ast-decl-path-list-get (& paths) index entry-path)]
-              [module-id : i64
-                (ast.ast-decl-path-list-owner-id
-                  (& paths)
-                  index
-                  cbi.compiler-builtin-id-fix-empty)]
-              [decl-ctx : tc.TcContext
-                (if (= module-id cbi.compiler-builtin-id-fix-empty)
-                  (tc.tc-context-with-module-id
-                    ctx
-                    ""
-                    cbi.compiler-builtin-id-fix-empty)
-                  (tc.tc-context-with-module-id
-                    ctx
-                    (tc.macro-decl-module-display module-id)
-                    module-id))]
-              [generated : bool
-                (match (ast.ast-decl-generated-meta decl)
-                  [(ast.AstGeneratedDeclMeta.No) false]
-                  [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true])]
-              [provenance : CompilerSemanticProvenance
-                (compiler-semantic-decl-provenance decl)]
-              [path-changed : bool (not (string.eq path cached-path))]
-              [module-changed : bool
-                (or path-changed (!= module-id walk-state.module-id))]
-              (begin
-                (if path-changed
-                  (begin
-                    (set! cached-path (string.copy (& path)))
-                    (set! form-search-start 0)
+              CompilerSemanticModuleEvent
+              (+ (* decl-count 2) 8))]
+          [decl-record-indices : (__tl_dyn-array i64)
+            (array.make-array i64 symbol-count)]
+          [walk-state : CompilerSemanticWalkState
+            (CompilerSemanticWalkState
+              ctx
+              env
+              ""
+              ""
+              -1
+              cbi.compiler-builtin-id-fix-empty
+              -1
+              false
+              CompilerSemanticProvenance.EditableSource
+              (box
+                (compiler-semantic-record-vec-new
+                  (* (ast.ast-decl-list-len (& decls)) 2)))
+              (box
+                (compiler-semantic-binding-vec-new
+                  (* (ast.ast-decl-list-len (& decls)) 2)))
+              complete
+              -1
+              -1
+              (box
+                (CompilerSemanticVisibilityBuildStorage
+                  paths-out
+                  (box 0)
+                  modules-out
+                  (box 0)
+                  module-events-out
+                  (box 0)
+                  (box
+                    (compiler-semantic-scope-event-vec-new
+                      (+ (* decl-count 2) 8)))
+                  (box 0)
+                  (box 0)
+                  (box 1)
+                  (box 1)))
+              (array.make-array
+                i64
+                (ast.ast-node-pool-context-expr-len (tc.tc-context-pools ctx)))
+              (box 0))]
+          [index : i64 0]
+          [cached-path : String ""]
+          [cached-source : String ""]
+          [form-search-start : i64 0]
+          (begin
+            (while (< index (ast.ast-decl-list-len (& decls)))
+              (let
+                [decl : ast.AstDecl
+                  (ast.ast-decl-list-get
+                    (& decls)
+                    index
+                    (ast.ast-decl-fallback))]
+                [path : String
+                  (ast.ast-decl-path-list-get (& paths) index entry-path)]
+                [module-id : i64
+                  (ast.ast-decl-path-list-owner-id
+                    (& paths)
+                    index
+                    cbi.compiler-builtin-id-fix-empty)]
+                [decl-ctx : tc.TcContext
+                  (if (= module-id cbi.compiler-builtin-id-fix-empty)
+                    (tc.tc-context-with-module-id
+                      ctx
+                      ""
+                      cbi.compiler-builtin-id-fix-empty)
+                    (tc.tc-context-with-module-id
+                      ctx
+                      (tc.macro-decl-module-display module-id)
+                      module-id))]
+                [generated : bool
+                  (match (ast.ast-decl-generated-meta decl)
+                    [(ast.AstGeneratedDeclMeta.No) false]
+                    [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true])]
+                [provenance : CompilerSemanticProvenance
+                  (compiler-semantic-decl-provenance decl)]
+                [path-changed : bool (not (string.eq path cached-path))]
+                [module-changed : bool
+                  (or path-changed (!= module-id walk-state.module-id))]
+                (begin
+                  (if path-changed
+                    (begin
+                      (set! cached-path (string.copy (& path)))
+                      (set! form-search-start 0)
+                      (set!
+                        cached-source
+                        (cond
+                          [(string.eq path entry-path)
+                            (string.copy (& entry-source))]
+                          [(and
+                              (not (string.eq path ""))
+                              (io.file-exists? path))
+                            (byte_buf.to-string (io.read-file path))]
+                          [else ""]))
+                      (set! walk-state.path (string.copy (& path)))
+                      (set! walk-state.source (string.copy (& cached-source))))
+                    unit)
+                  (set! walk-state.ctx decl-ctx)
+                  (set! walk-state.top-env env)
+                  (set! walk-state.form-start -1)
+                  (set! walk-state.module-id module-id)
+                  (if module-changed
                     (set!
-                      cached-source
-                      (cond
-                        [(string.eq path entry-path)
-                          (string.copy (& entry-source))]
-                        [(and (not (string.eq path "")) (io.file-exists? path))
-                          (byte_buf.to-string (io.read-file path))]
-                        [else ""]))
-                    (set! walk-state.path (string.copy (& path)))
-                    (set! walk-state.source (string.copy (& cached-source))))
-                  unit)
-                (set! walk-state.ctx decl-ctx)
-                (set! walk-state.top-env env)
-                (set! walk-state.form-start -1)
-                (set! walk-state.module-id module-id)
-                (if module-changed
-                  (set!
-                    walk-state.module-index
-                    (if complete
-                      (compiler-semantic-module-index-ensure!
+                      walk-state.module-index
+                      (if complete
+                        (compiler-semantic-module-index-ensure!
+                          walk-state
+                          module-id)
+                        -1))
+                    unit)
+                  (if path-changed
+                    (set!
+                      walk-state.path-index
+                      (compiler-semantic-path-index-ensure!
                         walk-state
-                        module-id)
-                      -1))
-                  unit)
-                (if path-changed
-                  (set!
-                    walk-state.path-index
-                    (compiler-semantic-path-index-ensure!
-                      walk-state
-                      path
-                      (string.string-length cached-source)
-                      walk-state.module-index))
-                  unit)
-                (set! walk-state.declaration-ordinal index)
-                (set! walk-state.generated generated)
-                (set! walk-state.provenance provenance)
-                (set! (deref walk-state.next-local-ordinal) 0)
-                (compiler-semantic-source-anchor-set! walk-state 0 1 1)
-                ;; Imports and module markers have no semantic definition row,
-                ;; but their checked path owner still changes the module that
-                ;; a cursor at that form observes.
-                (match (compiler-semantic-decl-symbol decl)
-                  [(CompilerSemanticMaybeDecl.Some _ _) unit]
-                  [(CompilerSemanticMaybeDecl.None)
-                    (match (compiler-semantic-decl-origin (& decls) index decl)
-                      [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
-                        (let
-                          [form-start : i64
-                            (if (or generated (string.eq cached-source ""))
-                              -1
-                              (compiler-semantic-top-level-form-start
-                                cached-source
-                                (compiler-semantic-source-offset
+                        path
+                        (string.string-length cached-source)
+                        walk-state.module-index))
+                    unit)
+                  (set! walk-state.declaration-ordinal index)
+                  (set! walk-state.generated generated)
+                  (set! walk-state.provenance provenance)
+                  (set! (deref walk-state.next-local-ordinal) 0)
+                  (compiler-semantic-source-anchor-set! walk-state 0 1 1)
+                  ;; Imports and module markers have no semantic definition row,
+                  ;; but their checked path owner still changes the module that
+                  ;; a cursor at that form observes.
+                  (match (compiler-semantic-decl-symbol decl)
+                    [(CompilerSemanticMaybeDecl.Some _ _) unit]
+                    [(CompilerSemanticMaybeDecl.None)
+                      (match (compiler-semantic-decl-origin
+                        (& decls)
+                        index
+                        decl)
+                        [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                          (let
+                            [form-start : i64
+                              (if (or generated (string.eq cached-source ""))
+                                -1
+                                (compiler-semantic-top-level-form-start
                                   cached-source
-                                  (ast.ast-source-span-start-line origin)
-                                  (ast.ast-source-span-start-col origin))
-                                form-search-start))]
-                          (begin
-                            (compiler-semantic-module-event-push!
-                              walk-state
-                              walk-state.path-index
-                              form-start
-                              walk-state.module-index)
-                            (if (>= form-start 0)
-                              (set! form-search-start form-start)
-                              unit)))]
-                      [(parse_core.CompilerParseMaybeDeclSpan.None) unit])])
-                (match (compiler-semantic-decl-symbol decl)
-                  [(CompilerSemanticMaybeDecl.Some name-id kind)
-                    (let
-                      [name : String (tc.tc-env-key-name-text name-id)]
-                      [maybe-origin : parse_core.CompilerParseMaybeDeclSpan
-                        (compiler-semantic-decl-origin (& decls) index decl)]
-                      [form-start : i64
-                        (match maybe-origin
-                          [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
-                            (if (or generated (string.eq cached-source ""))
-                              -1
-                              (compiler-semantic-top-level-form-start
-                                cached-source
-                                (compiler-semantic-source-offset
-                                  cached-source
-                                  (ast.ast-source-span-start-line origin)
-                                  (ast.ast-source-span-start-col origin))
-                                form-search-start))]
-                          [(parse_core.CompilerParseMaybeDeclSpan.None)
-                            (if (and
-                              (not generated)
-                              (not (string.eq cached-source "")))
-                              0
-                              -1)])]
-                      [has-origin : bool
-                        (match maybe-origin
-                          [(parse_core.CompilerParseMaybeDeclSpan.Some _) true]
-                          [(parse_core.CompilerParseMaybeDeclSpan.None)
-                            (and
-                              (not generated)
-                              (not (string.eq cached-source "")))])]
-                      [span : CompilerSemanticSpan
-                        (match maybe-origin
-                          [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
-                            (if (string.eq cached-source "")
-                              (CompilerSemanticSpan
-                                (string.copy (& path))
-                                -1
-                                -1
-                                origin
-                                -1
-                                -1)
-                              (compiler-semantic-definition-span
-                                path
-                                cached-source
-                                name
-                                origin
-                                form-start))]
-                          [(parse_core.CompilerParseMaybeDeclSpan.None)
-                            (if (and
-                              (not generated)
-                              (not (string.eq cached-source "")))
-                              (let
-                                [end-position : ast.AstSourceSpan
-                                  (compiler-semantic-source-position
+                                  (compiler-semantic-source-offset
                                     cached-source
-                                    (string.string-length cached-source))]
+                                    (ast.ast-source-span-start-line origin)
+                                    (ast.ast-source-span-start-col origin))
+                                  form-search-start))]
+                            (begin
+                              (compiler-semantic-module-event-push!
+                                walk-state
+                                walk-state.path-index
+                                form-start
+                                walk-state.module-index)
+                              (if (>= form-start 0)
+                                (set! form-search-start form-start)
+                                unit)))]
+                        [(parse_core.CompilerParseMaybeDeclSpan.None) unit])])
+                  (match (compiler-semantic-decl-symbol decl)
+                    [(CompilerSemanticMaybeDecl.Some name-id kind)
+                      (let
+                        [name : String (tc.tc-env-key-name-text name-id)]
+                        [maybe-origin : parse_core.CompilerParseMaybeDeclSpan
+                          (compiler-semantic-decl-origin (& decls) index decl)]
+                        [form-start : i64
+                          (match maybe-origin
+                            [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                              (if (or generated (string.eq cached-source ""))
+                                -1
+                                (compiler-semantic-top-level-form-start
+                                  cached-source
+                                  (compiler-semantic-source-offset
+                                    cached-source
+                                    (ast.ast-source-span-start-line origin)
+                                    (ast.ast-source-span-start-col origin))
+                                  form-search-start))]
+                            [(parse_core.CompilerParseMaybeDeclSpan.None)
+                              (if (and
+                                (not generated)
+                                (not (string.eq cached-source "")))
+                                0
+                                -1)])]
+                        [has-origin : bool
+                          (match maybe-origin
+                            [(parse_core.CompilerParseMaybeDeclSpan.Some _)
+                              true]
+                            [(parse_core.CompilerParseMaybeDeclSpan.None)
+                              (and
+                                (not generated)
+                                (not (string.eq cached-source "")))])]
+                        [span : CompilerSemanticSpan
+                          (match maybe-origin
+                            [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                              (if (string.eq cached-source "")
+                                (CompilerSemanticSpan
+                                  (string.copy (& path))
+                                  -1
+                                  -1
+                                  origin
+                                  -1
+                                  -1)
                                 (compiler-semantic-definition-span
                                   path
                                   cached-source
                                   name
-                                  (ast.ast-source-span
-                                    1
-                                    1
-                                    (ast.ast-source-span-start-line
-                                      end-position)
-                                    (ast.ast-source-span-start-col end-position))
-                                  form-start))
-                              (CompilerSemanticSpan
-                                (string.copy (& path))
-                                -1
-                                -1
-                                (ast.ast-source-span 1 1 1 1)
-                                -1
-                                -1))])]
-                      [symbol : CompilerSemanticSymbolId
-                        (compiler-semantic-symbol-for-decl
-                          decl-ctx
-                          module-id
-                          index
-                          name-id
-                          kind)]
-                      [type-text : String
-                        (compiler-semantic-decl-type
-                          decl-ctx
-                          env
-                          decl
-                          kind
-                          name-id
-                          name)]
-                      [documentation : String
-                        (if (and
-                          (not generated)
-                          (not (string.eq cached-source ""))
-                          (>= span.start-byte 0))
-                          (compiler-semantic-documentation-above
-                            cached-source
-                            form-start)
-                          "")]
-                      (begin
-                        (if (>= span.start-byte 0)
-                          (compiler-semantic-source-anchor-set!
-                            walk-state
-                            span.start-byte
-                            (ast.ast-source-span-start-line span.source)
-                            (ast.ast-source-span-start-col span.source))
-                          unit)
-                        (set! walk-state.form-start form-start)
-                        (compiler-semantic-module-event-push!
-                          walk-state
-                          walk-state.path-index
-                          form-start
-                          walk-state.module-index)
-                        (if (>= form-start 0)
-                          (set! form-search-start form-start)
-                          unit)
-                        ;; Local identities are anchored to the resolved
-                        ;; declaration handle, not the flattened AST position.
-                        (set! walk-state.module-id symbol.module-id)
-                        (set!
-                          walk-state.declaration-ordinal
-                          symbol.declaration-ordinal)
-                        (let
-                          [record-index : i64
-                            (compiler-semantic-record-vec-push-index!
-                              (&mut (__tl-box-place walk-state.records))
-                              (CompilerSemanticRecord
-                                symbol
-                                -1
-                                CompilerSemanticRecordRole.Definition
-                                kind
-                                (string.copy (& name))
-                                (string.copy (& type-text))
-                                (string.copy (& documentation))
-                                symbol.module-id
-                                span
-                                (and
-                                  (not generated)
-                                  has-origin
-                                  (>= span.start-byte 0))
-                                provenance))]
+                                  origin
+                                  form-start))]
+                            [(parse_core.CompilerParseMaybeDeclSpan.None)
+                              (if (and
+                                (not generated)
+                                (not (string.eq cached-source "")))
+                                (let
+                                  [end-position : ast.AstSourceSpan
+                                    (compiler-semantic-source-position
+                                      cached-source
+                                      (string.string-length cached-source))]
+                                  (compiler-semantic-definition-span
+                                    path
+                                    cached-source
+                                    name
+                                    (ast.ast-source-span
+                                      1
+                                      1
+                                      (ast.ast-source-span-start-line
+                                        end-position)
+                                      (ast.ast-source-span-start-col
+                                        end-position))
+                                    form-start))
+                                (CompilerSemanticSpan
+                                  (string.copy (& path))
+                                  -1
+                                  -1
+                                  (ast.ast-source-span 1 1 1 1)
+                                  -1
+                                  -1))])]
+                        [symbol : CompilerSemanticSymbolId
+                          (compiler-semantic-symbol-for-decl
+                            decl-ctx
+                            module-id
+                            index
+                            name-id
+                            kind)]
+                        [type-text : String
+                          (compiler-semantic-decl-type
+                            decl-ctx
+                            env
+                            decl
+                            kind
+                            name-id
+                            name)]
+                        [documentation : String
                           (if (and
-                            (>= symbol.declaration-ordinal 0)
-                            (< symbol.declaration-ordinal symbol-count))
-                            (set!
-                              (array-ref
-                                decl-record-indices
-                                symbol.declaration-ordinal)
-                              (+ record-index 1))
-                            unit))))]
-                  [(CompilerSemanticMaybeDecl.None) unit])
-                (compiler-semantic-walk-decl! walk-state decl)
-                (set! index (+ index 1)))))
-          (compiler-semantic-record-macro-call-sites!
-            walk-state
-            entry-path
-            entry-source)
-          (let
-            [canonical-build : CompilerSemanticCanonicalBuildResult
-              (compiler-semantic-canonical-build
-                (__tl-project-field (__tl-box-place walk-state.records) items)
-                (__tl-project-field (__tl-box-place walk-state.records) len))]
-            [visibility-storage : CompilerSemanticVisibilityBuildStorage
-              (__tl-box-place walk-state.visibility-storage)]
-            [path-count : i64 (__tl-box-place visibility-storage.path-len)]
-            [module-count : i64 (__tl-box-place visibility-storage.module-len)]
-            [top-capacity : i64
-              (if complete
-                (compiler-semantic-top-candidate-capacity ctx module-count)
-                0)]
-            [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
-              (array.make-array CompilerSemanticTopCandidateRef top-capacity)]
-            [top-labels : (__tl_dyn-array String)
-              (array.make-array String top-capacity)]
-            [raw-scope-events : CompilerSemanticScopeEventVec
-              (__tl-box-place visibility-storage.scope-events)]
-            [scope-event-count : i64
-              (if complete
-                raw-scope-events.len
-                0)]
-            [module-event-count : i64
-              (if complete
-                (__tl-box-place visibility-storage.module-event-len)
-                0)]
-            [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
-              (array.make-array CompilerSemanticScopeEvent scope-event-count)]
-            [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
-              (array.make-array CompilerSemanticModuleEvent module-event-count)]
-            [top-candidate-count : i64 0]
-            (begin
-              (if complete
-                (begin
-                  (compiler-semantic-bucket-scope-events!
-                    paths-out
-                    path-count
-                    raw-scope-events.items
-                    scope-event-count
-                    scope-events)
-                  (compiler-semantic-bucket-module-events!
-                    paths-out
-                    path-count
-                    module-events-out
-                    module-event-count
-                    module-events)
-                  (set!
-                    top-candidate-count
-                    (compiler-semantic-build-top-candidates!
-                      ctx
-                      modules-out
-                      module-count
-                      decl-record-indices
-                      (__tl-project-field
-                        (__tl-box-place walk-state.records)
-                        items)
-                      top-candidates
-                      top-labels)))
-                unit)
-              (let
-                [top-visible-bindings : (__tl_dyn-array
-                  CompilerSemanticVisibleBinding)
-                  (array.make-array
-                    CompilerSemanticVisibleBinding
-                    top-candidate-count)]
-                (begin
-                  (if complete
-                    (compiler-semantic-top-visible-bindings-fill!
-                      (&
-                        (__tl-project-field
-                          (__tl-box-place walk-state.records)
-                          items))
-                      (& top-candidates)
-                      (& top-labels)
+                            (not generated)
+                            (not (string.eq cached-source ""))
+                            (>= span.start-byte 0))
+                            (compiler-semantic-documentation-above
+                              cached-source
+                              form-start)
+                            "")]
+                        (begin
+                          (if (>= span.start-byte 0)
+                            (compiler-semantic-source-anchor-set!
+                              walk-state
+                              span.start-byte
+                              (ast.ast-source-span-start-line span.source)
+                              (ast.ast-source-span-start-col span.source))
+                            unit)
+                          (set! walk-state.form-start form-start)
+                          (compiler-semantic-module-event-push!
+                            walk-state
+                            walk-state.path-index
+                            form-start
+                            walk-state.module-index)
+                          (if (>= form-start 0)
+                            (set! form-search-start form-start)
+                            unit)
+                          ;; Local identities are anchored to the resolved
+                          ;; declaration handle, not the flattened AST position.
+                          (set! walk-state.module-id symbol.module-id)
+                          (set!
+                            walk-state.declaration-ordinal
+                            symbol.declaration-ordinal)
+                          (let
+                            [record-index : i64
+                              (compiler-semantic-record-vec-push-index!
+                                (&mut (__tl-box-place walk-state.records))
+                                (CompilerSemanticRecord
+                                  symbol
+                                  -1
+                                  CompilerSemanticRecordRole.Definition
+                                  kind
+                                  (string.copy (& name))
+                                  (string.copy (& type-text))
+                                  (string.copy (& documentation))
+                                  symbol.module-id
+                                  span
+                                  (and
+                                    (not generated)
+                                    has-origin
+                                    (>= span.start-byte 0))
+                                  provenance))]
+                            (if (and
+                              (>= symbol.declaration-ordinal 0)
+                              (< symbol.declaration-ordinal symbol-count))
+                              (set!
+                                (array-ref
+                                  decl-record-indices
+                                  symbol.declaration-ordinal)
+                                (+ record-index 1))
+                              unit))))]
+                    [(CompilerSemanticMaybeDecl.None) unit])
+                  (compiler-semantic-walk-decl! walk-state decl)
+                  (set! index (+ index 1)))))
+            (compiler-semantic-record-macro-call-sites!
+              walk-state
+              entry-path
+              entry-source)
+            (let
+              [canonical-build : CompilerSemanticCanonicalBuildResult
+                (compiler-semantic-canonical-build
+                  (__tl-project-field (__tl-box-place walk-state.records) items)
+                  (__tl-project-field (__tl-box-place walk-state.records) len))]
+              [visibility-storage : CompilerSemanticVisibilityBuildStorage
+                (__tl-box-place walk-state.visibility-storage)]
+              [path-count : i64 (__tl-box-place visibility-storage.path-len)]
+              [module-count : i64
+                (__tl-box-place visibility-storage.module-len)]
+              [top-capacity : i64
+                (if complete
+                  (compiler-semantic-top-candidate-capacity ctx module-count)
+                  0)]
+              [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
+                (array.make-array CompilerSemanticTopCandidateRef top-capacity)]
+              [top-labels : (__tl_dyn-array String)
+                (array.make-array String top-capacity)]
+              [raw-scope-events : CompilerSemanticScopeEventVec
+                (__tl-box-place visibility-storage.scope-events)]
+              [scope-event-count : i64
+                (if complete
+                  raw-scope-events.len
+                  0)]
+              [module-event-count : i64
+                (if complete
+                  (__tl-box-place visibility-storage.module-event-len)
+                  0)]
+              [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
+                (array.make-array CompilerSemanticScopeEvent scope-event-count)]
+              [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
+                (array.make-array
+                  CompilerSemanticModuleEvent
+                  module-event-count)]
+              [top-candidate-count : i64 0]
+              (begin
+                (if complete
+                  (begin
+                    (compiler-semantic-bucket-scope-events!
+                      paths-out
+                      path-count
+                      raw-scope-events.items
+                      scope-event-count
+                      scope-events)
+                    (compiler-semantic-bucket-module-events!
+                      paths-out
+                      path-count
+                      module-events-out
+                      module-event-count
+                      module-events)
+                    (set!
                       top-candidate-count
-                      top-visible-bindings)
-                    unit)
-                  (let
-                    [result : CompilerSemanticSourceIndex
-                      (CompilerSemanticSourceIndex
-                        owner
-                        (__tl-project-field
-                          (__tl-box-place walk-state.records)
-                          items)
-                        (__tl-project-field
-                          (__tl-box-place walk-state.records)
-                          len)
-                        canonical-build.symbols
-                        canonical-build.len
-                        complete
-                        paths-out
-                        path-count
+                      (compiler-semantic-build-top-candidates!
+                        ctx
                         modules-out
                         module-count
-                        module-events
-                        module-event-count
-                        scope-events
-                        scope-event-count
-                        (if complete
-                          (__tl-box-place visibility-storage.scope-region-count)
-                          0)
+                        decl-record-indices
                         (__tl-project-field
-                          (__tl-box-place walk-state.bindings)
+                          (__tl-box-place walk-state.records)
                           items)
-                        (if complete
+                        top-candidates
+                        top-labels)))
+                  unit)
+                (let
+                  [top-visible-bindings : (__tl_dyn-array
+                    CompilerSemanticVisibleBinding)
+                    (array.make-array
+                      CompilerSemanticVisibleBinding
+                      top-candidate-count)]
+                  (begin
+                    (if complete
+                      (compiler-semantic-top-visible-bindings-fill!
+                        (&
+                          (__tl-project-field
+                            (__tl-box-place walk-state.records)
+                            items))
+                        (& top-candidates)
+                        (& top-labels)
+                        top-candidate-count
+                        top-visible-bindings)
+                      unit)
+                    (let
+                      [result : CompilerSemanticSourceIndex
+                        (CompilerSemanticSourceIndex
+                          owner
+                          (__tl-project-field
+                            (__tl-box-place walk-state.records)
+                            items)
+                          (__tl-project-field
+                            (__tl-box-place walk-state.records)
+                            len)
+                          canonical-build.symbols
+                          canonical-build.len
+                          complete
+                          paths-out
+                          path-count
+                          modules-out
+                          module-count
+                          module-events
+                          module-event-count
+                          scope-events
+                          scope-event-count
+                          (if complete
+                            (__tl-box-place
+                              visibility-storage.scope-region-count)
+                            0)
                           (__tl-project-field
                             (__tl-box-place walk-state.bindings)
-                            len)
-                          0)
-                        top-candidates
-                        top-labels
-                        top-visible-bindings
-                        top-candidate-count)]
-                    (begin
-                      (unsafe
-                        (arena.tl_arena_set previous))
+                            items)
+                          (if complete
+                            (__tl-project-field
+                              (__tl-box-place walk-state.bindings)
+                              len)
+                            0)
+                          top-candidates
+                          top-labels
+                          top-visible-bindings
+                          top-candidate-count)]
                       result)))))))))))
 
 (define (compiler-check-program-with-paths-index-cache

@@ -1953,6 +1953,1272 @@
           "math.log: expected f64 or f32, found "
           (type-kind (comptime.expr-type value))))]))
 
+;; The power implementation below follows musl `pow`/`powf` and their data
+;; tables at revision b306b16af15c89a04d8e0c55cac2dadbeb39c083 (the Arm
+;; optimized-routines algorithm), using the documented non-FMA evaluation
+;; paths (HAVE_FAST_FMA unset, TOINT_INTRINSICS unset, EXP_USE_TOINT_NARROW 0,
+;; WANT_ERRNO unset, POWF_SCALE 1). Table fields are shortest round-tripping
+;; decimal literals folded to exact IEEE-754 payloads through `f64-to-bits`;
+;; scalar constants are exact bit patterns, and operation order remains fixed
+;; because both are part of the stated error bounds. The fenv/errno-dependent
+;; upstream branches collapse to the plain infinity/zero/NaN results:
+;; TypeLisp exposes only the default round-to-nearest mode, has no floating
+;; point exception flags, and does not quiet or inspect signaling NaNs, so
+;; the `WANT_ROUNDING`/`WANT_ERRNO`/`opt_barrier`/`force_eval` machinery and
+;; the `issignaling_inline` special cases are outside the contract, mirroring
+;; the exp/log ports above.
+;: Internal binary64 pow logarithm constants for one table interval.
+(defstruct MathPowLogF64TableEntry
+  (invc-bits u64)
+  (logc-bits u64)
+  (logctail-bits u64))
+
+;: Return the exact musl pow_log_data.c constants for interval index.
+(define (math-pow-f64-table-entry [index : i64]) : MathPowLogF64TableEntry
+  (cond
+    [(= index 0)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.4140625)
+        (stdlib.math.f64-to-bits -0.3464667673462145)
+        (stdlib.math.f64-to-bits 5.929407345889625e-15))]
+    [(= index 1)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.40625)
+        (stdlib.math.f64-to-bits -0.34092658697056777)
+        (stdlib.math.f64-to-bits -2.544157440035963e-14))]
+    [(= index 2)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3984375)
+        (stdlib.math.f64-to-bits -0.3353555419211034)
+        (stdlib.math.f64-to-bits -3.443525940775045e-14))]
+    [(= index 3)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.390625)
+        (stdlib.math.f64-to-bits -0.3297532863724655)
+        (stdlib.math.f64-to-bits -2.500123826022799e-15))]
+    [(= index 4)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3828125)
+        (stdlib.math.f64-to-bits -0.32411946865420305)
+        (stdlib.math.f64-to-bits -8.929337133850617e-15))]
+    [(= index 5)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.375)
+        (stdlib.math.f64-to-bits -0.31845373111855224)
+        (stdlib.math.f64-to-bits 1.7625431312172662e-14))]
+    [(= index 6)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3671875)
+        (stdlib.math.f64-to-bits -0.31275571000389846)
+        (stdlib.math.f64-to-bits 1.5688303180062087e-15))]
+    [(= index 7)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.359375)
+        (stdlib.math.f64-to-bits -0.3070250352949415)
+        (stdlib.math.f64-to-bits 2.9655274673691784e-14))]
+    [(= index 8)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3515625)
+        (stdlib.math.f64-to-bits -0.3012613305781997)
+        (stdlib.math.f64-to-bits 3.7923164802093147e-14))]
+    [(= index 9)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.34375)
+        (stdlib.math.f64-to-bits -0.2954642128938758)
+        (stdlib.math.f64-to-bits 3.993416384387844e-14))]
+    [(= index 10)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3359375)
+        (stdlib.math.f64-to-bits -0.28963329258306203)
+        (stdlib.math.f64-to-bits 1.9352855826489123e-14))]
+    [(= index 11)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3359375)
+        (stdlib.math.f64-to-bits -0.28963329258306203)
+        (stdlib.math.f64-to-bits 1.9352855826489123e-14))]
+    [(= index 12)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.328125)
+        (stdlib.math.f64-to-bits -0.28376817313062475)
+        (stdlib.math.f64-to-bits -1.9852665484979036e-14))]
+    [(= index 13)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3203125)
+        (stdlib.math.f64-to-bits -0.27786845100342816)
+        (stdlib.math.f64-to-bits -2.814323765595281e-14))]
+    [(= index 14)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3125)
+        (stdlib.math.f64-to-bits -0.2719337154836694)
+        (stdlib.math.f64-to-bits 2.7643769993528702e-14))]
+    [(= index 15)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.3046875)
+        (stdlib.math.f64-to-bits -0.2659635484970977)
+        (stdlib.math.f64-to-bits -4.025092402293806e-14))]
+    [(= index 16)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.296875)
+        (stdlib.math.f64-to-bits -0.25995752443691345)
+        (stdlib.math.f64-to-bits -1.2621729398885316e-14))]
+    [(= index 17)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.2890625)
+        (stdlib.math.f64-to-bits -0.25391520998095984)
+        (stdlib.math.f64-to-bits -3.600176732637335e-15))]
+    [(= index 18)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.2890625)
+        (stdlib.math.f64-to-bits -0.25391520998095984)
+        (stdlib.math.f64-to-bits -3.600176732637335e-15))]
+    [(= index 19)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.28125)
+        (stdlib.math.f64-to-bits -0.2478361639045943)
+        (stdlib.math.f64-to-bits 1.3029797173308663e-14))]
+    [(= index 20)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.2734375)
+        (stdlib.math.f64-to-bits -0.2417199368871934)
+        (stdlib.math.f64-to-bits 4.8230289429940886e-14))]
+    [(= index 21)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.265625)
+        (stdlib.math.f64-to-bits -0.23556607131274632)
+        (stdlib.math.f64-to-bits -2.0592242769647135e-14))]
+    [(= index 22)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.2578125)
+        (stdlib.math.f64-to-bits -0.22937410106487732)
+        (stdlib.math.f64-to-bits 3.149265065191484e-14))]
+    [(= index 23)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.25)
+        (stdlib.math.f64-to-bits -0.22314355131425145)
+        (stdlib.math.f64-to-bits 4.169796584527195e-14))]
+    [(= index 24)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.25)
+        (stdlib.math.f64-to-bits -0.22314355131425145)
+        (stdlib.math.f64-to-bits 4.169796584527195e-14))]
+    [(= index 25)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.2421875)
+        (stdlib.math.f64-to-bits -0.21687393830063684)
+        (stdlib.math.f64-to-bits 2.2477465222466186e-14))]
+    [(= index 26)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.234375)
+        (stdlib.math.f64-to-bits -0.21056476910735)
+        (stdlib.math.f64-to-bits 3.6507188831790577e-16))]
+    [(= index 27)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.2265625)
+        (stdlib.math.f64-to-bits -0.2042155414286526)
+        (stdlib.math.f64-to-bits -3.827767260205414e-14))]
+    [(= index 28)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.2265625)
+        (stdlib.math.f64-to-bits -0.2042155414286526)
+        (stdlib.math.f64-to-bits -3.827767260205414e-14))]
+    [(= index 29)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.21875)
+        (stdlib.math.f64-to-bits -0.19782574332987224)
+        (stdlib.math.f64-to-bits -4.7641388950792196e-14))]
+    [(= index 30)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.2109375)
+        (stdlib.math.f64-to-bits -0.19139485299967873)
+        (stdlib.math.f64-to-bits 4.9278276214647115e-14))]
+    [(= index 31)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.203125)
+        (stdlib.math.f64-to-bits -0.18492233849406148)
+        (stdlib.math.f64-to-bits 4.9485167661250996e-14))]
+    [(= index 32)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.203125)
+        (stdlib.math.f64-to-bits -0.18492233849406148)
+        (stdlib.math.f64-to-bits 4.9485167661250996e-14))]
+    [(= index 33)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1953125)
+        (stdlib.math.f64-to-bits -0.1784076574728033)
+        (stdlib.math.f64-to-bits -1.5003333854266542e-14))]
+    [(= index 34)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1875)
+        (stdlib.math.f64-to-bits -0.17185025692663203)
+        (stdlib.math.f64-to-bits -2.7194441649495324e-14))]
+    [(= index 35)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1875)
+        (stdlib.math.f64-to-bits -0.17185025692663203)
+        (stdlib.math.f64-to-bits -2.7194441649495324e-14))]
+    [(= index 36)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1796875)
+        (stdlib.math.f64-to-bits -0.1652495728952772)
+        (stdlib.math.f64-to-bits -2.99659267292569e-14))]
+    [(= index 37)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.171875)
+        (stdlib.math.f64-to-bits -0.15860503017665906)
+        (stdlib.math.f64-to-bits 2.0472357800461955e-14))]
+    [(= index 38)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.171875)
+        (stdlib.math.f64-to-bits -0.15860503017665906)
+        (stdlib.math.f64-to-bits 2.0472357800461955e-14))]
+    [(= index 39)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1640625)
+        (stdlib.math.f64-to-bits -0.15191604202584585)
+        (stdlib.math.f64-to-bits 3.879296723063646e-15))]
+    [(= index 40)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.15625)
+        (stdlib.math.f64-to-bits -0.1451820098444614)
+        (stdlib.math.f64-to-bits -3.6506824353335045e-14))]
+    [(= index 41)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1484375)
+        (stdlib.math.f64-to-bits -0.13840232285906495)
+        (stdlib.math.f64-to-bits -5.4183331379008994e-14))]
+    [(= index 42)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1484375)
+        (stdlib.math.f64-to-bits -0.13840232285906495)
+        (stdlib.math.f64-to-bits -5.4183331379008994e-14))]
+    [(= index 43)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.140625)
+        (stdlib.math.f64-to-bits -0.131576357788731)
+        (stdlib.math.f64-to-bits 1.1729485484531301e-14))]
+    [(= index 44)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.140625)
+        (stdlib.math.f64-to-bits -0.131576357788731)
+        (stdlib.math.f64-to-bits 1.1729485484531301e-14))]
+    [(= index 45)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1328125)
+        (stdlib.math.f64-to-bits -0.12470347850091912)
+        (stdlib.math.f64-to-bits -3.811763084710266e-14))]
+    [(= index 46)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.125)
+        (stdlib.math.f64-to-bits -0.11778303565643)
+        (stdlib.math.f64-to-bits 4.654729747598445e-14))]
+    [(= index 47)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.125)
+        (stdlib.math.f64-to-bits -0.11778303565643)
+        (stdlib.math.f64-to-bits 4.654729747598445e-14))]
+    [(= index 48)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1171875)
+        (stdlib.math.f64-to-bits -0.11081436634026431)
+        (stdlib.math.f64-to-bits -2.5799991283069902e-14))]
+    [(= index 49)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.109375)
+        (stdlib.math.f64-to-bits -0.10379679368168127)
+        (stdlib.math.f64-to-bits 3.7700471749674615e-14))]
+    [(= index 50)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.109375)
+        (stdlib.math.f64-to-bits -0.10379679368168127)
+        (stdlib.math.f64-to-bits 3.7700471749674615e-14))]
+    [(= index 51)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1015625)
+        (stdlib.math.f64-to-bits -0.09672962645856842)
+        (stdlib.math.f64-to-bits 1.7306161136093256e-14))]
+    [(= index 52)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.1015625)
+        (stdlib.math.f64-to-bits -0.09672962645856842)
+        (stdlib.math.f64-to-bits 1.7306161136093256e-14))]
+    [(= index 53)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.09375)
+        (stdlib.math.f64-to-bits -0.089612158689647)
+        (stdlib.math.f64-to-bits -4.012913552726574e-14))]
+    [(= index 54)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0859375)
+        (stdlib.math.f64-to-bits -0.08244366921110213)
+        (stdlib.math.f64-to-bits 2.7541708360737882e-14))]
+    [(= index 55)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0859375)
+        (stdlib.math.f64-to-bits -0.08244366921110213)
+        (stdlib.math.f64-to-bits 2.7541708360737882e-14))]
+    [(= index 56)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.078125)
+        (stdlib.math.f64-to-bits -0.07522342123763792)
+        (stdlib.math.f64-to-bits 5.0396178134370583e-14))]
+    [(= index 57)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.078125)
+        (stdlib.math.f64-to-bits -0.07522342123763792)
+        (stdlib.math.f64-to-bits 5.0396178134370583e-14))]
+    [(= index 58)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0703125)
+        (stdlib.math.f64-to-bits -0.06795066190852594)
+        (stdlib.math.f64-to-bits 1.8195060030168815e-14))]
+    [(= index 59)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0625)
+        (stdlib.math.f64-to-bits -0.06062462181648698)
+        (stdlib.math.f64-to-bits 5.213620639136504e-14))]
+    [(= index 60)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0625)
+        (stdlib.math.f64-to-bits -0.06062462181648698)
+        (stdlib.math.f64-to-bits 5.213620639136504e-14))]
+    [(= index 61)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0546875)
+        (stdlib.math.f64-to-bits -0.053244514518837605)
+        (stdlib.math.f64-to-bits 2.532168943117445e-14))]
+    [(= index 62)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0546875)
+        (stdlib.math.f64-to-bits -0.053244514518837605)
+        (stdlib.math.f64-to-bits 2.532168943117445e-14))]
+    [(= index 63)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.046875)
+        (stdlib.math.f64-to-bits -0.045809536031242715)
+        (stdlib.math.f64-to-bits -5.148849572685811e-14))]
+    [(= index 64)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.046875)
+        (stdlib.math.f64-to-bits -0.045809536031242715)
+        (stdlib.math.f64-to-bits -5.148849572685811e-14))]
+    [(= index 65)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0390625)
+        (stdlib.math.f64-to-bits -0.038318864302141264)
+        (stdlib.math.f64-to-bits 4.6652946995830086e-15))]
+    [(= index 66)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0390625)
+        (stdlib.math.f64-to-bits -0.038318864302141264)
+        (stdlib.math.f64-to-bits 4.6652946995830086e-15))]
+    [(= index 67)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.03125)
+        (stdlib.math.f64-to-bits -0.03077165866670839)
+        (stdlib.math.f64-to-bits -4.529814257790929e-14))]
+    [(= index 68)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.03125)
+        (stdlib.math.f64-to-bits -0.03077165866670839)
+        (stdlib.math.f64-to-bits -4.529814257790929e-14))]
+    [(= index 69)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0234375)
+        (stdlib.math.f64-to-bits -0.023167059281490765)
+        (stdlib.math.f64-to-bits -4.361324067851568e-14))]
+    [(= index 70)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.015625)
+        (stdlib.math.f64-to-bits -0.015504186535963527)
+        (stdlib.math.f64-to-bits -1.7274567499706107e-15))]
+    [(= index 71)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.015625)
+        (stdlib.math.f64-to-bits -0.015504186535963527)
+        (stdlib.math.f64-to-bits -1.7274567499706107e-15))]
+    [(= index 72)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0078125)
+        (stdlib.math.f64-to-bits -0.0077821404420319595)
+        (stdlib.math.f64-to-bits -2.298941004620351e-14))]
+    [(= index 73)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0078125)
+        (stdlib.math.f64-to-bits -0.0077821404420319595)
+        (stdlib.math.f64-to-bits -2.298941004620351e-14))]
+    [(= index 74)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0)
+        (stdlib.math.f64-to-bits 0.0)
+        (stdlib.math.f64-to-bits 0.0))]
+    [(= index 75)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 1.0)
+        (stdlib.math.f64-to-bits 0.0)
+        (stdlib.math.f64-to-bits 0.0))]
+    [(= index 76)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.9921875)
+        (stdlib.math.f64-to-bits 0.007843177461040796)
+        (stdlib.math.f64-to-bits -1.4902732911301337e-14))]
+    [(= index 77)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.984375)
+        (stdlib.math.f64-to-bits 0.01574835696817445)
+        (stdlib.math.f64-to-bits -3.527980389655325e-14))]
+    [(= index 78)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.9765625)
+        (stdlib.math.f64-to-bits 0.023716526617363343)
+        (stdlib.math.f64-to-bits -4.730054772033249e-14))]
+    [(= index 79)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.96875)
+        (stdlib.math.f64-to-bits 0.03174869831457272)
+        (stdlib.math.f64-to-bits 7.580310369375161e-15))]
+    [(= index 80)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.9609375)
+        (stdlib.math.f64-to-bits 0.039845908547249564)
+        (stdlib.math.f64-to-bits -4.9893776716773285e-14))]
+    [(= index 81)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.953125)
+        (stdlib.math.f64-to-bits 0.048009219186383234)
+        (stdlib.math.f64-to-bits -2.262629393030674e-14))]
+    [(= index 82)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.9453125)
+        (stdlib.math.f64-to-bits 0.056239718322899535)
+        (stdlib.math.f64-to-bits -2.345674491018699e-14))]
+    [(= index 83)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.94140625)
+        (stdlib.math.f64-to-bits 0.06038051098892083)
+        (stdlib.math.f64-to-bits -1.3352588834854848e-14))]
+    [(= index 84)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.93359375)
+        (stdlib.math.f64-to-bits 0.06871389254808946)
+        (stdlib.math.f64-to-bits -3.765296820388875e-14))]
+    [(= index 85)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.92578125)
+        (stdlib.math.f64-to-bits 0.07711730334438016)
+        (stdlib.math.f64-to-bits 5.1128335719851986e-14))]
+    [(= index 86)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.91796875)
+        (stdlib.math.f64-to-bits 0.08559193033545398)
+        (stdlib.math.f64-to-bits -5.046674438470119e-14))]
+    [(= index 87)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.9140625)
+        (stdlib.math.f64-to-bits 0.08985632912185793)
+        (stdlib.math.f64-to-bits 3.1218748807418837e-15))]
+    [(= index 88)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.90625)
+        (stdlib.math.f64-to-bits 0.09844007281321865)
+        (stdlib.math.f64-to-bits 3.3871241029241416e-14))]
+    [(= index 89)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.8984375)
+        (stdlib.math.f64-to-bits 0.10709813555638448)
+        (stdlib.math.f64-to-bits -1.7376727386423858e-14))]
+    [(= index 90)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.89453125)
+        (stdlib.math.f64-to-bits 0.11145544092528326)
+        (stdlib.math.f64-to-bits 3.957125899799804e-14))]
+    [(= index 91)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.88671875)
+        (stdlib.math.f64-to-bits 0.12022742699821265)
+        (stdlib.math.f64-to-bits -5.2849453521890294e-14))]
+    [(= index 92)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.8828125)
+        (stdlib.math.f64-to-bits 0.12464244520731427)
+        (stdlib.math.f64-to-bits -3.767012502308738e-14))]
+    [(= index 93)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.875)
+        (stdlib.math.f64-to-bits 0.13353139262449076)
+        (stdlib.math.f64-to-bits 3.1859736349078334e-14))]
+    [(= index 94)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.87109375)
+        (stdlib.math.f64-to-bits 0.13800567301939282)
+        (stdlib.math.f64-to-bits 5.0900642926060466e-14))]
+    [(= index 95)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.86328125)
+        (stdlib.math.f64-to-bits 0.14701474296180095)
+        (stdlib.math.f64-to-bits 8.710783796122478e-15))]
+    [(= index 96)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.859375)
+        (stdlib.math.f64-to-bits 0.15154989812720032)
+        (stdlib.math.f64-to-bits 6.157896229122976e-16))]
+    [(= index 97)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.8515625)
+        (stdlib.math.f64-to-bits 0.16068238169043525)
+        (stdlib.math.f64-to-bits 3.821577743916796e-14))]
+    [(= index 98)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.84765625)
+        (stdlib.math.f64-to-bits 0.16528009093906348)
+        (stdlib.math.f64-to-bits 3.9440046718453496e-14))]
+    [(= index 99)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.83984375)
+        (stdlib.math.f64-to-bits 0.17453941635187675)
+        (stdlib.math.f64-to-bits 2.2924522154618074e-14))]
+    [(= index 100)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.8359375)
+        (stdlib.math.f64-to-bits 0.17920142945774842)
+        (stdlib.math.f64-to-bits -3.742530094732263e-14))]
+    [(= index 101)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.83203125)
+        (stdlib.math.f64-to-bits 0.18388527877016259)
+        (stdlib.math.f64-to-bits -2.5223102140407338e-14))]
+    [(= index 102)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.82421875)
+        (stdlib.math.f64-to-bits 0.1933193110035063)
+        (stdlib.math.f64-to-bits -1.0320443688698849e-14))]
+    [(= index 103)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.8203125)
+        (stdlib.math.f64-to-bits 0.19806991376208316)
+        (stdlib.math.f64-to-bits 1.0634128304268335e-14))]
+    [(= index 104)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.8125)
+        (stdlib.math.f64-to-bits 0.20763936477828793)
+        (stdlib.math.f64-to-bits -4.3425422595242564e-14))]
+    [(= index 105)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.80859375)
+        (stdlib.math.f64-to-bits 0.21245865121420593)
+        (stdlib.math.f64-to-bits -1.2527395755711364e-14))]
+    [(= index 106)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.8046875)
+        (stdlib.math.f64-to-bits 0.21730127569003344)
+        (stdlib.math.f64-to-bits -5.204008743405884e-14))]
+    [(= index 107)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.80078125)
+        (stdlib.math.f64-to-bits 0.22216746534115828)
+        (stdlib.math.f64-to-bits -3.979844515951702e-15))]
+    [(= index 108)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.79296875)
+        (stdlib.math.f64-to-bits 0.2319714654378231)
+        (stdlib.math.f64-to-bits -4.7955860343296286e-14))]
+    [(= index 109)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.7890625)
+        (stdlib.math.f64-to-bits 0.2369097470783572)
+        (stdlib.math.f64-to-bits 5.015686013791602e-16))]
+    [(= index 110)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.78515625)
+        (stdlib.math.f64-to-bits 0.24187253642048745)
+        (stdlib.math.f64-to-bits -7.252318953240293e-16))]
+    [(= index 111)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.78125)
+        (stdlib.math.f64-to-bits 0.2468600779315011)
+        (stdlib.math.f64-to-bits 2.4688324156011588e-14))]
+    [(= index 112)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.7734375)
+        (stdlib.math.f64-to-bits 0.2569104137850218)
+        (stdlib.math.f64-to-bits 5.465121253624792e-15))]
+    [(= index 113)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.76953125)
+        (stdlib.math.f64-to-bits 0.26197371574153294)
+        (stdlib.math.f64-to-bits 4.102651071698446e-14))]
+    [(= index 114)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.765625)
+        (stdlib.math.f64-to-bits 0.2670627852490952)
+        (stdlib.math.f64-to-bits -4.996736502345936e-14))]
+    [(= index 115)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.76171875)
+        (stdlib.math.f64-to-bits 0.27217788591576664)
+        (stdlib.math.f64-to-bits 4.903580708156347e-14))]
+    [(= index 116)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.7578125)
+        (stdlib.math.f64-to-bits 0.27731928541618345)
+        (stdlib.math.f64-to-bits 5.089628039500759e-14))]
+    [(= index 117)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.75390625)
+        (stdlib.math.f64-to-bits 0.28248725557466514)
+        (stdlib.math.f64-to-bits 1.1782016386565151e-14))]
+    [(= index 118)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.74609375)
+        (stdlib.math.f64-to-bits 0.29290401643288533)
+        (stdlib.math.f64-to-bits 4.727452940514406e-14))]
+    [(= index 119)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.7421875)
+        (stdlib.math.f64-to-bits 0.29815337231912054)
+        (stdlib.math.f64-to-bits -4.4204083338755686e-14))]
+    [(= index 120)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.73828125)
+        (stdlib.math.f64-to-bits 0.3034304294199046)
+        (stdlib.math.f64-to-bits 1.548345993498083e-14))]
+    [(= index 121)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.734375)
+        (stdlib.math.f64-to-bits 0.30873548164959175)
+        (stdlib.math.f64-to-bits 2.1522127491642888e-14))]
+    [(= index 122)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.73046875)
+        (stdlib.math.f64-to-bits 0.3140688276249648)
+        (stdlib.math.f64-to-bits 1.1054030169005386e-14))]
+    [(= index 123)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.7265625)
+        (stdlib.math.f64-to-bits 0.31943077076641657)
+        (stdlib.math.f64-to-bits -5.534326352070679e-14))]
+    [(= index 124)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.72265625)
+        (stdlib.math.f64-to-bits 0.3248216194012912)
+        (stdlib.math.f64-to-bits -5.351646604259541e-14))]
+    [(= index 125)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.71875)
+        (stdlib.math.f64-to-bits 0.33024168687052224)
+        (stdlib.math.f64-to-bits 5.4612144489920215e-14))]
+    [(= index 126)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.71484375)
+        (stdlib.math.f64-to-bits 0.3356912916381134)
+        (stdlib.math.f64-to-bits 2.8136969901227338e-14))]
+    [(= index 127)
+      (MathPowLogF64TableEntry
+        (stdlib.math.f64-to-bits 0.7109375)
+        (stdlib.math.f64-to-bits 0.3411707574027787)
+        (stdlib.math.f64-to-bits -1.156568624616423e-14))]
+    [else (MathPowLogF64TableEntry 0 0 0)]))
+
+;: Internal binary64 pow logarithm result: rounded value plus a tail holding
+;: about fifteen extra bits of precision, mirroring `log_inline`'s out-param.
+(defstruct MathPowLogF64Result
+  (y f64)
+  (tail f64))
+
+;: Evaluate log(x) for the binary64 pow reduction; `ix` is the bit pattern of
+;: a positive finite x, pre-normalized with the sign bit as exponent for
+;: subnormals. Mirrors musl pow.c `log_inline` on the non-FMA path: OFF is
+;: 0x3fe6955500000000, the table is 128-way, and the degree-eight polynomial
+;: uses the scaled coefficients from pow_log_data.c.
+(define (math-pow-f64-log [ix : u64]) : MathPowLogF64Result
+  (let
+    [tmp : u64 (- ix (cast 0x3fe6955500000000 : u64))]
+    [index : i64 (cast (% (shr tmp 45) (cast 128 : u64)) : i64)]
+    [k : i64 (shr (cast tmp : i64) 52)]
+    [iz : u64 (- ix (bit-and tmp (cast 0xfff0000000000000 : u64)))]
+    [z : f64 (stdlib.math.f64-from-bits iz)]
+    [kd : f64 (cast k : f64)]
+    [entry : MathPowLogF64TableEntry (math-pow-f64-table-entry index)]
+    [invc : f64 (stdlib.math.f64-from-bits entry.invc-bits)]
+    [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
+    [logctail : f64 (stdlib.math.f64-from-bits entry.logctail-bits)]
+    [zhi : f64
+      (stdlib.math.f64-from-bits
+        (bit-and (+ iz (cast 0x80000000 : u64)) (cast 0xffffffff00000000 : u64)))]
+    [zlo : f64 (- z zhi)]
+    [rhi : f64 (- (* zhi invc) 1.0)]
+    [rlo : f64 (* zlo invc)]
+    [r : f64 (+ rhi rlo)]
+    [t1 : f64 (+ (* kd (stdlib.math.f64-from-bits 0x3fe62e42fefa3800)) logc)]
+    [t2 : f64 (+ t1 r)]
+    [lo1 : f64
+      (+ (* kd (stdlib.math.f64-from-bits 0x3d2ef35793c76730)) logctail)]
+    [lo2 : f64 (+ (- t1 t2) r)]
+    [ar : f64 (* (stdlib.math.f64-from-bits 0xbfe0000000000000) r)]
+    [ar2 : f64 (* r ar)]
+    [ar3 : f64 (* r ar2)]
+    [arhi : f64 (* (stdlib.math.f64-from-bits 0xbfe0000000000000) rhi)]
+    [arhi2 : f64 (* rhi arhi)]
+    [hi : f64 (+ t2 arhi2)]
+    [lo3 : f64 (* rlo (+ ar arhi))]
+    [lo4 : f64 (+ (- t2 hi) arhi2)]
+    [p : f64
+      (*
+        ar3
+        (+
+          (+
+            (stdlib.math.f64-from-bits 0xbfe5555555555560)
+            (* r (stdlib.math.f64-from-bits 0x3fe0000000000006)))
+          (*
+            ar2
+            (+
+              (+
+                (stdlib.math.f64-from-bits 0x3fe999999959554e)
+                (* r (stdlib.math.f64-from-bits 0xbfe555555529a47a)))
+              (*
+                ar2
+                (+
+                  (stdlib.math.f64-from-bits 0xbff2495b9b4845e9)
+                  (* r (stdlib.math.f64-from-bits 0x3ff0002b8b263fc3))))))))]
+    [lo : f64 (+ (+ (+ (+ lo1 lo2) lo3) lo4) p)]
+    [y : f64 (+ hi lo)]
+    (MathPowLogF64Result y (+ (- hi y) lo))))
+
+;: Complete a binary64 pow result whose table scale may overflow or
+;: underflow. Mirrors musl pow.c `specialcase`, including the sign-of-zero
+;: fix the exp port does not need (pow results can be negative through the
+;: sign bias). The rounding-mode-only DBL_MAX corner case is dropped because
+;: TypeLisp has no directed-rounding modes.
+(define (math-pow-f64-exp-special [tmp : f64] [scale-bits : u64] [k-bits : u64]) : f64
+  (if (= (bit-and k-bits (cast 0x80000000 : u64)) (cast 0 : u64))
+    (let
+      [adjusted-bits : u64 (- scale-bits (shl (cast 1009 : u64) 52))]
+      [scale : f64 (stdlib.math.f64-from-bits adjusted-bits)]
+      [y : f64 (+ scale (* scale tmp))]
+      (* y (stdlib.math.f64-from-bits 0x7f00000000000000)))
+    (let
+      [adjusted-bits : u64 (+ scale-bits (shl (cast 1022 : u64) 52))]
+      [scale : f64 (stdlib.math.f64-from-bits adjusted-bits)]
+      [y : f64 (+ scale (* scale tmp))]
+      (begin
+        (if (and (< y 1.0) (> y -1.0))
+          (let
+            [one : f64
+              (if (< y 0.0)
+                -1.0
+                1.0)]
+            [lo : f64 (+ (- scale y) (* scale tmp))]
+            [hi : f64 (+ one y)]
+            (begin
+              (set! lo (+ (+ (- one hi) y) lo))
+              (set! y (- (+ hi lo) one))
+              (if (= y 0.0)
+                (set!
+                  y
+                  (stdlib.math.f64-from-bits
+                    (bit-and adjusted-bits (cast 0x8000000000000000 : u64))))
+                unit)))
+          unit)
+        (* (stdlib.math.f64-from-bits 0x0010000000000000) y)))))
+
+;: Evaluate the binary64 pow exponential reduction once the argument is known
+;: to be finite and in the table range; `special` marks the upstream
+;: `abstop == 0` path that must route through `math-pow-f64-exp-special`.
+(define (math-pow-f64-exp-core
+  [x : f64]
+  [xtail : f64]
+  [sign-bias : u64]
+  [special : bool]) : f64
+  (let
+    [z : f64 (* (stdlib.math.f64-from-bits 0x40671547652b82fe) x)]
+    [rounded : f64 (+ z (stdlib.math.f64-from-bits 0x4338000000000000))]
+    [k-bits : u64 (stdlib.math.f64-to-bits rounded)]
+    [k : f64 (- rounded (stdlib.math.f64-from-bits 0x4338000000000000))]
+    [r : f64
+      (+
+        (+
+          (+ x (* k (stdlib.math.f64-from-bits 0xbf762e42fefa0000)))
+          (* k (stdlib.math.f64-from-bits 0xbd0cf79abc9e3b3a)))
+        xtail)]
+    [entry : MathExpF64TableEntry
+      (math-exp-f64-table-entry (cast (% k-bits (cast 128 : u64)) : i64))]
+    [top : u64 (shl (+ k-bits sign-bias) 45)]
+    [tail : f64 (stdlib.math.f64-from-bits entry.tail-bits)]
+    [sbits : u64 (+ entry.scale-bits top)]
+    [r2 : f64 (* r r)]
+    [tmp : f64
+      (+
+        (+
+          (+ tail r)
+          (*
+            r2
+            (+
+              (stdlib.math.f64-from-bits 0x3fdffffffffffdbd)
+              (* r (stdlib.math.f64-from-bits 0x3fc555555555543c)))))
+        (*
+          (* r2 r2)
+          (+
+            (stdlib.math.f64-from-bits 0x3fa55555cf172b91)
+            (* r (stdlib.math.f64-from-bits 0x3f81111167a4d017)))))]
+    (if special
+      (math-pow-f64-exp-special tmp sbits k-bits)
+      (let
+        [scale : f64 (stdlib.math.f64-from-bits sbits)]
+        (+ scale (* scale tmp))))))
+
+;: Compute sign*exp(x+xtail) for the binary64 pow reduction, where the sign
+;: bias is 0 or 0x40000 (musl SIGN_BIAS, 0x800 << EXP_TABLE_BITS). Mirrors
+;: musl pow.c `exp_inline`, reusing the shared `__exp_data` table accessor.
+(define (math-pow-f64-exp [x : f64] [xtail : f64] [sign-bias : u64]) : f64
+  (let
+    [abstop : u64
+      (bit-and (shr (stdlib.math.f64-to-bits x) 52) (cast 0x7ff : u64))]
+    [extreme : bool (>= (- abstop (cast 0x3c9 : u64)) (cast 0x3f : u64))]
+    (cond
+      [(and extreme (>= (- abstop (cast 0x3c9 : u64)) (cast 0x80000000 : u64)))
+        (let
+          [one : f64 (+ 1.0 x)]
+          (if (!= sign-bias (cast 0 : u64))
+            (- 0.0 one)
+            one))]
+      [(and extreme (>= abstop (cast 0x409 : u64)))
+        (if (!= (shr (stdlib.math.f64-to-bits x) 63) (cast 0 : u64))
+          (if (!= sign-bias (cast 0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            0.0)
+          (if (!= sign-bias (cast 0 : u64))
+            (stdlib.math.f64-negative-infinity)
+            (stdlib.math.f64-positive-infinity)))]
+      [else (math-pow-f64-exp-core x xtail sign-bias extreme)])))
+
+;: Return 0 when the nonzero finite binary64 bit pattern is not integral, 1
+;: for an odd integer, and 2 for an even integer. Mirrors musl `checkint`.
+(define (math-pow-f64-checkint [iy : u64]) : i64
+  (let
+    [e : u64 (bit-and (shr iy 52) (cast 0x7ff : u64))]
+    [shift : i64 (- 1075 (cast e : i64))]
+    (cond
+      [(< e (cast 0x3ff : u64)) 0]
+      [(> e (cast 0x433 : u64)) 2]
+      [(!=
+          (bit-and iy (- (shl (cast 1 : u64) shift) (cast 1 : u64)))
+          (cast 0 : u64))
+        0]
+      [(!= (bit-and iy (shl (cast 1 : u64) shift)) (cast 0 : u64)) 1]
+      [else 2])))
+
+;: True when the bit pattern is zero, infinity, or NaN. Mirrors musl
+;: `zeroinfnan`.
+(define (math-pow-f64-zero-inf-nan? [bits : u64]) : bool
+  (>=
+    (- (* (cast 2 : u64) bits) (cast 1 : u64))
+    (cast 0xffdfffffffffffff : u64)))
+
+;: Evaluate the finite binary64 pow path after the decision table: compute
+;: log(x) with its tail, multiply by y in split precision, and exponentiate.
+(define (math-pow-f64-main [ix : u64] [y : f64] [iy : u64] [sign-bias : u64]) : f64
+  (let
+    [log-result : MathPowLogF64Result (math-pow-f64-log ix)]
+    [hi : f64 log-result.y]
+    [lo : f64 log-result.tail]
+    [yhi : f64
+      (stdlib.math.f64-from-bits (bit-and iy (cast 0xfffffffff8000000 : u64)))]
+    [ylo : f64 (- y yhi)]
+    [lhi : f64
+      (stdlib.math.f64-from-bits
+        (bit-and (stdlib.math.f64-to-bits hi) (cast 0xfffffffff8000000 : u64)))]
+    [llo : f64 (+ (- hi lhi) lo)]
+    [ehi : f64 (* yhi lhi)]
+    [elo : f64 (+ (* ylo lhi) (* y llo))]
+    (math-pow-f64-exp ehi elo sign-bias)))
+
+;: Return binary64 `x` raised to `y` without allocation or platform math
+;: calls.
+;:
+;: The implementation ports musl `pow` (the Arm optimized-routines
+;: algorithm): a 128-way logarithm table with a degree-eight polynomial, a
+;: split-precision multiply by the exponent, and the shared exponential
+;: table. Worst-case error is about 0.54 ULP in default round-to-nearest
+;: mode, within the one-ULP contract. The full IEEE decision table is
+;: implemented: any base to a zero exponent is one, one to any exponent is
+;: one, negative one to an infinity exponent is one, NaN in either operand
+;: propagates, infinities and signed zeros follow the usual sign rules
+;: (negative zero or infinity to an odd integral exponent stays negative),
+;: a negative finite base with a nonintegral exponent yields NaN, overflow
+;: returns the signed infinity, and underflow is gradual through subnormals.
+;: Floating exception flags and signaling-NaN payload behavior are outside
+;: the contract.
+(define (f64-pow [x : f64] [y : f64]) : f64
+  (let
+    [ix : u64 (stdlib.math.f64-to-bits x)]
+    [iy : u64 (stdlib.math.f64-to-bits y)]
+    [topx : u64 (shr ix 52)]
+    [topy : u64 (shr iy 52)]
+    [sign-bias : u64 (cast 0 : u64)]
+    [domain-error : bool false]
+    (if (or
+      (>= (- topx (cast 1 : u64)) (cast 0x7fe : u64))
+      (>=
+        (- (bit-and topy (cast 0x7ff : u64)) (cast 0x3be : u64))
+        (cast 0x80 : u64)))
+      (cond
+        [(math-pow-f64-zero-inf-nan? iy)
+          (cond
+            [(= (* (cast 2 : u64) iy) (cast 0 : u64)) 1.0]
+            [(= ix (cast 0x3ff0000000000000 : u64)) 1.0]
+            [(or
+                (> (* (cast 2 : u64) ix) (cast 0xffe0000000000000 : u64))
+                (> (* (cast 2 : u64) iy) (cast 0xffe0000000000000 : u64)))
+              (+ x y)]
+            [(= (* (cast 2 : u64) ix) (cast 0x7fe0000000000000 : u64)) 1.0]
+            [(=
+                (< (* (cast 2 : u64) ix) (cast 0x7fe0000000000000 : u64))
+                (= (shr iy 63) (cast 0 : u64)))
+              0.0]
+            [else (* y y)])]
+        [(math-pow-f64-zero-inf-nan? ix)
+          (let
+            [x2 : f64 (* x x)]
+            (begin
+              (if (and
+                (!= (shr ix 63) (cast 0 : u64))
+                (= (math-pow-f64-checkint iy) 1))
+                (set! x2 (* x2 -1.0))
+                unit)
+              (if (!= (shr iy 63) (cast 0 : u64))
+                (/ 1.0 x2)
+                x2)))]
+        [else
+          (begin
+            (if (!= (shr ix 63) (cast 0 : u64))
+              (let
+                [yint : i64 (math-pow-f64-checkint iy)]
+                (if (= yint 0)
+                  (set! domain-error true)
+                  (begin
+                    (if (= yint 1)
+                      (set! sign-bias (cast 0x40000 : u64))
+                      unit)
+                    (set! ix (bit-and ix (cast 0x7fffffffffffffff : u64)))
+                    (set! topx (bit-and topx (cast 0x7ff : u64))))))
+              unit)
+            (if domain-error
+              (stdlib.math.f64-quiet-nan)
+              (if (>=
+                (- (bit-and topy (cast 0x7ff : u64)) (cast 0x3be : u64))
+                (cast 0x80 : u64))
+                (cond
+                  [(= ix (cast 0x3ff0000000000000 : u64)) 1.0]
+                  [(< (bit-and topy (cast 0x7ff : u64)) (cast 0x3be : u64))
+                    (if (> ix (cast 0x3ff0000000000000 : u64))
+                      (+ 1.0 y)
+                      (- 1.0 y))]
+                  [else
+                    (if (=
+                      (> ix (cast 0x3ff0000000000000 : u64))
+                      (< topy (cast 0x800 : u64)))
+                      (stdlib.math.f64-positive-infinity)
+                      0.0)])
+                (begin
+                  (if (= topx (cast 0 : u64))
+                    (begin
+                      (set!
+                        ix
+                        (bit-and
+                          (stdlib.math.f64-to-bits
+                            (* x (stdlib.math.f64-from-bits 0x4330000000000000)))
+                          (cast 0x7fffffffffffffff : u64)))
+                      (set! ix (- ix (shl (cast 52 : u64) 52))))
+                    unit)
+                  (math-pow-f64-main ix y iy sign-bias)))))])
+      (math-pow-f64-main ix y iy sign-bias))))
+
+;: Internal binary32 pow log2 constants for one table interval. The upstream
+;: powf_log2_data.c entries are doubles, so the fields stay in the `u64` ABI.
+(defstruct MathPowLogF32TableEntry
+  (invc-bits u64)
+  (logc-bits u64))
+
+;: Return the exact musl powf_log2_data.c constants for interval index.
+(define (math-powf-table-entry [index : i64]) : MathPowLogF32TableEntry
+  (cond
+    [(= index 0)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.398907162146528)
+        (stdlib.math.f64-to-bits -0.48430022186289673))]
+    [(= index 1)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.3403141896637998)
+        (stdlib.math.f64-to-bits -0.42257122959194704))]
+    [(= index 2)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.286432210124115)
+        (stdlib.math.f64-to-bits -0.3633754347673556))]
+    [(= index 3)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.2367150214269895)
+        (stdlib.math.f64-to-bits -0.30651309567405577))]
+    [(= index 4)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.1906977166711752)
+        (stdlib.math.f64-to-bits -0.25180720160537634))]
+    [(= index 5)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.1479821020556429)
+        (stdlib.math.f64-to-bits -0.19910014943794563))]
+    [(= index 6)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.1082251448272158)
+        (stdlib.math.f64-to-bits -0.14825100623281615))]
+    [(= index 7)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.0711297413057381)
+        (stdlib.math.f64-to-bits -0.09913323807318392))]
+    [(= index 8)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.036437278977283)
+        (stdlib.math.f64-to-bits -0.051632812977629436))]
+    [(= index 9)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 1.0)
+        (stdlib.math.f64-to-bits 0.0))]
+    [(= index 10)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 0.9492859795739057)
+        (stdlib.math.f64-to-bits 0.07508531937943004))]
+    [(= index 11)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 0.8951049428609004)
+        (stdlib.math.f64-to-bits 0.15987125980713107))]
+    [(= index 12)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 0.8476821620351103)
+        (stdlib.math.f64-to-bits 0.2384046664317681))]
+    [(= index 13)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 0.8050314851692001)
+        (stdlib.math.f64-to-bits 0.31288288605863257))]
+    [(= index 14)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 0.7664671008843108)
+        (stdlib.math.f64-to-bits 0.38370422656453185))]
+    [(= index 15)
+      (MathPowLogF32TableEntry
+        (stdlib.math.f64-to-bits 0.731428603316328)
+        (stdlib.math.f64-to-bits 0.451211048935815))]
+    [else (MathPowLogF32TableEntry 0 0)]))
+
+;: Evaluate log2(x) in binary64 for the binary32 pow reduction; `ix` is the
+;: bit pattern of a positive finite binary32 x, pre-normalized with the sign
+;: bit as exponent for subnormals. Mirrors musl powf.c `log2_inline` with
+;: POWF_SCALE 1 (TOINT intrinsics off), so the upstream scale multipliers are
+;: the identity.
+(define (math-powf-log2 [ix : u32]) : f64
+  (let
+    [tmp : u32 (- ix (cast 0x3f330000 : u32))]
+    [index : i64 (cast (% (shr tmp 19) (cast 16 : u32)) : i64)]
+    [top : u32 (bit-and tmp (cast 0xff800000 : u32))]
+    [iz : u32 (- ix top)]
+    [k : i64 (cast (shr (cast top : i32) 23) : i64)]
+    [entry : MathPowLogF32TableEntry (math-powf-table-entry index)]
+    [invc : f64 (stdlib.math.f64-from-bits entry.invc-bits)]
+    [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
+    [z : f64 (cast (stdlib.math.f32-from-bits iz) : f64)]
+    [r : f64 (- (* z invc) 1.0)]
+    [y0 : f64 (+ logc (cast k : f64))]
+    [r2 : f64 (* r r)]
+    [y : f64
+      (+
+        (* (stdlib.math.f64-from-bits 0x3fd27616c9496e0b) r)
+        (stdlib.math.f64-from-bits 0xbfd71969a075c67a))]
+    [p : f64
+      (+
+        (* (stdlib.math.f64-from-bits 0x3fdec70a6ca7badd) r)
+        (stdlib.math.f64-from-bits 0xbfe7154748bef6c8))]
+    [r4 : f64 (* r2 r2)]
+    [q : f64 (+ (* (stdlib.math.f64-from-bits 0x3ff71547652ab82b) r) y0)]
+    (begin
+      (set! q (+ (* p r2) q))
+      (set! y (+ (* y r4) q))
+      y)))
+
+;: Compute 2^(y*log2(x)) for the binary32 pow reduction. Mirrors musl powf.c
+;: `exp2_inline` on the non-TOINT path: the shift constant is
+;: __exp2f_data.shift_scaled (0x1.8p+47) and the polynomial is the unscaled
+;: __exp2f_data.poly. The 32-entry `__exp2f_data.tab` is every fourth
+;: `__exp_data` scale row (verified against exp2f_data.c, the same reuse the
+;: f32-exp port relies on), so the shared accessor supplies the scale bits.
+(define (math-powf-exp2 [xd : f64] [sign-bias : u32]) : f32
+  (let
+    [rounded : f64 (+ xd (stdlib.math.f64-from-bits 0x42e8000000000000))]
+    [ki : u64 (stdlib.math.f64-to-bits rounded)]
+    [kd : f64 (- rounded (stdlib.math.f64-from-bits 0x42e8000000000000))]
+    [r : f64 (- xd kd)]
+    [entry : MathExpF64TableEntry
+      (math-exp-f64-table-entry (* (cast (% ki (cast 32 : u64)) : i64) 4))]
+    [ski : u64 (+ ki (cast sign-bias : u64))]
+    [t : u64 (+ entry.scale-bits (shl ski 47))]
+    [s : f64 (stdlib.math.f64-from-bits t)]
+    [z : f64
+      (+
+        (* (stdlib.math.f64-from-bits 0x3fac6af84b912394) r)
+        (stdlib.math.f64-from-bits 0x3fcebfce50fac4f3))]
+    [r2 : f64 (* r r)]
+    [y : f64 (+ (* (stdlib.math.f64-from-bits 0x3fe62e42ff0c52d6) r) 1.0)]
+    (begin
+      (set! y (+ (* z r2) y))
+      (set! y (* y s))
+      (cast y : f32))))
+
+;: Return 0 when the nonzero finite binary32 bit pattern is not integral, 1
+;: for an odd integer, and 2 for an even integer. Mirrors musl `checkint`.
+(define (math-powf-checkint [iy : u32]) : i64
+  (let
+    [e : u32 (bit-and (shr iy 23) (cast 0xff : u32))]
+    [shift : i64 (- 150 (cast e : i64))]
+    (cond
+      [(< e (cast 0x7f : u32)) 0]
+      [(> e (cast 0x96 : u32)) 2]
+      [(!=
+          (bit-and iy (- (shl (cast 1 : u32) shift) (cast 1 : u32)))
+          (cast 0 : u32))
+        0]
+      [(!= (bit-and iy (shl (cast 1 : u32) shift)) (cast 0 : u32)) 1]
+      [else 2])))
+
+;: True when the binary32 bit pattern is zero, infinity, or NaN. Mirrors
+;: musl `zeroinfnan`.
+(define (math-powf-zero-inf-nan? [bits : u32]) : bool
+  (>= (- (* (cast 2 : u32) bits) (cast 1 : u32)) (cast 0xfeffffff : u32)))
+
+;: Evaluate the finite binary32 pow path after the decision table: form
+;: y*log2(x) in binary64, map the overflow and underflow boundaries, and
+;: exponentiate. The upstream WANT_ROUNDING boundary checks collapse to
+;: their round-to-nearest results.
+(define (math-powf-main [ix : u32] [y : f32] [sign-bias : u32]) : f32
+  (let
+    [ylogx : f64 (* (cast y : f64) (math-powf-log2 ix))]
+    [ylogx-bits : u64 (stdlib.math.f64-to-bits ylogx)]
+    (if (>=
+      (bit-and (shr ylogx-bits 47) (cast 0xffff : u64))
+      (cast 0x80bf : u64))
+      (cond
+        [(<= ylogx -150.0)
+          (if (!= sign-bias (cast 0 : u32))
+            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))
+            (cast 0.0 : f32))]
+        [(> ylogx (stdlib.math.f64-from-bits 0x405fffffffa3aae2))
+          (if (> ylogx (stdlib.math.f64-from-bits 0x405fffffffd1d571))
+            (if (!= sign-bias (cast 0 : u32))
+              (stdlib.math.f32-negative-infinity)
+              (stdlib.math.f32-positive-infinity))
+            (if (!= sign-bias (cast 0 : u32))
+              (stdlib.math.f32-from-bits (cast 0xff7fffff : u32))
+              (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))))]
+        [else (math-powf-exp2 ylogx sign-bias)])
+      (math-powf-exp2 ylogx sign-bias))))
+
+;: Return binary32 `x` raised to `y` without allocation or platform math
+;: calls.
+;:
+;: The implementation ports musl `powf`: a 16-way log2 table with a
+;: degree-five polynomial evaluated in binary64, followed by a 32-way exp2
+;: reduction. Worst-case error is about 0.82 ULP in default round-to-nearest
+;: mode, within the one-ULP contract. Special-value behavior matches
+;: `f64-pow`; floating exception flags and signaling-NaN payload behavior
+;: are outside the contract.
+(define (f32-pow [x : f32] [y : f32]) : f32
+  (let
+    [ix : u32 (stdlib.math.f32-to-bits x)]
+    [iy : u32 (stdlib.math.f32-to-bits y)]
+    [sign-bias : u32 (cast 0 : u32)]
+    [domain-error : bool false]
+    (if (or
+      (>= (- ix (cast 0x00800000 : u32)) (cast 0x7f000000 : u32))
+      (math-powf-zero-inf-nan? iy))
+      (cond
+        [(math-powf-zero-inf-nan? iy)
+          (cond
+            [(= (* (cast 2 : u32) iy) (cast 0 : u32)) (cast 1.0 : f32)]
+            [(= ix (cast 0x3f800000 : u32)) (cast 1.0 : f32)]
+            [(or
+                (> (* (cast 2 : u32) ix) (cast 0xff000000 : u32))
+                (> (* (cast 2 : u32) iy) (cast 0xff000000 : u32)))
+              (+ x y)]
+            [(= (* (cast 2 : u32) ix) (cast 0x7f000000 : u32)) (cast 1.0 : f32)]
+            [(=
+                (< (* (cast 2 : u32) ix) (cast 0x7f000000 : u32))
+                (= (bit-and iy (cast 0x80000000 : u32)) (cast 0 : u32)))
+              (cast 0.0 : f32)]
+            [else (* y y)])]
+        [(math-powf-zero-inf-nan? ix)
+          (let
+            [x2 : f32 (* x x)]
+            (begin
+              (if (and
+                (!= (bit-and ix (cast 0x80000000 : u32)) (cast 0 : u32))
+                (= (math-powf-checkint iy) 1))
+                (set! x2 (* x2 (cast -1.0 : f32)))
+                unit)
+              (if (!= (bit-and iy (cast 0x80000000 : u32)) (cast 0 : u32))
+                (/ (cast 1.0 : f32) x2)
+                x2)))]
+        [else
+          (begin
+            (if (!= (bit-and ix (cast 0x80000000 : u32)) (cast 0 : u32))
+              (let
+                [yint : i64 (math-powf-checkint iy)]
+                (if (= yint 0)
+                  (set! domain-error true)
+                  (begin
+                    (if (= yint 1)
+                      (set! sign-bias (cast 0x10000 : u32))
+                      unit)
+                    (set! ix (bit-and ix (cast 0x7fffffff : u32))))))
+              unit)
+            (if domain-error
+              (stdlib.math.f32-quiet-nan)
+              (begin
+                (if (< ix (cast 0x00800000 : u32))
+                  (begin
+                    (set!
+                      ix
+                      (bit-and
+                        (stdlib.math.f32-to-bits
+                          (*
+                            x
+                            (stdlib.math.f32-from-bits (cast 0x4b000000 : u32))))
+                        (cast 0x7fffffff : u32)))
+                    (set! ix (- ix (shl (cast 23 : u32) 23))))
+                  unit)
+                (math-powf-main ix y sign-bias))))])
+      (math-powf-main ix y sign-bias))))
+
+;: Return `base` raised to `exponent` for `f64` or `f32` expressions,
+;: preserving the shared operand type and evaluating each expression once.
+(defmacro (pow [base : comptime.Expr] [exponent : comptime.Expr]) : comptime.Expr
+  (match (type-kind (comptime.expr-type base))
+    ["f64"
+      (match (type-kind (comptime.expr-type exponent))
+        ["f64" `(stdlib.math.f64-pow ,base ,exponent)]
+        [_
+          (comptime.comptime-error
+            (comptime.string-append
+              "math.pow: exponent type must match base type f64, found "
+              (type-kind (comptime.expr-type exponent))))])]
+    ["f32"
+      (match (type-kind (comptime.expr-type exponent))
+        ["f32" `(stdlib.math.f32-pow ,base ,exponent)]
+        [_
+          (comptime.comptime-error
+            (comptime.string-append
+              "math.pow: exponent type must match base type f32, found "
+              (type-kind (comptime.expr-type exponent))))])]
+    [_
+      (comptime.comptime-error
+        (comptime.string-append
+          "math.pow: expected f64 or f32, found "
+          (type-kind (comptime.expr-type base))))]))
+
 ;; The trigonometric implementation below is derived from the musl/fdlibm
 ;; sources pinned in MATH_LICENSES.md. Keep the constants as exact IEEE-754
 ;; bit patterns and preserve the written operation order: the polynomial error
@@ -3716,5 +4982,3692 @@
         unit
         (fail))
       (if (stdlib.math.f32-nan? (stdlib.math.f32-scalbn payload-nan 99))
+        unit
+        (fail)))))
+
+(test
+  math-float-pow
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [calls : i64 0]
+    [ycalls : i64 0]
+    [once : f64
+      (stdlib.math.pow
+        (begin
+          (set! calls (+ calls 1))
+          2.0)
+        10.0)]
+    [once-y : f64
+      (stdlib.math.pow
+        3.0
+        (begin
+          (set! ycalls (+ ycalls 1))
+          2.0))]
+    [two32 : f32 2.0]
+    [ten32 : f32 10.0]
+    [pow32 : f32 (stdlib.math.pow two32 ten32)]
+    (if (and
+      (= calls 1)
+      (= ycalls 1)
+      (= (stdlib.math.f64-to-bits once) (cast 0x4090000000000000 : u64))
+      (= (stdlib.math.f64-to-bits once-y) (cast 0x4022000000000000 : u64))
+      (= (stdlib.math.f32-to-bits pow32) (cast 0x44800000 : u32)))
+      unit
+      (fail))))
+
+;; Power decision-table vectors: expectations are the analytic IEEE-754
+;; results, cross-checked against MPFR (mpmath 1.4.1 at 800 bits).
+(test
+  math-pow-f64-special
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    (begin
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4004000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x0000000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc004000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ff8000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x0000000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ff8000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x7ff8000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x7ff0000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc00c000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x7ff0000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (stdlib.math.f64-nan?
+        (stdlib.math.f64-pow
+          (stdlib.math.f64-from-bits (cast 0x7ff8000000000000 : u64))
+          (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        unit
+        (fail))
+      (if (stdlib.math.f64-nan?
+        (stdlib.math.f64-pow
+          (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))
+          (stdlib.math.f64-from-bits (cast 0x7ff8000000000000 : u64))))
+        unit
+        (fail))
+      (if (stdlib.math.f64-nan?
+        (stdlib.math.f64-pow
+          (stdlib.math.f64-from-bits (cast 0xfff8000000001234 : u64))
+          (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))))
+        unit
+        (fail))
+      (if (stdlib.math.f64-nan?
+        (stdlib.math.f64-pow
+          (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))
+          (stdlib.math.f64-from-bits (cast 0x7ff0000000000001 : u64))))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x7ff0000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x7ff0000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbfe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x7ff0000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4004000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc004000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4008000000000000 : u64))))
+        (cast 0x8000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc008000000000000 : u64))))
+        (cast 0xfff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4004000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc004000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4008000000000000 : u64))))
+        (cast 0xfff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc008000000000000 : u64))))
+        (cast 0x8000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4004000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xfff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc004000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4008000000000000 : u64))))
+        (cast 0xc020000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x4010000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc008000000000000 : u64))))
+        (cast 0xbfc0000000000000 : u64))
+        unit
+        (fail))
+      (if (stdlib.math.f64-nan?
+        (stdlib.math.f64-pow
+          (stdlib.math.f64-from-bits (cast 0xc000000000000000 : u64))
+          (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))))
+        unit
+        (fail))
+      (if (stdlib.math.f64-nan?
+        (stdlib.math.f64-pow
+          (stdlib.math.f64-from-bits (cast 0xc020000000000000 : u64))
+          (stdlib.math.f64-from-bits (cast 0x3ff8000000000000 : u64))))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbff8000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x4002000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x43b0000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbff0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x43b0000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x43b0000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x43b0000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc3b0000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc3b0000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3b90000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3b90000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbb90000000000000 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7fe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xffe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4008000000000000 : u64))))
+        (cast 0xfff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xffe0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0010000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4008000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x8010000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4008000000000000 : u64))))
+        (cast 0x8000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x8010000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0000000000000001 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000000000 : u64))))
+        (cast 0x0000000000000001 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0000000000000001 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0000000000000001 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe0000000000000 : u64))))
+        (cast 0x1e60000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x1e60000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x0000000000000001 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x1ed0000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x0000000000004000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0008000000000000 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000000000 : u64))))
+        (cast 0x0008000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7fefffffffffffff : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000000000 : u64))))
+        (cast 0x7fefffffffffffff : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7fefffffffffffff : u64))
+            (stdlib.math.f64-from-bits (cast 0xbff0000000000000 : u64))))
+        (cast 0x0004000000000000 : u64))
+        unit
+        (fail)))))
+
+(test
+  math-pow-f32-special
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    (begin
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x40200000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x00000000 : u32))))
+        (cast 0x3f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xc0200000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))))
+        (cast 0x3f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7fc00000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x00000000 : u32))))
+        (cast 0x3f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x7fc00000 : u32))))
+        (cast 0x3f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x7f800000 : u32))))
+        (cast 0x3f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbf800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x7f800000 : u32))))
+        (cast 0x3f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbf800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xff800000 : u32))))
+        (cast 0x3f800000 : u32))
+        unit
+        (fail))
+      (if (stdlib.math.f32-nan?
+        (stdlib.math.f32-pow
+          (stdlib.math.f32-from-bits (cast 0x7fc00000 : u32))
+          (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        unit
+        (fail))
+      (if (stdlib.math.f32-nan?
+        (stdlib.math.f32-pow
+          (stdlib.math.f32-from-bits (cast 0x40000000 : u32))
+          (stdlib.math.f32-from-bits (cast 0x7fc00000 : u32))))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x7f800000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xff800000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x7f800000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xff800000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x00000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40200000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x00000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0200000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
+        (cast 0x80000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0400000 : u32))))
+        (cast 0xff800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0000000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40200000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x80000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0200000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0000000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xff800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
+        (cast 0xff800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xff800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xff800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0400000 : u32))))
+        (cast 0x80000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xff800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0000000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xc0000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
+        (cast 0xc1000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xc0000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x40800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xc0000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0400000 : u32))))
+        (cast 0xbe000000 : u32))
+        unit
+        (fail))
+      (if (stdlib.math.f32-nan?
+        (stdlib.math.f32-pow
+          (stdlib.math.f32-from-bits (cast 0xc0000000 : u32))
+          (stdlib.math.f32-from-bits (cast 0x3f000000 : u32))))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x4e800000 : u32))))
+        (cast 0x3f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x4e800000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x4e800000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xce800000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0xce800000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xff000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
+        (cast 0xff800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xff000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x00800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x80800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
+        (cast 0x80000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x80800000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x00000001 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f800000 : u32))))
+        (cast 0x00000001 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x00000001 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x00000001 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f000000 : u32))))
+        (cast 0x1a3504f3 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x1a000000 : u32))
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x007fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f800000 : u32))))
+        (cast 0x007fffff : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f800000 : u32))))
+        (cast 0x7f7fffff : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f800001 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f800002 : u32))))
+        (cast 0x7f800000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf947ae1 : u32))))
+        (cast 0x00000001 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf951eb8 : u32))))
+        (cast 0x00000001 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf95c28f : u32))))
+        (cast 0x00000001 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf966666 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf970a3d : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf97ae14 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail)))))
+
+;; Sampled power vectors: expected bits are correctly rounded MPFR
+;; (mpmath 1.4.1, 800-bit) results; inputs come from a deterministic
+;; fixed-seed LCG over interesting bit-pattern buckets (near one, wide
+;; exponents, subnormal and huge bases, negative bases with integral
+;; exponents, and the overflow/underflow boundaries). Assertions allow
+;; at most one ULP of error, measured on the total order of the bit
+;; patterns; infinity and zero results are asserted exactly.
+(test
+  math-pow-f64-vectors
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [ulp1? : (-> u64 u64 bool)
+      (lambda ([got : u64] [want : u64]) : bool
+        (let
+          [kg : u64
+            (if (= (bit-and got (cast 0x8000000000000000 : u64)) (cast 0 : u64))
+              (+ got (cast 0x8000000000000000 : u64))
+              (- (cast 0xffffffffffffffff : u64) got))]
+          [kw : u64
+            (if (=
+              (bit-and want (cast 0x8000000000000000 : u64))
+              (cast 0 : u64))
+              (+ want (cast 0x8000000000000000 : u64))
+              (- (cast 0xffffffffffffffff : u64) want))]
+          (if (>= kg kw)
+            (<= (- kg kw) (cast 1 : u64))
+            (<= (- kw kg) (cast 1 : u64)))))]
+    (begin
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffff6bc00 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbe55500ea9a34351 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe124129b49e24c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0078d39e84ed08d : u64))))
+        (cast 0x4019219b3e00912a : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x45a377b2fd56a5b1 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc00c9b02bbdd5e53 : u64))))
+        (cast 0x2b884212185e7f44 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0391ecdc201b65af : u64))
+            (stdlib.math.f64-from-bits (cast 0x4002810624dd2f1a : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x79b7be902917b70a : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffd120375e2d5ae : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc00f2caa7c380020 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc024000000000000 : u64))))
+        (cast 0x3eb4c77757e7b75b : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff04014892416dc : u64))
+            (stdlib.math.f64-from-bits (cast 0x40c4183593530455 : u64))))
+        (cast 0x4e55579cf610119c : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7c59e5c77e75ae9e : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffecccccccccccd : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000056650 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc19a80ed41256b85 : u64))))
+        (cast 0x3fefb8c1a0909e1e : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe932dbfb5a2700 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fdea82aafffab3d : u64))))
+        (cast 0x3fec8a07f48a9269 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ac4285a9af717bc : u64))
+            (stdlib.math.f64-from-bits (cast 0xc001c9b2bba58743 : u64))))
+        (cast 0x4b6c04b91add272b : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0130f72db5c10780 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffefdf3b645a1cb : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7877df64fcfe859a : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffec8a754e2eadc : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff00d384170c02c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0854fafc84a2563 : u64))))
+        (cast 0x3fbc6fff4f02c8c9 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7abcf273511cacb1 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fecf5c28f5c28f6 : u64))))
+        (cast 0x752639818f28a45c : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff00000000604a0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x409576360262ee36 : u64))))
+        (cast 0x3ff00000204a21d3 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe99275edc130b4 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc004ffba176783bd : u64))))
+        (cast 0x3ffcd2ac9cc934dd : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x45da95d2364f505a : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0072ed75a781978 : u64))))
+        (cast 0x2ec645da1e99f081 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0550b78b4f05691a : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff2f5c28f5c28f6 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7efa6480378d4d71 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff0ca7cef35d497 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbfecbad05ba5de18 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc04b000000000000 : u64))))
+        (cast 0x407516e7fc8d48b0 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef086248b11d7c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc081e42f2f12aac6 : u64))))
+        (cast 0x41846a261861fce0 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7cb860b0f2a531f0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe7126e978d4fdf : u64))))
+        (cast 0x6bc306fe5c2e68a6 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff00000000d96f0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x41b6aa34d99fd183 : u64))))
+        (cast 0x3ff13fe204120b3d : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe7718fb0663f68 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfc34ff1ac738d2e : u64))))
+        (cast 0x3ff0c4ddb3ba5721 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x45a6e7133fb6bddb : u64))
+            (stdlib.math.f64-from-bits (cast 0xc00bf2febfa53d11 : u64))))
+        (cast 0x2bf34b4edf66c19b : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x00f19c0fd4627957 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff251eb851eb852 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ab9da9bf211c1e0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff257167d35fcfe : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbffe399ac387bd0b : u64))
+            (stdlib.math.f64-from-bits (cast 0xc018000000000000 : u64))))
+        (cast 0x3f9688779c5403b2 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef3ec0836a2ecc : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0c3976622b1609d : u64))))
+        (cast 0x558624050083ca99 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7d58d8433aed1f2e : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffc3d70a3d70a3d : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffff11d40 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbebbde3c87ed638c : u64))))
+        (cast 0x3ff0000000000001 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe13f261c80931c : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfd4d3d49d8f82af : u64))))
+        (cast 0x3ff390a34b15daf3 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x45a74859b95fc290 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4006b6959f8ee22f : u64))))
+        (cast 0x502dd8203a560db9 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x051023236eb7a990 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe2f9db22d0e560 : u64))))
+        (cast 0x1d05219b446e8430 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7df8bec71e7bca36 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffc1e7bd7dc1632 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbfe77f93ffbd3fb6 : u64))
+            (stdlib.math.f64-from-bits (cast 0x403e000000000000 : u64))))
+        (cast 0x3f18d7340dae6dd1 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef1c56ad60f41c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0819398321ddb09 : u64))))
+        (cast 0x415d3d496c06af18 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x79bef1e9ff44e938 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffe189374bc6a7f : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000059790 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbe3379ff81ec3a72 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feec14fda976bd0 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfbf4c299237a761 : u64))))
+        (cast 0x3ff013eb06704087 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3d43c796f72cb4c8 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4006b286028ac0f1 : u64))))
+        (cast 0x385d3ca9bc30181e : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0631e11d58858da0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff6bc6a7ef9db23 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7cf8333e5a8281c4 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff0b7f569c11a52 : u64))))
+        (cast 0x7fb5f90d9e8ce9c6 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbff4457feb1351eb : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x3ff9aeedaefa84bf : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fefc3b5a99a6d6c : u64))
+            (stdlib.math.f64-from-bits (cast 0x40ab64d79d64762a : u64))))
+        (cast 0x3d98cba8ccb932fa : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ab5d63880ec98e0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe028f5c28f5c29 : u64))))
+        (cast 0x5d9e6993a9d0d6a1 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff00000000005e0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3f77d8a87b0e3455 : u64))))
+        (cast 0x3ff0000000000009 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe0b5ae96820984 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fcacccb040ac664 : u64))))
+        (cast 0x3febee095c52f194 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3c3ae5d669c4ded3 : u64))
+            (stdlib.math.f64-from-bits (cast 0x400bb59780445978 : u64))))
+        (cast 0x331b643a87294e55 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x00d1ff3a7ed17be0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4002ba5e353f7cee : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x79f9df31020937d8 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff03726dca04b7f : u64))))
+        (cast 0x7ac25a797d1021e9 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc0009e7a61b63379 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc03a000000000000 : u64))))
+        (cast 0x3e37da41e3b558ff : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff000e6d25b9abc : u64))
+            (stdlib.math.f64-from-bits (cast 0x408b14755748561f : u64))))
+        (cast 0x3ff35cb8199de154 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7a3474fa40d0caf4 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fed374bc6a7ef9e : u64))))
+        (cast 0x7522e4421e8d9fce : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffff56830 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ea55aa4bd587754 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fecdac53367ac38 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfc0727d385c32d6 : u64))))
+        (cast 0x3ff036d1d6c8aa1b : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x39f4f2f0c4e97f02 : u64))
+            (stdlib.math.f64-from-bits (cast 0x400f38650f9ef3e3 : u64))))
+        (cast 0x289d52081e4e9be5 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0670644b8bb12d2c : u64))
+            (stdlib.math.f64-from-bits (cast 0x4007147ae147ae14 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7a3a87f3d0c46fc4 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffe664fa35933d8 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc0098e73e15e7830 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc049000000000000 : u64))))
+        (cast 0x3ab2a0205f2b795b : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff03c8b49297c0c : u64))
+            (stdlib.math.f64-from-bits (cast 0x40c3869bab656708 : u64))))
+        (cast 0x4d28bea47f401b15 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x798800650887b047 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff42d0e56041894 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffffabe80 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0cac35a6da5718f : u64))))
+        (cast 0x3ff000008ca9c232 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fec9172ffbf93ec : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fcc3cd0fa45c7da : u64))))
+        (cast 0x3fef3587836a64c1 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x43b8435dd10ac7a4 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc005e6848b17a052 : u64))))
+        (cast 0x35912c6b654631fd : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0290226f747e5cdc : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff2624dd2f1a9fc : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7c70abd6631ee0d7 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff70dcf8071a57e : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0142f46c9115c : u64))
+            (stdlib.math.f64-from-bits (cast 0x40ad9fd3a8d25d06 : u64))))
+        (cast 0x419db25c9719b2e3 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7d4ee56af88e0da6 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe0cccccccccccd : u64))))
+        (cast 0x6026ff631e83d781 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff00000000508d0 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0c19c4cdc66d927 : u64))))
+        (cast 0x3feffffe9d5d40e0 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe195d3e95100a0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fecb3223539e88e : u64))))
+        (cast 0x3fe2b48b93d1581c : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3a24ff69381cdf08 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc003c24409a736e6 : u64))))
+        (cast 0x4e3a80aa2b527ed9 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0230e7c225b268ca : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe37ced916872b0 : u64))))
+        (cast 0x1a547ba7cd3aac0f : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7d322584e65e7661 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff354552917ba90 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef7cd16b3f5aac : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0e7fffd7142b438 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7c4265936bc43be2 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffcd0e560418937 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000094720 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fa88b7902e7ac3c : u64))))
+        (cast 0x3ff00000000071dd : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe59ec5b1333254 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fc3394990158012 : u64))))
+        (cast 0x3fee2b82dd59a9c5 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3a67ef829dacdf81 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc009f1292c2457bf : u64))))
+        (cast 0x51da5eade2296702 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0050b2196669f151 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe7b645a1cac083 : u64))))
+        (cast 0x10ca20a837adbbde : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7f7ce29348094fb3 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff3286524a3d52f : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc0090290fd974b6e : u64))
+            (stdlib.math.f64-from-bits (cast 0x404d000000000000 : u64))))
+        (cast 0x45e4c7fbcd5fa253 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef149e0dd157fc : u64))
+            (stdlib.math.f64-from-bits (cast 0xc106ca0b8ca8b0bf : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ccf7ed5802b27cc : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff24189374bc6a8 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffffc7970 : u64))
+            (stdlib.math.f64-from-bits (cast 0x406040fc4d0e30ed : u64))))
+        (cast 0x3feffffffe358f14 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef03521fcd6908 : u64))
+            (stdlib.math.f64-from-bits (cast 0x402a882028b20187 : u64))))
+        (cast 0x3fe51e21c8b4aa9e : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3beb82d55235d75c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc000ca267f256afc : u64))))
+        (cast 0x485b604539c96061 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x02f18fbc8d90794b : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff8e978d4fdf3b6 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x79f04083348ac01b : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff24b2f089a9f7a : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc006b4c595a872ea : u64))
+            (stdlib.math.f64-from-bits (cast 0x4043000000000000 : u64))))
+        (cast 0x438241de37b13ee4 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff008de8d04094c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc1077b9961575eba : u64))))
+        (cast 0x1a69cce603232dca : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7beb330314e15233 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff876c8b4395810 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffff39fc0 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc129585fcf9df55a : u64))))
+        (cast 0x3ff0004e6bbe1c92 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fedd53e38d6e4bc : u64))
+            (stdlib.math.f64-from-bits (cast 0x40061f7c8ff7680c : u64))))
+        (cast 0x3fea5c0009c537db : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3e289bc7f1b5c8eb : u64))
+            (stdlib.math.f64-from-bits (cast 0x400f6b431162a0be : u64))))
+        (cast 0x38f759c3d049296e : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0291707622b40611 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4007b020c49ba5e3 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7fb5f14a35184eeb : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff67def312f0b92 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbfeeaf818039cca0 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc024000000000000 : u64))))
+        (cast 0x3ff8566d51522246 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fefb51c9e9c6e9c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc084c53cf0a4924a : u64))))
+        (cast 0x407bfa17008dc980 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7abfc2670d5fcfe8 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe4e5604189374c : u64))))
+        (cast 0x665619445549091d : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff000000003ba10 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0a2c42a0af9cfa4 : u64))))
+        (cast 0x3fefffffba0fcf5d : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe22ffe6f56e570 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fc63ad8266e36c2 : u64))))
+        (cast 0x3fed0257ef15605c : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4028b1783d82aa7d : u64))
+            (stdlib.math.f64-from-bits (cast 0x40086b385e97f124 : u64))))
+        (cast 0x40a0c5978f0d89d8 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x05b09b710480bf7f : u64))
+            (stdlib.math.f64-from-bits (cast 0x4004851eb851eb85 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7e319b113cd6b773 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff7fe6316445396 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc005d939cdfee45e : u64))
+            (stdlib.math.f64-from-bits (cast 0xc049000000000000 : u64))))
+        (cast 0x3b670d0dfc5a2a31 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fefe0799f9f87ec : u64))
+            (stdlib.math.f64-from-bits (cast 0x40e4243bf80ae78f : u64))))
+        (cast 0x3197570a0bac8195 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7d654c4da9f749b9 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffd851eb851eb85 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff000000001c860 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3e5996a15a65ddeb : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fedcb4fd9a4ab24 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfe05753f95178c8 : u64))))
+        (cast 0x3ff098265c97717f : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x4623cdbb815f6662 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4005ac52aee71c4f : u64))))
+        (cast 0x50c06f3902bbc8f6 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x01d0ef052ee48fec : u64))
+            (stdlib.math.f64-from-bits (cast 0x4004126e978d4fdf : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7bf4fe9af53ee901 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff36c1e5ceff9a7 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc00d43be757299f6 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4024000000000000 : u64))))
+        (cast 0x411a303e5492ef96 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fefbe39e452553c : u64))
+            (stdlib.math.f64-from-bits (cast 0x40af301496cbc2a8 : u64))))
+        (cast 0x3d07c80d371381ca : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x795dc441c58cfc78 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffac49ba5e353f8 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff000000002cab0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4188b8f12fc9864e : u64))))
+        (cast 0x3ff008a2edd8baed : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe830b6656775d8 : u64))
+            (stdlib.math.f64-from-bits (cast 0x401d315c4020c13f : u64))))
+        (cast 0x3fc09c9416413727 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x40ea1c9fd3d0daea : u64))
+            (stdlib.math.f64-from-bits (cast 0x400068a80ab9aa5e : u64))))
+        (cast 0x41f2953424db2639 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x01f147eabadac435 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fed78d4fdf3b646 : u64))))
+        (cast 0x06d62ab5ce6b89e3 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7b328c7219c306e7 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff8dfd6c57bc7e4 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff016840839d68c : u64))
+            (stdlib.math.f64-from-bits (cast 0x40c1a21198114fb5 : u64))))
+        (cast 0x446522e35bd2bff3 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7bbf83ddc897b8f4 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe50624dd2f1aa0 : u64))))
+        (cast 0x673a9f2372bb52b1 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffffbc100 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc18de22c3bf176ed : u64))))
+        (cast 0x3ff007f02d1506ce : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe643200b96858c : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfcac9b19ab22b46 : u64))))
+        (cast 0x3ff1432641ede42b : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3d4d64de81b2da66 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc00ac481e322eb71 : u64))))
+        (cast 0x48beb22ec75de93d : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0111f53c31dfabb2 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff5a5e353f7ced9 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7fb132b532b36874 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff3ef0515e7d06e : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff03c543e1b0bdc : u64))
+            (stdlib.math.f64-from-bits (cast 0x40cf92ea819082d7 : u64))))
+        (cast 0x55400d8c9421cbf8 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x79c83723215ce3fe : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe526e978d4fdf4 : u64))))
+        (cast 0x662c400151bc95c6 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff000000001ab50 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbdb561eda351a5e9 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe317ed04791a40 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbffbfd272fc459fe : u64))))
+        (cast 0x4003be0975263e04 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x44961823f50d2b25 : u64))
+            (stdlib.math.f64-from-bits (cast 0x40020a9d8ec1f7aa : u64))))
+        (cast 0x4a6e8f6d0b46510f : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x00319e43cf0c383e : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff845a1cac08312 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ef11408ff6398f8 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff0098120ec6d64 : u64))))
+        (cast 0x7f159ad74fdfa4ba : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbfe28d2e3bd117f6 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4024000000000000 : u64))))
+        (cast 0x3f7190a1bdfa46dd : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef35a39ffaf52c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0a9c23786ab182d : u64))))
+        (cast 0x475f8082d3989ed9 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ba8b45f116d7664 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffb374bc6a7ef9e : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff00000000989a0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x402c96a35f475162 : u64))))
+        (cast 0x3ff000000088551d : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe9709cfba673f4 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfc807eccc107886 : u64))))
+        (cast 0x3ff0b44630c0313a : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x443cf68567288777 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc000aeafbb23af26 : u64))))
+        (cast 0x36f55389bba50f90 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x04d01e41c7d99e32 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffb89374bc6a7f0 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x78b903eedf8f57c4 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff09407097c40e7 : u64))))
+        (cast 0x7ac65bb16d9aacfb : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc00890d55cc59313 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc02c000000000000 : u64))))
+        (cast 0x3e844045eeddc813 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef3ac37f1e927c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0847549801193d8 : u64))))
+        (cast 0x416033b10a6ff295 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7b46c0b7a062fcf8 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff3cac083126e98 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000085bf0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4137add3ebdaff77 : u64))))
+        (cast 0x3ff000c5f465131c : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe274614405d2a8 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfb36cc421dc39ff : u64))))
+        (cast 0x3ff0aeb14ad49783 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ed8c1f0ade39dad : u64))
+            (stdlib.math.f64-from-bits (cast 0xc009cd5ef2a4ba07 : u64))))
+        (cast 0x437043f732b37afd : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x06f1412c368cf469 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff91a9fbe76c8b4 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7fbf55708bff9827 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbff0d9dbe2c63516 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbfeba2d02e63f719 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc049000000000000 : u64))))
+        (cast 0x4097dab949e0af4e : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef71ecb40ae3cc : u64))
+            (stdlib.math.f64-from-bits (cast 0x408516be07e541f8 : u64))))
+        (cast 0x3edf44ea2c902d0d : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7a110f8f83dc9889 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fe7f7ced916872b : u64))))
+        (cast 0x6b78ec1d13ff3b34 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffff32240 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc17f14f962027e48 : u64))))
+        (cast 0x3ff00c84238d243e : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe798d40bce765c : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fb1aa08490bd989 : u64))))
+        (cast 0x3fef559c6af2acda : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3c5274d674481015 : u64))
+            (stdlib.math.f64-from-bits (cast 0x40019db156d3886d : u64))))
+        (cast 0x37faaeac9c7605b4 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0690a2dbc04ad43d : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff46e978d4fdf3c : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7c34fec66e6f8171 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff1e90fccb77c12 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc003273cab441bd9 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4041000000000000 : u64))))
+        (cast 0x429c515cd634458b : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff00c02ee84e91c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0efbdefda5a36ab : u64))))
+        (cast 0x2ec4c5c49c0f2f48 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7b213503ccbbfde8 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff92b020c49ba5e : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffffedc90 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbed84bd41e62e3f6 : u64))))
+        (cast 0x3ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe2f91490879f10 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc00469f69fb41a42 : u64))))
+        (cast 0x400e5d6c5daae7de : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x42051ac32e5f7501 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc00ba6b1af525277 : u64))))
+        (cast 0x38b78f44fda5132a : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0630e02a90d2f987 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff628f5c28f5c29 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x78bf8f51e8b16ef2 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbff02823acfd8ffa : u64))))
+        (cast 0x06914b908087dae7 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xbff02c5455402d22 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4000000000000000 : u64))))
+        (cast 0x3ff059237c11bc24 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0278c0591a26c : u64))
+            (stdlib.math.f64-from-bits (cast 0x410ca52b9ad94e14 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7aa40ada29a275e3 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fec51eb851eb852 : u64))))
+        (cast 0x73e3bbe5d584262b : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff0000000008ae0 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4241155f14928ea1 : u64))))
+        (cast 0x40097abf4427aab7 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feaaa8853088cc4 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4021f1302b2c474d : u64))))
+        (cast 0x3fc8ef1e04b480b5 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x41840a0f184856c1 : u64))
+            (stdlib.math.f64-from-bits (cast 0x400d0cd7ed391846 : u64))))
+        (cast 0x45af25e83962c85e : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x02d1773dc5e3e2a2 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff96c8b43958106 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7dbc34f8db13effa : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffc7120a48832ef : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff01edb47760fbc : u64))
+            (stdlib.math.f64-from-bits (cast 0x40cad7591da22c51 : u64))))
+        (cast 0x493bdc2d3fc08ddb : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x78686b4a8eaddd4c : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff68b4395810625 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff00000000d2d30 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3fc7d2d7eedb2468 : u64))))
+        (cast 0x3ff00000000273d3 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fe8ee814b787f78 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4021f5f299a033c8 : u64))))
+        (cast 0x3fbb3692b00a4bee : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3e1e1341908b33a3 : u64))
+            (stdlib.math.f64-from-bits (cast 0x400b6d8942f7a1f9 : u64))))
+        (cast 0x39b3411d422bf29f : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x0070c983e4467068 : u64))
+            (stdlib.math.f64-from-bits (cast 0x4003978d4fdf3b64 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7c7352a3ba06c7da : u64))
+            (stdlib.math.f64-from-bits (cast 0xbff13d77618b6f10 : u64))))
+        (cast 0x0000000066918a05 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3ff02670c9b7310c : u64))
+            (stdlib.math.f64-from-bits (cast 0xc0c5819155ed3d82 : u64))))
+        (cast 0x36a8689de2f746d1 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7ac366231275a4f2 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffb99999999999a : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3feffffffff9c380 : u64))
+            (stdlib.math.f64-from-bits (cast 0xbfcca4951a7b936b : u64))))
+        (cast 0x3ff000000000b2a0 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fec70091d4eb72c : u64))
+            (stdlib.math.f64-from-bits (cast 0x4026441004223ad3 : u64))))
+        (cast 0x3fd1335f207d284e : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3d3985381daf7df9 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc00403cbf0b77fb0 : u64))))
+        (cast 0x46b50f232971e6c4 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x059156e570818632 : u64))
+            (stdlib.math.f64-from-bits (cast 0x400549ba5e353f7d : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7af8335382ffede1 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ff06f456e01967e : u64))))
+        (cast 0x7c93211f0abd171c : u64))
+        unit
+        (fail))
+      (if (ulp1?
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0xc002c2c0a7758e54 : u64))
+            (stdlib.math.f64-from-bits (cast 0xc041000000000000 : u64))))
+        (cast 0x3d5247315ef768a7 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x3fef608cb91a065c : u64))
+            (stdlib.math.f64-from-bits (cast 0x40e8dae1088db5c8 : u64))))
+        (cast 0x0000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-pow
+            (stdlib.math.f64-from-bits (cast 0x7b0d72d8d047d1a6 : u64))
+            (stdlib.math.f64-from-bits (cast 0x3ffe8b4395810625 : u64))))
+        (cast 0x7ff0000000000000 : u64))
+        unit
+        (fail)))))
+
+(test
+  math-pow-f32-vectors
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [ulp1f? : (-> u32 u32 bool)
+      (lambda ([got : u32] [want : u32]) : bool
+        (let
+          [kg : u32
+            (if (= (bit-and got (cast 0x80000000 : u32)) (cast 0 : u32))
+              (+ got (cast 0x80000000 : u32))
+              (- (cast 0xffffffff : u32) got))]
+          [kw : u32
+            (if (= (bit-and want (cast 0x80000000 : u32)) (cast 0 : u32))
+              (+ want (cast 0x80000000 : u32))
+              (- (cast 0xffffffff : u32) want))]
+          (if (>= kg kw)
+            (<= (- kg kw) (cast 1 : u32))
+            (<= (- kw kg) (cast 1 : u32)))))]
+    (begin
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f07c615 : u32))
+            (stdlib.math.f32-from-bits (cast 0x41a3ce4f : u32))))
+        (cast 0x3619e911 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f803180 : u32))
+            (stdlib.math.f32-from-bits (cast 0x4198daa7 : u32))))
+        (cast 0x3f83bed5 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3bb7b2ee : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f1b46fa : u32))))
+        (cast 0x3d308623 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0e0fa5fd : u32))
+            (stdlib.math.f32-from-bits (cast 0x3fea5e35 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7c899f06 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3e919ddd : u32))))
+        (cast 0x50d3ee83 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f6bbbf0 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbdd57078 : u32))))
+        (cast 0x3f811adc : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f80145c : u32))
+            (stdlib.math.f32-from-bits (cast 0xc584eaf7 : u32))))
+        (cast 0x3d91dfa4 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x26c486b8 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf20e3d1 : u32))))
+        (cast 0x4f0325ce : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0f6de11f : u32))
+            (stdlib.math.f32-from-bits (cast 0x40388312 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x76e2f58b : u32))
+            (stdlib.math.f32-from-bits (cast 0xbeae14af : u32))))
+        (cast 0x2c9fa9d3 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbf9d422c : u32))
+            (stdlib.math.f32-from-bits (cast 0x42100000 : u32))))
+        (cast 0x44cec18a : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f13020d : u32))
+            (stdlib.math.f32-from-bits (cast 0xbfe20bdf : u32))))
+        (cast 0x402a73f3 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f802c78 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc3f74141 : u32))))
+        (cast 0x3f02ea17 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x37d27f0f : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf6e7670 : u32))))
+        (cast 0x4696b04c : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x07b4c596 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f1126e9 : u32))))
+        (cast 0x1fdb8bf3 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x72b799da : u32))
+            (stdlib.math.f32-from-bits (cast 0x3ece61f8 : u32))))
+        (cast 0x542059a7 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f74e9da : u32))
+            (stdlib.math.f32-from-bits (cast 0x40463cce : u32))))
+        (cast 0x3f5f31e4 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f8035d4 : u32))
+            (stdlib.math.f32-from-bits (cast 0x4379e14e : u32))))
+        (cast 0x3fc0e66e : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x54cda21b : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f135a4e : u32))))
+        (cast 0x4bbdda05 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0dfcb1f2 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f69374c : u32))))
+        (cast 0x125dec82 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7ca2e68b : u32))
+            (stdlib.math.f32-from-bits (cast 0x3ebb3b19 : u32))))
+        (cast 0x55d5e6d3 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xc05857e6 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0800000 : u32))))
+        (cast 0x3bfaf471 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f279f64 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3feed953 : u32))))
+        (cast 0x3ee8536b : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f802c70 : u32))
+            (stdlib.math.f32-from-bits (cast 0x46c0d64a : u32))))
+        (cast 0x57993211 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x48299853 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf3a38e4 : u32))))
+        (cast 0x3921d5c1 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x08885e1b : u32))
+            (stdlib.math.f32-from-bits (cast 0x403fef9e : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x76d95d85 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3ebc7bb9 : u32))))
+        (cast 0x53db238c : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbfdd08e4 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc2200000 : u32))))
+        (cast 0x2fb1e378 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f33475a : u32))
+            (stdlib.math.f32-from-bits (cast 0xbfe8ba01 : u32))))
+        (cast 0x3ff4a035 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7fcc4c : u32))
+            (stdlib.math.f32-from-bits (cast 0xc411a985 : u32))))
+        (cast 0x3fcabb17 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x30c62b7e : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f53de72 : u32))))
+        (cast 0x334f0067 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0aee2e36 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f249ba6 : u32))))
+        (cast 0x1dab069d : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x749716ff : u32))
+            (stdlib.math.f32-from-bits (cast 0x3ed7c683 : u32))))
+        (cast 0x55dabe2e : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xc022cfc6 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc1e00000 : u32))))
+        (cast 0x2c9baaea : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f00bd09 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbe57e6b0 : u32))))
+        (cast 0x3f93f67d : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f801168 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc1b8dd36 : u32))))
+        (cast 0x3f7ce0ae : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x409e95b3 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf37b2ba : u32))))
+        (cast 0x3ea25c14 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x01066f81 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3fdf9db2 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x74e60080 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbe9709e5 : u32))))
+        (cast 0x2fb2a22a : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbfa0176b : u32))
+            (stdlib.math.f32-from-bits (cast 0x41c00000 : u32))))
+        (cast 0x4356aedd : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f31f060 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3eace73a : u32))))
+        (cast 0x3f6268b2 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f8037c4 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc6e22b34 : u32))))
+        (cast 0x1bfcf06f : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x345aa058 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf1c95c3 : u32))))
+        (cast 0x46417218 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0c6c5f34 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3fe8d4fe : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x76c2ebde : u32))
+            (stdlib.math.f32-from-bits (cast 0xbee5a8d3 : u32))))
+        (cast 0x26a75ff8 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f51e3ec : u32))
+            (stdlib.math.f32-from-bits (cast 0x3d92f83d : u32))))
+        (cast 0x3f7c60a3 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f803b60 : u32))
+            (stdlib.math.f32-from-bits (cast 0x41cc47bd : u32))))
+        (cast 0x3f860e54 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x24a89325 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f10e099 : u32))))
+        (cast 0x304aeadc : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0159db60 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3fc81062 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x76f86e41 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbe970783 : u32))))
+        (cast 0x2f1a5a31 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f6a4add : u32))
+            (stdlib.math.f32-from-bits (cast 0xbe55e3dc : u32))))
+        (cast 0x3f82641e : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7fd83c : u32))
+            (stdlib.math.f32-from-bits (cast 0x4234e830 : u32))))
+        (cast 0x3f791174 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x5696f321 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f1c4a09 : u32))))
+        (cast 0x4d95f6b5 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x097f9dd1 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3fc91687 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7cd68f20 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbeed3c30 : u32))))
+        (cast 0x230baf04 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f2cc6ff : u32))
+            (stdlib.math.f32-from-bits (cast 0xbe823e7f : u32))))
+        (cast 0x3f8d76d9 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f800a58 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc2fdcdd3 : u32))))
+        (cast 0x3f75f300 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x35f511a3 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f7a6f66 : u32))))
+        (cast 0x36234e2c : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x06b5e0ee : u32))
+            (stdlib.math.f32-from-bits (cast 0x3fd45a1d : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x76be4742 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3efaa3d9 : u32))))
+        (cast 0x5a8beb10 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbfb73a7d : u32))
+            (stdlib.math.f32-from-bits (cast 0x41800000 : u32))))
+        (cast 0x439b6aaf : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7dc6c0 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f46c790 : u32))))
+        (cast 0x3f7e458f : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f800db4 : u32))
+            (stdlib.math.f32-from-bits (cast 0x436f948f : u32))))
+        (cast 0x3f8d7c55 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x48116b52 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf60c147 : u32))))
+        (cast 0x37f10fb1 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x03fb4e96 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3ff624dd : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x78c7cfbe : u32))
+            (stdlib.math.f32-from-bits (cast 0x3efd1b00 : u32))))
+        (cast 0x5bcc1985 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbfccce73 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc1a00000 : u32))))
+        (cast 0x38ad5cfe : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f4f032f : u32))
+            (stdlib.math.f32-from-bits (cast 0xbea1ae3d : u32))))
+        (cast 0x3f88e130 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7fde50 : u32))
+            (stdlib.math.f32-from-bits (cast 0x442305b0 : u32))))
+        (cast 0x3f371349 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x537cd725 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f069448 : u32))))
+        (cast 0x4a01a8d9 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x05b21903 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f52b021 : u32))))
+        (cast 0x0ff2e4ac : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x789ac0fa : u32))
+            (stdlib.math.f32-from-bits (cast 0x3ed59a6c : u32))))
+        (cast 0x574c4502 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xc0013677 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc1c00000 : u32))))
+        (cast 0x334c267d : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f579dfa : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f287a3a : u32))))
+        (cast 0x3f64a6a5 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f80382c : u32))
+            (stdlib.math.f32-from-bits (cast 0x43fdaea7 : u32))))
+        (cast 0x40189bd9 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x34498562 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f2a15c6 : u32))))
+        (cast 0x380e6a41 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x03e51da9 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f5ae148 : u32))))
+        (cast 0x0c8aec45 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7adf01ae : u32))
+            (stdlib.math.f32-from-bits (cast 0x3e82f7e8 : u32))))
+        (cast 0x4ea79d2f : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f57df6e : u32))
+            (stdlib.math.f32-from-bits (cast 0x3dbd587d : u32))))
+        (cast 0x3f7bff1a : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f801748 : u32))
+            (stdlib.math.f32-from-bits (cast 0x44d27bc9 : u32))))
+        (cast 0x4053a085 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3a0ccea1 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf10e4a4 : u32))))
+        (cast 0x428dd43f : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0e18f216 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3feb645a : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x74fd85e1 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3e8a8b03 : u32))))
+        (cast 0x4df732f7 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbff94eb3 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc1000000 : u32))))
+        (cast 0x3b9e3714 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f36947a : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0488c00 : u32))))
+        (cast 0x40388ff3 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f8037a4 : u32))
+            (stdlib.math.f32-from-bits (cast 0x441b170e : u32))))
+        (cast 0x4037586f : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x363ad2c9 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f070e0a : u32))))
+        (cast 0x3a99b953 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0d46bad2 : u32))
+            (stdlib.math.f32-from-bits (cast 0x403a0c4a : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7cb7ddea : u32))
+            (stdlib.math.f32-from-bits (cast 0x3efd75cf : u32))))
+        (cast 0x5dc95699 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbf64fe79 : u32))
+            (stdlib.math.f32-from-bits (cast 0x42100000 : u32))))
+        (cast 0x3c940deb : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f660cac : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f90c284 : u32))))
+        (cast 0x3f62da38 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f801540 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc2e2cad3 : u32))))
+        (cast 0x3f6ddb0d : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3fc2e811 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f232e21 : u32))))
+        (cast 0x3fa7586c : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0718ac3e : u32))
+            (stdlib.math.f32-from-bits (cast 0x402926e9 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x74ed9570 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3ecd51a3 : u32))))
+        (cast 0x54e92bef : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbfaa1f68 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc1c00000 : u32))))
+        (cast 0x3a8dfd4b : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f1eb831 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc1110d49 : u32))))
+        (cast 0x429876ae : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7fec1c : u32))
+            (stdlib.math.f32-from-bits (cast 0x445fa89a : u32))))
+        (cast 0x3f431e69 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3ea3d9ff : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f1a74d9 : u32))))
+        (cast 0x3f00bbe1 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x095a1576 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f57ced9 : u32))))
+        (cast 0x11d8ec9c : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x78b66269 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3ee6ffda : u32))))
+        (cast 0x594acdbf : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xc04e3a50 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc0800000 : u32))))
+        (cast 0x3c17f7b8 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f1d65d8 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbdaf3dd8 : u32))))
+        (cast 0x3f857095 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f803838 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc35ab3c6 : u32))))
+        (cast 0x3f2ff6d2 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x547ef86c : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf334ea4 : u32))))
+        (cast 0x30c033f2 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0dc6d531 : u32))
+            (stdlib.math.f32-from-bits (cast 0x4033e76d : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7ac8241e : u32))
+            (stdlib.math.f32-from-bits (cast 0x3e8e5e93 : u32))))
+        (cast 0x4ffe696a : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbf6581cf : u32))
+            (stdlib.math.f32-from-bits (cast 0xc2200000 : u32))))
+        (cast 0x429e0c08 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f33210f : u32))
+            (stdlib.math.f32-from-bits (cast 0xbdf966bb : u32))))
+        (cast 0x3f85b04b : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f803594 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc46bd061 : u32))))
+        (cast 0x3e5b4ca0 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3400f67d : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f69713a : u32))))
+        (cast 0x35034842 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x0980189e : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f90c49c : u32))))
+        (cast 0x02673c5c : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x72efb224 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3eb9a170 : u32))))
+        (cast 0x521e994a : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f14afe3 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbe954040 : u32))))
+        (cast 0x3f95f78c : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7fe030 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc1b235d7 : u32))))
+        (cast 0x3f816458 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x52c799aa : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf1a0c54 : u32))))
+        (cast 0x33d6effa : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x02e64446 : u32))
+            (stdlib.math.f32-from-bits (cast 0x403051ec : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7ab37b63 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3eaf0e58 : u32))))
+        (cast 0x53b67dfd : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbf326c1f : u32))
+            (stdlib.math.f32-from-bits (cast 0xc2200000 : u32))))
+        (cast 0x49e428d8 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f77b102 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc150313b : u32))))
+        (cast 0x3fc4a255 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7ff40c : u32))
+            (stdlib.math.f32-from-bits (cast 0xc21625b9 : u32))))
+        (cast 0x3f80e122 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x523b38ba : u32))
+            (stdlib.math.f32-from-bits (cast 0x3f12de73 : u32))))
+        (cast 0x4a3a5a33 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x04f1e6ef : u32))
+            (stdlib.math.f32-from-bits (cast 0x403b53f8 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7886f511 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbeebde36 : u32))))
+        (cast 0x252e87d4 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbfc2f43e : u32))
+            (stdlib.math.f32-from-bits (cast 0x40800000 : u32))))
+        (cast 0x40ac33d4 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f2b59bc : u32))
+            (stdlib.math.f32-from-bits (cast 0xc142bbc2 : u32))))
+        (cast 0x43047257 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7fed28 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc544a67c : u32))))
+        (cast 0x401e2d0a : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x4a230ac3 : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf22ed97 : u32))))
+        (cast 0x38aa61aa : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x035f9676 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3fd8f5c3 : u32))))
+        (cast 0x00000000 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x7cc5d9b7 : u32))
+            (stdlib.math.f32-from-bits (cast 0x3edf01b9 : u32))))
+        (cast 0x5a2a4dde : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0xbf0ed190 : u32))
+            (stdlib.math.f32-from-bits (cast 0x41c00000 : u32))))
+        (cast 0x355dc6c7 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f7ad3fd : u32))
+            (stdlib.math.f32-from-bits (cast 0xbf3e0df0 : u32))))
+        (cast 0x3f81f449 : u32))
+        unit
+        (fail))
+      (if (ulp1f?
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-pow
+            (stdlib.math.f32-from-bits (cast 0x3f800784 : u32))
+            (stdlib.math.f32-from-bits (cast 0xc5fa0238 : u32))))
+        (cast 0x3e237d55 : u32))
         unit
         (fail)))))

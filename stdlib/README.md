@@ -318,7 +318,11 @@ Vec bang place macros as available yet.
   in default round-to-nearest mode; the one-evaluation `exp` macro preserves
   operand precision. Freestanding `f64-log` and `f32-log` use non-FMA
   table/range reduction with the same one-ULP contract; the `log` macro
-  preserves operand precision and evaluates it once. Full-range `f64-sin` /
+  preserves operand precision and evaluates it once. Freestanding `f64-pow`
+  and `f32-pow` port musl's Arm optimized-routines `pow`/`powf` with the
+  full IEEE-754 decision table and the same one-ULP contract in default
+  round-to-nearest mode; the `pow` macro requires both operands to share one
+  `f64` or `f32` type and evaluates each once. Full-range `f64-sin` /
   `f64-cos` / `f64-tan` and
   binary32 counterparts use a shared
   allocation-free fdlibm/musl Payne-Hanek reducer across the full finite

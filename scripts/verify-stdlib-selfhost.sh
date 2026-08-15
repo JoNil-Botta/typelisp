@@ -69,6 +69,8 @@ reject_diag() {
             printf 'math.exp: expected f64 or f32, found i64' ;;
         stdlib/tests/math_log_non_float_reject.tl)
             printf 'math.log: expected f64 or f32, found i64' ;;
+        stdlib/tests/math_pow_non_float_reject.tl)
+            printf 'math.pow: expected f64 or f32, found i64' ;;
         stdlib/tests/hashmap_value_borrow_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/hashmap_value_borrow_insert_live.tl)

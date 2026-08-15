@@ -43271,6 +43271,32 @@
           (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
         [(option_i64.None) (OptCseResult.Result table instr)])]))
 
+;; Keep only the copies introduced by the Slice Word CSE above. Load analysis
+;; needs those mappings before it sees the dependent Gep, so the Gep inherits
+;; the canonical Slice data root. Feeding the general copy environment into
+;; load CSE would change the established scheduling for unrelated values: a
+;; local load hit would become a dead Mov before cross-block GVN can erase it.
+(define (opt-slice-word-copy-update
+  [env : OptCopyEnv]
+  [original : ir.CompilerIrInstr]
+  [rewritten : ir.CompilerIrInstr]) : OptCopyEnv
+  (match original
+    [(ir.CompilerIrInstr.Word dst _ _ _)
+      (match rewritten
+        [(ir.CompilerIrInstr.Mov moved-dst _ _)
+          (if (= moved-dst dst)
+            (opt-copy-update-env env rewritten)
+            (opt-copy-invalidate-var env dst))]
+        [_ (opt-copy-invalidate-var env dst)])]
+    [(ir.CompilerIrInstr.AddrOf dst source)
+      (opt-copy-invalidate-var (opt-copy-invalidate-var env dst) source)]
+    [(ir.CompilerIrInstr.StorePtr _ _ _) (OptCopyEnv.Nil)]
+    [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
+    [_
+      (match (opt-instr-def-var original)
+        [(option_i64.Some dst) (opt-copy-invalidate-var env dst)]
+        [(option_i64.None) env])]))
+
 (define (opt-load-copy-instr-seq-rewrite!
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -43283,35 +43309,46 @@
     [load-state : OptLoadCseState state]
     [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
     [word-state : OptExprTable (OptExprTable.Nil)]
+    [word-copy-state : OptCopyEnv (OptCopyEnv.Nil)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (while (< index count)
-      (match (opt-slice-word-cse-instr
-        type-segment-bases
-        hs
-        word-state
-        (ir.compiler-ir-instr-seq-ref instrs index))
-        [(OptCseResult.Result next-word word-rewritten)
-          ;; Substitute established copies before load analysis. In particular,
-          ;; a repeated Slice Word becomes `Mov fresh, canonical`; the following
-          ;; Gep must be keyed on CANONICAL rather than the fresh copy temp.
-          (let
-            [copy-rewritten : ir.CompilerIrInstr
-              (opt-copy-subst-instr copy-state word-rewritten)]
-            (match (opt-load-cse-dispatch
-              type-segment-bases
-              hs
-              false
-              sources
-              call-memory
-              load-state
-              copy-rewritten)
-              [(OptLoadCseResult.Result next-load loaded)
-                (begin
-                  (ir.compiler-ir-instr-seq-set! instrs index loaded)
-                  (set! load-state next-load)
-                  (set! copy-state (opt-copy-update-env copy-state loaded))
-                  (set! word-state next-word)
-                  (set! index (+ index 1)))]))]))))
+      (let
+        [original : ir.CompilerIrInstr
+          (ir.compiler-ir-instr-seq-ref instrs index)]
+        (match (opt-slice-word-cse-instr
+          type-segment-bases
+          hs
+          word-state
+          original)
+          [(OptCseResult.Result next-word word-rewritten)
+            ;; Only a repeated Slice Word is substituted before load analysis.
+            ;; General copies retain the old load-then-copy scheduling.
+            (let
+              [word-copy-rewritten : ir.CompilerIrInstr
+                (opt-copy-subst-instr word-copy-state word-rewritten)]
+              (match (opt-load-cse-dispatch
+                type-segment-bases
+                hs
+                false
+                sources
+                call-memory
+                load-state
+                word-copy-rewritten)
+                [(OptLoadCseResult.Result next-load loaded)
+                  (match (opt-copy-instr copy-state loaded)
+                    [(OptCopyResult.Result next-copy rewritten)
+                      (begin
+                        (ir.compiler-ir-instr-seq-set! instrs index rewritten)
+                        (set! load-state next-load)
+                        (set! copy-state next-copy)
+                        (set! word-state next-word)
+                        (set!
+                          word-copy-state
+                          (opt-slice-word-copy-update
+                            word-copy-state
+                            original
+                            word-rewritten))
+                        (set! index (+ index 1)))])]))])))))
 
 ;; --- fold pre-scan -------------------------------------------------------------
 ;;

@@ -225,8 +225,8 @@
             (surface_facts.surface-typecheck-facts-test-fragment-one)]
           [first-hydrated : surface_facts.SurfaceTypecheckFacts
             (surface_facts.surface-typecheck-facts-empty)]
-          [builder : surface_facts.SurfaceTypecheckFactsBuilder
-            (surface_facts.surface-typecheck-facts-builder-empty)]
+          [second-hydrated : surface_facts.SurfaceTypecheckFacts
+            (surface_facts.surface-typecheck-facts-empty)]
           [pools : ast.AstNodePoolContext
             (ast.ast-node-pool-context-new-with-capacities 1 1)]
           [ok : bool true]
@@ -242,15 +242,7 @@
               payloads.key
               pools)
               [(ResultCompilerSurfaceHydration.Ok hydration)
-                (begin
-                  (set! first-hydrated hydration.facts)
-                  (match (surface_facts.surface-typecheck-facts-builder-append
-                    builder
-                    first-hydrated)
-                    [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err _)
-                      (set! ok false)]
-                    [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok next)
-                      (set! builder next)]))]
+                (set! first-hydrated hydration.facts)]
               [_ (set! ok false)])
             ;; A complete successful hydration is still pure: only the explicit
             ;; publisher may replace the previously active facts.
@@ -261,9 +253,11 @@
                 prior))
               unit
               (set! ok false))
+            (if (surface_facts.surface-typecheck-facts-publish! first-hydrated)
+              unit
+              (set! ok false))
             ;; Decode a malformed second fact payload after a valid first one.
-            ;; Both the active publication and the reusable completed builder
-            ;; must remain unchanged.
+            ;; The explicitly published first hydration must remain unchanged.
             (match (compiler-surface-hydrate-payloads
               payloads.identity-bytes
               payloads.ast-bytes
@@ -272,16 +266,13 @@
               pools)
               [(ResultCompilerSurfaceHydration.Err _) unit]
               [_ (set! ok false)])
-            (match (surface_facts.surface-typecheck-facts-builder-finish
-              builder)
-              [(surface_facts.ResultSurfaceTypecheckFacts.Err _)
-                (set! ok false)]
-              [(surface_facts.ResultSurfaceTypecheckFacts.Ok unchanged)
-                (if (surface_facts.surface-typecheck-facts-eq?
-                  unchanged
-                  first-hydrated)
-                  unit
-                  (set! ok false))])
+            (if (and
+              (surface_facts.surface-typecheck-facts-active?)
+              (surface_facts.surface-typecheck-facts-eq?
+                (surface_facts.surface-typecheck-facts-current)
+                first-hydrated))
+              unit
+              (set! ok false))
             (match (compiler-surface-hydrate-payloads
               payloads.identity-bytes
               payloads.ast-bytes
@@ -289,25 +280,12 @@
               payloads.key
               pools)
               [(ResultCompilerSurfaceHydration.Ok hydration)
-                (match (surface_facts.surface-typecheck-facts-builder-append
-                  builder
-                  hydration.facts)
-                  [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err _)
-                    (set! ok false)]
-                  [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok next)
-                    (begin
-                      (set! builder next)
-                      (match (surface_facts.surface-typecheck-facts-builder-finish
-                        builder)
-                        [(surface_facts.ResultSurfaceTypecheckFacts.Err _)
-                          (set! ok false)]
-                        [(surface_facts.ResultSurfaceTypecheckFacts.Ok
-                            composite)
-                          (if (surface_facts.surface-typecheck-facts-i64-array-eq?
-                            composite.clone-call-indices
-                            (__tl_make-array 0 1))
-                            unit
-                            (set! ok false))]))])]
+                (begin
+                  (set! second-hydrated hydration.facts)
+                  (if (surface_facts.surface-typecheck-facts-publish!
+                    second-hydrated)
+                    unit
+                    (set! ok false)))]
               [_ (set! ok false)])
             (match (compiler-surface-hydrate
               (__tl_make-array u8 0)
@@ -319,7 +297,7 @@
               (surface_facts.surface-typecheck-facts-active?)
               (surface_facts.surface-typecheck-facts-eq?
                 (surface_facts.surface-typecheck-facts-current)
-                prior))
+                second-hydrated))
               unit
               (set! ok false))
             (surface_facts.surface-typecheck-facts-clear!)

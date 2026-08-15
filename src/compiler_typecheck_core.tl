@@ -1281,21 +1281,14 @@
   (begin
     (if tc-serial-job-state-ready
       unit
-      (let
-        [previous-arena : i64 (arena.tl_arena_current)]
-        (begin
-          (if (= tc-serial-job-state-arena 0)
-            (set! tc-serial-job-state-arena (arena.tl_arena_make_small))
-            unit)
-          (unsafe
-            (arena.tl_arena_set tc-serial-job-state-arena))
-          (set! (array-ref tc-serial-job-state-cell 0) (tc-job-state-new))
-          ;; Large table allocation can grow and replace the current arena
-          ;; segment, so retain the updated handle before restoring the caller.
-          (set! tc-serial-job-state-arena (arena.tl_arena_current))
-          (unsafe
-            (arena.tl_arena_set previous-arena))
-          (set! tc-serial-job-state-ready true))))
+      (begin
+        (if (= tc-serial-job-state-arena 0)
+          (set! tc-serial-job-state-arena (arena.tl_arena_make_small))
+          unit)
+        (in-arena
+          (arena.Arena tc-serial-job-state-arena)
+          (set! (array-ref tc-serial-job-state-cell 0) (tc-job-state-new)))
+        (set! tc-serial-job-state-ready true)))
     (array-ref tc-serial-job-state-cell 0)))
 
 (define (tc-serial-job-state-reset-if-ready!) : unit
@@ -1799,9 +1792,8 @@
         (if (> source-limit 0)
           source-limit
           1)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
+      (in-arena
+        (arena.Arena storage)
         (let
           [data : TcBodyStateData (tc-body-state-data-value state)]
           (begin
@@ -1819,11 +1811,8 @@
             (set!
               data.type-fact-closure-codes
               (array.make-array i64 (tc-body-type-fact-initial-capacity)))
-            (set! data.type-fact-storage-arena (arena.tl_arena_current))
             (set! data.type-fact-count 0)
-            (tc-body-state-data-set! state data)
-            (unsafe
-              (arena.tl_arena_set enclosing))))))))
+            (tc-body-state-data-set! state data)))))))
 
 (define (tc-body-type-fact-grow-copy!
   [dst-types : (__tl_dyn-array ast.AstType)]
@@ -1854,10 +1843,8 @@
       (if (< old-cap 1)
         (tc-body-type-fact-initial-capacity)
         (* old-cap 2))]
-    [enclosing : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set data.type-fact-storage-arena))
+    (in-arena
+      (arena.Arena data.type-fact-storage-arena)
       (let
         [next-types : (__tl_dyn-array ast.AstType)
           (array.make-array ast.AstType new-cap)]
@@ -1877,10 +1864,7 @@
           (set! data.type-fact-types next-types)
           (set! data.type-fact-closure-codes next-closure-codes)
           (set! data.type-fact-expr-ids next-expr-ids)
-          (set! data.type-fact-storage-arena (arena.tl_arena_current))
-          (tc-body-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set enclosing)))))))
+          (tc-body-state-data-set! state data))))))
 
 (define (tc-body-type-fact-clear-recorded-index! [state : TcBodyState]) : unit
   (let

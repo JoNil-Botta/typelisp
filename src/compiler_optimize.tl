@@ -49377,14 +49377,6 @@
     [(OptUceExitRecs.Nil) (OptUceExitRec.Rec -1 (ast.AstType.I64))]
     [(OptUceExitRecs.Dense items len) (array-ref items (- (- len 1) index))]))
 
-(define (opt-uce-exit-rec-tail [recs : OptUceExitRecs]) : OptUceExitRecs
-  (match recs
-    [(OptUceExitRecs.Nil) (OptUceExitRecs.Nil)]
-    [(OptUceExitRecs.Dense items len)
-      (if (<= len 1)
-        (OptUceExitRecs.Nil)
-        (OptUceExitRecs.Dense items (- len 1)))]))
-
 (define (opt-uce-exit-rec-cons
   [dst : i64]
   [ty : ast.AstType]

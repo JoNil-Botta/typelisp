@@ -943,16 +943,6 @@
           (set! canonical-index (+ canonical-index 1))))
       bytes)))
 
-;; Exact structural/key-payload proxy for the memory added by canonical
-;; identity, excluding allocator bookkeeping and padding in backing arrays.
-(define (compiler-semantic-source-index-canonical-byte-estimate
-  [index : (& index CompilerSemanticSourceIndex)]) : i64
-  (+
-    (* index.len (comptime (size-of (type i64))))
-    (+
-      (* index.canonical-symbol-len (comptime (size-of (type String))))
-      (compiler-semantic-source-index-canonical-key-byte-count index))))
-
 (define (compiler-semantic-source-index-release!
   [index : (&mut index CompilerSemanticSourceIndex)]) : unit
   (let

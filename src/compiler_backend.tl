@@ -55046,9 +55046,12 @@
                             result-store)
                           "")))]
                   [_
-                    ;; Active-scavenge the closure pointer after arg marshalling.
-                    ;; It must dodge in-flight arg registers, but it can use the
-                    ;; pooled caller-saved non-arg target register.
+                    ;; Materialize the closure pointer before arg marshalling.
+                    ;; A register-resident callee may occupy the first explicit
+                    ;; argument register (the hidden environment uses slot zero),
+                    ;; so loading it afterward could observe the staged argument
+                    ;; instead. The planned target is live across the argument
+                    ;; moves and excludes their ABI registers.
                     (let
                       [scav-clo : String
                         (compiler-backend-scavenge-call-target-reg
@@ -55063,8 +55066,8 @@
                           (ResultCompilerBackend.Ok
                             (str_cat.str-cat
                               (compiler-backend-emit-call-space-sub call-space)
-                              args-asm
                               func-asm
+                              args-asm
                               (str_cat.str-cat
                                 "    movq 8("
                                 scav-clo
@@ -55301,9 +55304,9 @@
 (define (compiler-backend-scavenge-call-target-reg
   [planned : String]
   [backend-state : CompilerBackendState]) : String
-  ;; Indirect call targets are materialized after argument marshalling. Do not
-  ;; reuse pooled caller-arg candidates that may already hold in-flight args, and
-  ;; keep %r11 available for ABI/runtime clobber semantics instead of staging.
+  ;; Indirect call targets remain live throughout argument marshalling. Do not
+  ;; use pooled caller-arg candidates, and keep %r11 available for ABI/runtime
+  ;; clobber semantics instead of staging.
   (if (string.eq planned "")
     (compiler-backend-scavenge-reg-here
       (compiler-backend-c-abi-stage-exclude-with "%r11")

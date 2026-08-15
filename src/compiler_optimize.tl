@@ -18,7 +18,8 @@
 ;; - Tracking is block-local (reset per block), so no value is folded across a
 ;;   control-flow edge.
 ;;
-;; Out of scope: broad aggregate/String/array IR optimization.
+;; Out of scope: broad aggregate/String/array transformations beyond
+;; fixed-representation register-value SSA.
 (import stdlib.io)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
@@ -11571,9 +11572,9 @@
       unit)
     program))
 
-;; --- standalone scalar SSA construction / mem2reg --------------------------
+;; --- standalone register-value SSA construction / mem2reg -----------------
 ;;
-;; This constructor rewrites repeated scalar virtual-register definitions into
+;; This constructor rewrites repeated register-value definitions into
 ;; single-assignment form and inserts phis at dominance frontiers. It is
 ;; deliberately verifier-gated: unsupported shapes leave the function unchanged.
 ;; This first slice handles functions without pre-existing phi nodes, which keeps
@@ -11804,7 +11805,7 @@
       (opt_i64_i64_map.insert-ref! (&mut out) var next-count)
       out)))
 
-(define (opt-ssa-scalar-type? [ty : ast.AstType]) : bool
+(define (opt-ssa-register-value-type? [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.I64) true]
     [(ast.AstType.I32) true]
@@ -11822,6 +11823,16 @@
     [(ast.AstType.MutPtr _) true]
     [(ast.AstType.Ref _ _) true]
     [(ast.AstType.MutRef _ _) true]
+    ;; These built-ins have a fixed register representation even though their
+    ;; source-level values are handles rather than primitive scalars. Keep the
+    ;; boundary explicit: aggregate/nominal and lifetime-wrapper forms still
+    ;; need grouped SSA packets before they can be renamed safely.
+    [(ast.AstType.String) true]
+    [(ast.AstType.Str) true]
+    [(ast.AstType.Func _ _) true]
+    [(ast.AstType.Array _ _) true]
+    [(ast.AstType.DynArray _) true]
+    [(ast.AstType.Box _) true]
     [_ false]))
 
 (define (opt-ssa-facts-bad-var [facts : OptSsaFacts (:consume)] [var : i64]) : OptSsaFacts
@@ -11846,7 +11857,7 @@
     [(OptSsaFacts.Facts counts bad types)
       (let
         [next-counts : opt_i64_i64_map.Map (opt-ssa-count-add counts var)]
-        (if (not (opt-ssa-scalar-type? ty))
+        (if (not (opt-ssa-register-value-type? ty))
           (OptSsaFacts.Facts next-counts (opt-used-add bad var) types)
           (match (opt-ssa-var-types-lookup types var)
             [(OptMaybeAstType.No)
@@ -17206,7 +17217,8 @@
 
 ;; --- simple top-test loop rotation ------------------------------------------
 ;;
-;; This runs before scalar SSA construction. It only rotates non-SSA loops whose
+;; This runs before register-value SSA construction. It only rotates non-SSA
+;; loops whose
 ;; header is a side-effect-free scalar guard ending in a conditional branch, with
 ;; one safe preheader and one latch. Duplicating the guard into the preheader and
 ;; latch preserves the zero-trip check while making the steady-state backedge
@@ -17562,7 +17574,8 @@
 ;;
 ;; The pre-SSA rotation pass (#2458) never fires on lowered while-loops: their
 ;; preheaders are synthesized by the loop-preheaders pass (#2457), which runs
-;; after scalar SSA construction, so nested/inner loops stay top-tested (a
+;; after register-value SSA construction, so nested/inner loops stay top-tested
+;; (a
 ;; guard block plus a jump back on every iteration) and loop BCE misses the
 ;; facts it derives from the rotated shape. This pass rotates one SSA-form
 ;; natural loop per invocation (the surrounding fixpoint handles the rest):
@@ -44333,9 +44346,10 @@
       (opt-tailrec-array-values-to-list values 0)]))
 
 ;; An unchanged tail argument needs no write back to its parameter slot. A
-;; non-scalar identity is the structural trigger: when a caller containing an
-;; already-SSA inner region is converted to a loop, non-scalars remain outside
-;; scalar SSA and such a write would be a permanent duplicate definition. Once
+;; non-SSA identity is the structural trigger: when a caller containing an
+;; already-SSA inner region is converted to a loop, grouped values remain
+;; outside register-value SSA and such a write would be a permanent duplicate
+;; definition. Once
 ;; that exact hybrid call-site shape is proven, the rewrite also omits its
 ;; unchanged scalar arguments. The predicate is paired by parameter and
 ;; argument at this call site; it is independent of enclosing function size and
@@ -44360,7 +44374,7 @@
           (match param
             [(ir.CompilerIrParam.Param _ ty var-id)
               (if (and
-                (not (opt-ssa-scalar-type? ty))
+                (not (opt-ssa-register-value-type? ty))
                 (match arg
                   [(ir.CompilerIrValue.Var source) (= source var-id)]
                   [_ false]))
@@ -51153,7 +51167,8 @@
                   next-frame
                   next-blocks)]
               [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-              ;; Mutable SIMD IR is intentionally outside scalar SSA. Its
+              ;; Mutable SIMD IR is intentionally outside register-value SSA.
+              ;; Its
               ;; verifier contract is therefore the final/backend structural
               ;; contract; the exact local shape checks above establish the
               ;; dataflow used by the rewrite.
@@ -72597,7 +72612,7 @@
                             name
                             _t-rotation)
                           unit)]
-                      ;; Scalar SSA construction feeds the verifier-gated
+                      ;; Register-value SSA construction feeds the verifier-gated
                       ;; dominator passes below. Unsupported cases fall back to the
                       ;; original function, so the optimization path remains safe.
                       [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
@@ -77161,7 +77176,7 @@
   [ret : ast.AstType]) : bool
   (or
     (opt-inline-params-have-sret? params)
-    (opt-ssa-scalar-type? ret)
+    (opt-ssa-register-value-type? ret)
     (match ret
       [(ast.AstType.Unit) true]
       [_ false])))
@@ -85674,7 +85689,8 @@
           (opt-call-memory-summary-add-unknown summary)))]
     [(OptLicmRoot.NoRoot) (opt-call-memory-summary-add-unknown summary)]))
 
-;; Summary construction runs before scalar SSA. Track roots only through vars
+;; Summary construction runs before register-value SSA. Track roots only
+;; through vars
 ;; with one whole-function source, so textual block order or a reused lowered
 ;; var can never manufacture provenance. A second scan resolves same-root phis
 ;; and later-listed definitions without weakening that single-source gate.
@@ -85792,7 +85808,8 @@
 ;; allocation, which is what the parameter-write bits mean and is not what a
 ;; separately-allocated buffer is. Deriving nothing keeps the two facts apart.
 ;;
-;; Summary construction runs before scalar SSA, so every var consulted -- the
+;; Summary construction runs before register-value SSA, so every var consulted
+;; -- the
 ;; classified def AND the header-typed base -- has to pass the same
 ;; whole-function single-source gate the root walk uses; a var written twice
 ;; could otherwise be a data buffer at one store and something else at another.

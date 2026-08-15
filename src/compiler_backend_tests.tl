@@ -35306,6 +35306,71 @@
             "    call *(%r11)\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-overlapping-indirect-call-target-ok?
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (match (compiler_backend.compiler-backend-target-arg-reg target 1)
+    [(compiler_backend.ResultBackendReg.Ok arg-reg)
+      (let
+        [functions : compiler_ir_types.CompilerIrFunctionList
+          (compiler-backend-known-function-call-functions)]
+        [index : compiler_backend.CompilerBackendProgramIndex
+          (compiler-backend-known-function-call-index)]
+        [assignments : compiler_regalloc.CompilerRegAssignmentTable
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              1
+              (compiler_regalloc.CompilerRegLocation.Register
+                (compiler_abi.compiler-abi-register-id-from-spelling arg-reg)))
+            (compiler_regalloc.compiler-reg-assignment-table-empty))]
+        [result : compiler_backend.ResultCompilerBackend
+          (compiler_backend.compiler-backend-emit-indirect-call
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            target
+            0
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.I64 3))
+            (compiler_ast_types.AstType.I64)
+            assignments
+            "%r10"
+            ""
+            (compiler_regalloc.compiler-reg-var-types-empty)
+            functions
+            compiler_ir_types.CompilerIrExternList.Nil
+            index
+            2
+            (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+            index.backend-state)]
+        (match result
+          [(compiler_backend.ResultCompilerBackend.Ok asm)
+            (let
+              [callee-load : i64
+                (compiler_backend.compiler-backend-string-find-from
+                  asm
+                  (str_cat.str-cat "    movq " arg-reg ", %r10\n")
+                  0)]
+              [arg-load : i64
+                (compiler_backend.compiler-backend-string-find-from
+                  asm
+                  (compiler_backend.compiler-backend-emit-load-i64-immediate
+                    3
+                    arg-reg)
+                  0)]
+              [call : i64
+                (compiler_backend.compiler-backend-string-find-from
+                  asm
+                  "    call *(%r10)\n"
+                  0)]
+              ;; The callee can share the first explicit argument register.
+              ;; Preserve it in the planned call-target scratch before staging
+              ;; that argument, then dereference only the preserved value.
+              (and
+                (>= callee-load 0)
+                (> arg-load callee-load)
+                (> call arg-load)))]
+          [(compiler_backend.ResultCompilerBackend.Err _) false]))]
+    [(compiler_backend.ResultBackendReg.Err _) false]))
+
 (define (compiler-backend-known-function-indirect-call-ok?) : bool
   (and
     (compiler-backend-known-function-indirect-call-target-ok?
@@ -35315,6 +35380,10 @@
     (compiler-backend-dynamic-indirect-call-target-ok?
       (compiler_backend.CompilerBackendTarget.Linux))
     (compiler-backend-dynamic-indirect-call-target-ok?
+      (compiler_backend.CompilerBackendTarget.Windows))
+    (compiler-backend-overlapping-indirect-call-target-ok?
+      (compiler_backend.CompilerBackendTarget.Linux))
+    (compiler-backend-overlapping-indirect-call-target-ok?
       (compiler_backend.CompilerBackendTarget.Windows))))
 
 (define (compiler-backend-export-symbol-source) : String

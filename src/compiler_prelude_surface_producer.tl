@@ -156,6 +156,7 @@
   [prefix-cache : tc.TcPrefixSnapshotCacheState]
   [job-state : tc.TcJobState]
   [source-names : ci.InternSourceNameSessionHandle]
+  [intern-state : ci.InternCompatState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [surface-program : ast.AstProgram]
@@ -173,7 +174,7 @@
       (surface_facts.surface-typecheck-facts-recording-start!
         (arena.tl_arena_current))]
     [checked : tc.ResultCompilerTypecheckChecked
-      (tc.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+      (tc.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
         load-state
         prefix-cache
         job-state
@@ -182,7 +183,8 @@
         roots
         (tc.tc-prefix-default-cache-scope)
         pools
-        source-names)]
+        source-names
+        intern-state)]
     (match checked
       [(tc.ResultCompilerTypecheckChecked.Partial diag _ _ _)
         (begin
@@ -219,6 +221,7 @@
   [prefix-cache : tc.TcPrefixSnapshotCacheState]
   [job-state : tc.TcJobState]
   [source-names : ci.InternSourceNameSessionHandle]
+  [intern-state : ci.InternCompatState]
   [expanded : ast.AstProgram]
   [expanded-paths : ast.AstDeclPathList]
   [roots : surface_svec.Vec]
@@ -229,11 +232,12 @@
         [(ast.AstProgram.Program decls-box)
           (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
     (if (spec.compiler-specialize-needed-with-pools expanded pools)
-      (match (spec.compiler-specialize-program-with-paths-and-pools
+      (match (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
         expanded
         expanded-paths
         ""
-        pools)
+        pools
+        intern-state)
         [(spec.ResultSpecProgramWithPaths.Err diag)
           (prelude-surface-facts-error
             "prelude surface specialization failed: "
@@ -244,6 +248,7 @@
             prefix-cache
             job-state
             source-names
+            intern-state
             specialized
             specialized-paths
             expanded
@@ -256,6 +261,7 @@
         prefix-cache
         job-state
         source-names
+        intern-state
         expanded
         expanded-paths
         expanded
@@ -275,19 +281,21 @@
     [prefix-cache : tc.TcPrefixSnapshotCacheState
       (tc.tc-prefix-snapshot-cache-state-new)]
     [job-state : tc.TcJobState (tc.tc-job-state-new)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
     [source-names : ci.InternSourceNameSessionHandle
-      (ci.intern-source-name-session-capture-active-handle)]
-    (match (spec.gen-normalize-program-with-paths-and-pools
+      (ci.intern-source-name-session-handle-from-state intern-state)]
+    (match (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
       (ast.ast-program decls)
       paths
       ""
-      pools)
+      (spec.spec-owner-context-new pools intern-state))
       [(spec.ResultGenProgramWithPaths.Err diag)
         (prelude-surface-facts-error
           "prelude surface normalization failed: "
           diag)]
       [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
-        (match (tc.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
+        (match (tc.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
           load-state
           generated
           generated-paths
@@ -295,7 +303,8 @@
           source-names
           job-state
           roots
-          cfgs)
+          cfgs
+          intern-state)
           [(tc.ResultMacroExpand.Err diag)
             (prelude-surface-facts-error
               "prelude surface expansion failed: "
@@ -306,6 +315,7 @@
               prefix-cache
               job-state
               source-names
+              intern-state
               expanded
               expanded-paths
               roots

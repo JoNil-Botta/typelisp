@@ -4575,14 +4575,16 @@
             [(tc_core.ResultMacroExpand.Ok expanded _)
               (match expanded
                 [(ast.AstProgram.Program decls-box)
-                  (match (tc_core.macro-find-module-body-decls
-                    (__tl-box-place decls-box)
-                    module-name)
-                    [(tc_core.MacroMaybeDeclList.Some body)
+                  (let
+                    [decls : ast.AstDeclList (__tl-box-place decls-box)]
+                    (if (tc_core.macro-module-exists? decls module-name)
                       (compiler-typecheck-smoke-generated-catalog-body-has-name?
-                        body
-                        name)]
-                    [(tc_core.MacroMaybeDeclList.No) false])])]
+                        (tc_core.macro-collect-module-body-decls
+                          decls
+                          module-name
+                          "")
+                        name)
+                      false))])]
             [(tc_core.ResultMacroExpand.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
     (begin

@@ -3264,6 +3264,10 @@
       (compiler_optimize_tests.compiler-optimize-ssa-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-ssa-fixed-handle-self-test"
+      (compiler_optimize_tests.compiler-optimize-ssa-fixed-handle-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-level-self-test"
       (compiler_optimize_tests.compiler-optimize-level-self-test)
       42)

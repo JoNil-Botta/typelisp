@@ -20718,6 +20718,45 @@
       (opt-count-phi-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-phi-types-match-instr-seq-from?
+  [type-segment-bases : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [ty : compiler_ast_types.AstType]) : bool
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        [(compiler_ir_types.CompilerIrInstr.Phi _ _ phi-ty)
+          (compiler_optimize.opt-type-eq type-segment-bases phi-ty ty)]
+        [_ true])
+      (opt-phi-types-match-instr-seq-from?
+        type-segment-bases
+        instrs
+        (+ index 1)
+        ty))))
+
+(define (opt-phi-types-match-blocks?
+  [type-segment-bases : i64]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [ty : compiler_ast_types.AstType]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) true]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (and
+            (opt-phi-types-match-instr-seq-from? type-segment-bases instrs 0 ty)
+            (opt-phi-types-match-blocks?
+              type-segment-bases
+              (__tl-box-place rest)
+              ty))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-phi-types-match-blocks?
+        type-segment-bases
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        ty)]))
+
 (define (opt-count-mov-dst-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]
   [dst : i64]) : i64
@@ -25353,6 +25392,349 @@
     (compiler_ast_types.AstType.I64)
     3
     (opt-ssa-construct-address-taken-blocks)))
+
+(define (opt-ssa-fixed-handle-params [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param "left" ty 1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param "right" ty 2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+(define (opt-ssa-fixed-handle-diamond-blocks [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "then")
+          (compiler_ir_types.compiler-ir-label "else"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "then")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            ty)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "else")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              3
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              ty)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-ssa-fixed-handle-diamond-function
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ssa_fixed_handle_diamond")
+    (opt-ssa-fixed-handle-params ty)
+    ty
+    4
+    (opt-ssa-fixed-handle-diamond-blocks ty)))
+
+(define (opt-ssa-fixed-handle-diamond-ok? [ty : compiler_ast_types.AstType]) : bool
+  (let
+    [out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-fixed-handle-diamond-function ty))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out)]
+    (and
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function out))
+      (= (opt-count-phi-blocks blocks) 1)
+      (= (opt-count-mov-dst-blocks blocks 3) 0)
+      (opt-phi-types-match-blocks?
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        blocks
+        ty))))
+
+(define (opt-ssa-fixed-handle-loop-params [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param "seed" ty 0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param "next" ty 1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "cond"
+          (compiler_ast_types.AstType.Bool)
+          2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+(define (opt-ssa-fixed-handle-loop-blocks [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          ty)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              3
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              ty)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "loop"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-ssa-fixed-handle-loop-function [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ssa_fixed_handle_loop")
+    (opt-ssa-fixed-handle-loop-params ty)
+    ty
+    4
+    (opt-ssa-fixed-handle-loop-blocks ty)))
+
+(define (opt-ssa-fixed-handle-loop-ok? [ty : compiler_ast_types.AstType]) : bool
+  (let
+    [out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-fixed-handle-loop-function ty))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out)]
+    (and
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function out))
+      (= (opt-count-phi-blocks blocks) 1)
+      (= (opt-count-mov-dst-blocks blocks 3) 0)
+      (opt-phi-types-match-blocks?
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        blocks
+        ty))))
+
+(define (opt-ssa-fixed-handle-address-taken-function
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ssa_fixed_handle_address_taken")
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param "value" ty 0)
+      (compiler_ir_types.CompilerIrParamList.Nil))
+    ty
+    3
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            ty)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Mov
+                1
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                ty)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 1)))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-ssa-fixed-handle-unsupported-dst-function
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ssa_fixed_handle_unsupported_dst")
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param "value" ty 0)
+      (compiler_ir_types.CompilerIrParamList.Nil))
+    ty
+    2
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Alloc 1 ty)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              1
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              ty)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 1)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-ssa-fixed-handle-boundary-ok?) : bool
+  (and
+    (compiler_optimize.opt-ssa-register-value-type?
+      (compiler_ast_types.AstType.String))
+    (compiler_optimize.opt-ssa-register-value-type?
+      (compiler_ast_types.AstType.Str))
+    (compiler_optimize.opt-ssa-register-value-type?
+      (compiler_ast_types.ast-ty-func
+        (compiler_ast_types.ast-type-list-new)
+        (compiler_ast_types.AstType.I64)))
+    (compiler_optimize.opt-ssa-register-value-type?
+      (compiler_ast_types.ast-ty-array (compiler_ast_types.AstType.I64) 2))
+    (compiler_optimize.opt-ssa-register-value-type?
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_optimize.opt-ssa-register-value-type?
+      (compiler_ast_types.ast-ty-box (compiler_ast_types.AstType.I64)))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.AstType.Bytes)))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.AstType.Unit)))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.AstType.Never)))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.AstType.Expr)))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.AstType.ExprList)))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.ast-ty-tuple (compiler_ast_types.ast-type-list-new))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.ast-ty-region 0 (compiler_ast_types.AstType.I64))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.ast-ty-slice (compiler_ast_types.AstType.I64))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.ast-ty-consume (compiler_ast_types.AstType.I64))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.AstType.Enum (opt-test-symbol "SsaBoundaryEnum"))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.ast-ty-enum-args
+          (opt-test-symbol "SsaBoundaryEnumArgs")
+          (compiler_ast_types.ast-lifetime-list-new))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.AstType.Struct
+          (opt-test-symbol "SsaBoundaryStruct"))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.ast-ty-struct-args
+          (opt-test-symbol "SsaBoundaryStructArgs")
+          (compiler_ast_types.ast-lifetime-list-new))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.AstType.Var (opt-test-symbol "SsaBoundaryVar"))))
+    (not
+      (compiler_optimize.opt-ssa-register-value-type?
+        (compiler_ast_types.ast-ty-var-args
+          (opt-test-symbol "SsaBoundaryVarArgs")
+          (compiler_ast_types.ast-lifetime-list-new))))))
+
+(define (compiler-optimize-ssa-fixed-handle-self-test) : i64
+  (let
+    [func-ty : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-func
+        (compiler_ast_types.ast-type-list-new)
+        (compiler_ast_types.AstType.I64))]
+    [array-ty : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-array (compiler_ast_types.AstType.I64) 2)]
+    [dyn-array-ty : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64))]
+    [box-ty : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-box (compiler_ast_types.AstType.I64))]
+    [address-taken : compiler_ir_types.CompilerIrFunction
+      (opt-ssa-fixed-handle-address-taken-function box-ty)]
+    [address-taken-out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        address-taken)]
+    [unsupported-dst : compiler_ir_types.CompilerIrFunction
+      (opt-ssa-fixed-handle-unsupported-dst-function dyn-array-ty)]
+    [unsupported-dst-out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        unsupported-dst)]
+    (cond
+      [(not (opt-ssa-fixed-handle-boundary-ok?)) 1]
+      [(not
+          (opt-ssa-fixed-handle-diamond-ok? (compiler_ast_types.AstType.String)))
+        2]
+      [(not (opt-ssa-fixed-handle-diamond-ok? (compiler_ast_types.AstType.Str)))
+        3]
+      [(not (opt-ssa-fixed-handle-diamond-ok? func-ty)) 4]
+      [(not (opt-ssa-fixed-handle-diamond-ok? array-ty)) 5]
+      [(not (opt-ssa-fixed-handle-diamond-ok? dyn-array-ty)) 6]
+      [(not (opt-ssa-fixed-handle-diamond-ok? box-ty)) 7]
+      [(not (opt-ssa-fixed-handle-loop-ok? (compiler_ast_types.AstType.String)))
+        8]
+      [(not (opt-ssa-fixed-handle-loop-ok? func-ty)) 9]
+      [(not
+          (compiler_optimize.opt-function-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            address-taken
+            address-taken-out))
+        10]
+      [(not
+          (compiler_optimize.opt-function-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            unsupported-dst
+            unsupported-dst-out))
+        11]
+      [else 42])))
 
 ;; The raw tail-recursion-to-loop shape targets the function ENTRY block and its
 ;; latch reassigns a parameter. SSA construction must decline that raw form (a
@@ -31986,7 +32368,8 @@
             (compiler_ir_types.CompilerIrValue.Var 9)
             (compiler_ast_types.AstType.I64)))
         31]
-      ;; The main pipeline must run this mutable-only path before scalar SSA.
+      ;; The main pipeline must run this mutable-only path before register-value
+      ;; SSA.
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-final-function pipeline-map-func)))
@@ -40464,8 +40847,8 @@
         (compiler_ast_types.AstType.I64)
         1)
       (compiler_ir_types.compiler-ir-param-cons
-        ;; Model the unchanged aggregate carried by the real absorbed-call
-        ;; shape. Scalar SSA deliberately does not rename this slot.
+        ;; Model the unchanged dynamic-array handle carried by the real
+        ;; absorbed-call shape. Register-value SSA now renames this slot safely.
         (compiler_ir_types.CompilerIrParam.Param
           "base"
           (compiler_ast_types.AstType.DynArray 0)
@@ -40492,8 +40875,8 @@
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
       (array.make-array compiler_ir_types.CompilerIrValue 4)]
     (begin
-      ;; The first three arguments are unchanged. Tail-recursion conversion
-      ;; must not materialize identity writes for them.
+      ;; The first three arguments are unchanged. Identity writes must not
+      ;; survive the tail-recursion conversion plus register-value SSA pipeline.
       (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
       (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
       (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))

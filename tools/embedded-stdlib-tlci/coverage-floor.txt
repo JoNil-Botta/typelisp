@@ -21,9 +21,12 @@
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
 #
-# Issues #6554/#6555 move stdlib.serialize/serialize and stdlib.sort/vec off
-# their fallback shells by lowering ordered String-literal matches to scalar
-# data locals. Native coverage rises from 101 to 103 of 107 entries without
-# adding interpreted arms.
-native-entries-min 103
+# Issue #6556 moves stdlib.vector/vector off its fallback shell by adding
+# tuple-type and consuming-array template lowering plus computed local
+# destructuring/conditions and aligning the producer/host local budget with
+# large module generators. Its generalized support also removes the
+# stdlib.hashmap/hashmap shell. Together with #6554/#6555's serialize and sort
+# routes, native coverage rises from 101 to 105 of 107 entries without
+# interpreted arms.
+native-entries-min 105
 interpreted-arms-max 0

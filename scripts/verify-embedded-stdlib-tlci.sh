@@ -205,11 +205,12 @@ fi
 # Pin the landed families, not just the aggregate ratchet. Each identity must
 # exist in the catalog and, because every shell is accounted for by the blocked
 # relation above, must not be one of those blocked identities. Refs #6552,
-# #6554, #6555.
+# #6554, #6555, #6556.
 for NATIVE_IDENTITY in \
     stdlib.clone/synthesize-helpers \
     stdlib.serialize/serialize \
-    stdlib.sort/vec; do
+    stdlib.sort/vec \
+    stdlib.vector/vector; do
     if ! grep -aFq "$NATIVE_IDENTITY" "$IMAGE_A"; then
         echo "embedded stdlib tlci image is missing $NATIVE_IDENTITY" >&2
         exit 1

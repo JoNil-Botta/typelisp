@@ -1602,9 +1602,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #2778's dependency-catalog observation row was the first to cross it: the
     # authoritative Windows probe on that tree measured 24,577 used nodes, 25
     # segments, 25,600 capacity, and 614,400 physical payload bytes. The
+    # #6556 vector-generator tree measured 24,579 used nodes. The later
     # multi-exit rotation series' classified exit placement adds macro-expanded
-    # type structure on top of that: the combined tree measures 24,589 used
-    # nodes, still 25 segments with 1,011 nodes below the 26-segment line.
+    # type structure on top of main: its authoritative tree measured 24,589
+    # used nodes, still 25 segments with 1,011 nodes below the 26-segment line.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 25 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -2174,6 +2175,78 @@ if ! cmp -s "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" \
     diff -u "$STDLIB_TLCI_DIR/for-diagnostic-interpreted.text" \
         "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" >&2 || true
     fail "native and interpreted for diagnostics differ"
+fi
+
+echo "[compile-profile] verify vector residual routing differential (#6556)"
+verify_residual_route \
+    vector-full-residual \
+    "$ROOT/tests/integration/compile_profile_vector_full.tl" \
+    "stdlib.vector/vector"
+verify_residual_route \
+    vector-core-residual \
+    "$ROOT/tests/integration/compile_profile_vector_core.tl" \
+    "stdlib.vector/vector"
+
+# Pin the module generator's public malformed-capability diagnostic on both
+# routes. Successful full/core expansion above covers both body branches; this
+# rejection catches computed-match/control-flow drift before syntax building.
+VECTOR_RESIDUAL_DIAG_SOURCE="$ROOT/tests/safety/vector_invalid_capability_reject.tl"
+VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/vector-diagnostic-embedded.stdout"
+VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/vector-diagnostic-embedded.stderr"
+VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.stdout"
+VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.stderr"
+if (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" check "$VECTOR_RESIDUAL_DIAG_SOURCE"
+) > "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
+    2> "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"; then
+    fail "embedded vector diagnostic fixture unexpectedly passed"
+fi
+if (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" check "$VECTOR_RESIDUAL_DIAG_SOURCE" \
+        --stdlib-root stdlib
+) > "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
+    2> "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"; then
+    fail "interpreted vector diagnostic fixture unexpectedly passed"
+fi
+grep -v 'compile-profile' "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR" \
+    > "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text"
+grep -v 'compile-profile' "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR" \
+    > "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
+    'vector: optional capability must be bare `core`' \
+    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
+    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
+    'vector: optional capability must be bare `core`' \
+    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
+    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
+    'in expansion of macro `stdlib.vector/vector` invoked here' \
+    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
+    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
+    'in expansion of macro `stdlib.vector/vector` invoked here' \
+    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
+    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"
+# Native callback diagnostics are anchored at the invocation by design; the
+# interpreted route can retain a transformer-expression primary span. Compare
+# the route-stable diagnostic headline exactly and require invocation
+# provenance above instead of conflating this location policy with semantics.
+head -n 1 "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
+    > "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline"
+head -n 1 "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
+    > "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline"
+if ! cmp -s "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline" \
+    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline"; then
+    diff -u "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline" \
+        "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline" >&2 || true
+    fail "native and interpreted vector diagnostic messages differ"
 fi
 
 echo "[compile-profile] verify json/serialize residual routing differential (#5606/#5627/#5999)"

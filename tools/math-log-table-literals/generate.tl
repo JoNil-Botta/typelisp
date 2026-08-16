@@ -2,6 +2,7 @@
 ;; literals.  The fixed table/field walk makes the output a migration manifest:
 ;; running it before and after a literal rewrite must be byte-identical.
 (import stdlib.array)
+(import stdlib.format)
 (import stdlib.io)
 (import stdlib.math)
 (import stdlib.string)
@@ -27,7 +28,7 @@
   (if (math-log-literal-seen? seen index bits)
     false
     (let
-      [formatted : String (io.format-float-core (math.f64-from-bits bits))]
+      [formatted : String (format.format-float-core (math.f64-from-bits bits))]
       ;; Integer-looking formatter results need a decimal point to remain f64
       ;; source literals at the call site.
       [text : String

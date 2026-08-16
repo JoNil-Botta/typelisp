@@ -197,7 +197,12 @@ Inline stdlib coverage:
   integer, boolean, char, and float formatting; `comptime_string_literal_reject.tl`
   keeps non-literal syntax inspection rejected at macro expansion. The
   `format_*_reject.tl` fixtures cover non-literal templates, unsupported
-  specifiers, and both placeholder-count mismatches.
+  specifiers, both placeholder-count mismatches, missing or wrongly typed
+  canonical owner hooks, and ambiguous plain-plus-nominal hook definitions.
+  `tests/integration/format_owner_*` covers positive struct/enum/nested hooks,
+  multi-type owner modules, same-named types from distinct owners, single
+  evaluation, non-consuming formatting, shared `format`/print dispatch, and
+  import-order independence on Linux and Windows.
 - `text_buf.tl` owns inline tests for scoped arena rendering of a program-owned
   text buffer from an inner active arena, empty buffers, repeated appends,
   char/int append helpers, buffer concatenation, clear/reset behavior, and

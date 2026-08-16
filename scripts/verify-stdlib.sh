@@ -31,6 +31,22 @@ esac
 
 scripts/verify-qualified-module-macro-imports.sh
 
+# Formatting owns template parsing, value dispatch, and conversion. I/O may
+# delegate to that layer, but the dependency must never point back from the
+# pure formatter into platform I/O or the two public entry points can drift.
+if grep -Eq '^\(import stdlib\.io([ )]|$)' stdlib/format.tl; then
+    echo "stdlib.format must not import stdlib.io" >&2
+    exit 1
+fi
+if ! grep -Fxq '(import stdlib.format)' stdlib/io.tl; then
+    echo "stdlib.io must import stdlib.format for print-format/println" >&2
+    exit 1
+fi
+if grep -Eq '^\(defmacro \((format|format-value|format-from|format-push|format-finish)([ )]|$)' stdlib/io.tl; then
+    echo "stdlib.io must not define a second formatting dispatch path" >&2
+    exit 1
+fi
+
 # Linux verifies through the GNU `as`/`ld` pipeline with libc linked for stdlib
 # host FFI bindings; Windows (Git Bash / MSYS / Cygwin on the CI runner)
 # verifies through the host-default native toolchain (`typelisp build` ->
@@ -282,6 +298,9 @@ stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
 stdlib/tests/env_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
+stdlib/tests/format_owner_ambiguous_reject.tl|fail|format: ambiguous owner hooks for
+stdlib/tests/format_owner_missing_reject.tl|fail|format: unsupported nominal type
+stdlib/tests/format_owner_wrong_signature_reject.tl|fail|format: owner hook has wrong signature for
 stdlib/tests/format_specifier_reject.tl|fail|format: format specifiers are not supported
 stdlib/tests/format_too_few_args_reject.tl|fail|format: not enough arguments for placeholders
 stdlib/tests/format_too_many_args_reject.tl|fail|format: not enough placeholders for arguments

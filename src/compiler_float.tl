@@ -1,4 +1,5 @@
 ;; compiler_float.tl - Compiler-facing wrappers for deterministic float helpers.
+(import stdlib.format)
 (import stdlib.io)
 (import stdlib.option)
 (import (option.option i64) as option_i64)
@@ -300,7 +301,7 @@
       (CompilerFiniteCastNoResult))))
 
 (define (compiler-float-format-f64 [value : f64]) : String
-  (io.format-float-core value))
+  (format.format-float-core value))
 
 (define (compiler-float-parse-f64-bits [text : String]) : CompilerFloatMaybeBits
   (match (compiler-float-parse-f64 text)

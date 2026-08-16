@@ -132,9 +132,12 @@ Vec bang place macros as available yet.
   `(import stdlib.comptime)`.
 - `format.tl`: Rust-style literal `format` macro returning a fresh `String`.
   It accepts positional `{}` placeholders, escaped `{{` / `}}` braces, and
-  `String`, `i64`, `bool`, `char`, `f64`, or `f32` values; unsupported values
-  must be converted explicitly. Import it with `(import stdlib.format)` and
-  call `format.format`.
+  `String`, `i64`, `bool`, `char`, `f64`, or `f32` values. A nominal struct or
+  enum delegates to its canonical owner module's exact
+  `to-string : (& T) -> String` hook; modules with multiple nominal types may
+  use `to-string-<NominalName>` for the additional types. Defining both
+  applicable spellings is rejected as ambiguous. Import it with
+  `(import stdlib.format)` and call `format.format`.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
@@ -635,7 +638,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `string.is-char-whitespace`, `string.char-eq`, `string.index-of-byte`, `string.contains`, `string.contains-char`, `string.is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string.append`, `string.concat`, `string.copy`, `string.substring`, `string.slice`, `string.concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string.concat-all` accepts a borrowed native `Slice String`; long `str-cat` expansions pass a live-prefix Slice over one compiler-private packed buffer. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
-| `format.format` | Parses a literal template at macro expansion and emits one flat `str-cat` expression. The final rendered `String` allocates once in the active arena; scalar conversion helpers retain their documented allocation behavior before the final concat. |
+| `format.format` | Parses a literal template at macro expansion and emits one flat `str-cat` expression. Nominal placeholders call the canonical owner module's exact shared-borrow display hook, preserving lvalues and evaluating rvalues once. The final rendered `String` allocates once in the active arena; scalar and owner-hook conversion helpers may allocate their rendered pieces before the final concat. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `read-file`, `try-read-file` | `read-file` returns an active-arena `ByteBuf`. The recoverable form returns `OkIoBytes ByteBuf` when the path is readable, or `ErrIoBytes` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. Text consumers call `byte_buf.to-string` explicitly. |

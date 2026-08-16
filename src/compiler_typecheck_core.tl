@@ -15564,6 +15564,24 @@
           (tc-fn2 (ast.AstType.String) (ast.AstType.String) expr)))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          (cbi.compiler-builtin-ctfe-ref 285)
+          (tc-fn2 (ast.AstType.String) (ast.AstType.String) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          (cbi.compiler-builtin-ctfe-ref 286)
+          (tc-fn2 expr expr (ast.AstType.Bool))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          (cbi.compiler-builtin-ctfe-ref 287)
+          (tc-fn2 expr expr expr)))
+      (set!
+        out
         (tc-bind-id out (cbi.compiler-builtin-ctfe-ref 218) (tc-fn1 expr expr)))
       (set!
         out

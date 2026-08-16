@@ -13,7 +13,7 @@
 ;#     (test.assert-true true "expected true")
 ;#     42))
 ;# ```
-(import stdlib.io)
+(import stdlib.format)
 (import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.text_buf)
@@ -77,8 +77,8 @@
   (if (= actual expected)
     unit
     (assert-eq-failure
-      (io.format-float-core actual)
-      (io.format-float-core expected)
+      (format.format-float-core actual)
+      (format.format-float-core expected)
       message)))
 
 ;: Assert that two char values have the same scalar code.

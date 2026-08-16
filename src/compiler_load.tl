@@ -8613,11 +8613,11 @@
             (match decl
               [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
               [_
-                (if (and
-                  (= cur-module target-module)
-                  (compiler-load-decl-defines-selected-item? decl item))
-                  (return true)
-                  unit)])
+                (when
+                  (and
+                    (= cur-module target-module)
+                    (compiler-load-decl-defines-selected-item? decl item))
+                  (return true))])
             (set! index (+ index 1)))))
       false)))
 

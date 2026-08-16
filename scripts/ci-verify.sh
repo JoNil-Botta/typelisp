@@ -405,18 +405,23 @@ echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_B
 # The default-off scratch planner changes the compiler's own ABI and switch
 # movement only when its cfg is enabled. A focused unit fixture is not enough:
 # #4911 reproduced only after a scratch-built stage2 executed its generated
-# stage3 compiler. Require the same multi-generation fixpoint on both hosts,
-# while reusing the normal converged compiler as the seed and skipping duplicate
-# stage1 CLI surface checks.
+# stage3 compiler. Require the same multi-generation fixpoint on both hosts.
+# The already-isolated run also carries the #6610 same-commit stdlib mutation:
+# stage1 must interpret its changed transformer, stage2 must execute the newly
+# embedded body natively, and compiler/image/provenance outputs must converge.
+# Reuse the normal converged compiler as the seed and skip duplicate CLI checks.
 TYPELISP_BOOTSTRAP_CFG=scratch-vreg
 TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-scratch-vreg"
 TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1
-export TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE
+TYPELISP_BOOTSTRAP_TLCI_MUTATION=1
+export TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR
+export TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE TYPELISP_BOOTSTRAP_TLCI_MUTATION
 run_gate \
-    "scratch-vreg bootstrap fixpoint" \
+    "scratch-vreg + TLCI mutation bootstrap fixpoint" \
     scripts/check-bootstrap-fixpoint.sh \
     "$STAGE2_BIN"
-unset TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE
+unset TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR
+unset TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE TYPELISP_BOOTSTRAP_TLCI_MUTATION
 
 # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
 # RUN a native program before the run-assert tiers below may execute. A failed

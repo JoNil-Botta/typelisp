@@ -49,7 +49,7 @@ instead, which the sweep does not require to be reachable.
 | --- | --- |
 | Fetch the published seed | `fetch-stage0.sh` / `fetch-stage0.ps1` |
 | Build a successor compiler | `build-stage0.sh` |
-| Prove self-host convergence | `check-bootstrap-fixpoint.sh` |
+| Prove self-host and same-commit TLCI handoff convergence | `check-bootstrap-fixpoint.sh` |
 | Run the complete local CI suite | `ci-verify.sh` |
 | Check TypeLisp formatting and lint | `check-tl-format.sh`, `verify-format-large-crlf.sh`, `check-tl-lint.sh` |
 | Check compiler-source coverage | `verify-selfhost-compile-manifest.sh`, `verify-inline-tests.sh` |

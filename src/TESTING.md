@@ -886,7 +886,23 @@ parser and production W^X loader, and
 the bootstrap smoke requires `typelisp inspect embedded:stdlib.tlci` to register
 every current macro identity. Trusted embedded-stdlib native routing is the
 default on both hosts; the bootstrap embedded-provenance parity compile proves
-the staged disk-source and embedded-source paths converge. The
+the staged disk-source and embedded-source paths converge.
+
+CI's isolated scratch-vreg bootstrap also enables the deterministic same-commit
+mutation witness. It copies `src/` and `stdlib/` below that bootstrap's target
+workdir, changes only the zero-body sentinel in the already-native
+`stdlib.core_macros/when` transformer, and builds every generation from that
+tree. Stage1 must emit exact package-qualified source-route evidence and the
+changed diagnostic. Stage2, with the newly produced image embedded, must emit
+the matching native-route evidence with no contradictory source record and the
+same changed diagnostic. Stage1, stage2, and the final converged producer must
+then emit byte-identical ordinary images, TLCH envelopes, source hashes, and
+inspected producer provenance; the ordinary assembly and embedded-provenance
+fixpoints remain mandatory. The fast adaptive-control test rejects wrong or
+duplicate routes, stale identities, and unequal payload artifacts before the
+expensive bootstrap begins. Checked-in sources are never edited by this gate.
+
+The
 `verify-embedded-stdlib-tlci.sh` gate separately checks ordinary-image and
 envelope byte determinism and exact envelope expansion, proves that a
 source-only mutation changes the image, ratchets source-lowered native-entry

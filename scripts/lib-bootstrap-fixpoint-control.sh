@@ -44,3 +44,44 @@ bootstrap_resolve_fixpoint() {
     BOOTSTRAP_COMPILER_STAGE=stage4
     return 0
 }
+
+# Require one exact route record for the selected same-commit TLCI mutation
+# witness. Reject duplicate or contradictory records so a broad aggregate
+# counter cannot make the handoff check pass accidentally.
+bootstrap_tlci_require_route() {
+    _btr_file=$1
+    _btr_identity=$2
+    _btr_route=$3
+    _btr_result=$4
+    _btr_prefix="tlci-bootstrap-mutation-route|identity=$_btr_identity|"
+    _btr_expected="${_btr_prefix}route=$_btr_route|result=$_btr_result"
+    _btr_count=$(grep -Fxc "$_btr_expected" "$_btr_file" 2>/dev/null || true)
+    _btr_total=$(grep -Fc "$_btr_prefix" "$_btr_file" 2>/dev/null || true)
+    if [ "$_btr_count" -ne 1 ] || [ "$_btr_total" -ne 1 ]; then
+        echo "bootstrap tlci mutation route mismatch in $_btr_file" >&2
+        echo "  expected exactly: $_btr_expected" >&2
+        grep -F "$_btr_prefix" "$_btr_file" | sed 's/^/  observed: /' >&2 || true
+        return 1
+    fi
+}
+
+bootstrap_tlci_require_same_artifact() {
+    _bta_left=$1
+    _bta_right=$2
+    _bta_label=$3
+    if ! cmp -s "$_bta_left" "$_bta_right"; then
+        echo "bootstrap tlci mutation $_bta_label did not converge" >&2
+        return 1
+    fi
+}
+
+bootstrap_tlci_require_identity() {
+    _bti_actual=$1
+    _bti_expected=$2
+    _bti_label=$3
+    if [ "$_bti_actual" != "$_bti_expected" ]; then
+        echo "bootstrap tlci mutation $_bti_label identity mismatch:" \
+            "expected $_bti_expected, got $_bti_actual" >&2
+        return 1
+    fi
+}

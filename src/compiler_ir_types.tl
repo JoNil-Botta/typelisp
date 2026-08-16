@@ -1904,7 +1904,7 @@
 (define (compiler-ir-instr-builder-with-capacity [capacity : i64]) : CompilerIrInstrBuilder
   (let
     [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrInstrBuilder (make-array CompilerIrInstr cap) 0)))
+    (CompilerIrInstrBuilder (__tl_make-array CompilerIrInstr cap) 0)))
 
 (define (compiler-ir-instr-builder-new) : CompilerIrInstrBuilder
   ;; Seed for the common small block: optimizer IR blocks are short
@@ -1934,7 +1934,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array CompilerIrInstr)
-      (make-array CompilerIrInstr new-cap)]
+      (__tl_make-array CompilerIrInstr new-cap)]
     (begin
       (compiler-ir-instr-builder-copy-range!
         (&mut bigger)
@@ -1975,7 +1975,7 @@
 (define (compiler-ir-block-builder-with-capacity [capacity : i64]) : CompilerIrBlockBuilder
   (let
     [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrBlockBuilder (make-array CompilerIrBlock cap) 0)))
+    (CompilerIrBlockBuilder (__tl_make-array CompilerIrBlock cap) 0)))
 
 (define (compiler-ir-block-builder-new) : CompilerIrBlockBuilder
   ;; Seed for the common small function: most lowered functions have four
@@ -2004,7 +2004,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array CompilerIrBlock)
-      (make-array CompilerIrBlock new-cap)]
+      (__tl_make-array CompilerIrBlock new-cap)]
     (begin
       (compiler-ir-block-builder-copy-range!
         (&mut bigger)
@@ -2050,7 +2050,7 @@
 (define (compiler-ir-function-builder-with-capacity [capacity : i64]) : CompilerIrFunctionBuilder
   (let
     [cap : i64 (compiler-ir-builder-capacity capacity)]
-    (CompilerIrFunctionBuilder (make-array CompilerIrFunction cap) 0)))
+    (CompilerIrFunctionBuilder (__tl_make-array CompilerIrFunction cap) 0)))
 
 (define (compiler-ir-function-builder-new) : CompilerIrFunctionBuilder
   (compiler-ir-function-builder-with-capacity 8))
@@ -2075,7 +2075,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array CompilerIrFunction)
-      (make-array CompilerIrFunction new-cap)]
+      (__tl_make-array CompilerIrFunction new-cap)]
     (begin
       (compiler-ir-function-builder-copy-range!
         (&mut bigger)
@@ -2137,7 +2137,7 @@
   (let
     [count : i64 builder.len]
     [slots : (__tl_dyn-array CompilerIrFunction)
-      (make-array CompilerIrFunction count)]
+      (__tl_make-array CompilerIrFunction count)]
     (begin
       (compiler-ir-function-builder-copy-range!
         (&mut slots)
@@ -5075,11 +5075,11 @@
       (CompilerMaybeSourceSpan.Some found.span)]))
 
 (define (compiler-source-spans-entry-list-empty) : CompilerSourceSpansEntryList
-  (CompilerSourceSpansEntryList (make-array CompilerSourceSpansEntry 0) 0))
+  (CompilerSourceSpansEntryList (__tl_make-array CompilerSourceSpansEntry 0) 0))
 
 (define (compiler-source-spans-instr-entry-list-empty) : CompilerSourceSpansInstrEntryList
   (CompilerSourceSpansInstrEntryList
-    (make-array CompilerSourceSpansInstrEntry 0)
+    (__tl_make-array CompilerSourceSpansInstrEntry 0)
     0))
 
 (define (compiler-source-spans-empty) : CompilerSourceSpans
@@ -5139,7 +5139,7 @@
         [new-cap : i64
           (compiler-source-spans-entry-list-capacity-for (+ len 1))]
         [bigger : (__tl_dyn-array CompilerSourceSpansEntry)
-          (make-array CompilerSourceSpansEntry new-cap)]
+          (__tl_make-array CompilerSourceSpansEntry new-cap)]
         (begin
           (compiler-source-spans-entry-list-copy-array-range!
             (&mut bigger)
@@ -5196,7 +5196,7 @@
         [new-cap : i64
           (compiler-source-spans-entry-list-capacity-for (+ len 1))]
         [bigger : (__tl_dyn-array CompilerSourceSpansInstrEntry)
-          (make-array CompilerSourceSpansInstrEntry new-cap)]
+          (__tl_make-array CompilerSourceSpansInstrEntry new-cap)]
         (begin
           (compiler-source-spans-instr-entry-list-copy-array-range!
             (&mut bigger)
@@ -5222,7 +5222,7 @@
     [slots : (__tl_dyn-array CompilerSourceSpansEntry) entries.slots]
     [len : i64 entries.len]
     [copy : (__tl_dyn-array CompilerSourceSpansEntry)
-      (make-array CompilerSourceSpansEntry len)]
+      (__tl_make-array CompilerSourceSpansEntry len)]
     (begin
       (compiler-source-spans-entry-list-copy-array-range!
         (&mut copy)
@@ -5237,7 +5237,7 @@
     [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry) entries.slots]
     [len : i64 entries.len]
     [copy : (__tl_dyn-array CompilerSourceSpansInstrEntry)
-      (make-array CompilerSourceSpansInstrEntry len)]
+      (__tl_make-array CompilerSourceSpansInstrEntry len)]
     (begin
       (compiler-source-spans-instr-entry-list-copy-array-range!
         (&mut copy)

@@ -2949,7 +2949,7 @@
 ;; step. Zero length is the "no mirror" signal, so the rewrite paths below skip
 ;; the mirrored bookkeeping with one length test and no allocation.
 (define opt-dce-no-mirror : (__tl_dyn-array (__tl_dyn-array i64))
-  (make-array (array.make-array i64 0)))
+  (__tl_make-array (array.make-array i64 0)))
 
 ;; The zero-length mirror sentinel is immutable in practice: every update is
 ;; guarded by its length. Preserve the allocation-free shared sentinel behind
@@ -24315,7 +24315,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -46094,7 +46094,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -49641,7 +49641,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -49682,7 +49682,7 @@
     [(OptUceExitRecs.Dense _ len)
       (let
         [slots : (__tl_dyn-array ir.CompilerIrInstr)
-          (make-array ir.CompilerIrInstr len)]
+          (__tl_make-array ir.CompilerIrInstr len)]
         [env : OptCopyEnv (OptCopyEnv.Nil)]
         [index : i64 0]
         (begin
@@ -49723,7 +49723,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       ;; Preserve the historical accumulator order exactly.
@@ -50611,7 +50611,7 @@
   (let
     [count : i64 (opt-unroll-simd-memory-count memory-bases)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -70165,7 +70165,7 @@
   (let
     [count : i64 (ir.compiler-ir-block-seq-count blocks)]
     [facts : (__tl_dyn-array OptIfConvertBlockFact)
-      (make-array OptIfConvertBlockFact count)]
+      (__tl_make-array OptIfConvertBlockFact count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -77159,7 +77159,7 @@
 (define opt-inline-caller-chain-blocks : i64
   0)
 (define opt-inline-pred-renames : (__tl_dyn-array OptInlinePredRenameList)
-  (make-array (OptInlinePredRenameList.Nil)))
+  (__tl_make-array (OptInlinePredRenameList.Nil)))
 
 (define (opt-inline-pred-renames-shared-view) : OptInlinePredRenameList
   (unsafe
@@ -78572,7 +78572,7 @@
 ;; Computing them for every function instead is +0.36% of the opt2 self-compile
 ;; spent on facts that almost no caller reads.
 (define opt-inline-caller-facts-blocks : (__tl_dyn-array ir.CompilerIrBlockList)
-  (make-array (ir.CompilerIrBlockList.Nil)))
+  (__tl_make-array (ir.CompilerIrBlockList.Nil)))
 
 (define (opt-inline-caller-facts-blocks-shared-view) : ir.CompilerIrBlockList
   (unsafe
@@ -78586,7 +78586,7 @@
 (define opt-inline-caller-facts-ready? : bool
   false)
 (define opt-inline-caller-loop-labels : (__tl_dyn-array OptLabelSet)
-  (make-array (OptLabelSet.Nil)))
+  (__tl_make-array (OptLabelSet.Nil)))
 
 (define (opt-inline-caller-loop-labels-shared-view) : OptLabelSet
   (unsafe
@@ -83281,7 +83281,7 @@
     [count : i64 (opt-function-index-count index)]
     [values : (__tl_dyn-array ir.CompilerIrFunction) index.values]
     [flags : (__tl_dyn-array bool)
-      (make-array
+      (__tl_make-array
         bool
         (if (> count 0)
           count
@@ -94713,7 +94713,7 @@
   (if (>= store-capacity 2)
     (let
       [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-      [dead : (__tl_dyn-array i64) (make-array i64 count)]
+      [dead : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [pending : OptDeadStoreSet
         (opt-dead-store-set-with-capacity store-capacity)]
       [kinds : OptLoadPtrKinds initial-kinds]

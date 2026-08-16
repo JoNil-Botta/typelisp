@@ -16,10 +16,12 @@
   (CompilerParallelMoveCycle i64))
 
 (define (compiler-parallel-move-edge-seq-empty) : CompilerParallelMoveEdgeSeq
-  (CompilerParallelMoveEdgeSeq (make-array CompilerParallelMoveEdge 0) 0))
+  (CompilerParallelMoveEdgeSeq (__tl_make-array CompilerParallelMoveEdge 0) 0))
 
 (define (compiler-parallel-move-edge-seq-with-capacity [capacity : i64]) : CompilerParallelMoveEdgeSeq
-  (CompilerParallelMoveEdgeSeq (make-array CompilerParallelMoveEdge capacity) 0))
+  (CompilerParallelMoveEdgeSeq
+    (__tl_make-array CompilerParallelMoveEdge capacity)
+    0))
 
 (define (compiler-parallel-move-edge-seq-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerParallelMoveEdge))]
@@ -41,7 +43,7 @@
       (let
         [old-capacity : i64 (array-length seq.slots)]
         [bigger : (__tl_dyn-array CompilerParallelMoveEdge)
-          (make-array
+          (__tl_make-array
             CompilerParallelMoveEdge
             (if (< old-capacity 1)
               4

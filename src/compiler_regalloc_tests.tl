@@ -4434,7 +4434,9 @@
 (cfg
   test
   (define (compiler-reg-evict-test-pool) : (__tl_dyn-array i64)
-    (make-array (cast cabi.compiler-reg-id-r12 : i64) cabi.compiler-reg-id-r13)))
+    (__tl_make-array
+      (cast cabi.compiler-reg-id-r12 : i64)
+      cabi.compiler-reg-id-r13)))
 
 (cfg
   test

@@ -17255,13 +17255,15 @@
     i64)
   (match target-abi
     [(cabi.CompilerRegTargetAbi.Linux)
-      (make-array
+      (__tl_make-array
         (cast cabi.compiler-reg-id-r8 : i64)
         cabi.compiler-reg-id-r9
         cabi.compiler-reg-id-rsi
         cabi.compiler-reg-id-rdi)]
     [(cabi.CompilerRegTargetAbi.Windows)
-      (make-array (cast cabi.compiler-reg-id-r8 : i64) cabi.compiler-reg-id-r9)]))
+      (__tl_make-array
+        (cast cabi.compiler-reg-id-r8 : i64)
+        cabi.compiler-reg-id-r9)]))
 
 ;; Loop-scoped shadow pool: CALLEE-saved registers only, and only the ones the
 ;; plan already homes a value in.

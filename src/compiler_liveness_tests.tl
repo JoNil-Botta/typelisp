@@ -126,7 +126,7 @@
 
 (define (compiler-live-scratch-ops-ok?) : bool
   (let
-    [words : (__tl_dyn-array i64) (make-array i64 6)]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [copy-count : i64
       (live.compiler-live-scratch-copy-set!
         words
@@ -309,13 +309,13 @@
 ;; count -- exactly where the bitset forms leave them.
 (define (compiler-live-step-ids-ok?) : bool
   (let
-    [set-words : (__tl_dyn-array i64) (make-array i64 6)]
-    [id-words : (__tl_dyn-array i64) (make-array i64 6)]
-    [ids : (__tl_dyn-array i64) (make-array i64 4)]
-    [set-use-words : (__tl_dyn-array i64) (make-array i64 6)]
-    [set-def-words : (__tl_dyn-array i64) (make-array i64 6)]
-    [id-use-words : (__tl_dyn-array i64) (make-array i64 6)]
-    [id-def-words : (__tl_dyn-array i64) (make-array i64 6)]
+    [set-words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [id-words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [set-use-words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [set-def-words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [id-use-words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [id-def-words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [seed : live.CompilerLiveI64Set (live.compiler-live-set3 1 64 130)]
     [set-active : i64 (live.compiler-live-scratch-copy-set! set-words seed)]
     [id-active : i64 (live.compiler-live-scratch-copy-set! id-words seed)]
@@ -375,7 +375,7 @@
           (live.compiler-live-scratch-freeze set-def-words 6)
           (live.compiler-live-scratch-freeze id-def-words 6)))]
     ;; A use list wider than the buffer reports -1 so the caller can fall back.
-    [narrow : (__tl_dyn-array i64) (make-array i64 1)]
+    [narrow : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [overflow-ok : bool
       (=
         (live.compiler-live-instr-use-ids-into!
@@ -403,7 +403,7 @@
   [sixth : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (make-array ir.CompilerIrInstr 6)]
+      (__tl_make-array ir.CompilerIrInstr 6)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)
@@ -423,7 +423,7 @@
   [seventh : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (make-array ir.CompilerIrInstr 7)]
+      (__tl_make-array ir.CompilerIrInstr 7)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)
@@ -445,7 +445,7 @@
   [eighth : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (make-array ir.CompilerIrInstr 8)]
+      (__tl_make-array ir.CompilerIrInstr 8)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)

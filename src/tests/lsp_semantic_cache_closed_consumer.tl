@@ -1,6 +1,6 @@
 (module semantic.lsp_cache.closed_consumer)
 
-(import semantic.lsp_cache.shared as shared)
+(import semantic.lsp_cache.shared)
 
 ;; target-value in comments and strings must never become semantic facts.
 (define target-text : String

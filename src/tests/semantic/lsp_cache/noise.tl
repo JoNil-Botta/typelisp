@@ -4,5 +4,5 @@
 (define target-value : i64
   99)
 
-(define (noise-consumer) : i64
+(define (consumer) : i64
   target-value)

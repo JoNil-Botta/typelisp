@@ -417,6 +417,287 @@
               (cdiag.compiler-diagnostic-list-first diagnostics))
             "typecheck: unbound name unknown-origin")))]))
 
+(define (compiler-check-semantic-access-code
+  [access : semantic_index.CompilerSemanticAccess]) : i64
+  (match access
+    [(semantic_index.CompilerSemanticAccess.None) 0]
+    [(semantic_index.CompilerSemanticAccess.Read) 1]
+    [(semantic_index.CompilerSemanticAccess.Write) 2]
+    [(semantic_index.CompilerSemanticAccess.ReadWrite) 3]))
+
+(define (compiler-check-semantic-record-access?
+  [index : (& index semantic_index.CompilerSemanticSourceIndex)]
+  [record-index : i64]
+  [expected : i64]) : bool
+  (and
+    (>= record-index 0)
+    (=
+      (compiler-check-semantic-access-code
+        (semantic_index.compiler-semantic-source-index-get index record-index).access)
+      expected)))
+
+(define (compiler-check-semantic-record-symbols-eq?
+  [index : (& index semantic_index.CompilerSemanticSourceIndex)]
+  [left-index : i64]
+  [right-index : i64]) : bool
+  (and
+    (>= left-index 0)
+    (>= right-index 0)
+    (semantic_index.compiler-semantic-symbol-id-eq?
+      (semantic_index.compiler-semantic-source-index-get index left-index).symbol
+      (semantic_index.compiler-semantic-source-index-get index right-index).symbol)))
+
+(define (compiler-check-semantic-access-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_access_entry.tl"]
+    [source : String
+      "(module semantic.access)
+(import semantic.index.import_dep as dep)
+(defmacro (wrap [value : Expr]) : Expr value)
+(defmacro (emit-one) : Decls
+  `(define generated-from-macro : i64 (wrap 5)))
+(emit-one)
+(define top : i64 dep.imported-value)
+(define (bump [slot : i64]) : i64
+  (begin
+    (set! slot (+ slot top))
+    slot))
+(define result : i64 (bump (wrap top)))
+(define (shadow [shadowed : i64]) : i64
+  (let
+    [shadowed : i64 (+ shadowed 1)]
+    (begin
+      (set! shadowed (+ shadowed 1))
+      shadowed)))"]
+    (match (semantic_index.compiler-check-source-index-with-roots
+      path
+      source
+      (svec.new))
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [slot-definition : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "slot"
+              semantic_index.CompilerSemanticRecordRole.Definition
+              0)]
+          [slot-write : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "slot"
+              semantic_index.CompilerSemanticRecordRole.Use
+              0)]
+          [slot-rhs-read : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "slot"
+              semantic_index.CompilerSemanticRecordRole.Use
+              1)]
+          [slot-result-read : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "slot"
+              semantic_index.CompilerSemanticRecordRole.Use
+              2)]
+          [shadow-param-definition : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              semantic_index.CompilerSemanticRecordRole.Definition
+              0)]
+          [shadow-local-definition : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              semantic_index.CompilerSemanticRecordRole.Definition
+              1)]
+          [shadow-param-read : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              semantic_index.CompilerSemanticRecordRole.Use
+              0)]
+          [shadow-local-write : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              semantic_index.CompilerSemanticRecordRole.Use
+              1)]
+          [shadow-local-read : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              semantic_index.CompilerSemanticRecordRole.Use
+              2)]
+          [shadow-local-result-read : i64
+            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              semantic_index.CompilerSemanticRecordRole.Use
+              3)]
+          [bump-read : i64
+            (semantic_index.compiler-semantic-source-index-find-record
+              (& index)
+              path
+              "bump"
+              semantic_index.CompilerSemanticRecordRole.Use
+              -1)]
+          [import-read : i64
+            (semantic_index.compiler-semantic-source-index-find-record
+              (& index)
+              path
+              "imported-value"
+              semantic_index.CompilerSemanticRecordRole.Use
+              -1)]
+          [macro-read : i64
+            (semantic_index.compiler-semantic-source-index-find-macro-use
+              (& index)
+              "wrap"
+              true
+              0)]
+          [generated-macro : i64
+            (semantic_index.compiler-semantic-source-index-find-macro-use
+              (& index)
+              "wrap"
+              false
+              0)]
+          [generated-definition : i64
+            (semantic_index.compiler-semantic-source-index-find-record
+              (& index)
+              ""
+              "generated-from-macro"
+              semantic_index.CompilerSemanticRecordRole.Definition
+              -1)]
+          [unknown-ok : bool
+            (match (semantic_index.compiler-check-source-index-with-roots
+              "src/tests/semantic_access_unknown.tl"
+              "(module semantic.access.unknown)
+(define (broken) : i64 unresolved-name)"
+              (svec.new))
+              [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial
+                  _
+                  partial)
+                (let
+                  [ok : bool
+                    (<
+                      (semantic_index.compiler-semantic-source-index-find-name-occurrence
+                        (& partial)
+                        "src/tests/semantic_access_unknown.tl"
+                        "unresolved-name"
+                        semantic_index.CompilerSemanticRecordRole.Use
+                        0)
+                      0)]
+                  (begin
+                    (semantic_index.compiler-semantic-source-index-release!
+                      (&mut partial))
+                    ok))]
+              [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok
+                  _
+                  complete)
+                (begin
+                  (semantic_index.compiler-semantic-source-index-release!
+                    (&mut complete))
+                  false)]
+              [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _)
+                false])]
+          [ok : bool
+            (and
+              (compiler-check-semantic-record-access?
+                (& index)
+                slot-definition
+                0)
+              (compiler-check-semantic-record-access? (& index) slot-write 2)
+              (compiler-check-semantic-record-access? (& index) slot-rhs-read 1)
+              (compiler-check-semantic-record-access?
+                (& index)
+                slot-result-read
+                1)
+              (compiler-check-semantic-record-symbols-eq?
+                (& index)
+                slot-definition
+                slot-write)
+              (compiler-check-semantic-record-symbols-eq?
+                (& index)
+                slot-write
+                slot-rhs-read)
+              (compiler-check-semantic-record-symbols-eq?
+                (& index)
+                slot-write
+                slot-result-read)
+              (compiler-check-semantic-record-access?
+                (& index)
+                shadow-param-definition
+                0)
+              (compiler-check-semantic-record-access?
+                (& index)
+                shadow-local-definition
+                0)
+              (compiler-check-semantic-record-access?
+                (& index)
+                shadow-param-read
+                1)
+              (compiler-check-semantic-record-access?
+                (& index)
+                shadow-local-write
+                2)
+              (compiler-check-semantic-record-access?
+                (& index)
+                shadow-local-read
+                1)
+              (compiler-check-semantic-record-access?
+                (& index)
+                shadow-local-result-read
+                1)
+              (compiler-check-semantic-record-symbols-eq?
+                (& index)
+                shadow-param-definition
+                shadow-param-read)
+              (compiler-check-semantic-record-symbols-eq?
+                (& index)
+                shadow-local-definition
+                shadow-local-write)
+              (compiler-check-semantic-record-symbols-eq?
+                (& index)
+                shadow-local-write
+                shadow-local-read)
+              (not
+                (compiler-check-semantic-record-symbols-eq?
+                  (& index)
+                  shadow-param-definition
+                  shadow-local-definition))
+              (compiler-check-semantic-record-access? (& index) bump-read 1)
+              (compiler-check-semantic-record-access? (& index) import-read 1)
+              (compiler-check-semantic-record-access? (& index) macro-read 1)
+              (compiler-check-semantic-record-access?
+                (& index)
+                generated-macro
+                0)
+              (compiler-check-semantic-record-access?
+                (& index)
+                generated-definition
+                0)
+              unknown-ok)]
+          (begin
+            (semantic_index.compiler-semantic-source-index-release!
+              (&mut index))
+            ok))]
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (semantic_index.compiler-semantic-source-index-release!
+            (&mut partial))
+          false)]
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -430,6 +711,7 @@
           (compiler-check-parser-recovery-diagnostics-ok?)
           (compiler-check-poison-suppresses-derived-diagnostics-ok?)
           (semantic_index.compiler-check-semantic-index-ok?)
+          (compiler-check-semantic-access-ok?)
           (compiler-check-subform-diagnostic-spans-ok?)
           (compiler-check-qualified-near-miss-ok?)
           (compiler-check-qualified-unbound-display-ok?))

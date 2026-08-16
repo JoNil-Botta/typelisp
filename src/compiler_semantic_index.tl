@@ -51,6 +51,12 @@
   (Definition)
   (Use))
 
+(defenum CompilerSemanticAccess
+  (None)
+  (Read)
+  (Write)
+  (ReadWrite))
+
 (defenum CompilerSemanticProvenance
   (EditableSource)
   (Generated String String String))
@@ -73,6 +79,10 @@
   ;; key obtained from any independently retained source index.
   (canonical-index i64)
   (role CompilerSemanticRecordRole)
+  ;; Source-level binding access proven by the checked semantic walk. A
+  ;; declaration has no access; unresolved syntax produces no record rather
+  ;; than a guessed classification.
+  (access CompilerSemanticAccess)
   (kind CompilerSemanticSymbolKind)
   (display-name String)
   ;; Empty only when the checked walk cannot reproduce a reliable local type
@@ -310,6 +320,7 @@
     (CompilerSemanticSymbolId 0 -1 -1)
     -1
     CompilerSemanticRecordRole.Definition
+    CompilerSemanticAccess.None
     CompilerSemanticSymbolKind.Value
     ""
     ""
@@ -2418,13 +2429,17 @@
 (define (compiler-semantic-record-use-with-binding!
   [state : CompilerSemanticWalkState]
   [binding : CompilerSemanticBinding]
-  [span : CompilerSemanticSpan]) : unit
+  [span : CompilerSemanticSpan]
+  [access : CompilerSemanticAccess]) : unit
   (compiler-semantic-record-vec-push!
     (&mut (__tl-box-place state.records))
     (CompilerSemanticRecord
       binding.symbol
       -1
       CompilerSemanticRecordRole.Use
+      (if state.generated
+        CompilerSemanticAccess.None
+        access)
       binding.kind
       (string.copy (& binding.display-name))
       (string.copy (& binding.resolved-type))
@@ -2437,7 +2452,8 @@
 (define (compiler-semantic-record-top-use!
   [state : CompilerSemanticWalkState]
   [name-id : i64]
-  [span : CompilerSemanticSpan]) : unit
+  [span : CompilerSemanticSpan]
+  [access : CompilerSemanticAccess]) : unit
   (let
     [ctx : tc.TcContext state.ctx]
     [env : tc.TcTypeEnv state.top-env]
@@ -2490,6 +2506,9 @@
                           -1)
                         -1
                         CompilerSemanticRecordRole.Use
+                        (if state.generated
+                          CompilerSemanticAccess.None
+                          access)
                         kind
                         (string.copy (& display-name))
                         (string.copy (& type-text))
@@ -2533,20 +2552,36 @@
             -1)])]
     (match (compiler-semantic-binding-lookup state scope name-id)
       [(CompilerSemanticMaybeBinding.Some binding)
-        (compiler-semantic-record-use-with-binding! state binding span)]
+        (compiler-semantic-record-use-with-binding!
+          state
+          binding
+          span
+          CompilerSemanticAccess.Read)]
       [(CompilerSemanticMaybeBinding.None)
-        (compiler-semantic-record-top-use! state name-id span)])))
+        (compiler-semantic-record-top-use!
+          state
+          name-id
+          span
+          CompilerSemanticAccess.Read)])))
 
-(define (compiler-semantic-record-name-use-span!
+(define (compiler-semantic-record-name-write-span!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
   [span : CompilerSemanticSpan]) : unit
   (match (compiler-semantic-binding-lookup state scope name-id)
     [(CompilerSemanticMaybeBinding.Some binding)
-      (compiler-semantic-record-use-with-binding! state binding span)]
+      (compiler-semantic-record-use-with-binding!
+        state
+        binding
+        span
+        CompilerSemanticAccess.Write)]
     [(CompilerSemanticMaybeBinding.None)
-      (compiler-semantic-record-top-use! state name-id span)]))
+      (compiler-semantic-record-top-use!
+        state
+        name-id
+        span
+        CompilerSemanticAccess.Write)]))
 
 (define (compiler-semantic-bind-local!
   [state : CompilerSemanticWalkState]
@@ -2598,6 +2633,7 @@
               symbol
               -1
               CompilerSemanticRecordRole.Definition
+              CompilerSemanticAccess.None
               kind
               (string.copy (& name))
               (string.copy (& type-text))
@@ -3466,7 +3502,7 @@
         (compiler-semantic-form-head-end state.source form-start)
         value-start)]
     (begin
-      (compiler-semantic-record-name-use-span! state scope name-id span)
+      (compiler-semantic-record-name-write-span! state scope name-id span)
       (compiler-semantic-walk-node! state scope env value-id))))
 
 (define (compiler-semantic-bind-pattern!
@@ -4367,6 +4403,9 @@
         symbol
         -1
         CompilerSemanticRecordRole.Use
+        (if editable
+          CompilerSemanticAccess.Read
+          CompilerSemanticAccess.None)
         CompilerSemanticSymbolKind.Macro
         (string.copy (& display-name))
         (string.copy (& resolved-type))
@@ -5441,6 +5480,7 @@
                                   symbol
                                   -1
                                   CompilerSemanticRecordRole.Definition
+                                  CompilerSemanticAccess.None
                                   kind
                                   (string.copy (& name))
                                   (string.copy (& type-text))

@@ -568,6 +568,15 @@ assert_active_cli_surface_command() {
             assert_empty "$package_label" "$WORKDIR/$package_label.out"
             assert_contains "$package_label" "$WORKDIR/$package_label.err" "--batch list is empty"
             ;;
+        explain)
+            # cli-gate-expand selfhost-cli-surface-{command} wrapper run_cli_capture command=explain
+            run_cli_capture "$label" "$COMPILER" explain E0206
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "E0206: type mismatch"
+            assert_contains "$label" "$WORKDIR/$label.out" "Minimal failing example:"
+            assert_contains "$label" "$WORKDIR/$label.out" "Fix:"
+            ;;
         compile)
             asm="$CLI_SURFACE_DIR/compile.s"
             # cli-gate-expand selfhost-cli-surface-{command} wrapper run_cli_capture command=compile
@@ -935,6 +944,7 @@ assert_contains root-package-help "$WORKDIR/root-package-help.err" "Usage:"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "Synopsis:"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "Commands:"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp build          Build a source file or package artifact"
+assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp explain        Explain a diagnostic code"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp inspect        Inspect a TypeLisp comptime image"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" 'Run `typelisp <command> --help` for command-specific usage.'
 

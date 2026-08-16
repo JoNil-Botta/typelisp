@@ -8,8 +8,8 @@
 ;;   typelisp <command> <args...>
 ;;
 ;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, clean,
-;; inspect, repl, lsp, new, and init. The command name is `(io.arg 1)`; each
-;; `*-run-from` entry parses its own arguments starting at index 2.
+;; explain, inspect, repl, lsp, new, and init. The command name is `(io.arg 1)`;
+;; each `*-run-from` entry parses its own arguments starting at index 2.
 ;;
 ;; This is the shipped Rust-free stage0 dispatcher: the toolchain
 ;; needs neither a host-language compiler driver nor per-command driver
@@ -32,6 +32,7 @@
 (import doc_cli_core)
 (import compile_cli_core)
 (import clean_cli_core)
+(import explain_cli_core)
 (import inspect_cli_core)
 (import repl_cli_core)
 (import scaffold_cli_core)
@@ -79,6 +80,7 @@ Commands:
     typelisp clean          Remove build artifacts
     typelisp compile        Generate assembly or IR
     typelisp doc            Generate documentation or run doc tests
+    typelisp explain        Explain a diagnostic code
     typelisp fmt            Format source files or a package
     typelisp init           Scaffold a package in the current directory
     typelisp inspect        Inspect a TypeLisp comptime image
@@ -295,6 +297,9 @@ Options:
 (define (cli-inspect-help-text) : String
   (inspect_cli_core.tlci-inspect-help-text))
 
+(define (cli-explain-help-text) : String
+  (explain_cli_core.diagnostic-explain-help-text))
+
 (define (cli-repl-help-text) : String
   "Usage:
     typelisp repl
@@ -431,6 +436,10 @@ Options:
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-compile-help-text) 0)
         (compile_cli_core.compile-cli-run count))]
+    [(cli-eq? command "explain")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-explain-help-text) 0)
+        (explain_cli_core.diagnostic-explain-run-from 2 count))]
     [(cli-eq? command "inspect")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-inspect-help-text) 0)

@@ -12,6 +12,7 @@ active|lint|-
 active|inspect|-
 active|test|-
 active|doc|-
+active|explain|-
 active|compile|-
 active|repl|-
 active|lsp|-

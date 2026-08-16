@@ -44,6 +44,7 @@ Commands:
     typelisp clean          Remove build artifacts
     typelisp compile        Generate assembly or IR
     typelisp doc            Generate documentation or run doc tests
+    typelisp explain        Explain a diagnostic code
     typelisp fmt            Format source files or a package
     typelisp init           Scaffold a package in the current directory
     typelisp inspect        Inspect a TypeLisp comptime image
@@ -72,7 +73,14 @@ TypeLisp does not currently provide runtime reflection for their contents.
 Human-facing `check`, `compile`, `build`, `run`, and test-preflight failures
 render error codes, source locations and snippets, carets, secondary labels,
 and available help/notes. LSP and other machine consumers keep their structured
-or stable flat diagnostic representations.
+or stable flat diagnostic representations. Diagnostic codes are append-only:
+published numbers are never renumbered or reused. The currently classified
+typecheck codes are `E0201` (unbound name), `E0202` (arity mismatch), `E0203`
+(non-exhaustive match), `E0204` (unknown struct field), `E0205` (region
+escape), and `E0206` (type mismatch). Run `typelisp explain <code>` for a
+description, minimal failing example, and suggested fix. The generic `E0100`
+parse and `E0200` typecheck codes remain recognized even when no long-form
+entry is available yet.
 
 Disposable measurements and diagnostics belong under `target/exp/<name>/`;
 `typelisp clean --experiments` removes that subtree at the nearest package root

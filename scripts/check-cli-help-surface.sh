@@ -40,6 +40,7 @@ check check
 clean clean
 compile compile
 doc doc
+explain explain
 format fmt
 inspect inspect
 repl repl

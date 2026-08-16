@@ -42022,6 +42022,375 @@
     42
     "late licm hoists descriptor header loads from a header-write-free loop past the return-shaped suppression"))
 
+;; --- LICM ownership provenance through descriptor-handle loads ---------------
+;;
+;; The `&Vec` / `&mut Vec` shape: a checked reference to a nominal aggregate
+;; whose field 0 holds an owning array handle. Reaching an element is
+;; `gep %vec, 0 -> load : (Array T) -> gep %h, 1 / gep %h, 0 -> load -> gep
+;; %data, i`, and every step of that chain has to stay classified for the loads
+;; to leave a loop that stores through the data pointer.
+(define (opt-licm-object-vec-type) : compiler_ast_types.AstType
+  (compiler_ast_types.AstType.Struct (opt-test-symbol "licm_object_vec")))
+
+(define (opt-licm-object-slot-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "src"
+      (compiler_ast_types.ast-ty-ref 0 (opt-licm-object-vec-type))
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "dst"
+        (compiler_ast_types.ast-ty-mut-ref 0 (opt-licm-object-vec-type))
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "limit"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+;; One descriptor chain off an object-slot base: handle, length, data pointer,
+;; element address. `first` is the chain's first var id, `base` the parameter it
+;; hangs off.
+(define (opt-licm-object-chain-instrs
+  [base : i64]
+  [first : i64]
+  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      first
+      (compiler_ir_types.CompilerIrValue.Var base)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        (+ first 1)
+        (compiler_ir_types.CompilerIrValue.Var first)
+        (compiler_ast_types.AstType.DynArray 0))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          (+ first 2)
+          (compiler_ir_types.CompilerIrValue.Var (+ first 1))
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            (+ first 3)
+            (compiler_ir_types.CompilerIrValue.Var (+ first 2))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Gep
+              (+ first 4)
+              (compiler_ir_types.CompilerIrValue.Var (+ first 1))
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.U8))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Load
+                (+ first 5)
+                (compiler_ir_types.CompilerIrValue.Var (+ first 4))
+                (compiler_ast_types.AstType.U64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  (+ first 6)
+                  (compiler_ir_types.CompilerIrValue.Var (+ first 5))
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ast_types.AstType.I64))
+                rest))))))))
+
+;; mode 0: the m2 shape -- read one Vec's element, store into the other's.
+;; mode 1: the same body plus a store THROUGH the object-slot pointer, which is
+;; a header-or-unknown store and must close every hoist in the chain.
+(define (opt-licm-object-slot-body-instrs [mode : i64]) : compiler_ir_types.CompilerIrInstrList
+  (opt-licm-object-chain-instrs
+    0
+    5
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        12
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ast_types.AstType.I64))
+      (opt-licm-object-chain-instrs
+        1
+        13
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 19)
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ast_types.AstType.I64))
+          (if (= mode 1)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.StorePtr
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.CompilerIrValue.Var 12)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))))))
+
+(define (opt-licm-object-slot-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "header"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 20)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-licm-object-slot-body-instrs mode))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                20
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 2)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-licm-object-slot-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "licm_object_slot")
+    (opt-licm-object-slot-params)
+    (compiler_ast_types.AstType.I64)
+    24
+    blocks))
+
+(define (opt-licm-object-slot-optimized [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-licm-function
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-licm-object-slot-function (opt-licm-object-slot-blocks mode)))))
+
+;; The root an owning-handle load inherits, exercised on the update helper
+;; directly: `%dst = load %src : ty` keeps `%src`'s root exactly when `ty` owns
+;; the storage it designates.
+(define (opt-licm-object-load-root [ty : compiler_ast_types.AstType]) : compiler_optimize.OptLicmRoot
+  (let
+    [env : compiler_optimize.OptLicmRootEnv
+      (compiler_optimize.opt-licm-root-env-with-capacity 8)]
+    [_seed : unit
+      (compiler_optimize.opt-licm-root-env-bind!
+        (&mut env)
+        1
+        (compiler_optimize.OptLicmRoot.Exclusive 1))]
+    [_step : unit
+      (compiler_optimize.opt-licm-root-env-update-instr!
+        (&mut env)
+        (compiler_ir_types.CompilerIrInstr.Load
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          ty))]
+    (compiler_optimize.opt-licm-root-env-lookup (& env) 2)))
+
+(define (opt-licm-object-slot-ptrs) : compiler_optimize.OptLicmPtrEnv
+  (compiler_optimize.opt-licm-ptr-bind
+    (compiler_optimize.OptLicmPtrEnv.Nil)
+    7
+    (compiler_optimize.OptLicmPtrKind.ObjectSlot 7)))
+
+(define (opt-licm-object-slot-gep-kind
+  [offset : compiler_ir_types.CompilerIrValue]) : compiler_optimize.OptLicmPtrKind
+  (compiler_optimize.opt-licm-gep-kind
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-ssa-var-types-new)
+    (opt-licm-object-slot-ptrs)
+    (compiler_ir_types.CompilerIrValue.Var 7)
+    offset
+    (compiler_ast_types.AstType.U8)))
+
+(define (compiler-optimize-licm-object-slot-self-test) : i64
+  (let
+    [tsb : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [element-store : compiler_ir_types.CompilerIrBlockList
+      (opt-licm-object-slot-optimized 0)]
+    [header-store : compiler_ir_types.CompilerIrBlockList
+      (opt-licm-object-slot-optimized 1)]
+    [object-store-summary : compiler_optimize.OptLicmStoreSummary
+      (compiler_optimize.opt-licm-store-summary-for-storeptr
+        (opt-licm-object-slot-ptrs)
+        (compiler_ir_types.CompilerIrValue.Var 7))]
+    (cond
+      ;; (a) an owning handle loaded out of an exclusive root's object stays in
+      ;; that root's ownership tree.
+      [(not
+          (compiler_optimize.opt-licm-root-eq?
+            (opt-licm-object-load-root (compiler_ast_types.AstType.DynArray 0))
+            (compiler_optimize.OptLicmRoot.Exclusive 1)))
+        1]
+      [(not
+          (compiler_optimize.opt-licm-root-eq?
+            (opt-licm-object-load-root (compiler_ast_types.AstType.String))
+            (compiler_optimize.OptLicmRoot.Exclusive 1)))
+        2]
+      ;; (b) a borrowed VIEW loaded out of the same object owns nothing and may
+      ;; designate anything, so it keeps the root removal.
+      [(not
+          (compiler_optimize.opt-licm-root-eq?
+            (opt-licm-object-load-root
+              (compiler_ast_types.ast-ty-ref 0 (compiler_ast_types.AstType.I64)))
+            (compiler_optimize.OptLicmRoot.NoRoot)))
+        3]
+      [(not
+          (compiler_optimize.opt-licm-root-eq?
+            (opt-licm-object-load-root (compiler_ast_types.AstType.Str))
+            (compiler_optimize.OptLicmRoot.NoRoot)))
+        4]
+      [(not
+          (compiler_optimize.opt-licm-root-eq?
+            (opt-licm-object-load-root (compiler_ast_types.AstType.Bytes))
+            (compiler_optimize.OptLicmRoot.NoRoot)))
+        5]
+      [(not
+          (compiler_optimize.opt-licm-owning-handle-type?
+            (compiler_ast_types.AstType.DynArray 0)))
+        6]
+      [(compiler_optimize.opt-licm-owning-handle-type?
+          (compiler_ast_types.ast-ty-mut-ref
+            0
+            (compiler_ast_types.AstType.DynArray 0)))
+        7]
+      ;; (c) parameter classification: a checked reference to a nominal
+      ;; aggregate is an object base; an array/string handle keeps the more
+      ;; precise header/data classification, and a scalar or raw pointer is not
+      ;; admitted at all.
+      [(not
+          (compiler_optimize.opt-licm-object-param-type?
+            tsb
+            (compiler_ast_types.ast-ty-ref 0 (opt-licm-object-vec-type))))
+        8]
+      [(not
+          (compiler_optimize.opt-licm-object-param-type?
+            tsb
+            (compiler_ast_types.ast-ty-mut-ref 0 (opt-licm-object-vec-type))))
+        9]
+      [(compiler_optimize.opt-licm-object-param-type?
+          tsb
+          (compiler_ast_types.ast-ty-mut-ref
+            0
+            (compiler_ast_types.AstType.DynArray 0)))
+        10]
+      [(compiler_optimize.opt-licm-object-param-type?
+          tsb
+          (compiler_ast_types.ast-ty-ref 0 (compiler_ast_types.AstType.I64)))
+        11]
+      [(compiler_optimize.opt-licm-object-param-type?
+          tsb
+          (compiler_ast_types.ast-ty-ptr (opt-licm-object-vec-type)))
+        12]
+      ;; a literal offset off an object pointer names another word of the same
+      ;; object; a variable offset is indexing and proves nothing.
+      [(not
+          (compiler_optimize.opt-licm-object-slot-ptr-kind?
+            (opt-licm-object-slot-gep-kind
+              (compiler_ir_types.CompilerIrValue.I64 8))))
+        13]
+      [(compiler_optimize.opt-licm-object-slot-ptr-kind?
+          (opt-licm-object-slot-gep-kind
+            (compiler_ir_types.CompilerIrValue.Var 3)))
+        14]
+      ;; a load through an object slot is a header-class read; a STORE through
+      ;; one stays a header-or-unknown store.
+      [(not
+          (compiler_optimize.opt-licm-object-slot-source?
+            (opt-licm-object-slot-ptrs)
+            (compiler_ir_types.CompilerIrValue.Var 7)))
+        15]
+      [(compiler_optimize.opt-licm-header-slot-ptr-kind?
+          (compiler_optimize.OptLicmPtrKind.ObjectSlot 7))
+        16]
+      [(not object-store-summary.header-or-unknown-store?) 17]
+      [object-store-summary.element-only-store? 18]
+      ;; (d) the m2 shape end to end: both handle loads, both length loads and
+      ;; both data-pointer loads leave the loop; only the element load stays.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              element-store
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        19]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              element-store
+              (compiler_ir_types.compiler-ir-label "entry"))
+            6))
+        20]
+      ;; a store through the object-slot pointer is a header-or-unknown store
+      ;; and closes the whole chain again.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              header-store
+              (compiler_ir_types.compiler-ir-label "body"))
+            7))
+        21]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              header-store
+              (compiler_ir_types.compiler-ir-label "entry"))
+            0))
+        22]
+      [else 42])))
+
+(test
+  licm-object-slot-provenance
+  (test.assert-i64-eq
+    (compiler-optimize-licm-object-slot-self-test)
+    42
+    "licm carries ownership provenance through owning-handle loads and hoists object-slot descriptor chains out of an element-store loop"))
+
 ;; Runtime witnesses for the hoisted data-pointer semantics: reads through the
 ;; descriptor must return the right values, and an element store in the loop
 ;; must be observed by the element reads (only the header load moves; element

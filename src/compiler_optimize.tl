@@ -18953,7 +18953,33 @@
   ;; global's symbol id. This is the same class of word as a descriptor header
   ;; slot -- element storage is disjoint from it -- so the header-load proofs
   ;; accept it, while a store through it stays a header-or-unknown store.
-  (GlobalSlot i64))
+  (GlobalSlot i64)
+  ;; A fixed-offset word of a ROOTED OBJECT that is not element storage: the
+  ;; stack slot an `AddrOf` designates, the object a checked-reference
+  ;; parameter of nominal aggregate type points at, and every literal-offset
+  ;; Gep off such a pointer. The payload is the object base's var id.
+  ;;
+  ;; Element storage -- the buffer a descriptor's data slot points at -- is
+  ;; disjoint from every such word: a stack slot is not heap element storage,
+  ;; a `(&mut x T)` target is exclusive so no descriptor reachable in the same
+  ;; function contains it, a `(& x T)` target cannot be stored through in safe
+  ;; code, and a fresh allocation's buffer is fresh memory
+  ;; (docs/memory-model.md). So an element-only store cannot change an
+  ;; ObjectSlot word, which makes a load of one the same header-class read a
+  ;; descriptor header slot is. That is what lets `%h = load (gep %vec, 0)` --
+  ;; the owning handle inside a `&Vec`/`&mut Vec` -- leave a loop whose only
+  ;; store is an element store, which in turn makes the handle's length and
+  ;; data loads loop-invariant and the loop versionable by bce_version.
+  ;;
+  ;; The class is tracked POSITIVELY (from AddrOf and from parameter types)
+  ;; rather than inferred as "carries a root and is not a DataBuffer": the
+  ;; DataSlot arm of opt-licm-provenance-state-instr gives a loaded data
+  ;; POINTER the descriptor's root, and a Phi of two such pointers keeps that
+  ;; root while losing the ptr kind, so a root test alone would classify
+  ;; element storage as an object slot. A STORE through an ObjectSlot pointer
+  ;; stays a header-or-unknown store (opt-licm-store-summary-for-storeptr's
+  ;; default arm) -- it can reach a descriptor word.
+  (ObjectSlot i64))
 
 (defenum OptLicmPtrEnv
   (Nil)
@@ -19579,6 +19605,16 @@
                   (opt-licm-phi-root env (__tl-box-place rest) found)
                   (OptMaybeLicmRoot.No))])]))]))
 
+;; The types whose VALUES own the storage they designate. A loaded value of one
+;; of these is part of its source object's ownership tree (see the Load arm of
+;; opt-licm-root-env-update-instr!); every other pointer-shaped type is a
+;; borrowed view and carries no such guarantee.
+(define (opt-licm-owning-handle-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.DynArray _) true]
+    [(ast.AstType.String) true]
+    [_ false]))
+
 (define (opt-licm-root-env-update-instr!
   [env : (&mut env OptLicmRootEnv)]
   [instr : ir.CompilerIrInstr]) : unit
@@ -19598,7 +19634,26 @@
         [(OptMaybeLicmRoot.Some root) (opt-licm-root-env-bind! env dst root)])]
     ;; A descriptor-data Load may be rebound by
     ;; opt-licm-provenance-state-instr immediately after this update.
-    [(ir.CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! env dst)]
+    ;;
+    ;; Loading an OWNING handle -- `(__tl_dyn-array T)` or `String` -- out of a
+    ;; field of an object owned by root R yields a value that is itself inside
+    ;; R's ownership tree. Ownership is affine, so no other root's tree reaches
+    ;; that object while the loop runs, and R is a sound root for the loaded
+    ;; handle and for everything derived from it. Borrowed VIEW types (Ref,
+    ;; MutRef, Str, Bytes, Ptr, MutPtr, fn pointers) own nothing and may
+    ;; designate anything, so those keep the root removal. Without this the
+    ;; provenance chain dies at the first hop of every `&Vec` element access
+    ;; (`%h = load (gep %vec, 0)`), and every load in a loop that contains any
+    ;; store reads as may-alias.
+    ;;
+    ;; The rebinding in opt-licm-provenance-state-instr agrees with this arm
+    ;; rather than fighting it: a DataSlot load's address is a Gep off the
+    ;; descriptor, which already carries the descriptor's root, and a data
+    ;; pointer is never typed as an owning handle.
+    [(ir.CompilerIrInstr.Load dst src ty)
+      (if (opt-licm-owning-handle-type? ty)
+        (opt-licm-root-env-copy! env dst src)
+        (opt-licm-root-env-remove! env dst))]
     [(ir.CompilerIrInstr.Call dst name _ _)
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
@@ -19663,12 +19718,117 @@
           (opt-licm-data-slot? offset ty)))]
     [_ false]))
 
+;; ObjectSlot is deliberately NOT in this set. The three kinds here are proved
+;; safe against a header-load-safe body summary alone, and that summary admits
+;; one more writer: `Store G`, the named global-cell write, which contributes
+;; the element-only class (a cell holds a handle, never the descriptor header
+;; words that handle points at). An ObjectSlot pointer CAN designate a global
+;; cell -- `(& g)` / `(&mut g)` on a global lowers to
+;; CompilerIrValue.GlobalAddr and arrives as an ordinary checked-reference
+;; parameter -- so an ObjectSlot load needs the extra condition that the body
+;; writes no global cell. Its callers spell that out with
+;; opt-licm-globals-clean?; keeping the two sets apart is what stops the weaker
+;; proof from leaking into the descriptor-header paths.
 (define (opt-licm-header-slot-ptr-kind? [kind : OptLicmPtrKind]) : bool
   (match kind
     [(OptLicmPtrKind.HeaderSlot _) true]
     [(OptLicmPtrKind.DataSlot _) true]
     [(OptLicmPtrKind.GlobalSlot _) true]
     [_ false]))
+
+(define (opt-licm-object-slot-ptr-kind? [kind : OptLicmPtrKind]) : bool
+  (match kind
+    [(OptLicmPtrKind.ObjectSlot _) true]
+    [_ false]))
+
+;; A load through a fixed word of a rooted non-element object. Combined with a
+;; header-load-safe body summary and a globals-clean body, that word is
+;; invariant for the same reason a descriptor header word is.
+(define (opt-licm-object-slot-source?
+  [ptrs : OptLicmPtrEnv]
+  [src : ir.CompilerIrValue]) : bool
+  (match src
+    [(ir.CompilerIrValue.Var ptr-var)
+      (opt-licm-object-slot-ptr-kind? (opt-licm-ptr-lookup ptrs ptr-var))]
+    [_ false]))
+
+;; The address form of the same fact: a literal-offset Gep off an object
+;; pointer names a fixed word of that object.
+(define (opt-licm-object-slot-gep?
+  [ptrs : OptLicmPtrEnv]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]) : bool
+  (and
+    (opt-licm-object-slot-source? ptrs base)
+    (match offset
+      [(ir.CompilerIrValue.I64 _) true]
+      [_ false])))
+
+;; A parameter whose value is a checked reference to a whole nominal aggregate
+;; object: `(& x Vec)`, `(&mut x State)`, and their region-wrapped spellings.
+;; Array/string handle parameters are excluded -- those keep the
+;; HeaderSlot/DataSlot classification, which is strictly more precise -- and so
+;; are scalar and raw-pointer parameters, whose targets are the ones an
+;; auto-borrowed array ELEMENT place would most plausibly produce.
+(define (opt-licm-object-pointee-type?
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Struct _) true]
+    [(ast.AstType.StructArgs _ _) true]
+    [(ast.AstType.Enum _) true]
+    [(ast.AstType.EnumArgs _ _) true]
+    [(ast.AstType.Tuple _) true]
+    [(ast.AstType.Region _ inner)
+      (opt-licm-object-pointee-type?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ false]))
+
+(define (opt-licm-object-param-type?
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Ref _ inner)
+      (opt-licm-object-pointee-type?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(ast.AstType.MutRef _ inner)
+      (opt-licm-object-pointee-type?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(ast.AstType.Region _ inner)
+      (opt-licm-object-param-type?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ false]))
+
+(define (opt-licm-ptr-env-seed-param
+  [type-segment-bases : i64]
+  [ptrs : OptLicmPtrEnv]
+  [param : ir.CompilerIrParam]) : OptLicmPtrEnv
+  (match param
+    [(ir.CompilerIrParam.Param _ ty var)
+      (if (opt-licm-object-param-type? type-segment-bases ty)
+        (opt-licm-ptr-bind ptrs var (OptLicmPtrKind.ObjectSlot var))
+        ptrs)]))
+
+(define (opt-licm-ptr-env-seed-params
+  [type-segment-bases : i64]
+  [ptrs : OptLicmPtrEnv]
+  [params : ir.CompilerIrParamList]) : OptLicmPtrEnv
+  (match (ir.compiler-ir-param-list-force-cons params)
+    [(ir.CompilerIrParamList.Nil) ptrs]
+    [(ir.CompilerIrParamList.Array seq)
+      (opt-licm-ptr-env-seed-params
+        type-segment-bases
+        ptrs
+        (ir.compiler-ir-param-seq-to-list seq))]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (opt-licm-ptr-env-seed-params
+        type-segment-bases
+        (opt-licm-ptr-env-seed-param type-segment-bases ptrs param)
+        (__tl-box-place rest))]))
 
 (define (opt-licm-header-slot-source?
   [type-segment-bases : i64]
@@ -19709,6 +19869,13 @@
             ;; buffer. Lowering commonly emits one Gep for the scaled slot
             ;; address and another for an inline field within the slot.
             (OptLicmPtrKind.DataElement object)]
+          [(OptLicmPtrKind.ObjectSlot object)
+            ;; A literal offset off an object pointer names another fixed word
+            ;; of the SAME object -- a struct field, an enum payload word. A
+            ;; variable offset is indexing and nothing proves where it lands.
+            (match offset
+              [(ir.CompilerIrValue.I64 _) (OptLicmPtrKind.ObjectSlot object)]
+              [_ (OptLicmPtrKind.Unknown)])]
           [_
             (if (opt-licm-array-header-var? type-segment-bases types base-var)
               (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
@@ -19996,6 +20163,20 @@
               dst
               (opt-licm-ptr-lookup invalid.ptrs src-var))]
           [_ invalid])]
+      ;; `AddrOf dst src` is the address of a LOCAL slot: a lowered
+      ;; address-taken local, or an aggregate the stack promotion rewrote (see
+      ;; opt-aggregate-stack-promote-type?, which admits only nominal
+      ;; aggregates). Stack storage is never a descriptor's element buffer and
+      ;; never a named global cell, so the object it designates is an object
+      ;; slot at offset zero. The ROOT is deliberately NOT copied here: `src`
+      ;; may be a local that HOLDS a rooted pointer, in which case `dst`
+      ;; designates the slot rather than the pointee, and copying the pointee's
+      ;; root would claim a disjointness the storage does not have.
+      [(ir.CompilerIrInstr.AddrOf dst src)
+        (opt-licm-store-state-bind-ptr
+          invalid
+          dst
+          (OptLicmPtrKind.ObjectSlot src))]
       [(ir.CompilerIrInstr.Gep dst base offset ty)
         (opt-licm-store-state-bind-ptr
           invalid
@@ -20318,7 +20499,12 @@
     [_params : unit
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)]
     [initial : OptLicmStoreState
-      (opt-licm-store-state-with-provenance (OptLicmPtrEnv.Nil) roots)]
+      (opt-licm-store-state-with-provenance
+        (opt-licm-ptr-env-seed-params
+          type-segment-bases
+          (OptLicmPtrEnv.Nil)
+          params)
+        roots)]
     [first : OptLicmStoreState
       (opt-licm-provenance-state-blocks type-segment-bases types blocks initial)]
     (opt-licm-provenance-state-blocks type-segment-bases types blocks first)))
@@ -20439,6 +20625,123 @@
 ;; speculate header loads the same way). The exception is late-only for the
 ;; established reason: before BCE, moving a descriptor length can hide the
 ;; shared bound identity bounds-check elimination still needs.
+;; Does `label`'s block run on every iteration of the loop whose latch is
+;; `latch-id`? The classic "guaranteed to execute" condition -- the block
+;; dominates the loop's latch -- and the whole-function dominator info this pass
+;; is already handed answers it with no extra analysis. An unknown label (no id
+;; in the index) and an unknown latch both answer `true`, which keeps the
+;; pre-existing decision.
+(define (opt-licm-block-guaranteed?
+  [context : OptCfgContext]
+  [latch-id : i64]
+  [label : i64]) : bool
+  (if (< latch-id 0)
+    true
+    (match (opt-cfg-index-id context.index label)
+      [(option_i64.Some id)
+        (opt-dom-info-dominates-id? context.doms id latch-id)]
+      [(option_i64.None) true])))
+
+;; Is `label` inside a loop NESTED in the one being processed? Such a block runs
+;; once per iteration of the INNER loop, so a value it consumes is consumed many
+;; times per iteration of THIS loop and is worth hoisting even though this loop
+;; can bypass the block. Leaving the clause out costs peephole_lines +4,049,867
+;; Ir and opt_quicksort +7,984 (one cachegrind run each); with it both return to
+;; their baselines.
+(define (opt-licm-label-in-nested-loop?
+  [loops : OptNaturalLoopList]
+  [header : i64]
+  [body : OptLabelSet]
+  [label : i64]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons inner rest)
+      (if (and
+        (not (= (opt-natural-loop-header inner) header))
+        (opt-label-contains body (opt-natural-loop-header inner))
+        (opt-label-contains (opt-natural-loop-body inner) label))
+        true
+        (opt-licm-label-in-nested-loop? (__tl-box-place rest) header body label))]))
+
+;; The vars a hoist can actually pay for: everything used by a block that runs
+;; on every iteration (opt-licm-block-guaranteed?) or inside a nested loop
+;; (opt-licm-label-in-nested-loop?), plus everything used outside the loop,
+;; where the value has to exist regardless.
+;;
+;; LICM moves an instruction into the PREHEADER, which runs once per loop ENTRY,
+;; so the trade it makes is the CONSUMER's frequency against the entry's -- and
+;; for a value consumed only by a block the loop can bypass those two are
+;; unrelated. A probe loop's miss arm can run orders of magnitude less often
+;; than the loop is entered, and precomputing its operands removes nothing from
+;; the hot path while adding a value that is live across the whole loop.
+;;
+;; Measured on intern_table: bce_version guards the miss-path name-copy loop of
+;; it-intern-slice, and the next round of this pass hoisted three of that
+;; guard's operands -- consumed only by the guard and its fast clone, entered
+;; 39,978 times -- into the function entry, executed 1,719,672 times. The three
+;; hoists cost 11 instructions per call (+18.9M Ir, including the spill of a
+;; parameter that had been holding a register) against the 12.9M the copy loop's
+;; own rewrite saved.
+;;
+;; This gates only the PURE ARITHMETIC classes. A Load or Gep hoist removes a
+;; real memory access from wherever it stood, is what makes a descriptor length
+;; loop-invariant for the versioner, and carries its own much stronger
+;; admission proofs, so those keep the established behavior; keying the gate on
+;; the CONSUMER rather than on the defining block is also what keeps a value
+;; computed in a cold arm but consumed on the hot path hoistable, which is the
+;; common and profitable shape.
+(define (opt-licm-hot-use-vars
+  [context : OptCfgContext]
+  [latch-id : i64]
+  [loops : OptNaturalLoopList]
+  [header : i64]
+  [body : OptLabelSet]
+  ;; False collects every use, which admits every hoist -- the pre-existing
+  ;; decision. It is true only when this loop's preheader IS the function's
+  ;; entry block, which is exactly when the hoist's cost is paid once per CALL
+  ;; rather than once per iteration of something enclosing. That restriction is
+  ;; load-bearing, and the reason is the INLINER: its measured-plan tier prices
+  ;; a candidate by re-running this whole optimizer over the merged caller
+  ;; (opt-inline-checked-plan-cost-at) and accepts inside a two-sided window
+  ;; (opt-inline-checked-window-ok?), so a refusal anywhere else in the corpus
+  ;; can move a verdict. Applying the refusal to every loop flips
+  ;; liveness_scan's `recompute!` into `fixpoint!` and costs +60,372,371 Ir
+  ;; (+14.2%); restricted to entry preheaders, no benchmark row moves except
+  ;; the intended ones.
+  [gate? : bool]
+  [blocks : ir.CompilerIrBlockList]
+  [set : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) set]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-licm-hot-use-vars
+            context
+            latch-id
+            loops
+            header
+            body
+            gate?
+            (__tl-box-place rest)
+            (if (or
+              (not gate?)
+              (not (opt-label-contains body label))
+              (opt-licm-block-guaranteed? context latch-id label)
+              (opt-licm-label-in-nested-loop? loops header body label))
+              (opt-collect-instr-seq-uses set instrs)
+              set))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-hot-use-vars
+        context
+        latch-id
+        loops
+        header
+        body
+        gate?
+        (ir.compiler-ir-block-seq-to-list seq)
+        set)]))
+
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
@@ -20457,6 +20760,9 @@
   ;; cell -- reads the same value on every iteration of this loop. See
   ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
   [globals-clean? : bool]
+  ;; The vars whose consumers make a hoist worth its live range. See
+  ;; opt-licm-hot-use-vars.
+  [hot-uses : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
@@ -20491,12 +20797,15 @@
               (opt-licm-mode-vector? licm-mode)
               (opt-used-contains hoisted var))]
           [_ true]))]
-    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
       (and
+        (opt-used-contains hot-uses dst)
         (not (opt-binop-traps? op))
         (opt-licm-values-invariant? globals-clean? loop-defs hoisted lhs rhs))]
-    [(ir.CompilerIrInstr.UnOp _ _ src _)
-      (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)]
+    [(ir.CompilerIrInstr.UnOp dst _ src _)
+      (and
+        (opt-used-contains hot-uses dst)
+        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src))]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -20541,12 +20850,21 @@
             (opt-licm-root-of-value roots base)
             (and
               (opt-licm-store-summary-header-load-safe? legacy-store-summary)
-              (opt-licm-header-slot-gep?
-                type-segment-bases
-                types
-                base
-                offset
-                ty)))))]
+              (or
+                (opt-licm-header-slot-gep?
+                  type-segment-bases
+                  types
+                  base
+                  offset
+                  ty)
+                ;; The address of a fixed word of a rooted non-element object
+                ;; -- `gep %vec, 0`, the owning handle inside a `&Vec`.
+                ;; Element stores cannot reach it; the globals-clean?
+                ;; conjunct covers the `Store G` such a pointer may designate
+                ;; (see opt-licm-header-slot-ptr-kind?).
+                (and
+                  globals-clean?
+                  (opt-licm-object-slot-gep? ptrs base offset)))))))]
     [(ir.CompilerIrInstr.Load dst src _)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -20561,24 +20879,28 @@
             (opt-licm-root-of-value roots src)
             (and
               (opt-licm-store-summary-header-load-safe? legacy-store-summary)
-              (opt-licm-header-slot-source?
-                type-segment-bases
-                types
-                ptrs
-                (opt-licm-mode-late? licm-mode)
-                src)))
+              (or
+                (opt-licm-header-slot-source?
+                  type-segment-bases
+                  types
+                  ptrs
+                  (opt-licm-mode-late? licm-mode)
+                  src)
+                (and globals-clean? (opt-licm-object-slot-source? ptrs src)))))
           ;; Descriptor-header exception: when the body provably cannot write
           ;; a descriptor header (see the define-site comment), a header-slot
           ;; load of a loop-invariant descriptor handle moves out even though
           ;; the return-shaped side-exit poison closed the general path.
           (and
             descriptor-header-hoist?
-            (opt-licm-header-slot-source?
-              type-segment-bases
-              types
-              ptrs
-              true
-              src))))]
+            (or
+              (opt-licm-header-slot-source?
+                type-segment-bases
+                types
+                ptrs
+                true
+                src)
+              (and globals-clean? (opt-licm-object-slot-source? ptrs src))))))]
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
@@ -20604,6 +20926,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals-clean? : bool]
+  [hot-uses : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult.Result
@@ -20628,6 +20951,7 @@
         licm-mode
         descriptor-header-hoist?
         globals-clean?
+        hot-uses
         instr)
         (match (opt-licm-filter-instr-seq-from
           type-segment-bases
@@ -20645,6 +20969,7 @@
           licm-mode
           descriptor-header-hoist?
           globals-clean?
+          hot-uses
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult.Result kept moved next-hoisted _)
             (OptLicmInstrsResult.Result
@@ -20668,6 +20993,7 @@
           licm-mode
           descriptor-header-hoist?
           globals-clean?
+          hot-uses
           hoisted)
           [(OptLicmInstrsResult.Result kept moved next-hoisted changed)
             (OptLicmInstrsResult.Result
@@ -20691,6 +21017,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals-clean? : bool]
+  [hot-uses : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
@@ -20708,6 +21035,7 @@
     licm-mode
     descriptor-header-hoist?
     globals-clean?
+    hot-uses
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -20725,6 +21053,7 @@
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
   [globals-clean? : bool]
+  [hot-uses : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(ir.CompilerIrBlockList.Nil)
@@ -20751,6 +21080,7 @@
             licm-mode
             descriptor-header-hoist?
             globals-clean?
+            hot-uses
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -20768,6 +21098,7 @@
                 licm-mode
                 descriptor-header-hoist?
                 globals-clean?
+                hot-uses
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -20797,6 +21128,7 @@
         licm-mode
         descriptor-header-hoist?
         globals-clean?
+        hot-uses
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -21518,6 +21850,13 @@
   [global-cells : OptGlobalCellSummary]
   [frame-cell : (__tl_dyn-array i64)]
   [late? : bool]
+  ;; Valid for `blocks`: the pass only inserts instructions into preheader
+  ;; blocks the preheader pass already created, so every label's dominance
+  ;; relation survives the whole loop walk.
+  [context : OptCfgContext]
+  ;; Every natural loop of the function, so this loop can tell which of its
+  ;; blocks belong to a loop nested inside it.
+  [all-loops : OptNaturalLoopList]
   [blocks : ir.CompilerIrBlockList]
   [loop : OptNaturalLoop]) : OptBlockListPassResult
   (match (opt-natural-loop-preheader loop)
@@ -21545,6 +21884,20 @@
         [raw-rooted-summary : OptLicmStoreSummary store-state.rooted-summary]
         [raw-legacy-summary : OptLicmStoreSummary
           (opt-licm-store-summary-merge raw-summary raw-rooted-summary)]
+        [hot-uses : opt_i64_i64_map.Map
+          (opt-licm-hot-use-vars
+            context
+            (match (opt-cfg-index-id
+              context.index
+              (opt-natural-loop-latch loop))
+              [(option_i64.Some latch-id) latch-id]
+              [(option_i64.None) -1])
+            all-loops
+            (opt-natural-loop-header loop)
+            (opt-natural-loop-body loop)
+            (= preheader context.entry-label)
+            blocks
+            (opt_i64_i64_map.with-capacity map-capacity))]
         [side-exit-kind : i64
           (opt-licm-loop-side-exit-kind
             blocks
@@ -21641,6 +21994,7 @@
             0)
           descriptor-header-hoist?
           globals-clean?
+          hot-uses
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             ;; Loop-scope global operand promotion runs on what the hoist
@@ -21703,6 +22057,8 @@
   [global-cells : OptGlobalCellSummary]
   [frame-cell : (__tl_dyn-array i64)]
   [late? : bool]
+  [context : OptCfgContext]
+  [all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (match loops
@@ -21717,6 +22073,8 @@
         global-cells
         frame-cell
         late?
+        context
+        all-loops
         blocks
         loop)
         [(OptBlockListPassResult.Result loop-blocks loop-changed)
@@ -21729,6 +22087,8 @@
             global-cells
             frame-cell
             late?
+            context
+            all-loops
             (__tl-box-place rest)
             loop-blocks)
             [(OptBlockListPassResult.Result rest-blocks rest-changed)
@@ -21785,6 +22145,8 @@
                     global-cells
                     frame-cell
                     late?
+                    context
+                    loops
                     loops
                     blocks)
                     [(OptBlockListPassResult.Result

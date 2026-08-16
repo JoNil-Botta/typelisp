@@ -11371,6 +11371,11 @@
                     (set! left (- left 1)))]))]))
       found)))
 
+;; `name-id` is the lookup key already selected by the caller. Module/import
+;; bindings use structural keys, while local bindings use raw interner ids.
+;; Do not normalize it with `tc-env-name-key-id` here: a qualified raw id and
+;; its structural key are distinct storage domains, and the marker is stored
+;; beside the value under the selected domain.
 (define (tc-binding-c-abi-fnptr-persistent-id?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
@@ -29890,6 +29895,75 @@
 
 (cfg
   test
+  (define (tc-type-env-c-abi-fnptr-selected-key-smoke?) : bool
+    (let
+      [module-id : i64 (ci.intern "selected-key-module")]
+      [name-id : i64 (ci.intern "selected-key-callback")]
+      [qualified-id : i64
+        (ci.intern "selected-key-module/selected-key-callback")]
+      [structural-key : i64 (tc-module-name-id-by-id module-id name-id)]
+      [normalized-key : i64 (tc-env-name-key-id qualified-id)]
+      [local-id : i64 (ci.intern "selected-key-local")]
+      [layer-id : i64 (ci.intern "selected-key-layer")]
+      [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
+      [structural-base : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-c-abi-fnptr-id (tc-empty-env) structural-key callback-ty))]
+      [structural-layer : TcTypeEnv
+        (tc-env-with-cache-layer-over-explicit
+          (tc-bind-id structural-base layer-id (ast.AstType.Bool)))]
+      [qualified-raw : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-c-abi-fnptr-id (tc-empty-env) qualified-id callback-ty))]
+      [local-raw : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-c-abi-fnptr-id (tc-empty-env) local-id callback-ty))]
+      [tail-carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-carrier-from-env structural-layer)]
+      [scoped-carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+          (tc-type-env-scoped-carrier-from-env (tc-empty-env))
+          structural-key
+          callback-ty)]
+      [was-active : bool (tc-type-env-scoped-runtime-active?)]
+      [runtime-save : TcTypeEnvScopedRuntimeSave
+        (tc-type-env-scoped-runtime-enter! tail-carrier)]
+      [runtime-ok : bool
+        (and
+          (tc-binding-c-abi-fnptr-id? structural-layer structural-key)
+          (not (tc-binding-c-abi-fnptr-id? structural-layer qualified-id)))]
+      (begin
+        (tc-type-env-scoped-runtime-restore! runtime-save)
+        (and
+          (not was-active)
+          (ci.intern-qualified? qualified-id)
+          (= structural-key normalized-key)
+          (not (= structural-key qualified-id))
+          (tc-env-cache-explicit-head? structural-layer)
+          (tc-type-env-cache-partial-head? structural-layer)
+          (tc-binding-c-abi-fnptr-id? structural-layer structural-key)
+          (not (tc-binding-c-abi-fnptr-id? structural-layer qualified-id))
+          (tc-binding-c-abi-fnptr-id? qualified-raw qualified-id)
+          (not (tc-binding-c-abi-fnptr-id? qualified-raw normalized-key))
+          (tc-binding-c-abi-fnptr-id? local-raw local-id)
+          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+            tail-carrier
+            structural-key)
+          (not
+            (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+              tail-carrier
+              qualified-id))
+          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+            scoped-carrier
+            structural-key)
+          (not
+            (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+              scoped-carrier
+              qualified-id))
+          runtime-ok)))))
+
+(cfg
+  test
   (define (tc-type-env-explicit-cache-layering-lookup-smoke?) : bool
     (let
       [base-id : i64 (ci.intern "base")]
@@ -30849,7 +30923,10 @@
       (io.panic "typecheck: explicit env cache flag layering smoke failed"))
     (if (tc-type-env-explicit-cache-layering-marker-smoke?)
       unit
-      (io.panic "typecheck: explicit env cache marker layering smoke failed"))))
+      (io.panic "typecheck: explicit env cache marker layering smoke failed"))
+    (if (tc-type-env-c-abi-fnptr-selected-key-smoke?)
+      unit
+      (io.panic "typecheck: selected C ABI fnptr key smoke failed"))))
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let

@@ -92474,6 +92474,23 @@
       unit)
     (tc-macro-walk-field state macro-hygiene-env-storage-arena)))
 
+(define (macro-hygiene-env-storage-restore!
+  [state : TcMacroState]
+  [previous : i64]
+  [storage : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      ;; Large array growth can advance the arena to a new segment. Retain that
+      ;; newest head, and keep it active when the caller was already allocating
+      ;; in this owner, rather than restoring a stale pre-growth handle.
+      (tc-macro-walk-set! state macro-hygiene-env-storage-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous storage)
+            head
+            previous))))))
+
 (define (macro-hygiene-env-grow-copy!
   [dst-kinds : (__tl_dyn-array i64)]
   [dst-keys : (__tl_dyn-array i64)]
@@ -92514,11 +92531,15 @@
           (if (< old-capacity 1)
             64
             (* old-capacity 2))]
+        [previous-arena : i64 (arena.tl_arena_current)]
         [storage : i64 (macro-hygiene-env-storage-handle state)]
-        ;; Snapshots can cross every scratch rewind involved in an expansion, so
-        ;; initial storage and every growth live in one retained arena.
-        (in-arena
-          (arena.Arena storage)
+        (begin
+          ;; Snapshots can cross every scratch rewind involved in an expansion.
+          ;; This path intentionally retains its explicit restoration helper:
+          ;; when growth advances a nested caller's physical head, restoring the
+          ;; pre-growth handle causes severe selfhost retention on Windows.
+          (unsafe
+            (arena.tl_arena_set storage))
           (let
             [next-kinds : (__tl_dyn-array i64)
               (array.make-array i64 next-capacity)]
@@ -92543,7 +92564,8 @@
               (tc-macro-walk-set! state macro-hygiene-env-kinds next-kinds)
               (tc-macro-walk-set! state macro-hygiene-env-keys next-keys)
               (tc-macro-walk-set! state macro-hygiene-env-values next-values)
-              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents))))))))
+              (tc-macro-walk-set! state macro-hygiene-env-parents next-parents)
+              (macro-hygiene-env-storage-restore! state previous-arena storage))))))))
 
 (define (macro-hygiene-env-push
   [kind : i64]

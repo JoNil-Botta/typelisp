@@ -11183,13 +11183,15 @@
 (define (compiler-typecheck-moved-set-growth
   [set : tc_core.TcMovedSet]
   [root-id : i64]
+  [start : i64]
   [count : i64]
   [origin : ast.AstExpr]) : tc_core.TcMovedSet
   (let
     [out : tc_core.TcMovedSet set]
-    [index : i64 0]
+    [index : i64 start]
+    [end : i64 (+ start count)]
     (begin
-      (while (< index count)
+      (while (< index end)
         (begin
           (set!
             out
@@ -11205,6 +11207,17 @@
           (set! index (+ index 1))))
       out)))
 
+(define (compiler-typecheck-moved-facts-same-dense-snapshot?
+  [a : tc_core.TcMovedPathFacts]
+  [b : tc_core.TcMovedPathFacts]) : bool
+  (match a
+    [(tc_core.TcMovedPathFacts.Dense address tail len)
+      (match b
+        [(tc_core.TcMovedPathFacts.Dense other-address other-tail other-len)
+          (and (= address other-address) (= tail other-tail) (= len other-len))]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
     [alpha-id : i64 (ci.intern "alpha")]
@@ -11213,6 +11226,7 @@
     [items-id : i64 (ci.intern "items")]
     [shadowed-id : i64 (ci.intern "shadowed")]
     [shared-id : i64 (ci.intern "shared")]
+    [growth-id : i64 (ci.intern "growth")]
     [items0 : tc_core.TcMovePath
       (tc_core.TcMovePath
         items-id
@@ -11229,6 +11243,24 @@
       (tc_core.TcMovePath items-id (tc_core.tc-move-path-segments-empty))]
     [shadowed-root : tc_core.TcMovePath
       (tc_core.TcMovePath shadowed-id (tc_core.tc-move-path-segments-empty))]
+    [growth0 : tc_core.TcMovePath
+      (tc_core.TcMovePath
+        growth-id
+        (tc_core.tc-move-path-segments-append-array
+          (tc_core.tc-move-path-segments-empty)
+          0))]
+    [growth1 : tc_core.TcMovePath
+      (tc_core.TcMovePath
+        growth-id
+        (tc_core.tc-move-path-segments-append-array
+          (tc_core.tc-move-path-segments-empty)
+          1))]
+    [growth63 : tc_core.TcMovePath
+      (tc_core.TcMovePath
+        growth-id
+        (tc_core.tc-move-path-segments-append-array
+          (tc_core.tc-move-path-segments-empty)
+          63))]
     [origin-a : ast.AstExpr (ast.AstExpr.Var (ci.intern "origin-a"))]
     [origin-b : ast.AstExpr (ast.AstExpr.Var (ci.intern "origin-b"))]
     [empty : tc_core.TcMovedSet (tc_core.tc-moved-empty)]
@@ -11324,26 +11356,43 @@
         shadowed-root)
         [(tc_core.TcMoveConflict.Some _ _) false]
         [tc_core.TcMoveConflict.No true])]
-    [retained-parent : tc_core.TcMovedSet (tc_core.tc-moved-empty)]
-    [growth-successor : tc_core.TcMovedSet
-      (compiler-typecheck-moved-set-growth retained-parent items-id 32 origin-a)]
+    [retained-parent : tc_core.TcMovedSet
+      (compiler-typecheck-moved-set-growth
+        (tc_core.tc-moved-empty)
+        items-id
+        0
+        2
+        origin-a)]
     [sibling-successor : tc_core.TcMovedSet
       (tc_core.tc-moved-add-path-fact
         retained-parent
         shadowed-root
         (tc_core.TcMovedPathKind.BorrowShared)
         (ast.ast-node-push origin-b))]
+    [growth-successor : tc_core.TcMovedSet
+      (compiler-typecheck-moved-set-growth
+        retained-parent
+        growth-id
+        0
+        64
+        origin-a)]
     [retained-parent-isolated : bool
       (and
         (match (tc_core.tc-moved-path-exact-conflict-kind
           retained-parent
           items0
           (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) true]
+          [tc_core.TcMoveConflict.No false])
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          retained-parent
+          shadowed-root
+          (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           retained-parent
-          shadowed-root
+          growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true]))]
@@ -11358,6 +11407,12 @@
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           growth-successor
+          growth63
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) true]
+          [tc_core.TcMoveConflict.No false])
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          growth-successor
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
@@ -11365,6 +11420,18 @@
         (match (tc_core.tc-moved-path-exact-conflict-kind
           sibling-successor
           items0
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) true]
+          [tc_core.TcMoveConflict.No false])
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          sibling-successor
+          shadowed-root
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) true]
+          [tc_core.TcMoveConflict.No false])
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          sibling-successor
+          growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true]))]
@@ -11379,6 +11446,74 @@
             (tc_core.tc-moved-paths growth-successor)
             shadowed-root
             (tc_core.TcMovedPathKind.BorrowShared))))]
+    [separate-store : tc_core.TcMovedSet
+      (compiler-typecheck-moved-set-growth
+        (tc_core.tc-moved-empty)
+        growth-id
+        0
+        2
+        origin-b)]
+    [cross-store-union : tc_core.TcMovedSet
+      (tc_core.tc-moved-union retained-parent separate-store)]
+    [cross-store-destination-ok : bool
+      (match (tc_core.tc-moved-paths retained-parent)
+        [(tc_core.TcMovedPathFacts.Dense parent-address _ _)
+          (match (tc_core.tc-moved-paths cross-store-union)
+            [(tc_core.TcMovedPathFacts.Dense union-address _ _)
+              (= parent-address union-address)]
+            [_ false])]
+        [_ false])]
+    [cross-store-order-ok : bool
+      (tc_core.tc-move-path-eq?
+        (tc_core.tc-moved-path-fact-path
+          (tc_core.tc-moved-path-facts-head
+            (tc_core.tc-moved-paths cross-store-union)))
+        growth0)]
+    [cross-store-removed : tc_core.TcMovedSet
+      (tc_core.tc-moved-remove-path-kind
+        cross-store-union
+        growth1
+        (tc_core.TcMovedPathKind.BorrowShared))]
+    [cross-store-remove-ok : bool
+      (and
+        (=
+          (tc_core.tc-moved-path-facts-len
+            (tc_core.tc-moved-paths cross-store-removed))
+          3)
+        (tc_core.tc-moved-path-facts-contains-exact-kind?
+          (tc_core.tc-moved-paths cross-store-removed)
+          growth0
+          (tc_core.TcMovedPathKind.BorrowShared))
+        (not
+          (tc_core.tc-moved-path-facts-contains-exact-kind?
+            (tc_core.tc-moved-paths cross-store-removed)
+            growth1
+            (tc_core.TcMovedPathKind.BorrowShared))))]
+    [missing-removal : tc_core.TcMovedSet
+      (tc_core.tc-moved-remove-path-kind
+        cross-store-union
+        shadowed-root
+        (tc_core.TcMovedPathKind.Move))]
+    [missing-removal-preserves-snapshot : bool
+      (match (tc_core.tc-moved-paths cross-store-union)
+        [(tc_core.TcMovedPathFacts.Dense address tail len)
+          (match (tc_core.tc-moved-paths missing-removal)
+            [(tc_core.TcMovedPathFacts.Dense next-address next-tail next-len)
+              (and (= address next-address) (= tail next-tail) (= len next-len))]
+            [_ false])]
+        [_ false])]
+    [missing-filter : tc_core.TcMovedSet
+      (tc_core.tc-moved-remove-root-state cross-store-union shadowed-id)]
+    [missing-filter-preserves-snapshot : bool
+      (compiler-typecheck-moved-facts-same-dense-snapshot?
+        (tc_core.tc-moved-paths cross-store-union)
+        (tc_core.tc-moved-paths missing-filter))]
+    [filtered-growth : tc_core.TcMovedSet
+      (tc_core.tc-moved-remove-root-state cross-store-union growth-id)]
+    [changed-filter-reuses-tail : bool
+      (compiler-typecheck-moved-facts-same-dense-snapshot?
+        (tc_core.tc-moved-paths retained-parent)
+        (tc_core.tc-moved-paths filtered-growth))]
     [union-left : tc_core.TcMovedSet
       (tc_core.tc-moved-add-value (tc_core.tc-moved-empty) shared-id 101)]
     [union-right : tc_core.TcMovedSet
@@ -11408,6 +11543,12 @@
       retained-parent-isolated
       successors-isolated
       query-agrees-with-facts
+      cross-store-destination-ok
+      cross-store-order-ok
+      cross-store-remove-ok
+      missing-removal-preserves-snapshot
+      missing-filter-preserves-snapshot
+      changed-filter-reuses-tail
       union-origin-left)))
 
 ;; Returns true when use-after-move is rejected (straight-line and after a

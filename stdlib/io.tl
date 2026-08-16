@@ -45,6 +45,7 @@
 (import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.comptime)
+(import stdlib.format)
 (import stdlib.io_core)
 (import stdlib.math)
 (import stdlib.str_cat)
@@ -542,163 +543,6 @@
     (print-string (string.int->string value))
     (print-newline)))
 
-;: Render one supported ASCII/control character as a String for formatting.
-(define (format-char-string [value : char]) : String
-  (let
-    [code : i64 (cast value : i64)]
-    [printable : String
-      " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"]
-    (cond
-      [(= code 9) "\t"]
-      [(= code 10) "\n"]
-      [(= code 13) "\r"]
-      [(and (>= code 32) (<= code 126))
-        (string.substring printable (- code 32) 1)]
-      [else (panic "format: unsupported non-printable char")])))
-
-;: Render one supported format placeholder as a String expression.
-(defmacro (format-value
-  [float-formatter : comptime.Expr]
-  [value : comptime.Expr]) : String
-  (match (type-kind (comptime.expr-type value))
-    ["string" value]
-    ["i64" `(stdlib.string.int->string ,value)]
-    ["bool"
-      `(if ,value
-        "true"
-        "false")]
-    ["char" `(stdlib.io.format-char-string ,value)]
-    ["f64" `(,float-formatter ,value)]
-    ["f32" `(,float-formatter (cast ,value : f64))]
-    [_
-      (comptime.comptime-error
-        (comptime.string-append
-          "format: unsupported argument type "
-          (type-kind (comptime.expr-type value))))]))
-
-;: Append one generated String expression to the internal format carrier.
-;:
-;: The carrier uses a non-macro head while parsing. Rebuilding its argument list
-;: through quasiquote keeps the eventual `str-cat` call flat without exposing a
-;: mutable compiler syntax list API.
-(defmacro (format-push [carrier : comptime.Expr] [piece : comptime.Expr]) : comptime.Expr
-  (match carrier
-    [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)]
-    [_ carrier]))
-
-;: Turn the completed internal carrier into the public single-allocation concat.
-(defmacro (format-finish [carrier : comptime.Expr]) : String
-  (match carrier
-    [(comptime.Expr.Call _ pieces) `(str_cat.str-cat ,@pieces)]
-    [_ `""]))
-
-;: Parse one byte of a literal format template and extend the output carrier.
-(defmacro (format-from
-  [float-formatter : comptime.Expr]
-  [template : comptime.Expr]
-  [output-carrier : comptime.Expr]
-  [offset : comptime.Expr]
-  [arg-index : comptime.Expr]
-  [args : comptime.Expr ...]) : String
-  (match offset
-    [(comptime.Expr.Int index)
-      (match arg-index
-        [(comptime.Expr.Int next-arg)
-          (let
-            [text : String (comptime.expr-string-value template)]
-            [template-len : i64 (string.string-length text)]
-            [arg-count : i64 (comptime.expr-list-length args)]
-            (if (>= index template-len)
-              (if (= next-arg arg-count)
-                `(format-finish ,output-carrier)
-                (comptime.comptime-error
-                  "format: not enough placeholders for arguments"))
-              (let
-                [ch : char (string.string-ref text index)]
-                (if (= (cast ch : i64) 123)
-                  (if (>= (+ index 1) template-len)
-                    (comptime.comptime-error "format: unmatched '{'")
-                    (let
-                      [following : char (string.string-ref text (+ index 1))]
-                      (if (= (cast following : i64) 123)
-                        `(format-from
-                          ,float-formatter
-                          ,(comptime.expr-string text)
-                          (format-push
-                            ,output-carrier
-                            ,(comptime.expr-string
-                              (comptime.string-slice text index 1)))
-                          ,(comptime.expr-int (+ index 2))
-                          ,(comptime.expr-int next-arg)
-                          ,@args)
-                        (if (= (cast following : i64) 125)
-                          (if (>= next-arg arg-count)
-                            (comptime.comptime-error
-                              "format: not enough arguments for placeholders")
-                            `(format-from
-                              ,float-formatter
-                              ,(comptime.expr-string text)
-                              (format-push
-                                ,output-carrier
-                                (format-value
-                                  ,float-formatter
-                                  ,(comptime.expr-list-nth args next-arg)))
-                              ,(comptime.expr-int (+ index 2))
-                              ,(comptime.expr-int (+ next-arg 1))
-                              ,@args))
-                          (comptime.comptime-error
-                            "format: format specifiers are not supported")))))
-                  (if (= (cast ch : i64) 125)
-                    (if (>= (+ index 1) template-len)
-                      (comptime.comptime-error "format: unmatched '}'")
-                      (if (=
-                        (cast (string.string-ref text (+ index 1)) : i64)
-                        125)
-                        `(format-from
-                          ,float-formatter
-                          ,(comptime.expr-string text)
-                          (format-push
-                            ,output-carrier
-                            ,(comptime.expr-string
-                              (comptime.string-slice text index 1)))
-                          ,(comptime.expr-int (+ index 2))
-                          ,(comptime.expr-int next-arg)
-                          ,@args)
-                        (comptime.comptime-error "format: unmatched '}'")))
-                    `(format-from
-                      ,float-formatter
-                      ,(comptime.expr-string text)
-                      (format-push
-                        ,output-carrier
-                        ,(comptime.expr-string
-                          (comptime.string-slice text index 1)))
-                      ,(comptime.expr-int (+ index 1))
-                      ,(comptime.expr-int next-arg)
-                      ,@args))))))]
-        [_
-          (comptime.comptime-error
-            "format: internal argument index is not an integer")])]
-    [_ (comptime.comptime-error "format: internal offset is not an integer")]))
-
-;: Format a literal template and positional values into a freshly allocated String.
-;:
-;: `{}` consumes one argument; `{{` and `}}` produce literal braces. The
-;: template must be a source string literal so syntax is deterministic and the
-;: placeholder count is checked during macro expansion.
-(defmacro (format-with
-  [float-formatter : comptime.Expr]
-  [template : comptime.Expr]
-  [args : comptime.Expr ...]) : String
-  (if (comptime.expr-string? template)
-    `(format-from
-      ,float-formatter
-      ,(comptime.expr-string (comptime.expr-string-value template))
-      (__format-output)
-      0
-      0
-      ,@args)
-    (comptime.comptime-error "format: template must be a string literal")))
-
 ;: Format a literal template and write it to stdout without a newline.
 ;:
 ;: The template and arguments follow `stdlib.format.format`: `{}` consumes one
@@ -708,8 +552,7 @@
 ;: The explicit `print-format` name preserves the historical newline-writing
 ;: integer function `print` without overloading its semantics.
 (defmacro (print-format [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(stdlib.io.print-string
-    (stdlib.io.format-with stdlib.io.format-float-core ,template ,@args)))
+  `(stdlib.io.print-string (stdlib.format.format ,template ,@args)))
 
 ;: Format a literal template, write it to stdout, then write one newline.
 ;:
@@ -717,8 +560,7 @@
 ;: explicit stream write.
 (defmacro (println [template : comptime.Expr] [args : comptime.Expr ...]) : unit
   `(let
-    [formatted : String
-      (stdlib.io.format-with stdlib.io.format-float-core ,template ,@args)]
+    [formatted : String (stdlib.format.format ,template ,@args)]
     (begin
       (stdlib.io.print-string formatted)
       (stdlib.io.print-newline))))
@@ -1100,12 +942,6 @@
                     exp-value))))]
           [else (IoFloatNoDecimal)])))))
 
-;: floor(a / b) for b > 0 (TL `/` truncates toward zero).
-(define (ftoa-floor-div [a : i64] [b : i64]) : i64
-  (if (>= a 0)
-    (/ a b)
-    (- 0 (/ (+ (- 0 a) (- b 1)) b))))
-
 ;: Index of the highest set bit of m.
 (define (ftoa-msb-index [m : u64]) : i64
   (let
@@ -1262,177 +1098,9 @@
 (define (float-round-f32-as-f64 [value : f64]) : f64
   (cast (cast value : f32) : f64))
 
-;: Significant-digit string of `d` with trailing zeros removed (>= 1 digit).
-(define (ftoa-strip-zeros [d : i64]) : String
-  (let
-    [dd : i64 d]
-    (begin
-      (while (and (> dd 9) (= (% dd 10) 0))
-        (set! dd (/ dd 10)))
-      (string.int->string dd))))
-
-;: Exponent k formatted with sign and at least two digits.
-(define (ftoa-pad-exp [k : i64]) : String
-  (let
-    [mag : i64
-      (if (< k 0)
-        (- 0 k)
-        k)]
-    [digits : String (string.int->string mag)]
-    [sign : String
-      (if (< k 0)
-        "-"
-        "+")]
-    (str_cat.str-cat
-      sign
-      (if (< (string-length digits) 2)
-        (str_cat.str-cat "0" digits "")
-        digits)
-      "")))
-
-;: A string of n zero characters.
-(define (ftoa-zeros [n : i64]) : String
-  (let
-    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref out i) (cast '0' : u8))
-          (set! i (+ i 1))))
-      (unsafe
-        (string-from-bytes (stdlib.io.array-const-ptr out) n)))))
-
-;: Format significant-digit string `s` whose leading digit has decimal
-;: exponent `k`, following printf %g (precision 17) style.
-(define (ftoa-render [neg : bool] [s : String] [k : i64]) : String
-  (let
-    [body : String ""]
-    [ndig : i64 (string-length s)]
-    (begin
-      (cond
-        [(or (< k -4) (>= k 17))
-          (set!
-            body
-            (str_cat.str-cat
-              (string.substring s 0 1)
-              (if (> ndig 1)
-                (str_cat.str-cat "." (string.substring s 1 (- ndig 1)) "")
-                "")
-              "e"
-              (stdlib.io.ftoa-pad-exp k)))]
-        [(< k 0)
-          (set!
-            body
-            (str_cat.str-cat "0." (stdlib.io.ftoa-zeros (- (- 0 k) 1)) s))]
-        [(>= (+ k 1) ndig)
-          (set!
-            body
-            (str_cat.str-cat s (stdlib.io.ftoa-zeros (- (+ k 1) ndig)) ""))]
-        [else
-          (set!
-            body
-            (str_cat.str-cat
-              (string.substring s 0 (+ k 1))
-              "."
-              (string.substring s (+ k 1) (- ndig (+ k 1)))))])
-      (if neg
-        (str_cat.str-cat "-" body "")
-        body))))
-
-;: Render value as a shortest round-tripping decimal string (printf %.17g style).
-(define (format-float-core [value : f64]) : String
-  (let
-    [buf : (__tl_dyn-array f64) (array.make-array f64 1)]
-    (begin
-      (set! (array-ref buf 0) value)
-      (let
-        [bits : u64
-          (unsafe
-            (ptr-read (ptr-cast (array-data buf) : (Ptr u64))))]
-        [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
-        [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
-        [frac : u64 (bit-and bits 0xfffffffffffff)]
-        (begin
-          (when
-            (= expf (cast 0x7ff : u64))
-            (return
-              (if (= frac (cast 0 : u64))
-                (if neg
-                  "-inf"
-                  "inf")
-                (if neg
-                  "-nan"
-                  "nan"))))
-          (when
-            (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
-            (return
-              (if neg
-                "-0"
-                "0")))
-          (let
-            [m : u64
-              (if (= expf (cast 0 : u64))
-                frac
-                (bit-or frac 0x10000000000000))]
-            [e2 : i64
-              (if (= expf (cast 0 : u64))
-                -1074
-                (- (cast expf : i64) 1075))]
-            [msb : i64 (stdlib.io.ftoa-msb-index m)]
-            [kest : i64 (stdlib.io.ftoa-floor-div (* (+ msb e2) 30103) 100000)]
-            [d : u64 (cast 0 : u64)]
-            [iters : i64 0]
-            [settled : bool false]
-            (begin
-              (while (if (not settled)
-                (< iters 6)
-                false)
-                (let
-                  [p : i64 (- 16 kest)]
-                  [num : BigNum (stdlib.io.bn-from-u64 m)]
-                  [den : BigNum (stdlib.io.bn-from-u64 (cast 1 : u64))]
-                  (begin
-                    (if (>= e2 0)
-                      (set! num (stdlib.io.bn-shl-bits num e2))
-                      (set! den (stdlib.io.bn-shl-bits den (- 0 e2))))
-                    (if (>= p 0)
-                      (set! num (stdlib.io.bn-mul-pow10 num p))
-                      (set! den (stdlib.io.bn-mul-pow10 den (- 0 p))))
-                    (let
-                      [q : u64 (stdlib.io.bn-div-floor-u64 num den)]
-                      [two-num : BigNum (stdlib.io.bn-shl-bits num 1)]
-                      [t : BigNum
-                        (stdlib.io.bn-mul-u64
-                          den
-                          (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
-                      [c : i64 (stdlib.io.bn-cmp two-num t)]
-                      (begin
-                        (set! d q)
-                        (if (> c 0)
-                          (set! d (+ q (cast 1 : u64)))
-                          (if (= c 0)
-                            (if (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
-                              (set! d (+ q (cast 1 : u64)))
-                              unit)
-                            unit))
-                        (if (>= d 100000000000000000)
-                          (set! kest (+ kest 1))
-                          (if (< d 10000000000000000)
-                            (set! kest (- kest 1))
-                            (set! settled true)))
-                        (set! iters (+ iters 1)))))))
-              (let
-                [s0 : String (string.int->string (cast d : i64))]
-                [k : i64 (+ (- (string-length s0) 17) kest)]
-                (stdlib.io.ftoa-render
-                  neg
-                  (stdlib.io.ftoa-strip-zeros (cast d : i64))
-                  k)))))))))
-
 ;: Format an f64 with `%.17g` and a trailing newline.
 (define (format-float [value : f64]) : String
-  (str_cat.str-cat (stdlib.io.format-float-core value) "\n" ""))
+  (str_cat.str-cat (stdlib.format.format-float-core value) "\n" ""))
 
 ;: Write a floating-point value to stdout using `%.17g` plus a newline.
 (define (print-float [value : f64]) : unit

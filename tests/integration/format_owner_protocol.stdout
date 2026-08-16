@@ -1,0 +1,2 @@
+format:Point(1, 2)|count=7|nested<Point(3, 4)>|primary=8|secondary=9|alpha|beta|Point(5, 6)
+print:Point(1, 2)|println:count=7

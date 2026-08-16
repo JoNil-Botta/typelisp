@@ -6183,6 +6183,32 @@ The deprecated `string-append` and
 `string-concat` names remain staged lint targets for old source, while
 `tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
 
+**Literal formatting and nominal display.** `stdlib.format` owns the literal
+`format` macro, its template scanner, all placeholder dispatch, and scalar
+conversion. `stdlib.io` depends on that module: `io.print-format` writes the
+result of the same formatter unchanged and `io.println` writes that result plus
+one newline. `stdlib.format` must not import `stdlib.io`.
+
+Templates accept positional `{}` placeholders and `{{` / `}}` escapes. The
+built-in placeholder types are `String`, `i64`, `bool`, `char`, `f64`, and
+`f32`. A struct or enum instead delegates to a function in the type's canonical
+owner module. The owner may define either:
+
+- `to-string : (& T) -> String`, normally for the module's primary type; or
+- `to-string-<NominalName> : (& T) -> String`, for another nominal type owned
+  by the same module.
+
+The signature must be exact: one shared-borrow argument of the nominal type and
+an owned `String` result. Formatting a place does not move it; formatting an
+rvalue evaluates the expression once and borrows a generated temporary. A hook
+may recursively call `format` for nested values. Hook lookup uses the canonical
+owner identity rather than the caller's imports or aliases, so unrelated
+modules may use the same nominal name and import order cannot select a hook.
+If neither spelling exists, if an existing spelling has the wrong signature,
+or if both spellings match the same nominal type, macro expansion fails with a
+diagnostic naming the owner and expected contract. The last case is ambiguous
+and programs must retain exactly one applicable spelling.
+
 **Byte buffers.** `ByteBuf` and `bytes` are specified in section 3.11 as
 stdlib/language surface, not implicit compiler builtins. There is no
 implicit conversion from text, arrays, or raw pointers to byte buffers;
@@ -7858,7 +7884,9 @@ one additional newline write. The explicit compatibility-preserving
 `(io.print value)` function unchanged. `print-string`, `print-str`,
 `print-newline`, `print-error`, `print-bool`, `print-char`, and `print-float`
 retain their existing behavior, as do the low-level borrowed `stdout-write` and
-`stderr-write` helpers.
+`stderr-write` helpers. All placeholder conversion, including the canonical
+owner-module nominal display protocol specified in section 6.1, is therefore
+identical between `format.format`, `io.print-format`, and `io.println`.
 
 ### Extern call
 

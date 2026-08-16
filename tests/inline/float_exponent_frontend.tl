@@ -10,6 +10,7 @@
 (import format_cst as fcst)
 (import format_rules as fr)
 (import format_cli_core as fcli)
+(import stdlib.format)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -83,7 +84,8 @@
               (shl (cast (% (* i 7919) 2048) : u64) 32)
               (cast (* i 2654435761) : u64))]
           [bits : u64 (bit-or sign (bit-or (shl exp-field 52) mantissa))]
-          [text : String (io.format-float-core (io.float-f64-from-bits bits))]
+          [text : String
+            (format.format-float-core (io.float-f64-from-bits bits))]
           (begin
             (if (or
               (string.contains (& text) "e")

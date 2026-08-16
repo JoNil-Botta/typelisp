@@ -21,11 +21,13 @@
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
 #
-# Issue #6550 reconstructs dynamically unquoted set! targets through the named
-# host ABI, moving stdlib.text_buf/append! off the final registration shell.
-# All 107 checked-in entries are now fully native, so every fallback dimension
-# is pinned to zero rather than allowing a future catalog addition to hide one.
-native-entries-min 107
+# Issue #5230 adds the native stdlib.math/pow macro, growing the catalog from
+# 107 to 108 entries. Issue #6550 reconstructs dynamically unquoted set!
+# targets through the named host ABI, moving stdlib.text_buf/append! off the
+# final registration shell. All 108 checked-in entries are now fully native,
+# so every fallback dimension is pinned to zero rather than allowing a future
+# catalog addition to hide one.
+native-entries-min 108
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

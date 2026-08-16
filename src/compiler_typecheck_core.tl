@@ -96009,23 +96009,51 @@
 ;; every declaration walked, on every qualified-alias resolution -- 11.6% of
 ;; the stage2 self-compile CPU profile. Import aliases still compare by
 ;; content, but only for imports declared in the current module.
+(define (macro-import-kind-module-alias? [kind : ast.AstImportKind]) : bool
+  (match kind
+    [(ast.AstImportKind.Module) true]
+    [(ast.AstImportKind.Macro _ _) true]
+    [(ast.AstImportKind.MacroDecls _ _) true]
+    [(ast.AstImportKind.ModuleAll) false]
+    [(ast.AstImportKind.ModuleItem _) false]))
+
+(test
+  macro-import-kind-module-alias-classification
+  (begin
+    (test.assert-true
+      (macro-import-kind-module-alias? ast.AstImportKind.Module)
+      "file module imports bind module aliases")
+    (test.assert-true
+      (macro-import-kind-module-alias?
+        (ast.AstImportKind.Macro 0 ast.AstMaybeModuleName.No))
+      "expression module macros bind module aliases")
+    (test.assert-true
+      (macro-import-kind-module-alias?
+        (ast.AstImportKind.MacroDecls 0 ast.AstMaybeModuleName.No))
+      "declaration module macros bind module aliases")
+    (test.assert-false
+      (macro-import-kind-module-alias? ast.AstImportKind.ModuleAll)
+      "wildcard imports do not bind module aliases")
+    (test.assert-false
+      (macro-import-kind-module-alias? (ast.AstImportKind.ModuleItem 0))
+      "selected imports do not bind module aliases")))
+
 (define (macro-import-alias-target-from-spec
   [spec : ast.AstImportSpec]
   [alias-id : i64]) : TcMaybeNameId
   (match spec
     [(ast.AstImportSpec.Spec kind _ expected maybe-alias _)
-      (match kind
-        [(ast.AstImportKind.Module)
-          (match maybe-alias
-            [(ast.AstMaybeImportAlias.Some import-alias)
-              (if (= import-alias alias-id)
-                (match expected
-                  [(ast.AstMaybeModuleName.Some target)
-                    (TcMaybeNameId.Some target)]
-                  [(ast.AstMaybeModuleName.No) (TcMaybeNameId.Some alias-id)])
-                (TcMaybeNameId.No))]
-            [(ast.AstMaybeImportAlias.No) (TcMaybeNameId.No)])]
-        [_ (TcMaybeNameId.No)])]))
+      (if (macro-import-kind-module-alias? kind)
+        (match maybe-alias
+          [(ast.AstMaybeImportAlias.Some import-alias)
+            (if (= import-alias alias-id)
+              (match expected
+                [(ast.AstMaybeModuleName.Some target)
+                  (TcMaybeNameId.Some target)]
+                [(ast.AstMaybeModuleName.No) (TcMaybeNameId.Some alias-id)])
+              (TcMaybeNameId.No))]
+          [(ast.AstMaybeImportAlias.No) (TcMaybeNameId.No)])
+        (TcMaybeNameId.No))]))
 
 (define (macro-import-alias-target-from-wrapped-decl
   [decl : ast.AstDecl]
@@ -98298,29 +98326,26 @@
                 (set! cur-module-id next-module)]
               [(ast.AstDecl.Import
                   decl-meta
-                  (ast.AstImportSpec.Spec
-                    (ast.AstImportKind.Module)
-                    _
-                    expected
-                    maybe-alias
-                    _))
-                (match maybe-alias
-                  [(ast.AstMaybeImportAlias.Some alias)
-                    (let
-                      [target-id : i64
-                        (match expected
-                          [(ast.AstMaybeModuleName.Some target) target]
-                          [(ast.AstMaybeModuleName.No) alias])]
-                      (if (>=
-                        (* (tc-macro-import-index-control state 0) 2)
-                        16384)
-                        (tc-macro-import-index-control-set! state 6 0)
-                        (macro-alias-cache-put!
-                          state
-                          cur-module-id
-                          alias
-                          target-id)))]
-                  [(ast.AstMaybeImportAlias.No) unit])]
+                  (ast.AstImportSpec.Spec kind _ expected maybe-alias _))
+                (if (macro-import-kind-module-alias? kind)
+                  (match maybe-alias
+                    [(ast.AstMaybeImportAlias.Some alias)
+                      (let
+                        [target-id : i64
+                          (match expected
+                            [(ast.AstMaybeModuleName.Some target) target]
+                            [(ast.AstMaybeModuleName.No) alias])]
+                        (if (>=
+                          (* (tc-macro-import-index-control state 0) 2)
+                          16384)
+                          (tc-macro-import-index-control-set! state 6 0)
+                          (macro-alias-cache-put!
+                            state
+                            cur-module-id
+                            alias
+                            target-id)))]
+                    [(ast.AstMaybeImportAlias.No) unit])
+                  unit)]
               [_ unit])
             unit)
           (set! i (+ i 1))))
@@ -98349,29 +98374,26 @@
                 (set! cur-module-id next-module)]
               [(ast.AstDecl.Import
                   _decl-meta
-                  (ast.AstImportSpec.Spec
-                    (ast.AstImportKind.Module)
-                    _
-                    expected
-                    maybe-alias
-                    _))
-                (match maybe-alias
-                  [(ast.AstMaybeImportAlias.Some alias)
-                    (let
-                      [target-id : i64
-                        (match expected
-                          [(ast.AstMaybeModuleName.Some target) target]
-                          [(ast.AstMaybeModuleName.No) alias])]
-                      (if (>=
-                        (* (tc-macro-import-index-control state 0) 2)
-                        16384)
-                        (tc-macro-import-index-control-set! state 6 0)
-                        (macro-alias-cache-put!
-                          state
-                          cur-module-id
-                          alias
-                          target-id)))]
-                  [(ast.AstMaybeImportAlias.No) unit])]
+                  (ast.AstImportSpec.Spec kind _ expected maybe-alias _))
+                (if (macro-import-kind-module-alias? kind)
+                  (match maybe-alias
+                    [(ast.AstMaybeImportAlias.Some alias)
+                      (let
+                        [target-id : i64
+                          (match expected
+                            [(ast.AstMaybeModuleName.Some target) target]
+                            [(ast.AstMaybeModuleName.No) alias])]
+                        (if (>=
+                          (* (tc-macro-import-index-control state 0) 2)
+                          16384)
+                          (tc-macro-import-index-control-set! state 6 0)
+                          (macro-alias-cache-put!
+                            state
+                            cur-module-id
+                            alias
+                            target-id)))]
+                    [(ast.AstMaybeImportAlias.No) unit])
+                  unit)]
               [_ unit])
             unit)
           (set! i (- i 1))))

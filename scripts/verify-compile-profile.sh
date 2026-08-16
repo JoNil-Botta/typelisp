@@ -2530,6 +2530,17 @@ assert_profile_counter_at_least_in \
     1 \
     "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
     "$TEMPLATE_NODES_EMBEDDED_STDERR"
+# #6550's final-shell removal must be proven by identity on the bounded
+# native/source differential, not inferred from another macro's dispatch.
+assert_contains \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
+    "stdlib.text_buf/append! arity=2"
+assert_profile_counter_eq_in \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+    0 \
+    "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR"
 # text_buf_family.owned commits a Decls result through the real mapped image;
 # the byte comparison below proves its handle rejoins the source CTFE
 # validation/splice path instead of merely returning a native value. Refs

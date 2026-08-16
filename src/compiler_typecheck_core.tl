@@ -637,22 +637,6 @@
           (comptime (offset-of (type TcJobStateData) ,field)))
         : (Ptr ,_T)))))
 
-(defmacro (tc-job-state-set-field!
-  [state : Expr]
-  [field : Expr]
-  [_T : type]
-  [value : Expr]) : Expr
-  `(unsafe
-    (ptr-write!
-      (ptr-cast
-        (ptr-offset
-          (int->ptr
-            (cast ,(comptime.expr-struct-get state "address") : u64)
-            : (Ptr u8))
-          (comptime (offset-of (type TcJobStateData) ,field)))
-        : (MutPtr ,_T))
-      ,value)))
-
 (define (tc-macro-state-owner-arena [state : TcMacroState]) : i64
   (unsafe
     (ptr-read (ptr-offset (int->ptr (cast state.address : u64) : (Ptr i64)) 12))))
@@ -681,8 +665,6 @@
   10)
 (define tc-macro-state-slot-identity : i64
   11)
-(define tc-macro-state-slot-source-names : i64
-  13)
 (define tc-macro-state-slot-lazy-import : i64
   14)
 
@@ -1297,15 +1279,6 @@
 (define (tc-serial-job-state-reset-if-ready!) : unit
   (if tc-serial-job-state-ready
     (tc-job-state-reset-file-state! (array-ref tc-serial-job-state-cell 0))
-    unit))
-
-;; The legacy reset surface historically released only typecheck scratch.
-;; Keep that boundary distinct from a full job reset: standalone callers can
-;; own an inlay generation across internal compiler reset points.
-(define (tc-serial-scratch-arenas-release-if-ready!) : unit
-  (if tc-serial-job-state-ready
-    (tc-job-state-release-scratch-arenas!
-      (array-ref tc-serial-job-state-cell 0))
     unit))
 
 (defstruct TcBodyStateData
@@ -18053,16 +18026,6 @@
       [_ false])
     false))
 
-(define (tc-signature-lifetime-marker-entry?
-  [key : i64]
-  [ty : ast.AstType]
-  [lifetime-id : i64]) : bool
-  (tc-signature-lifetime-marker-entry-id?
-    key
-    ty
-    lifetime-id
-    (tc-signature-lifetime-marker-id)))
-
 (define (tc-env-binding-matches-lifetime-id?
   [key : i64]
   [ty : ast.AstType]
@@ -22284,11 +22247,6 @@
 (define (tc-lazy-import-stub-storage-ensure-for-job! [state : TcJobState]) : unit
   (tc-lazy-import-stub-storage-ensure-for-state!
     (tc-job-state-lazy-import state)))
-
-;; Serial/test compatibility adapter. Production compiler jobs prewarm their
-;; own lazy-import table through the explicit job-state entry above.
-(define (tc-lazy-import-stub-storage-ensure!) : unit
-  (tc-lazy-import-stub-storage-ensure-for-job! (tc-serial-job-state)))
 
 ;; Return either the matching record-index slot or the first empty slot. Slots
 ;; store record index + 1, so reset can clear the index without touching the
@@ -67553,19 +67511,6 @@
             (set! remaining (- remaining 1)))))
       out)))
 
-(define (tc-moved-path-kind-hash [kind : TcMovedPathKind]) : i64
-  (match kind
-    [(TcMovedPathKind.Move) 1]
-    [(TcMovedPathKind.BorrowShared) 2]
-    [(TcMovedPathKind.BorrowMut) 3]
-    [(TcMovedPathKind.BorrowTwoPhaseMut) 4]
-    [(TcMovedPathKind.BorrowLending binding-id)
-      (tc-move-path-hash-combine 5 binding-id)]
-    [(TcMovedPathKind.BorrowLendingUsed binding-id)
-      (tc-move-path-hash-combine 6 binding-id)]
-    [(TcMovedPathKind.BorrowPending scope-id)
-      (tc-move-path-hash-combine 7 scope-id)]))
-
 (define (tc-moved-path-fact-new
   [path : TcMovePath]
   [kind : TcMovedPathKind]
@@ -75928,20 +75873,6 @@
       (tc-closure-call-capability-mut)
       (tc-closure-call-capability-shared))))
 
-(define (tc-lambda-call-capability-fallback
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [params : ast.AstParamList]
-  [body : ast.AstExpr]) : i64
-  (tc-lambda-call-capability-fallback-with-locals
-    ctx
-    expr-bases
-    env
-    (tc-moved-empty)
-    params
-    body))
-
 (define (tc-lambda-call-capability-with-locals
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -76029,24 +75960,6 @@
     (tc-moved-empty)
     params
     body-id))
-
-(define (tc-lambda-init-call-capability-with-locals
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [init : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan init)
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda params _ body-box)
-          (tc-lambda-call-capability-with-locals ctx env locals params body-box)])]
-    [_ (tc-closure-call-capability-shared)]))
-
-(define (tc-lambda-init-call-capability
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [init : ast.AstExpr]) : i64
-  (tc-lambda-init-call-capability-with-locals ctx env (tc-moved-empty) init))
 
 (define (tc-lambda-init-local-fact-code
   [ctx : TcContext]
@@ -77059,73 +76972,6 @@
           [_ false]))
         true
         (tc-borrow-check-pending-path-at? (__tl-box-place rest) path))]))
-
-(define (tc-borrow-check-add-pending-markers-at
-  [expr-bases : i64]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [scope-id : i64]
-  [facts : TcMovedPathFacts]
-  [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending binding-id)
-              (if (or
-                (tc-expr-list-uses-free-name?
-                  expr-bases
-                  exprs
-                  (tc-env-key-name-text binding-id)
-                  TcStringList.Nil)
-                (tc-borrow-check-lifetime-used-in-exprs?
-                  expr-bases
-                  ctx
-                  env
-                  locals
-                  exprs
-                  (tc-borrow-check-path-lifetime ctx env path)))
-                (tc-moved-add-path-fact
-                  out
-                  path
-                  (TcMovedPathKind.BorrowPending scope-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-add-pending-markers-at
-          expr-bases
-          ctx
-          env
-          locals
-          exprs
-          scope-id
-          (__tl-box-place rest)
-          out2))]))
-
-(define (tc-borrow-check-add-pending-markers
-  [expr-bases : i64]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [borrowed : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [scope-id : i64]) : TcMovedSet
-  (if (or (ast.ast-expr-list-empty? (& exprs)) (= (tc-moved-len borrowed) 0))
-    borrowed
-    (tc-borrow-check-add-pending-markers-at
-      expr-bases
-      ctx
-      env
-      locals
-      exprs
-      scope-id
-      (tc-moved-paths borrowed)
-      borrowed)))
 
 ;; Sequence walkers do not need to scan their full remaining syntax eagerly.
 ;; Guard every lending borrow while a later sibling exists; if the current
@@ -84958,119 +84804,6 @@
         [(csym.ResultCompilerSymbols.Err _) false]))
     false))
 
-;; A direct generated declaration splice is safe to rebase when it has only a
-;; positional registry effect. Imports can add aliases and macro definitions
-;; change the hoisted macro namespace, so both retain the full-rebuild path.
-;; Keep this an explicit whitelist: a future declaration form must opt in only
-;; after proving that registry remapping preserves its semantics.
-(define (macro-decl-registry-incremental-safe? [decl : ast.AstDecl]) : bool
-  (match decl
-    [(ast.AstDecl.Def decl-meta _ _ _) true]
-    [(ast.AstDecl.DefFn decl-meta _ _ _ _ _) true]
-    [(ast.AstDecl.Extern decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefEnum decl-meta _ _ _) true]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefStruct decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
-    [(ast.AstDecl.DefDispatch decl-meta _ _) true]
-    [(ast.AstDecl.Test _ _ _) true]
-    [(ast.AstDecl.Import decl-meta _) false]
-    [(ast.AstDecl.IncludeStr _ _) false]
-    [(ast.AstDecl.IncludeStrComptime _ _) false]
-    [(ast.AstDecl.IncludeStrLzss _ _) false]
-    [(ast.AstDecl.IncludeBin _ _) false]
-    [(ast.AstDecl.DefMacro decl-meta _ _ _ _) false]
-    [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-registry-incremental-safe? (__tl-box-place inner-box))]
-    [_ false]))
-
-(define (macro-decls-registry-incremental-safe? [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) true]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (and
-        (macro-decl-registry-incremental-safe? decl)
-        (macro-decls-registry-incremental-safe? rest))]))
-
-;; An existing unqualified import aliases every nominal member of its target
-;; module. If a generated splice adds a member to that target, repairing only
-;; direct registry entries would leave the import alias stale, so retain the
-;; established whole-registry rebuild in that case.
-(define (macro-decl-has-unqualified-import-of-module?
-  [decl : ast.AstDecl]
-  [module-id : i64]) : bool
-  (match decl
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec
-          _
-          _
-          (ast.AstMaybeModuleName.Some target-module)
-          (ast.AstMaybeImportAlias.Some alias)
-          _))
-      (and
-        (= target-module module-id)
-        (= alias cbi.compiler-builtin-id-fix-empty))]
-    [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-has-unqualified-import-of-module?
-        (__tl-box-place inner-box)
-        module-id)]
-    [(ast.AstDecl.ModuleBody _ body-box)
-      (macro-decls-have-unqualified-import-of-module?
-        (__tl-box-place body-box)
-        module-id)]
-    [_ false]))
-
-;; Index cursor rather than `ast-decl-list-step`. The list is already a flat
-;; array slice, so the step's 104 B row copy and 144 B result exist only to give
-;; the walk a cons shape; the backing slot is handed to the per-declaration
-;; predicate directly, which costs nothing (aggregate arguments are passed by
-;; reference).
-(define (macro-decls-have-unqualified-import-of-module?
-  [decls : ast.AstDeclList]
-  [module-id : i64]) : bool
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-    [decl-offset : i64 decls.offset]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (begin
-          (if (macro-decl-has-unqualified-import-of-module?
-            (array-ref decl-slots (+ decl-offset index))
-            module-id)
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
-
-;; Rebase the cached registry across an additive non-module splice that still
-;; takes the fresh-symbol fallback. Generated modules use the append companion
-;; below so symbol and registry owner handles share one stable index space.
-(define (macro-live-registries-insert-decls!
-  [state : TcMacroState]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [insertion-index : i64]
-  [module-id : i64]) : bool
-  (match (csym.compiler-registries-insert-decls
-    (macro-live-registries-shared-view state)
-    decls
-    paths
-    insertion-index
-    module-id)
-    [(csym.ResultCompilerRegistries.Ok registries)
-      (begin
-        (set!
-          (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
-          registries)
-        (tc-macro-walk-set! state macro-live-registries-ready true)
-        (tc-macro-walk-set! state macro-live-registries-fallback false)
-        true)]
-    [(csym.ResultCompilerRegistries.Err _) false]))
-
 (define (macro-live-registries-append-decls!
   [state : TcMacroState]
   [decls : ast.AstDeclList]
@@ -90004,14 +89737,6 @@
       (MacroMaybeDeclList.Some
         (macro-collect-module-body-decls decls target-module ""))
       (MacroMaybeDeclList.No))))
-
-(define (macro-find-module-body-decls
-  [decls : ast.AstDeclList]
-  [target-module : String]) : MacroMaybeDeclList
-  (if (macro-module-exists? decls target-module)
-    (MacroMaybeDeclList.Some
-      (macro-collect-module-body-decls decls target-module ""))
-    (MacroMaybeDeclList.No)))
 
 (define (macro-generated-identity-shortcut-safe-params?
   [ctx : TcContext]
@@ -108303,13 +108028,6 @@
     [(MacroMaybeGeneratedNormalImport.Some _ _ _ _ _ _) true]
     [(MacroMaybeGeneratedNormalImport.No) false]))
 
-(define (macro-decls-start-with-module-import-placeholder?
-  [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Cons decl _)
-      (macro-decl-module-import-placeholder? decl)]
-    [(ast.AstDeclListStep.Nil) false]))
-
 ;; The single demand-driven expansion walk. Every macro placeholder is expanded
 ;; and its splice forced inline: the walk rebuilds the whole-program
 ;; symbols/env over the spliced view (macro-expand-rebuild-context-for-splice)
@@ -110022,24 +109740,6 @@
     cfgs
     (ci.intern-compat-state-capture-active)))
 
-(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
-  [load-state : cload.CompilerLoadSessionState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
-    load-state
-    program
-    paths
-    pools
-    source-names
-    (tc-serial-job-state)
-    stdlib-roots
-    cfgs))
-
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [job-state : TcJobState]
@@ -110151,22 +109851,6 @@
     stdlib-roots
     cfgs
     intern-state))
-
-(define (macro-expand-then-build-envs-with-load-state
-  [load-state : cload.CompilerLoadSessionState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-then-build-envs-with-load-state-and-job-state
-    load-state
-    (tc-serial-job-state)
-    program
-    paths
-    pools
-    stdlib-roots
-    cfgs))
 
 ;; Serial/test compatibility adapter. Production typecheck jobs call the
 ;; explicit load-state, job-state, and intern-state entry above.
@@ -112820,28 +112504,6 @@
         (ResultCompilerTypecheckChecked.Err
           (cdiag.compiler-diagnostic-list-box-single diag))])))
 
-;; Serial/test compatibility adapter. Production jobs pass both explicit state
-;; values to the entry above.
-(cfg
-  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
-    [program : ast.AstProgram]
-    [paths : ast.AstDeclPathList]
-    [stdlib-roots : svec.Vec]
-    [cache-scope : String]
-    [pools : ast.AstNodePoolContext]
-    [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
-    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
-      (cload.compiler-load-serial-test-session-state)
-      (tc-prefix-snapshot-serial-test-cache-state-shared-view)
-      (tc-serial-job-state)
-      program
-      paths
-      stdlib-roots
-      cache-scope
-      pools
-      source-names)))
-
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
@@ -112908,30 +112570,6 @@
           (begin
             (tc-body-early-exit-facts-abort! body-state)
             (ResultCompilerTypecheckChecked.Err diag))]))))
-
-;; Serial/test compatibility adapter. Production callers pass the explicit
-;; intern state to the entry above; this adapter snapshots the active table.
-(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
-  [load-state : cload.CompilerLoadSessionState]
-  [prefix-cache : TcPrefixSnapshotCacheState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
-  (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
-    load-state
-    prefix-cache
-    job-state
-    program
-    paths
-    stdlib-roots
-    cache-scope
-    pools
-    source-names
-    (ci.intern-compat-state-capture-active)))
 
 (define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]

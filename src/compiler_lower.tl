@@ -7667,7 +7667,9 @@
       (if done
         result
         (ResultLowerModuleLocalEnv.Ok
-          cur-type-env
+          ;; Keep the module declaration-count phase from seeding function-local
+          ;; partial-cache collapse depth.
+          (tc_core.tc-env-with-cache-layer-over-explicit cur-type-env)
           cur-local-type-env
           cur-local-names)))))
 

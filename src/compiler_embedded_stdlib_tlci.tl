@@ -5320,6 +5320,89 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; Dynamic quasiquote set!: pop the reconstructed value after the evaluated
+;; unquoted place, inspect that place through transparent source wrappers, and
+;; build the same assignment node as interpreted CTFE. Every other place shape
+;; uses the interpreted path's exact diagnostic. Refs #6550.
+(define (compiler-comptime-host-callback-expr-set-from-place
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci.tlci-host-callback-status-bad-request
+            (let
+              [value-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 1))]
+              [place-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 2))]
+              [value-node : i64 (compiler-comptime-host-value-node value-value)]
+              [place-node : i64 (compiler-comptime-host-value-node place-value)]
+              (if (or (< value-node 0) (< place-node 0))
+                tlci.tlci-host-callback-status-bad-request
+                (let
+                  [pools : ast.AstNodePoolContext
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)]
+                  [place : ast.AstExpr
+                    (compiler-comptime-host-unspanned-expr
+                      pools
+                      (ast.ast-node-pool-context-expr-get pools place-node))]
+                  [result-node : i64
+                    (match place
+                      [(ast.AstExpr.Var name)
+                        (ast.ast-expr-set-id-with-pools pools name value-node)]
+                      [(ast.AstExpr.StructGet receiver field)
+                        (ast.ast-expr-struct-set-id-with-pools
+                          pools
+                          receiver
+                          field
+                          value-node)]
+                      [(ast.AstExpr.BoxGet receiver)
+                        (ast.ast-expr-box-set-with-pools
+                          pools
+                          receiver
+                          value-node)]
+                      [_ -1])]
+                  (if (< result-node 0)
+                    (begin
+                      (set!
+                        (array-ref compiler-comptime-host-diagnostic 0)
+                        "quasiquote set! target must evaluate to a name, struct field place, or box place")
+                      tlci.tlci-host-callback-status-diagnostic)
+                    (begin
+                      (set!
+                        compiler-comptime-host-stack-len
+                        (- compiler-comptime-host-stack-len 2))
+                      (compiler-comptime-host-push!
+                        (ctfe_support.CompilerCtfeValue.Expr
+                          result-node
+                          (ast.AstType.Unit)))))))))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; array-set!: pop the value, index, and target expressions and push the
 ;; node the parser produces.
 (define (compiler-comptime-host-callback-expr-array-set
@@ -9070,6 +9153,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-struct-set-from-value)
         compiler-comptime-host-callback-expr-struct-set-from-value)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-set-from-place)
+        compiler-comptime-host-callback-expr-set-from-place)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

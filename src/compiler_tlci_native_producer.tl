@@ -1610,11 +1610,31 @@
             (+ arg-opened 1))))]
     ;; an internal StructSet node. The parser folds the place into
     ;; the node, so the field name travels as an immediate like StructGet's.
-    ;; The sentinel field id marks `(set! ,place value)`, whose place shape is
-    ;; only known once the unquoted operand is evaluated; that stays a fallback.
+    ;; The sentinel field id marks `(set! ,place value)`: evaluate the unquoted
+    ;; place and value in source order, then let the value-consuming callback
+    ;; select Var, StructGet, or BoxGet assignment reconstruction. Refs #6550.
     [(compiler_ast_types.AstExpr.StructSet target-node field value-node)
       (if (= field (compiler_ast_types.ast-expr-unquote-set-target-field-id))
-        -1
+        (let
+          [target-opened : i64
+            (embedded-native-template-ops params target-node ops ops-count)]
+          (if (< target-opened 0)
+            -1
+            (let
+              [value-opened : i64
+                (embedded-native-template-ops params value-node ops ops-count)]
+              (if (< value-opened 0)
+                -1
+                (begin
+                  (embedded-native-template-push!
+                    ops
+                    ops-count
+                    (tlci_core.tlci-host-callback-name-shared-view
+                      tlci_core.tlci-host-callback-name-expr-set-from-place)
+                    "0"
+                    "0"
+                    "0")
+                  (+ target-opened value-opened 1))))))
         (let
           [target-opened : i64
             (embedded-native-template-ops params target-node ops ops-count)]
@@ -7757,6 +7777,7 @@
     "(extern comptime-host-expr-struct-get (:symbol \"_tl_comptime_host_expr-struct-get\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-struct-get-from-value (:symbol \"_tl_comptime_host_expr-struct-get-from-value\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-struct-set-from-value (:symbol \"_tl_comptime_host_expr-struct-set-from-value\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-set-from-place (:symbol \"_tl_comptime_host_expr-set-from-place\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-set (:symbol \"_tl_comptime_host_expr-array-set\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-struct-set (:symbol \"_tl_comptime_host_expr-struct-set\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-return (:symbol \"_tl_comptime_host_expr-return\") : (-> i64 i64 i64 i64 i64 i64))\n"

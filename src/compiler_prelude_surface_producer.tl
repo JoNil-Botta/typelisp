@@ -173,7 +173,7 @@
       (surface_facts.surface-typecheck-facts-recording-start!
         (arena.tl_arena_current))]
     [checked : tc.ResultCompilerTypecheckChecked
-      (tc.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+      (tc.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
         load-state
         prefix-cache
         job-state
@@ -182,7 +182,8 @@
         roots
         (tc.tc-prefix-default-cache-scope)
         pools
-        source-names)]
+        source-names
+        (ci.intern-compat-state-capture-active))]
     (match checked
       [(tc.ResultCompilerTypecheckChecked.Partial diag _ _ _)
         (begin

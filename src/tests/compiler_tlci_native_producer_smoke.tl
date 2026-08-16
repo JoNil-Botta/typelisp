@@ -3003,6 +3003,100 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+;; Drive a quasiquoted `(set! ,place ,value)` through each place shape accepted
+;; by interpreted CTFE, plus one rejected shape whose diagnostic must remain
+;; byte-identical. The unquoted place nodes retain their call-site name/field
+;; identities rather than receiving template-source marks. Refs #6550.
+(define (producer-test-dispatch-dynamic-set?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]
+  [mode : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [receiver : i64
+      (producer-test-push-spanned
+        pools
+        (ast.AstExpr.Var (ci.intern "dynamic-receiver")))]
+    [field : i64 (ci.intern "dynamic-field")]
+    [place : i64
+      (producer-test-push-spanned
+        pools
+        (cond
+          [(= mode 0) (ast.AstExpr.Var (ci.intern "dynamic-var"))]
+          [(= mode 1) (ast.AstExpr.StructGet receiver field)]
+          [(= mode 2) (ast.AstExpr.BoxGet receiver)]
+          [else (ast.AstExpr.Literal (ast.AstLiteral.Bool true))]))]
+    [value : i64
+      (producer-test-push-spanned
+        pools
+        (ast.AstExpr.Var (ci.intern "dynamic-value")))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Expr place (ast.AstType.Expr)))
+      (set!
+        (array-ref operands 1)
+        (compiler_ctfe.CompilerCtfeValue.Expr value (ast.AstType.Expr)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        2
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (if (= mode 3)
+                (and
+                  (= dispatch.status tlci.tlci-host-callback-status-diagnostic)
+                  (not
+                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))
+                  (string.eq
+                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-diagnostic-text)
+                    "quasiquote set! target must evaluate to a name, struct field place, or box place"))
+                (and
+                  (= dispatch.status tlci.tlci-host-callback-status-ok)
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                    [(compiler_ctfe.CompilerCtfeValue.Expr
+                        node
+                        (ast.AstType.Unit))
+                      (match (producer-test-expr-get pools node)
+                        [(ast.AstExpr.Set name actual-value)
+                          (and
+                            (= mode 0)
+                            (= name (ci.intern "dynamic-var"))
+                            (= actual-value value))]
+                        [(ast.AstExpr.StructSet
+                            actual-receiver
+                            actual-field
+                            actual-value)
+                          (and
+                            (= mode 1)
+                            (= actual-receiver receiver)
+                            (= actual-field field)
+                            (= actual-value value))]
+                        [(ast.AstExpr.BoxSet actual-receiver actual-value)
+                          (and
+                            (= mode 2)
+                            (= actual-receiver receiver)
+                            (= actual-value value))]
+                        [_ false])]
+                    [_ false])))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 ;: Owner arena for the smoke's image loads. Every one of them releases the
 ;: image before returning, so the arena current at the load already
 ;: outlives it.
@@ -3775,7 +3869,7 @@
       (str_cat.str-cat
         source-base
         "(defmacro (literalmatch [T : type]) : Expr (let [kind : String (type-kind T)] [scalar? : bool (match kind [\"i64\" true] [\"f64\" true] [_ false])] [rank : i64 (match kind [\"i64\" 7] [\"f64\" 9] [_ 11])] [selected : Expr (if scalar? `(scalar ,(comptime.expr-int rank)) `(custom ,(comptime.expr-int rank)))] selected))\n"
-        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n(defmacro (structset [target : Expr] [field : String] [value : Expr]) : Expr (comptime.expr-struct-set target field value))\n")]
+        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n(defmacro (structset [target : Expr] [field : String] [value : Expr]) : Expr (comptime.expr-struct-set target field value))\n(defmacro (dynamicset [place : Expr] [value : Expr]) : Expr `(set! ,place ,value))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
@@ -3832,13 +3926,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 40)
-                              (= captures.len 40)
+                              (= (array-length name-array) 41)
+                              (= captures.len 41)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                   0)
-                                39)
+                                40)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -4085,6 +4179,22 @@
                                 (& loaded)
                                 "package.macros/structset"
                                 4)
+                              (producer-test-dispatch-dynamic-set?
+                                (& loaded)
+                                "package.macros/dynamicset"
+                                0)
+                              (producer-test-dispatch-dynamic-set?
+                                (& loaded)
+                                "package.macros/dynamicset"
+                                1)
+                              (producer-test-dispatch-dynamic-set?
+                                (& loaded)
+                                "package.macros/dynamicset"
+                                2)
+                              (producer-test-dispatch-dynamic-set?
+                                (& loaded)
+                                "package.macros/dynamicset"
+                                3)
                               (producer-test-dispatch-tuple-splice?
                                 (& loaded)
                                 "package.macros/tuplepack"

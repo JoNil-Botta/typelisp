@@ -16802,22 +16802,27 @@
         ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
         ;; survives the scratch arenas active during per-decl typechecking.
         (let
-          [current : TcMacroModuleEnvStateData
-            (tc-macro-module-env-state-data state)]
+          [owner : i64 (tc-hygiene-module-env-cache-arena-handle state)]
           (in-arena
-            (arena.Arena (tc-hygiene-module-env-cache-arena-handle state))
-            (match (tc-module-local-env-cached-id
-              ctx
-              current.hygiene-active-top-env
-              module
-              module-id
-              current.hygiene-module-env-cache)
-              [(ResultTcModuleLocalEnv.Ok def-env next-cache)
-                (begin
-                  (set! current.hygiene-module-env-cache next-cache)
-                  (tc-macro-module-env-state-data-set! state current)
-                  (ResultTcEnv.Ok def-env))]
-              [(ResultTcModuleLocalEnv.Err message) (ResultTcEnv.Err message)]))))
+            (arena.Arena owner)
+            (let
+              ;; Resolving the handle can install the cache arena and publish
+              ;; it into state. Reload after that side effect so a later cache
+              ;; write cannot overwrite the freshly installed ownership fields.
+              [current : TcMacroModuleEnvStateData
+                (tc-macro-module-env-state-data state)]
+              (match (tc-module-local-env-cached-id
+                ctx
+                current.hygiene-active-top-env
+                module
+                module-id
+                current.hygiene-module-env-cache)
+                [(ResultTcModuleLocalEnv.Ok def-env next-cache)
+                  (begin
+                    (set! current.hygiene-module-env-cache next-cache)
+                    (tc-macro-module-env-state-data-set! state current)
+                    (ResultTcEnv.Ok def-env))]
+                [(ResultTcModuleLocalEnv.Err message) (ResultTcEnv.Err message)])))))
       (ResultTcEnv.Err
         "typecheck: macro hygiene definition context unavailable"))))
 

@@ -96043,17 +96043,20 @@
   [alias-id : i64]) : TcMaybeNameId
   (match spec
     [(ast.AstImportSpec.Spec kind _ expected maybe-alias _)
-      (if (macro-import-kind-module-alias? kind)
-        (match maybe-alias
-          [(ast.AstMaybeImportAlias.Some import-alias)
-            (if (= import-alias alias-id)
+      ;; This lookup walks declarations for every uncached qualified macro
+      ;; alias. Keep the cheap alias rejection before import-kind
+      ;; classification so unrelated imports do not pay for the enum match.
+      (match maybe-alias
+        [(ast.AstMaybeImportAlias.Some import-alias)
+          (if (= import-alias alias-id)
+            (if (macro-import-kind-module-alias? kind)
               (match expected
                 [(ast.AstMaybeModuleName.Some target)
                   (TcMaybeNameId.Some target)]
                 [(ast.AstMaybeModuleName.No) (TcMaybeNameId.Some alias-id)])
-              (TcMaybeNameId.No))]
-          [(ast.AstMaybeImportAlias.No) (TcMaybeNameId.No)])
-        (TcMaybeNameId.No))]))
+              (TcMaybeNameId.No))
+            (TcMaybeNameId.No))]
+        [(ast.AstMaybeImportAlias.No) (TcMaybeNameId.No)])]))
 
 (define (macro-import-alias-target-from-wrapped-decl
   [decl : ast.AstDecl]

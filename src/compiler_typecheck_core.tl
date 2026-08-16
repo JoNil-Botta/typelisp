@@ -66772,13 +66772,31 @@
   (kind TcMovedPathKind)
   (origin i64))
 
+;; Moved-path facts are persistent snapshots over an append-only node store.
+;; The singleton stays inline; larger snapshots carry only the stable store
+;; address, their newest node, and their logical length.
+(defstruct TcMovedPathFactNode
+  (fact TcMovedPathFact)
+  (parent i64))
+
+(defstruct TcMovedPathFactStoreData
+  (nodes (__tl_dyn-array TcMovedPathFactNode))
+  (len i64)
+  (owner-arena i64))
+
 (defenum TcMovedPathFacts
   (Nil)
-  (Cons TcMovedPathFact (Box TcMovedPathFacts)))
+  (One TcMovedPathFact)
+  (Dense (Box TcMovedPathFactStoreData) i64 i64))
 
 (defenum TcMovedPathFactsRemove
   (Missing)
   (Removed TcMovedPathFacts))
+
+(defenum TcMovedPathFactsFilter
+  (Root i64)
+  (Lending TcMovePath)
+  (Pending i64))
 
 (defstruct TcParamStorageOriginNode
   (name-id i64)
@@ -66934,11 +66952,145 @@
 (define (tc-moved-paths [set : TcMovedSet]) : TcMovedPathFacts
   set.paths)
 
+(define (tc-moved-path-fact-store-new [first : TcMovedPathFact]) : (Box
+    TcMovedPathFactStoreData)
+  (let
+    [nodes : (__tl_dyn-array TcMovedPathFactNode)
+      (array.make-array TcMovedPathFactNode 4)]
+    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    (begin
+      (set! (array-ref nodes 0) (TcMovedPathFactNode first -1))
+      (box (TcMovedPathFactStoreData nodes 1 owner)))))
+
+(define (tc-moved-path-fact-store-grow!
+  [data : (&mut data TcMovedPathFactStoreData)]
+  [required : i64]) : unit
+  (let
+    [old : (__tl_dyn-array TcMovedPathFactNode) data.nodes]
+    [old-capacity : i64 (array.length old)]
+    [next-capacity : i64 old-capacity]
+    (if (<= required old-capacity)
+      unit
+      (begin
+        (while (< next-capacity required)
+          (set! next-capacity (* next-capacity 2)))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [next : (__tl_dyn-array TcMovedPathFactNode)
+              (array.make-array TcMovedPathFactNode next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index data.len)
+                (let
+                  [node : TcMovedPathFactNode (array-ref old index)]
+                  [kind : TcMovedPathKind
+                    (match node.fact.kind
+                      [(TcMovedPathKind.Move) (TcMovedPathKind.Move)]
+                      [(TcMovedPathKind.BorrowShared)
+                        (TcMovedPathKind.BorrowShared)]
+                      [(TcMovedPathKind.BorrowMut) (TcMovedPathKind.BorrowMut)]
+                      [(TcMovedPathKind.BorrowTwoPhaseMut)
+                        (TcMovedPathKind.BorrowTwoPhaseMut)]
+                      [(TcMovedPathKind.BorrowLending binding-id)
+                        (TcMovedPathKind.BorrowLending binding-id)]
+                      [(TcMovedPathKind.BorrowLendingUsed binding-id)
+                        (TcMovedPathKind.BorrowLendingUsed binding-id)]
+                      [(TcMovedPathKind.BorrowPending scope-id)
+                        (TcMovedPathKind.BorrowPending scope-id)])]
+                  (begin
+                    (set!
+                      (array-ref next index)
+                      (TcMovedPathFactNode
+                        (TcMovedPathFact
+                          (TcMovePath
+                            node.fact.path.root
+                            (TcMovePathSegments
+                              node.fact.path.segments.store-address
+                              node.fact.path.segments.tail
+                              node.fact.path.segments.len))
+                          kind
+                          node.fact.origin)
+                        node.parent))
+                    (set! index (+ index 1)))))
+              (set! data.nodes next))))))))
+
+(define (tc-moved-path-fact-store-push!
+  [data : (&mut data TcMovedPathFactStoreData)]
+  [parent : i64]
+  [fact : TcMovedPathFact]) : i64
+  (let
+    [index : i64 data.len]
+    (begin
+      (tc-moved-path-fact-store-grow! data (+ index 1))
+      (set! (array-ref data.nodes index) (TcMovedPathFactNode fact parent))
+      (set! data.len (+ index 1))
+      index)))
+
+(define (tc-moved-path-fact-store-node
+  [data : (& data TcMovedPathFactStoreData)]
+  [index : i64]) : TcMovedPathFactNode
+  (unsafe
+    (ptr-read (ptr-offset (array-data data.nodes) index))))
+
+(define (tc-moved-path-facts-empty? [facts : TcMovedPathFacts]) : bool
+  (match facts
+    [(TcMovedPathFacts.Nil) true]
+    [_ false]))
+
 (define (tc-moved-path-facts-len [facts : TcMovedPathFacts]) : i64
   (match facts
     [(TcMovedPathFacts.Nil) 0]
-    [(TcMovedPathFacts.Cons _ rest)
-      (+ 1 (tc-moved-path-facts-len (__tl-box-place rest)))]))
+    [(TcMovedPathFacts.One _) 1]
+    [(TcMovedPathFacts.Dense _ _ len) len]))
+
+(define (tc-moved-path-facts-head [facts : TcMovedPathFacts]) : TcMovedPathFact
+  (match facts
+    [(TcMovedPathFacts.Nil)
+      (io.panic "typecheck: moved-path fact head of empty snapshot")]
+    [(TcMovedPathFacts.One fact) fact]
+    [(TcMovedPathFacts.Dense store tail _)
+      (__tl-project-field
+        (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
+        fact)]))
+
+(define (tc-moved-path-facts-rest [facts : TcMovedPathFacts]) : TcMovedPathFacts
+  (match facts
+    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
+    [(TcMovedPathFacts.One _) TcMovedPathFacts.Nil]
+    [(TcMovedPathFacts.Dense store tail len)
+      (let
+        [parent : i64
+          (__tl-project-field
+            (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
+            parent)]
+        (if (= len 2)
+          (TcMovedPathFacts.One
+            (__tl-project-field
+              (tc-moved-path-fact-store-node (& (__tl-box-place store)) parent)
+              fact))
+          (TcMovedPathFacts.Dense store parent (- len 1))))]))
+
+(define (tc-moved-path-facts-cons
+  [facts : TcMovedPathFacts]
+  [fact : TcMovedPathFact]) : TcMovedPathFacts
+  (match facts
+    [(TcMovedPathFacts.Nil) (TcMovedPathFacts.One fact)]
+    [(TcMovedPathFacts.One previous)
+      (let
+        [store : (Box TcMovedPathFactStoreData)
+          (tc-moved-path-fact-store-new previous)]
+        [tail : i64
+          (tc-moved-path-fact-store-push! (&mut (__tl-box-place store)) 0 fact)]
+        (TcMovedPathFacts.Dense store tail 2))]
+    [(TcMovedPathFacts.Dense store tail len)
+      (let
+        [next-tail : i64
+          (tc-moved-path-fact-store-push!
+            (&mut (__tl-box-place store))
+            tail
+            fact)]
+        (TcMovedPathFacts.Dense store next-tail (+ len 1)))]))
 
 (define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
   set.hidden-atomic-users)
@@ -67520,8 +67672,9 @@
 (define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
   fact.origin)
 
-;; An index that owns its storage. Used wherever a fact is known up front, so
-;; the seed cell that only a deferred index needs is never created.
+(define (tc-moved-path-fact-path [fact : TcMovedPathFact]) : TcMovePath
+  fact.path)
+
 (define (tc-moved-base-path-kind? [kind : TcMovedPathKind]) : bool
   (match kind
     [(TcMovedPathKind.Move) true]
@@ -67577,37 +67730,35 @@
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMovedPathFactsRemove
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcMovedPathFactsRemove.Missing)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    (TcMovedPathFactsRemove.Missing)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (tc-moved-path-kind-eq? fact.kind kind))
-        (TcMovedPathFactsRemove.Removed (__tl-box-place rest))
-        (match (tc-moved-path-facts-remove-exact
-          (__tl-box-place rest)
-          path
-          kind)
+        (TcMovedPathFactsRemove.Removed rest)
+        (match (tc-moved-path-facts-remove-exact rest path kind)
           [(TcMovedPathFactsRemove.Missing) (TcMovedPathFactsRemove.Missing)]
           [(TcMovedPathFactsRemove.Removed tail)
             (TcMovedPathFactsRemove.Removed
-              (TcMovedPathFacts.Cons fact (box tail)))]))]))
+              (tc-moved-path-facts-cons tail fact))])))))
 
 (define (tc-moved-path-facts-contains-exact-kind?
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (tc-moved-path-kind-eq? fact.kind kind))
         true
-        (tc-moved-path-facts-contains-exact-kind?
-          (__tl-box-place rest)
-          path
-          kind))]))
+        (tc-moved-path-facts-contains-exact-kind? rest path kind)))))
 
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
@@ -67621,7 +67772,7 @@
       (TcMovedSet
         (tc-moved-roots set)
         (tc-moved-partials set)
-        (TcMovedPathFacts.Cons fact (box (tc-moved-paths set)))
+        (tc-moved-path-facts-cons (tc-moved-paths set) fact)
         (tc-moved-hidden-atomic-users set)
         (tc-moved-param-storage-origins set)))))
 
@@ -67643,16 +67794,18 @@
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (tc-moved-path-kind-eq? fact.kind kind))
         (TcMoveConflict.Some
           (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-exact-conflict-kind-at (__tl-box-place rest) path kind))]))
+        (tc-moved-path-exact-conflict-kind-at rest path kind)))))
 
 (define (tc-moved-path-exact-conflict-kind
   [set : TcMovedSet]
@@ -67906,31 +68059,35 @@
 (define (tc-moved-path-conflict-at
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-moved-base-path-kind? fact.kind)
         (tc-move-path-conflicts? fact.path path))
         (TcMoveConflict.Some
           (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-conflict-at (__tl-box-place rest) path))]))
+        (tc-moved-path-conflict-at rest path)))))
 
 (define (tc-moved-path-conflict-kind-at
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-moved-path-kind-eq? fact.kind kind)
         (tc-move-path-conflicts? fact.path path))
         (TcMoveConflict.Some
           (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-conflict-kind-at (__tl-box-place rest) path kind))]))
+        (tc-moved-path-conflict-kind-at rest path kind)))))
 
 (define (tc-moved-path-conflict-kind
   [set : TcMovedSet]
@@ -67946,18 +68103,56 @@
     [(TcMoveConflict.Some _ _) true]
     [TcMoveConflict.No false]))
 
+(define (tc-moved-path-fact-filter-remove?
+  [fact : TcMovedPathFact]
+  [filter : TcMovedPathFactsFilter]) : bool
+  (match filter
+    [(TcMovedPathFactsFilter.Root root-id)
+      (= (tc-move-path-root-id fact.path) root-id)]
+    [(TcMovedPathFactsFilter.Lending path)
+      (and
+        (tc-move-path-eq? fact.path path)
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending _) true]
+          [(TcMovedPathKind.BorrowLendingUsed _) true]
+          [_ false]))]
+    [(TcMovedPathFactsFilter.Pending scope-id)
+      (match fact.kind
+        [(TcMovedPathKind.BorrowPending fact-scope-id)
+          (= fact-scope-id scope-id)]
+        [_ false])]))
+
+(define (tc-moved-path-facts-filter-step
+  [facts : TcMovedPathFacts]
+  [filter : TcMovedPathFactsFilter]) : TcMovedPathFactsRemove
+  (if (tc-moved-path-facts-empty? facts)
+    (TcMovedPathFactsRemove.Missing)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [remove : bool (tc-moved-path-fact-filter-remove? fact filter)]
+      (match (tc-moved-path-facts-filter-step rest filter)
+        [(TcMovedPathFactsRemove.Missing)
+          (if remove
+            (TcMovedPathFactsRemove.Removed rest)
+            (TcMovedPathFactsRemove.Missing))]
+        [(TcMovedPathFactsRemove.Removed tail)
+          (if remove
+            (TcMovedPathFactsRemove.Removed tail)
+            (TcMovedPathFactsRemove.Removed
+              (tc-moved-path-facts-cons tail fact)))]))))
+
+(define (tc-moved-path-facts-filter
+  [facts : TcMovedPathFacts]
+  [filter : TcMovedPathFactsFilter]) : TcMovedPathFacts
+  (match (tc-moved-path-facts-filter-step facts filter)
+    [(TcMovedPathFactsRemove.Missing) facts]
+    [(TcMovedPathFactsRemove.Removed tail) tail]))
+
 (define (tc-moved-path-facts-remove-root
   [facts : TcMovedPathFacts]
   [root-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-root (__tl-box-place rest) root-id)]
-        (if (= (tc-move-path-root-id fact.path) root-id)
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Root root-id)))
 
 (define (tc-moved-remove-root-state [set : TcMovedSet] [name-id : i64]) : TcMovedSet
   (let
@@ -67975,16 +68170,18 @@
         name-id))))
 
 (define (tc-moved-any-root-path-at? [facts : TcMovedPathFacts] [root-id : i64]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (match fact.kind
           [(TcMovedPathKind.Move) true]
           [_ false])
         (= (tc-move-path-root-id fact.path) root-id))
         true
-        (tc-moved-any-root-path-at? (__tl-box-place rest) root-id))]))
+        (tc-moved-any-root-path-at? rest root-id)))))
 
 (define (tc-moved-any-root-path? [set : TcMovedSet] [root-id : i64]) : bool
   (tc-moved-any-root-path-at? (tc-moved-paths set) root-id))
@@ -67992,9 +68189,11 @@
 (define (tc-moved-root-path-conflict-loop
   [facts : TcMovedPathFacts]
   [root-id : i64]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (match fact.kind
           [(TcMovedPathKind.Move) true]
@@ -68003,7 +68202,7 @@
         (TcMoveConflict.Some
           (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-root-path-conflict-loop (__tl-box-place rest) root-id))]))
+        (tc-moved-root-path-conflict-loop rest root-id)))))
 
 (define (tc-moved-root-path-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
   (tc-moved-root-path-conflict-loop (tc-moved-paths set) root-id))
@@ -68029,16 +68228,18 @@
       (tc-moved-remove-partial without-path root-id))))
 
 (define (tc-moved-union-path-loop [a : TcMovedPathFacts] [out : TcMovedSet]) : TcMovedSet
-  (match a
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? a)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head a)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest a)]
       (tc-moved-union-path-loop
-        (__tl-box-place rest)
+        rest
         (tc-moved-add-path-fact
           out
           fact.path
           fact.kind
-          (tc-moved-path-fact-origin fact)))]))
+          (tc-moved-path-fact-origin fact))))))
 
 (define (tc-moved-union-id-loop
   [a : (& a tc_i64_i64_map.Map)]
@@ -76155,15 +76356,17 @@
 (define (tc-borrow-check-lending-binding-at
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMaybeNameId
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcMaybeNameId.No)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    (TcMaybeNameId.No)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (tc-move-path-eq? fact.path path)
         (match fact.kind
           [(TcMovedPathKind.BorrowLending binding-id)
             (TcMaybeNameId.Some binding-id)]
-          [_ (tc-borrow-check-lending-binding-at (__tl-box-place rest) path)])
-        (tc-borrow-check-lending-binding-at (__tl-box-place rest) path))]))
+          [_ (tc-borrow-check-lending-binding-at rest path)])
+        (tc-borrow-check-lending-binding-at rest path)))))
 
 (define (tc-borrow-check-lending-binding
   [facts : TcMovedPathFacts]
@@ -76186,43 +76389,40 @@
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [binding-id : i64]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (match fact.kind
           [(TcMovedPathKind.BorrowLendingUsed used-id) (= used-id binding-id)]
           [_ false]))
         true
-        (tc-borrow-check-lending-binding-used-at?
-          (__tl-box-place rest)
-          path
-          binding-id))]))
+        (tc-borrow-check-lending-binding-used-at? rest path binding-id)))))
 
 (define (tc-borrow-check-note-lending-use-at
   [facts : TcMovedPathFacts]
   [binding-id : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending fact-binding-id)
-              (if (= fact-binding-id binding-id)
-                (tc-moved-add-path-fact
-                  out
-                  fact.path
-                  (TcMovedPathKind.BorrowLendingUsed binding-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-note-lending-use-at
-          (__tl-box-place rest)
-          binding-id
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending fact-binding-id)
+            (if (= fact-binding-id binding-id)
+              (tc-moved-add-path-fact
+                out
+                fact.path
+                (TcMovedPathKind.BorrowLendingUsed binding-id)
+                (tc-moved-path-fact-origin fact))
+              out)]
+          [_ out])]
+      (tc-borrow-check-note-lending-use-at rest binding-id out2))))
 
 (define (tc-borrow-check-note-lending-use
   [borrowed : TcMovedSet]
@@ -76235,27 +76435,26 @@
 (define (tc-borrow-check-propagate-lending-uses-at
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLendingUsed _)
-              (let
-                [path : TcMovePath fact.path]
-                (match (tc-borrow-check-lending-binding
-                  (tc-moved-paths out)
-                  path)
-                  [(TcMaybeNameId.Some binding-id)
-                    (tc-moved-add-path-fact
-                      out
-                      path
-                      (TcMovedPathKind.BorrowLendingUsed binding-id)
-                      (tc-moved-path-fact-origin fact))]
-                  [(TcMaybeNameId.No) out]))]
-            [_ out])]
-        (tc-borrow-check-propagate-lending-uses-at (__tl-box-place rest) out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLendingUsed _)
+            (let
+              [path : TcMovePath fact.path]
+              (match (tc-borrow-check-lending-binding (tc-moved-paths out) path)
+                [(TcMaybeNameId.Some binding-id)
+                  (tc-moved-add-path-fact
+                    out
+                    path
+                    (TcMovedPathKind.BorrowLendingUsed binding-id)
+                    (tc-moved-path-fact-origin fact))]
+                [(TcMaybeNameId.No) out]))]
+          [_ out])]
+      (tc-borrow-check-propagate-lending-uses-at rest out2))))
 
 (define (tc-borrow-check-propagate-lending-uses
   [from : TcMovedSet]
@@ -76272,31 +76471,32 @@
   [bound : TcStringList]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending binding-id)
-              (if (tc-expr-uses-free-name?
-                expr-bases
-                body
-                (tc-env-key-name-text binding-id)
-                bound)
-                (tc-moved-add-path-fact
-                  out
-                  fact.path
-                  (TcMovedPathKind.BorrowLendingUsed binding-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-note-called-lambda-capture-uses-at
-          expr-bases
-          body
-          bound
-          (__tl-box-place rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending binding-id)
+            (if (tc-expr-uses-free-name?
+              expr-bases
+              body
+              (tc-env-key-name-text binding-id)
+              bound)
+              (tc-moved-add-path-fact
+                out
+                fact.path
+                (TcMovedPathKind.BorrowLendingUsed binding-id)
+                (tc-moved-path-fact-origin fact))
+              out)]
+          [_ out])]
+      (tc-borrow-check-note-called-lambda-capture-uses-at
+        expr-bases
+        body
+        bound
+        rest
+        out2))))
 
 (define (tc-borrow-check-note-called-lambda-capture-uses
   [expr-bases : i64]
@@ -76330,9 +76530,11 @@
   [binding-id : i64]
   [half : i64]
   [select-half : bool]) : TcMaybeMovePath
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcMaybeMovePath.No)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    (TcMaybeMovePath.No)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (match fact.kind
           [(TcMovedPathKind.BorrowLending fact-binding-id)
@@ -76345,10 +76547,10 @@
             (tc-move-path-slice-half? fact.path 1))))
         (TcMaybeMovePath.Some fact.path)
         (tc-borrow-check-split-provenance-for-binding-at
-          (__tl-box-place rest)
+          rest
           binding-id
           half
-          select-half))]))
+          select-half)))))
 
 (define (tc-borrow-check-split-provenance
   [expr-bases : i64]
@@ -76417,42 +76619,45 @@
   [half : i64]
   [binding-id : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [copy : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending fact-binding-id)
-              (and
-                (= fact-binding-id source-binding-id)
-                (or
-                  (and
-                    (not (tc-move-path-slice-half? fact.path 0))
-                    (not (tc-move-path-slice-half? fact.path 1)))
-                  (tc-move-path-slice-half? fact.path half)))]
-            [_ false])]
-        [out2 : TcMovedSet
-          (if copy
-            (tc-moved-add-path-fact
-              out
-              fact.path
-              (TcMovedPathKind.BorrowLending binding-id)
-              (tc-moved-path-fact-origin fact))
-            out)]
-        (tc-borrow-check-rebind-split-projection-at
-          (__tl-box-place rest)
-          source-binding-id
-          half
-          binding-id
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [copy : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending fact-binding-id)
+            (and
+              (= fact-binding-id source-binding-id)
+              (or
+                (and
+                  (not (tc-move-path-slice-half? fact.path 0))
+                  (not (tc-move-path-slice-half? fact.path 1)))
+                (tc-move-path-slice-half? fact.path half)))]
+          [_ false])]
+      [out2 : TcMovedSet
+        (if copy
+          (tc-moved-add-path-fact
+            out
+            fact.path
+            (TcMovedPathKind.BorrowLending binding-id)
+            (tc-moved-path-fact-origin fact))
+          out)]
+      (tc-borrow-check-rebind-split-projection-at
+        rest
+        source-binding-id
+        half
+        binding-id
+        out2))))
 
 (define (tc-borrow-check-binding-has-split-provenance?
   [facts : TcMovedPathFacts]
   [binding-id : i64]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (match fact.kind
           [(TcMovedPathKind.BorrowLending fact-binding-id)
@@ -76462,9 +76667,7 @@
           (tc-move-path-slice-half? fact.path 0)
           (tc-move-path-slice-half? fact.path 1)))
         true
-        (tc-borrow-check-binding-has-split-provenance?
-          (__tl-box-place rest)
-          binding-id))]))
+        (tc-borrow-check-binding-has-split-provenance? rest binding-id)))))
 
 (define (tc-borrow-check-rebind-split-projection
   [expr-bases : i64]
@@ -76493,20 +76696,7 @@
 (define (tc-moved-path-facts-remove-lending
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-lending (__tl-box-place rest) path)]
-        (if (and
-          (tc-move-path-eq? fact.path path)
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending _) true]
-            [(TcMovedPathKind.BorrowLendingUsed _) true]
-            [_ false]))
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Lending path)))
 
 (define (tc-borrow-check-remove-borrow-path
   [borrowed : TcMovedSet]
@@ -76780,53 +76970,53 @@
   [result-lifetimes : TcNameIdList]
   [direct-path : TcMaybeMovePath]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [keep-kind : bool
-          (match kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [(TcMovedPathKind.BorrowMut) true]
-            [_ false])]
-        [keep-direct : bool
-          (match direct-path
-            [(TcMaybeMovePath.Some direct)
-              (tc-move-path-conflicts? path direct)]
-            [(TcMaybeMovePath.No) true])]
-        [missing : bool
-          (match (tc-moved-path-exact-conflict-kind out path kind)
-            [(TcMoveConflict.Some _ _) false]
-            [TcMoveConflict.No true])]
-        [out2 : TcMovedSet
-          (if (and
-            keep-kind
-            (tc-borrow-check-root-in-scope?
-              ctx
-              env
-              outer-locals
-              (tc-move-path-root-id path))
-            (tc-name-id-list-contains
-              result-lifetimes
-              (tc-borrow-check-path-lifetime ctx env path))
-            keep-direct
-            missing)
-            (tc-moved-add-path-fact
-              out
-              path
-              kind
-              (tc-moved-path-fact-origin fact))
-            out)]
-        (tc-borrow-check-propagate-return-borrows-at
-          ctx
-          env
-          outer-locals
-          (__tl-box-place rest)
-          result-lifetimes
-          direct-path
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [keep-kind : bool
+        (match kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [(TcMovedPathKind.BorrowMut) true]
+          [_ false])]
+      [keep-direct : bool
+        (match direct-path
+          [(TcMaybeMovePath.Some direct) (tc-move-path-conflicts? path direct)]
+          [(TcMaybeMovePath.No) true])]
+      [missing : bool
+        (match (tc-moved-path-exact-conflict-kind out path kind)
+          [(TcMoveConflict.Some _ _) false]
+          [TcMoveConflict.No true])]
+      [out2 : TcMovedSet
+        (if (and
+          keep-kind
+          (tc-borrow-check-root-in-scope?
+            ctx
+            env
+            outer-locals
+            (tc-move-path-root-id path))
+          (tc-name-id-list-contains
+            result-lifetimes
+            (tc-borrow-check-path-lifetime ctx env path))
+          keep-direct
+          missing)
+          (tc-moved-add-path-fact
+            out
+            path
+            kind
+            (tc-moved-path-fact-origin fact))
+          out)]
+      (tc-borrow-check-propagate-return-borrows-at
+        ctx
+        env
+        outer-locals
+        rest
+        result-lifetimes
+        direct-path
+        out2))))
 
 (define (tc-borrow-check-propagate-return-borrows
   [ctx : TcContext]
@@ -76870,43 +77060,44 @@
   [result-lifetimes : TcNameIdList]
   [origin : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [shared : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [_ false])]
-        [new : bool
-          (match (tc-moved-path-exact-conflict-kind prior path fact.kind)
-            [(TcMoveConflict.Some _ _) false]
-            [TcMoveConflict.No true])]
-        [out2 : TcMovedSet
-          (if (and
-            shared
-            new
-            (tc-borrow-check-root-in-scope?
-              ctx
-              env
-              locals
-              (tc-move-path-root-id path))
-            (tc-name-id-list-contains
-              result-lifetimes
-              (tc-borrow-check-path-lifetime ctx env path)))
-            (tc-borrow-check-add-lending-marker out path binding-id origin)
-            out)]
-        (tc-borrow-check-mark-new-return-borrows-at
-          ctx
-          env
-          locals
-          prior
-          (__tl-box-place rest)
-          binding-id
-          result-lifetimes
-          origin
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [shared : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [_ false])]
+      [new : bool
+        (match (tc-moved-path-exact-conflict-kind prior path fact.kind)
+          [(TcMoveConflict.Some _ _) false]
+          [TcMoveConflict.No true])]
+      [out2 : TcMovedSet
+        (if (and
+          shared
+          new
+          (tc-borrow-check-root-in-scope?
+            ctx
+            env
+            locals
+            (tc-move-path-root-id path))
+          (tc-name-id-list-contains
+            result-lifetimes
+            (tc-borrow-check-path-lifetime ctx env path)))
+          (tc-borrow-check-add-lending-marker out path binding-id origin)
+          out)]
+      (tc-borrow-check-mark-new-return-borrows-at
+        ctx
+        env
+        locals
+        prior
+        rest
+        binding-id
+        result-lifetimes
+        origin
+        out2))))
 
 ;; A propagated returned borrow needs an NLL marker for the outer result
 ;; binding. Mark only source paths newly introduced by the initializer; this
@@ -76962,16 +77153,18 @@
 (define (tc-borrow-check-pending-path-at?
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (match fact.kind
           [(TcMovedPathKind.BorrowPending _) true]
           [_ false]))
         true
-        (tc-borrow-check-pending-path-at? (__tl-box-place rest) path))]))
+        (tc-borrow-check-pending-path-at? rest path)))))
 
 ;; Sequence walkers do not need to scan their full remaining syntax eagerly.
 ;; Guard every lending borrow while a later sibling exists; if the current
@@ -76981,23 +77174,21 @@
   [scope-id : i64]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending _)
-              (tc-moved-add-path-fact
-                out
-                fact.path
-                (TcMovedPathKind.BorrowPending scope-id)
-                (tc-moved-path-fact-origin fact))]
-            [_ out])]
-        (tc-borrow-check-add-all-pending-markers-at
-          scope-id
-          (__tl-box-place rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending _)
+            (tc-moved-add-path-fact
+              out
+              fact.path
+              (TcMovedPathKind.BorrowPending scope-id)
+              (tc-moved-path-fact-origin fact))]
+          [_ out])]
+      (tc-borrow-check-add-all-pending-markers-at scope-id rest out2))))
 
 (define (tc-borrow-check-add-all-pending-markers
   [borrowed : TcMovedSet]
@@ -77015,20 +77206,7 @@
 (define (tc-moved-path-facts-remove-pending-scope
   [facts : TcMovedPathFacts]
   [scope-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-pending-scope
-            (__tl-box-place rest)
-            scope-id)]
-        (if (match fact.kind
-          [(TcMovedPathKind.BorrowPending fact-scope-id)
-            (= fact-scope-id scope-id)]
-          [_ false])
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Pending scope-id)))
 
 (define (tc-borrow-check-remove-pending-markers
   [borrowed : TcMovedSet]
@@ -77051,69 +77229,70 @@
   [protected : TcMovedSet]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [shared : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [_ false])]
-        [out2 : TcMovedSet
-          (if (or
-            (not shared)
-            (tc-borrow-check-pending-path-at? (tc-moved-paths out) path)
-            (and
-              (not (tc-borrow-check-has-lending-binding? out path))
-              (tc-borrow-check-protected-path? protected path)))
-            out
-            (match (tc-borrow-check-lending-binding (tc-moved-paths out) path)
-              [(TcMaybeNameId.Some lending-binding-id)
-                (cond
-                  [(not
-                      (tc-borrow-check-lending-binding-used-at?
-                        (tc-moved-paths out)
-                        path
-                        lending-binding-id))
-                    out]
-                  [(tc-expr-list-uses-free-name?
-                      expr-bases
-                      exprs
-                      (tc-env-key-name-text lending-binding-id)
-                      TcStringList.Nil)
-                    out]
-                  [(tc-borrow-check-lifetime-used-in-exprs?
-                      expr-bases
-                      ctx
-                      env
-                      locals
-                      exprs
-                      (tc-borrow-check-path-lifetime ctx env path))
-                    (tc-moved-remove-path-kind
-                      out
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [shared : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [_ false])]
+      [out2 : TcMovedSet
+        (if (or
+          (not shared)
+          (tc-borrow-check-pending-path-at? (tc-moved-paths out) path)
+          (and
+            (not (tc-borrow-check-has-lending-binding? out path))
+            (tc-borrow-check-protected-path? protected path)))
+          out
+          (match (tc-borrow-check-lending-binding (tc-moved-paths out) path)
+            [(TcMaybeNameId.Some lending-binding-id)
+              (cond
+                [(not
+                    (tc-borrow-check-lending-binding-used-at?
+                      (tc-moved-paths out)
                       path
-                      (TcMovedPathKind.BorrowLending lending-binding-id))]
-                  [else (tc-borrow-check-remove-borrow-path out path)])]
-              [(TcMaybeNameId.No)
-                (if (tc-borrow-check-lifetime-used-in-exprs?
-                  expr-bases
-                  ctx
-                  env
-                  locals
-                  exprs
-                  (tc-borrow-check-path-lifetime ctx env path))
-                  out
-                  (tc-borrow-check-remove-borrow-path out path))]))]
-        (tc-borrow-check-prune-before-exprs-loop
-          expr-bases
-          ctx
-          env
-          locals
-          exprs
-          protected
-          (__tl-box-place rest)
-          out2))]))
+                      lending-binding-id))
+                  out]
+                [(tc-expr-list-uses-free-name?
+                    expr-bases
+                    exprs
+                    (tc-env-key-name-text lending-binding-id)
+                    TcStringList.Nil)
+                  out]
+                [(tc-borrow-check-lifetime-used-in-exprs?
+                    expr-bases
+                    ctx
+                    env
+                    locals
+                    exprs
+                    (tc-borrow-check-path-lifetime ctx env path))
+                  (tc-moved-remove-path-kind
+                    out
+                    path
+                    (TcMovedPathKind.BorrowLending lending-binding-id))]
+                [else (tc-borrow-check-remove-borrow-path out path)])]
+            [(TcMaybeNameId.No)
+              (if (tc-borrow-check-lifetime-used-in-exprs?
+                expr-bases
+                ctx
+                env
+                locals
+                exprs
+                (tc-borrow-check-path-lifetime ctx env path))
+                out
+                (tc-borrow-check-remove-borrow-path out path))]))]
+      (tc-borrow-check-prune-before-exprs-loop
+        expr-bases
+        ctx
+        env
+        locals
+        exprs
+        protected
+        rest
+        out2))))
 
 (define (tc-borrow-check-prune-before-exprs
   [expr-bases : i64]
@@ -77737,54 +77916,55 @@
   [facts : TcMovedPathFacts]
   [value : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [borrow-kind : bool
-          (match kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [(TcMovedPathKind.BorrowMut) true]
-            [(TcMovedPathKind.BorrowTwoPhaseMut) true]
-            [_ false])]
-        [new : bool
-          (not
-            (tc-moved-path-facts-contains-exact-kind?
-              (tc-moved-paths prior)
-              path
-              kind))]
-        [remove : bool
-          (if (and borrow-kind new)
-            (let
-              [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
-              (not
-                (or
-                  (tc-borrow-check-expr-type-contains-lifetime?
-                    ctx
-                    env
-                    value
-                    lifetime)
-                  (tc-borrow-check-expr-stores-lifetime?
-                    ctx
-                    expr-bases
-                    env
-                    value
-                    lifetime))))
-            false)]
-        [out2 : TcMovedSet
-          (if remove
-            (tc-moved-remove-path-kind out path kind)
-            out)]
-        (tc-borrow-check-prune-value-temporaries-at
-          ctx
-          expr-bases
-          env
-          prior
-          (__tl-box-place rest)
-          value
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [borrow-kind : bool
+        (match kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [(TcMovedPathKind.BorrowMut) true]
+          [(TcMovedPathKind.BorrowTwoPhaseMut) true]
+          [_ false])]
+      [new : bool
+        (not
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths prior)
+            path
+            kind))]
+      [remove : bool
+        (if (and borrow-kind new)
+          (let
+            [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
+            (not
+              (or
+                (tc-borrow-check-expr-type-contains-lifetime?
+                  ctx
+                  env
+                  value
+                  lifetime)
+                (tc-borrow-check-expr-stores-lifetime?
+                  ctx
+                  expr-bases
+                  env
+                  value
+                  lifetime))))
+          false)]
+      [out2 : TcMovedSet
+        (if remove
+          (tc-moved-remove-path-kind out path kind)
+          out)]
+      (tc-borrow-check-prune-value-temporaries-at
+        ctx
+        expr-bases
+        env
+        prior
+        rest
+        value
+        out2))))
 
 ;; Argument auto-borrows created while evaluating an assignment RHS end after
 ;; that value is produced unless the result or a nested store retains their
@@ -78397,9 +78577,11 @@
   [borrowed : TcMovedSet]
   [facts : TcMovedPathFacts]
   [primary : ast.AstExpr]) : TcBorrowCheckResult
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcBorrowCheckResult.Ok borrowed)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (match fact.kind
         [(TcMovedPathKind.BorrowTwoPhaseMut)
           (let
@@ -78419,14 +78601,14 @@
                 (tc-borrow-check-activate-two-phase-mut-borrows-loop
                   expr-bases
                   borrowed
-                  (__tl-box-place rest)
+                  rest
                   primary)]))]
         [_
           (tc-borrow-check-activate-two-phase-mut-borrows-loop
             expr-bases
             borrowed
-            (__tl-box-place rest)
-            primary)])]))
+            rest
+            primary)]))))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows
   [expr-bases : i64]
@@ -79455,32 +79637,33 @@
   [before : TcMovedSet]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [out2 : TcMovedSet
-          (if (or
-            (match (tc-moved-path-exact-conflict-kind before path kind)
-              [(TcMoveConflict.Some _ _) true]
-              [TcMoveConflict.No false])
-            (match (tc-moved-path-exact-conflict-kind out path kind)
-              [(TcMoveConflict.Some _ _) true]
-              [TcMoveConflict.No false]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [out2 : TcMovedSet
+        (if (or
+          (match (tc-moved-path-exact-conflict-kind before path kind)
+            [(TcMoveConflict.Some _ _) true]
+            [TcMoveConflict.No false])
+          (match (tc-moved-path-exact-conflict-kind out path kind)
+            [(TcMoveConflict.Some _ _) true]
+            [TcMoveConflict.No false]))
+          out
+          (tc-moved-add-path-fact
             out
-            (tc-moved-add-path-fact
-              out
-              path
-              kind
-              (tc-moved-path-fact-origin fact)))]
-        (tc-borrow-check-loop-protect-carried-facts-loop
-          ctx
-          loop-env
-          before
-          (__tl-box-place rest)
-          out2))]))
+            path
+            kind
+            (tc-moved-path-fact-origin fact)))]
+      (tc-borrow-check-loop-protect-carried-facts-loop
+        ctx
+        loop-env
+        before
+        rest
+        out2))))
 
 (define (tc-borrow-check-loop-protect-carried-facts
   [ctx : TcContext]
@@ -79502,38 +79685,39 @@
   [expr : ast.AstExpr]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [out2 : TcMovedSet
-          (if (match (tc-moved-path-exact-conflict-kind out path kind)
-            [(TcMoveConflict.Some _ _) true]
-            [TcMoveConflict.No false])
-            out
-            (let
-              [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
-              (if (tc-borrow-check-expr-stores-lifetime?
-                ctx
-                expr-bases
-                env
-                expr
-                lifetime)
-                (tc-moved-add-path-fact
-                  out
-                  path
-                  kind
-                  (tc-moved-path-fact-origin fact))
-                out)))]
-        (tc-borrow-check-loop-protect-stored-facts-loop
-          ctx
-          expr-bases
-          env
-          expr
-          (__tl-box-place rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [out2 : TcMovedSet
+        (if (match (tc-moved-path-exact-conflict-kind out path kind)
+          [(TcMoveConflict.Some _ _) true]
+          [TcMoveConflict.No false])
+          out
+          (let
+            [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
+            (if (tc-borrow-check-expr-stores-lifetime?
+              ctx
+              expr-bases
+              env
+              expr
+              lifetime)
+              (tc-moved-add-path-fact
+                out
+                path
+                kind
+                (tc-moved-path-fact-origin fact))
+              out)))]
+      (tc-borrow-check-loop-protect-stored-facts-loop
+        ctx
+        expr-bases
+        env
+        expr
+        rest
+        out2))))
 
 (define (tc-borrow-check-loop-protect-stored-facts
   [ctx : TcContext]
@@ -80761,44 +80945,45 @@
   [body : ast.AstExpr]
   [closure-id : i64]
   [facts : TcMovedPathFacts]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-borrow-check-rebind-lambda-lending-facts
-            ctx
-            expr-bases
-            env
-            locals
-            bound
-            body
-            closure-id
-            (__tl-box-place rest))]
-        (match fact.kind
-          [(TcMovedPathKind.BorrowLending binding-id)
-            (let
-              [captured : bool
-                (tc-expr-uses-free-name?
-                  expr-bases
-                  body
-                  (tc-env-key-name-text binding-id)
-                  bound)]
-              (if captured
-                (let
-                  [rebound : TcMovedPathFact
-                    (TcMovedPathFact
-                      fact.path
-                      (TcMovedPathKind.BorrowLending closure-id)
-                      fact.origin)]
-                  (if (tc-closure-local-fact-copyable-code?
-                    (tc-closure-local-fact-code locals binding-id))
-                    (TcMovedPathFacts.Cons
-                      fact
-                      (box (TcMovedPathFacts.Cons rebound (box tail))))
-                    (TcMovedPathFacts.Cons rebound (box tail))))
-                (TcMovedPathFacts.Cons fact (box tail))))]
-          [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
+  (if (tc-moved-path-facts-empty? facts)
+    TcMovedPathFacts.Nil
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [tail : TcMovedPathFacts
+        (tc-borrow-check-rebind-lambda-lending-facts
+          ctx
+          expr-bases
+          env
+          locals
+          bound
+          body
+          closure-id
+          rest)]
+      (match fact.kind
+        [(TcMovedPathKind.BorrowLending binding-id)
+          (let
+            [captured : bool
+              (tc-expr-uses-free-name?
+                expr-bases
+                body
+                (tc-env-key-name-text binding-id)
+                bound)]
+            (if captured
+              (let
+                [rebound : TcMovedPathFact
+                  (TcMovedPathFact
+                    fact.path
+                    (TcMovedPathKind.BorrowLending closure-id)
+                    fact.origin)]
+                (if (tc-closure-local-fact-copyable-code?
+                  (tc-closure-local-fact-code locals binding-id))
+                  (tc-moved-path-facts-cons
+                    (tc-moved-path-facts-cons tail rebound)
+                    fact)
+                  (tc-moved-path-facts-cons tail rebound)))
+              (tc-moved-path-facts-cons tail fact)))]
+        [_ (tc-moved-path-facts-cons tail fact)]))))
 
 ;; A Copy closure alias keeps the source closure live and gains the same
 ;; lending provenance. Duplicate only the checker-only lending marker; the
@@ -80807,29 +80992,26 @@
   [facts : TcMovedPathFacts]
   [source-id : i64]
   [closure-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-borrow-check-copy-lambda-lending-facts
-            (__tl-box-place rest)
-            source-id
-            closure-id)]
-        (match fact.kind
-          [(TcMovedPathKind.BorrowLending binding-id)
-            (if (= binding-id source-id)
-              (TcMovedPathFacts.Cons
-                fact
-                (box
-                  (TcMovedPathFacts.Cons
-                    (TcMovedPathFact
-                      fact.path
-                      (TcMovedPathKind.BorrowLending closure-id)
-                      fact.origin)
-                    (box tail))))
-              (TcMovedPathFacts.Cons fact (box tail)))]
-          [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
+  (if (tc-moved-path-facts-empty? facts)
+    TcMovedPathFacts.Nil
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [tail : TcMovedPathFacts
+        (tc-borrow-check-copy-lambda-lending-facts rest source-id closure-id)]
+      (match fact.kind
+        [(TcMovedPathKind.BorrowLending binding-id)
+          (if (= binding-id source-id)
+            (tc-moved-path-facts-cons
+              (tc-moved-path-facts-cons
+                tail
+                (TcMovedPathFact
+                  fact.path
+                  (TcMovedPathKind.BorrowLending closure-id)
+                  fact.origin))
+              fact)
+            (tc-moved-path-facts-cons tail fact))]
+        [_ (tc-moved-path-facts-cons tail fact)]))))
 
 (define (tc-borrow-check-add-closure-lending-for-lifetimes
   [ctx : TcContext]
@@ -80839,29 +81021,30 @@
   [closure-id : i64]
   [origin : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [out2 : TcMovedSet
-          (if (and
-            (match fact.kind
-              [(TcMovedPathKind.BorrowShared) true]
-              [_ false])
-            (tc-name-id-list-contains
-              lifetimes
-              (tc-borrow-check-path-lifetime ctx env path)))
-            (tc-borrow-check-add-lending-marker out path closure-id origin)
-            out)]
-        (tc-borrow-check-add-closure-lending-for-lifetimes
-          ctx
-          env
-          (__tl-box-place rest)
-          lifetimes
-          closure-id
-          origin
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [out2 : TcMovedSet
+        (if (and
+          (match fact.kind
+            [(TcMovedPathKind.BorrowShared) true]
+            [_ false])
+          (tc-name-id-list-contains
+            lifetimes
+            (tc-borrow-check-path-lifetime ctx env path)))
+          (tc-borrow-check-add-lending-marker out path closure-id origin)
+          out)]
+      (tc-borrow-check-add-closure-lending-for-lifetimes
+        ctx
+        env
+        rest
+        lifetimes
+        closure-id
+        origin
+        out2))))
 
 (define (tc-borrow-check-add-lambda-capture-lending-scan
   [ctx : TcContext]

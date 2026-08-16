@@ -887,28 +887,22 @@
       (if (< old-capacity 1)
         16
         (* old-capacity 2))]
-    [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 data.fixed-storage-arena]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [new-records : (__tl_dyn-array i64)
-      (array.make-array i64 (* new-capacity tc-macro-call-site-record-stride))]
-    [index : i64 0]
-    (begin
-      (while (< index (* data.len tc-macro-call-site-record-stride))
+    (in-arena
+      (arena.Arena data.fixed-storage-arena)
+      (let
+        [new-records : (__tl_dyn-array i64)
+          (array.make-array
+            i64
+            (* new-capacity tc-macro-call-site-record-stride))]
+        [index : i64 0]
         (begin
-          (set! (array-ref new-records index) (array-ref old-records index))
-          (set! index (+ index 1))))
-      (set! data.records new-records)
-      (set! data.capacity new-capacity)
-      (set! data.fixed-storage-arena (arena.tl_arena_current))
-      (tc-macro-call-site-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            data.fixed-storage-arena
-            previous))))))
+          (while (< index (* data.len tc-macro-call-site-record-stride))
+            (begin
+              (set! (array-ref new-records index) (array-ref old-records index))
+              (set! index (+ index 1))))
+          (set! data.records new-records)
+          (set! data.capacity new-capacity)
+          (tc-macro-call-site-state-data-set! state data))))))
 
 (define (tc-macro-call-site-record-key-eq?
   [data : TcMacroCallSiteStateData]
@@ -1015,24 +1009,14 @@
     (match (tc_i64_i64_map.get (& data.seen-sites) site-hash)
       [(tc_i64_i64_map.LookupFound _) unit]
       [(tc_i64_i64_map.LookupMissing)
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.fixed-storage-arena]
-          [_set-owner : unit
-            (unsafe
-              (arena.tl_arena_set owner))]
+        (in-arena
+          (arena.Arena data.fixed-storage-arena)
           (begin
             (tc_i64_i64_map.insert-ref!
               (&mut data.seen-sites)
               site-hash
               record-index)
-            (set! data.fixed-storage-arena (arena.tl_arena_current))
-            (tc-macro-call-site-state-data-set! state data)
-            (unsafe
-              (arena.tl_arena_set
-                (if (= previous owner)
-                  data.fixed-storage-arena
-                  previous)))))])))
+            (tc-macro-call-site-state-data-set! state data)))])))
 
 (define (tc-macro-call-site-state-record!
   [state : TcMacroCallSiteState]
@@ -3004,30 +2988,20 @@
   [module : String]
   [module-id : i64]
   [summary : CompilerTypecheckSummary]) : bool
-  (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    (begin
-      (tc-prefix-snapshot-cache-ensure-for-state! state)
-      (unsafe
-        (arena.tl_arena_set
-          (tc-prefix-snapshot-cache-arena-handle-for-state state)))
+  (begin
+    (tc-prefix-snapshot-cache-ensure-for-state! state)
+    (in-arena
+      (arena.Arena (tc-prefix-snapshot-cache-arena-handle-for-state state))
       (let
         [persistent-key : String (string.copy (& key))]
         [persistent-module : String (string.copy (& module))]
-        [stored : bool
-          (tc-prefix-snapshot-cache-store-for-state
-            state
-            persistent-key
-            count
-            persistent-module
-            module-id
-            summary)]
-        [cache-head : i64 (arena.tl_arena_current)]
-        (begin
-          (set! (array-ref state.arena 0) cache-head)
-          (unsafe
-            (arena.tl_arena_set prev-arena))
-          stored)))))
+        (tc-prefix-snapshot-cache-store-for-state
+          state
+          persistent-key
+          count
+          persistent-module
+          module-id
+          summary)))))
 
 ;; Serial/test compatibility surface. These adapters are intentionally the only
 ;; prefix-cache APIs that consult the serial loader selector.
@@ -5957,24 +5931,14 @@
         macro-name
         arity
         elapsed-ms)
-      (let
-        [enclosing : i64 (arena.tl_arena_current)]
-        [scratch : i64 (macro-expand-scratch-arena-get state)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set scratch))
-          (compiler-tc-macro-profile-record-in!
-            (&mut compiler-tc-macro-profile-entries)
-            macro-id
-            macro-name
-            arity
-            elapsed-ms)
-          (tc-macro-walk-set!
-            state
-            macro-expand-scratch-arena
-            (arena.tl_arena_current))
-          (unsafe
-            (arena.tl_arena_set enclosing)))))))
+      (in-arena
+        (arena.Arena (macro-expand-scratch-arena-get state))
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-id
+          macro-name
+          arity
+          elapsed-ms)))))
 
 (cfg
   compile-profile
@@ -12155,11 +12119,9 @@
       existing
       (let
         [owner : i64 (tc-chain-store-owner store-handle)]
-        [previous : i64 (arena.tl_arena_current)]
         [cell : i64
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+          (in-arena
+            (arena.Arena owner)
             (let
               [slots : (__tl_dyn-array TcChainIndex)
                 (array.make-array TcChainIndex 1)]
@@ -12172,7 +12134,6 @@
                     (ptr->int (ptr-cast (array-data slots) : (Ptr u8)))
                     : i64)))))]
         (begin
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
           (tc-chain-state-set! store-handle cell)
           cell)))))
 
@@ -12360,14 +12321,12 @@
       (let
         [state-addr : i64 (tc-chain-state-ensure! store-handle)]
         [owner : i64 (tc-chain-store-owner store-handle)]
-        [previous : i64 (arena.tl_arena_current)]
         [levels : i64 (tc-chain-jump-levels depth)]
-        (begin
-          ;; The jump and version arrays are reached from the index by node
-          ;; address, so they must live exactly as long as the node: allocate
-          ;; them in the store's owner arena, not the ambient one.
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+        ;; The jump and version arrays are reached from the index by node
+        ;; address, so they must live exactly as long as the node: allocate
+        ;; them in the store's owner arena, not the ambient one.
+        (in-arena
+          (arena.Arena owner)
           (let
             [jumps : (__tl_dyn-array i64)
               (if (= levels 0)
@@ -12397,7 +12356,6 @@
                           (tc-chain-jump-at (array-ref jumps (- k 1)) (- k 1)))
                         (set! k (+ k 1)))))))
               (tc-chain-node-set-fields! node-addr depth seq jumps prev)
-              (tc-type-env-store-restore-after-owner-alloc! previous owner)
               (tc-chain-register-layer!
                 store-handle
                 state-addr
@@ -13018,17 +12976,14 @@
   [state : TcMacroState]
   [root : i64]) : unit
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
     (begin
       (set! data.hygiene-cache-arena-root root)
       (set! data.hygiene-cache-arena root)
-      (unsafe
-        (arena.tl_arena_set root))
-      (set! data.hygiene-cache-arena-mark (arena.tl_region_mark))
-      (tc-macro-module-env-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set previous)))))
+      (in-arena
+        (arena.Arena root)
+        (set! data.hygiene-cache-arena-mark (arena.tl_region_mark)))
+      (tc-macro-module-env-state-data-set! state data))))
 
 (define (tc-hygiene-module-env-cache-arena-handle [state : TcMacroState]) : i64
   (let
@@ -13042,6 +12997,14 @@
       (__tl-project-field
         (tc-macro-module-env-state-data state)
         hygiene-cache-arena))))
+
+;; Installing the owner publishes three ownership fields into the job state.
+;; Return a post-install snapshot so callers can safely update another field
+;; and write the aggregate back without erasing that newly published state.
+(define (tc-hygiene-module-env-cache-owned-data [state : TcMacroState]) : TcMacroModuleEnvStateData
+  (begin
+    (tc-hygiene-module-env-cache-arena-handle state)
+    (tc-macro-module-env-state-data state)))
 
 (define (tc-hygiene-module-env-cache-arena-reset! [state : TcMacroState]) : unit
   (let
@@ -13111,6 +13074,34 @@
       (set! data.hygiene-cache-arena-root 0)
       (set! data.hygiene-cache-arena-mark 0)
       (tc-macro-module-env-state-data-set! state data))))
+
+(test
+  tc-hygiene-module-env-cache-lazy-owner-state
+  (let
+    [job : TcJobState (tc-job-state-new)]
+    [state : TcMacroState (tc-job-state-macro-state job)]
+    [before : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    [owned : TcMacroModuleEnvStateData
+      (tc-hygiene-module-env-cache-owned-data state)]
+    (begin
+      ;; Mirror the cache success arm: update unrelated aggregate state and
+      ;; publish it after the lazy owner install.
+      (set! owned.hygiene-active-top-env-ready true)
+      (tc-macro-module-env-state-data-set! state owned)
+      (let
+        [after : TcMacroModuleEnvStateData
+          (tc-macro-module-env-state-data state)]
+        [preserved? : bool
+          (and
+            (= before.hygiene-cache-arena-root 0)
+            (> after.hygiene-cache-arena-root 0)
+            (= after.hygiene-cache-arena after.hygiene-cache-arena-root)
+            after.hygiene-active-top-env-ready)]
+        (begin
+          (tc-hygiene-module-env-cache-release! state)
+          (test.assert-true
+            preserved?
+            "hygiene cache writes preserve a lazily installed owner"))))))
 
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -16847,38 +16838,22 @@
         ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
         ;; survives the scratch arenas active during per-decl typechecking.
         (let
-          [prev-arena : i64 (arena.tl_arena_current)]
-          [_switched : unit
-            (unsafe
-              (arena.tl_arena_set
-                (tc-hygiene-module-env-cache-arena-handle state)))]
           [current : TcMacroModuleEnvStateData
-            (tc-macro-module-env-state-data state)]
-          (match (tc-module-local-env-cached-id
-            ctx
-            current.hygiene-active-top-env
-            module
-            module-id
-            current.hygiene-module-env-cache)
-            [(ResultTcModuleLocalEnv.Ok def-env next-cache)
-              (let
-                [cache-head : i64 (arena.tl_arena_current)]
+            (tc-hygiene-module-env-cache-owned-data state)]
+          (in-arena
+            (arena.Arena current.hygiene-cache-arena)
+            (match (tc-module-local-env-cached-id
+              ctx
+              current.hygiene-active-top-env
+              module
+              module-id
+              current.hygiene-module-env-cache)
+              [(ResultTcModuleLocalEnv.Ok def-env next-cache)
                 (begin
-                  (set! current.hygiene-cache-arena cache-head)
                   (set! current.hygiene-module-env-cache next-cache)
                   (tc-macro-module-env-state-data-set! state current)
-                  (unsafe
-                    (arena.tl_arena_set prev-arena))
-                  (ResultTcEnv.Ok def-env)))]
-            [(ResultTcModuleLocalEnv.Err message)
-              (let
-                [cache-head : i64 (arena.tl_arena_current)]
-                (begin
-                  (set! current.hygiene-cache-arena cache-head)
-                  (tc-macro-module-env-state-data-set! state current)
-                  (unsafe
-                    (arena.tl_arena_set prev-arena))
-                  (ResultTcEnv.Err message)))])))
+                  (ResultTcEnv.Ok def-env))]
+              [(ResultTcModuleLocalEnv.Err message) (ResultTcEnv.Err message)]))))
       (ResultTcEnv.Err
         "typecheck: macro hygiene definition context unavailable"))))
 
@@ -40368,23 +40343,19 @@
 
 (define (tc-clone-root-collection-use! [retained : ast.AstProgram]) : unit
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
     [arena-handle : i64 (arena.tl_arena_make)]
-    [_switch : unit
-      (unsafe
-        (arena.tl_arena_set arena-handle))]
-    [selected : tc_i64_i64_map.Map
-      (tc-clone-root-collection-selected-from-program retained)]
     (begin
-      (set! tc-clone-root-collection-selected selected)
+      (in-arena
+        (arena.Arena arena-handle)
+        (set!
+          tc-clone-root-collection-selected
+          (tc-clone-root-collection-selected-from-program retained)))
       (set!
         tc-clone-root-collection-roots
         (clone_support.CloneRootEntries.Empty))
       (set! tc-clone-root-collection-current-decl false)
-      (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-      (set! tc-clone-root-collection-active true)
-      (unsafe
-        (arena.tl_arena_set prev-arena)))))
+      (set! tc-clone-root-collection-arena arena-handle)
+      (set! tc-clone-root-collection-active true))))
 
 (define (tc-clone-root-collection-select-decl!
   [decl : ast.AstDecl]
@@ -40428,46 +40399,41 @@
     tc-clone-root-collection-current-decl)
     (match (tc-context-program ctx)
       [(ast.AstProgram.Program decls-box)
-        (let
-          [prev-arena : i64 (arena.tl_arena_current)]
-          [_switch : unit
-            (unsafe
-              (arena.tl_arena_set tc-clone-root-collection-arena))]
-          [resolved : ast.AstType
-            (tc-type-without-regions (tc-resolve-type ctx ty))]
-          (begin
-            (cfg
-              (any
-                compiler-surface-producer
-                compiler-build-identity
-                embedded-stdlib-tlci)
-              (tc-clone-root-collection-record-surface-roots!
-                (if (surface_facts.surface-typecheck-facts-recording?)
-                  (clone_support.clone-root-add-type
-                    (tc-context-pools ctx)
-                    (__tl-box-place decls-box)
-                    (tc-clone-able-set ctx)
-                    (clone_support.CloneRootEntries.Empty)
-                    resolved
-                    cbi.compiler-builtin-id-fix-empty)
-                  (clone_support.CloneRootEntries.Empty)))
-              unit)
-            ;; Resolve the nominal closure while `ty` and all nested type-pool
-            ;; ids are still live in this function's semantic scratch scope.
-            ;; Retaining the shallow AstType until the declaration walk ends
-            ;; would leave those nested ids pointing past a pool rewind.
-            (set!
-              tc-clone-root-collection-roots
-              (clone_support.clone-root-add-type
-                (tc-context-pools ctx)
-                (__tl-box-place decls-box)
-                (tc-clone-able-set ctx)
-                (tc-global-shared-view tc-clone-root-collection-roots)
-                resolved
-                cbi.compiler-builtin-id-fix-empty))
-            (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-            (unsafe
-              (arena.tl_arena_set prev-arena))))])
+        (in-arena
+          (arena.Arena tc-clone-root-collection-arena)
+          (let
+            [resolved : ast.AstType
+              (tc-type-without-regions (tc-resolve-type ctx ty))]
+            (begin
+              (cfg
+                (any
+                  compiler-surface-producer
+                  compiler-build-identity
+                  embedded-stdlib-tlci)
+                (tc-clone-root-collection-record-surface-roots!
+                  (if (surface_facts.surface-typecheck-facts-recording?)
+                    (clone_support.clone-root-add-type
+                      (tc-context-pools ctx)
+                      (__tl-box-place decls-box)
+                      (tc-clone-able-set ctx)
+                      (clone_support.CloneRootEntries.Empty)
+                      resolved
+                      cbi.compiler-builtin-id-fix-empty)
+                    (clone_support.CloneRootEntries.Empty)))
+                unit)
+              ;; Resolve the nominal closure while `ty` and all nested type-pool
+              ;; ids are still live in this function's semantic scratch scope.
+              ;; Retaining the shallow AstType until the declaration walk ends
+              ;; would leave those nested ids pointing past a pool rewind.
+              (set!
+                tc-clone-root-collection-roots
+                (clone_support.clone-root-add-type
+                  (tc-context-pools ctx)
+                  (__tl-box-place decls-box)
+                  (tc-clone-able-set ctx)
+                  (tc-global-shared-view tc-clone-root-collection-roots)
+                  resolved
+                  cbi.compiler-builtin-id-fix-empty)))))])
     unit))
 
 (define (tc-clone-root-collection-copy-roots
@@ -40518,10 +40484,8 @@
       [call-indices : (__tl_dyn-array i64) facts.clone-call-indices]
       [count : i64 (array-length decl-keys)]
       [index : i64 0]
-      [previous-arena : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set tc-clone-root-collection-arena))
+      (in-arena
+        (arena.Arena tc-clone-root-collection-arena)
         (while (< index count)
           (let
             [call-index : i64 (array-ref call-indices index)]
@@ -40553,10 +40517,7 @@
                               root-key)))
                         (set! cursor (- cursor 1))))))
                 unit)
-              (set! index end))))
-        (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set previous-arena))))
+              (set! index end))))))
     unit))
 
 (define (tc-clone-able-cache-reset!) : unit
@@ -42195,25 +42156,13 @@
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     (if (= (array-length data.lines) tc-inlay-hint-capacity)
       unit
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 data.fixed-storage-arena]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
+      (in-arena
+        (arena.Arena data.fixed-storage-arena)
         (begin
           (set! data.lines (array.make-array i64 tc-inlay-hint-capacity))
           (set! data.cols (array.make-array i64 tc-inlay-hint-capacity))
           (set! data.types (array.make-array String tc-inlay-hint-capacity))
-          ;; Arena allocation chains segments; retain the newest owner head so
-          ;; a later switch keeps allocating on the live chain.
-          (set! data.fixed-storage-arena (arena.tl_arena_current))
-          (tc-inlay-hint-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                data.fixed-storage-arena
-                previous))))))))
+          (tc-inlay-hint-state-data-set! state data))))))
 
 (define (tc-inlay-hint-string-arena-ensure-for-state!
   [state : TcInlayHintState]) : i64
@@ -50036,35 +49985,35 @@
       [count : i64 decls.len]
       [decl-offset : i64 decls.offset]
       [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-      [prev-arena : i64 (arena.tl_arena_current)]
       [index-arena : i64 (arena.tl_arena_make)]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set index-arena))]
-      [positions : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8192)]
-      [module-id : i64 (csym.compiler-symbol-root-module-id)]
-      [position : i64 0]
       (begin
-        (while (< position count)
+        (in-arena
+          (arena.Arena index-arena)
           (let
-            [decl : ast.AstDecl (array-ref decl-slots (+ decl-offset position))]
+            [positions : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8192)]
+            [module-id : i64 (csym.compiler-symbol-root-module-id)]
+            [position : i64 0]
             (begin
-              (match decl
-                [(ast.AstDecl.Module next-module) (set! module-id next-module)]
-                [_
-                  (tc-program-enum-index-bind-decl!
-                    (&mut positions)
-                    module-id
-                    decl
-                    position)])
-              (set! position (+ position 1)))))
-        (set! tc-program-enum-index-positions positions)
+              (while (< position count)
+                (let
+                  [decl : ast.AstDecl
+                    (array-ref decl-slots (+ decl-offset position))]
+                  (begin
+                    (match decl
+                      [(ast.AstDecl.Module next-module)
+                        (set! module-id next-module)]
+                      [_
+                        (tc-program-enum-index-bind-decl!
+                          (&mut positions)
+                          module-id
+                          decl
+                          position)])
+                    (set! position (+ position 1)))))
+              (set! tc-program-enum-index-positions positions))))
         (set! tc-program-enum-index-decl-count count)
         (set! tc-program-enum-index-decl-offset decl-offset)
         (set! tc-program-enum-index-generation (ci.intern-generation))
-        (set! tc-program-enum-index-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set prev-arena))
+        (set! tc-program-enum-index-arena index-arena)
         (set! tc-program-enum-index-ready true)))))
 
 (define (tc-program-enum-variants-from-indexed-decl
@@ -62254,7 +62203,6 @@
   [state : TcMacroState]
   [macro-key : (& macro-key str)]) : String
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64
       (if (= (tc-macro-proof-field state qualified-arena) 0)
         (begin
@@ -62264,21 +62212,7 @@
             (arena.tl_arena_make_small))
           (tc-macro-proof-field state qualified-arena))
         (tc-macro-proof-field state qualified-arena))]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [copied : String (string.copy macro-key)]
-    (begin
-      (let
-        [head : i64 (arena.tl_arena_current)]
-        (begin
-          (tc-macro-proof-set! state qualified-arena head)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                head
-                previous)))))
-      copied)))
+    (in-arena (arena.Arena owner) (string.copy macro-key))))
 
 (define (text-copy [text : (& text str)]) : String
   (text-copy-for-state (tc-job-state-macro-state (tc-serial-job-state)) text))
@@ -84745,66 +84679,63 @@
                 (or
                   (> required-layouts (array.length layouts.slots))
                   (> required-reflections (array.length reflections.slots)))]
-              [previous-arena : i64 (arena.tl_arena_current)]
               [_profile-start : unit
                 (cfg
                   compile-profile
                   (compiler-tc-walk-ctfe-extension-start!)
                   unit)]
-              [_switch-owner : unit
-                (unsafe
-                  (arena.tl_arena_set
-                    (tc-type-env-store-owner-current-head
-                      (tc-macro-walk-field
-                        state
-                        macro-expand-ctfe-env-owner-arena))))]
-              [grown-layouts : ctfe_support.CtfeLayoutInfoList
-                (ctfe_support.ctfe-layout-info-list-ensure-capacity
-                  layouts
-                  required-layouts)]
-              [grown-reflections : ctfe_support.CtfeReflectInfoList
-                (ctfe_support.ctfe-reflect-info-list-ensure-capacity
-                  reflections
-                  required-reflections)]
-              [next-layouts : ctfe_support.CtfeLayoutInfoList
-                (tc-ctfe-layouts-from-decls
-                  ctx
-                  decls
-                  module
-                  module-id
-                  grown-layouts)]
-              [next-reflections : ctfe_support.CtfeReflectInfoList
-                (ctfe_support.ctfe-reflections-from-decls
-                  decls
-                  module
-                  module-id
-                  grown-reflections)]
-              (begin
-                (tc-macro-walk-set!
-                  state
-                  macro-expand-ctfe-env-value
-                  (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
-                    next-layouts
-                    next-reflections
-                    (ctfe_support.ctfe-env-pools
-                      (tc-macro-walk-field state macro-expand-ctfe-env-value))
-                    (ctfe_support.ctfe-env-source-names
-                      (tc-macro-walk-field state macro-expand-ctfe-env-value))
-                    (tc-macro-ctfe-state state)))
-                (tc-type-env-store-restore-after-owner-alloc!
-                  previous-arena
+              (in-arena
+                (arena.Arena
                   (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))
-                (if grew?
-                  (cfg
-                    compile-profile
-                    (compiler-tc-walk-ctfe-extension-reject-note! 3)
-                    unit)
-                  unit)
-                (cfg
-                  compile-profile
-                  (compiler-tc-walk-ctfe-extension-finish!)
-                  unit)
-                CompilerCtfeSpliceExtensionResult.Extended))
+                (let
+                  [grown-layouts : ctfe_support.CtfeLayoutInfoList
+                    (ctfe_support.ctfe-layout-info-list-ensure-capacity
+                      layouts
+                      required-layouts)]
+                  [grown-reflections : ctfe_support.CtfeReflectInfoList
+                    (ctfe_support.ctfe-reflect-info-list-ensure-capacity
+                      reflections
+                      required-reflections)]
+                  [next-layouts : ctfe_support.CtfeLayoutInfoList
+                    (tc-ctfe-layouts-from-decls
+                      ctx
+                      decls
+                      module
+                      module-id
+                      grown-layouts)]
+                  [next-reflections : ctfe_support.CtfeReflectInfoList
+                    (ctfe_support.ctfe-reflections-from-decls
+                      decls
+                      module
+                      module-id
+                      grown-reflections)]
+                  (begin
+                    (tc-macro-walk-set!
+                      state
+                      macro-expand-ctfe-env-value
+                      (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
+                        next-layouts
+                        next-reflections
+                        (ctfe_support.ctfe-env-pools
+                          (tc-macro-walk-field
+                            state
+                            macro-expand-ctfe-env-value))
+                        (ctfe_support.ctfe-env-source-names
+                          (tc-macro-walk-field
+                            state
+                            macro-expand-ctfe-env-value))
+                        (tc-macro-ctfe-state state)))
+                    (if grew?
+                      (cfg
+                        compile-profile
+                        (compiler-tc-walk-ctfe-extension-reject-note! 3)
+                        unit)
+                      unit)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-walk-ctfe-extension-finish!)
+                      unit)
+                    CompilerCtfeSpliceExtensionResult.Extended))))
             (begin
               (cfg
                 compile-profile
@@ -84849,39 +84780,39 @@
             0)
             (tc-type-env-store-owner-root previous-arena)
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))]
-        [_switch-owner : unit
-          (unsafe
-            (arena.tl_arena_set
-              (tc-type-env-store-owner-current-head owner-arena)))]
-        (begin
-          (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-owner-arena
-            owner-arena)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-value
-            (tc-ctfe-env ctx))
-          (tc-type-env-store-restore-after-owner-alloc!
-            previous-arena
-            owner-arena)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-has-metadata
-            (tc-macro-walk-field state ctfe-needs-metadata))
-          (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-build-generation
-            (+
-              (tc-macro-walk-field state macro-expand-ctfe-env-build-generation)
-              1))
-          (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending false)
-          (cfg
-            compile-profile
-            (compiler-tc-walk-ctfe-build-finish! _rebuild?)
-            unit))))))
+        (in-arena
+          (arena.Arena owner-arena)
+          (begin
+            (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-owner-arena
+              owner-arena)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-value
+              (tc-ctfe-env ctx))
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-has-metadata
+              (tc-macro-walk-field state ctfe-needs-metadata))
+            (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-build-generation
+              (+
+                (tc-macro-walk-field
+                  state
+                  macro-expand-ctfe-env-build-generation)
+                1))
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-rebuild-pending
+              false)
+            (cfg
+              compile-profile
+              (compiler-tc-walk-ctfe-build-finish! _rebuild?)
+              unit)))))))
 
 (define (compiler-typecheck-ctfe-env-rebuild-for-splice!
   [ctx : TcContext]
@@ -85223,18 +85154,10 @@
   [decls : ast.AstDeclList]) : unit
   (if (tc-macro-walk-field state macro-expand-scratch-enabled)
     (let
-      [enclosing : i64 (arena.tl_arena_current)]
       [scratch : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (macro-live-prescan-ensure-current! state decls)
-        (tc-macro-walk-set!
-          state
-          macro-expand-scratch-arena
-          (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set enclosing))))
+      (in-arena
+        (arena.Arena scratch)
+        (macro-live-prescan-ensure-current! state decls)))
     (macro-live-prescan-ensure-current! state decls)))
 
 (define (macro-live-prescan-ensure!
@@ -85789,26 +85712,17 @@
         (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
       [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
       [display : String (macro-decl-name-display macro-name-id module-id)]
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 data.fixed-storage-arena]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (tc_i64_i64_map.insert-ref!
-          (&mut data.definition-paths)
-          (ci.intern display)
-          (ci.intern path))
-        ;; Hash-table growth must remain owned by the job state. Indexing also
-        ;; runs inside per-declaration generations, which are destroyed after
-        ;; each splice; retaining their current arena would leave stale slots.
-        (set! data.fixed-storage-arena (arena.tl_arena_current))
-        (tc-macro-call-site-state-data-set! state data)
-        (unsafe
-          (arena.tl_arena_set
-            (if (= previous owner)
-              data.fixed-storage-arena
-              previous)))))))
+      ;; Hash-table growth must remain owned by the job state. Indexing also
+      ;; runs inside per-declaration generations, which are destroyed after
+      ;; each splice; retaining their current arena would leave stale slots.
+      (in-arena
+        (arena.Arena data.fixed-storage-arena)
+        (begin
+          (tc_i64_i64_map.insert-ref!
+            (&mut data.definition-paths)
+            (ci.intern display)
+            (ci.intern path))
+          (tc-macro-call-site-state-data-set! state data))))))
 
 (define (macro-definition-path-id
   [ctx : TcContext]
@@ -86669,27 +86583,15 @@
       (if (tc-macro-walk-field macro-state macro-expand-scratch-enabled)
         (macro-expand-scratch-arena-get macro-state)
         enclosing)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [address : i64
-          (macro-segmented-program-view-new-current
-            prefix-rev
-            prefix-paths-rev
-            decls
-            paths)]
-        [storage-head : i64 (arena.tl_arena_current)]
-        (begin
-          (if (tc-macro-walk-field macro-state macro-expand-scratch-enabled)
-            (tc-macro-walk-set!
-              macro-state
-              macro-expand-scratch-arena
-              storage-head)
-            unit)
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          (tc-job-state-set-macro-program-view-address! state address))))))
+    [address : i64
+      (in-arena
+        (arena.Arena storage)
+        (macro-segmented-program-view-new-current
+          prefix-rev
+          prefix-paths-rev
+          decls
+          paths))]
+    (tc-job-state-set-macro-program-view-address! state address)))
 
 (define (macro-segmented-program-end! [state : TcJobState]) : unit
   (tc-job-state-set-macro-program-view-address! state 0))
@@ -86908,21 +86810,13 @@
   [middle-paths : ast.AstDeclPathList]) : unit
   (let
     [macro-state : TcMacroState (tc-job-state-macro-state state)]
-    [enclosing : i64 (arena.tl_arena_current)]
     [storage : i64 (macro-expand-scratch-arena-get macro-state)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
+    (in-arena
+      (arena.Arena storage)
       (macro-segmented-program-splice-current-in-scratch!
         state
         middle
-        middle-paths)
-      (tc-macro-walk-set!
-        macro-state
-        macro-expand-scratch-arena
-        (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set enclosing)))))
+        middle-paths))))
 
 (define (macro-segmented-program-decl-count [state : TcJobState]) : i64
   (let
@@ -87874,20 +87768,9 @@
   [state : TcMacroState]
   [decls : ast.AstDeclList]) : ast.AstProgram
   (if (tc-macro-walk-field state macro-expand-scratch-enabled)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [program : ast.AstProgram (ast.ast-program decls)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (tc-macro-walk-set! state macro-expand-scratch-arena storage-head)
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            program))))
+    (in-arena
+      (arena.Arena (macro-expand-scratch-arena-get state))
+      (ast.ast-program decls))
     (ast.ast-program decls)))
 
 (define (macro-paths-for-decls
@@ -92264,27 +92147,12 @@
             state
             target-module-id
             base-id)
-          (let
-            [enclosing : i64 (arena.tl_arena_current)]
-            [scratch : i64 (macro-expand-scratch-arena-get state)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set scratch))
-              (let
-                [out : MacroMaybeDecl
-                  (macro-surface-call-decl-fill-in-module
-                    state
-                    target-module-id
-                    base-id)]
-                [scratch-head : i64 (arena.tl_arena_current)]
-                (begin
-                  (tc-macro-walk-set!
-                    state
-                    macro-expand-scratch-arena
-                    scratch-head)
-                  (unsafe
-                    (arena.tl_arena_set enclosing))
-                  out)))))])))
+          (in-arena
+            (arena.Arena (macro-expand-scratch-arena-get state))
+            (macro-surface-call-decl-fill-in-module
+              state
+              target-module-id
+              base-id)))])))
 
 (define (macro-expr-uses-expr-type? [expr-bases : i64] [expr : ast.AstExpr]) : bool
   (or
@@ -92850,8 +92718,9 @@
         [storage : i64 (macro-hygiene-env-storage-handle state)]
         (begin
           ;; Snapshots can cross every scratch rewind involved in an expansion.
-          ;; Allocate initial storage and every growth in one retained arena, then
-          ;; restore the caller's active owner.
+          ;; This path intentionally retains its explicit restoration helper:
+          ;; when growth advances a nested caller's physical head, restoring the
+          ;; pre-growth handle causes severe selfhost retention on Windows.
           (unsafe
             (arena.tl_arena_set storage))
           (let
@@ -93593,18 +93462,11 @@
         (begin
           (while (< capacity needed)
             (set! capacity (* capacity 2)))
-          (let
-            [previous-arena : i64 (arena.tl_arena_current)]
-            [owner : i64 (tc-macro-state-owner-arena state)]
+          (in-arena
+            (arena.Arena (tc-macro-state-owner-arena state))
             (begin
-              (unsafe
-                (arena.tl_arena_set
-                  (tc-type-env-store-owner-current-head owner)))
               (set! produced.refcounts (array.make-array i64 capacity))
-              (tc-macro-hygiene-produced-state-data-set! state produced)
-              (tc-type-env-store-restore-after-owner-alloc!
-                previous-arena
-                owner))))))))
+              (tc-macro-hygiene-produced-state-data-set! state produced))))))))
 
 (define (macro-hygiene-produced-note-id!
   [produced : TcMacroHygieneProducedStateData]
@@ -98080,24 +97942,9 @@
   [current-module-id : i64]) : MacroFlatImportTargetList
   (if (not (macro-generation-any-live? state))
     (macro-flat-import-targets-into-current state decls current-module-id)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (let
-          [out : MacroFlatImportTargetList
-            (macro-flat-import-targets-into-current
-              state
-              decls
-              current-module-id)]
-          [scratch-head : i64 (arena.tl_arena_current)]
-          (begin
-            (tc-macro-walk-set! state macro-expand-scratch-arena scratch-head)
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))))
+    (in-arena
+      (arena.Arena (macro-expand-scratch-arena-get state))
+      (macro-flat-import-targets-into-current state decls current-module-id))))
 
 (define (macro-flat-import-targets-into-current
   [state : TcMacroState]

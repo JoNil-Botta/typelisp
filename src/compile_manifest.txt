@@ -117,9 +117,10 @@ count-at-least|call _tl_sym_i64_lookup_id|2
 end
 
 # Unified pure-TypeLisp toolchain dispatcher (single self-hosted entry point for
-# build/clean/run/check/fmt/lint/test/doc/inspect/repl/lsp). Each subcommand routes
-# through its `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so
-# the dispatcher's assembly must reference every command's runner.
+# build/clean/run/check/fmt/lint/test/doc/explain/inspect/repl/lsp). Each
+# subcommand routes through its `*-run-from` entry in a shared main-free
+# `*_cli_core.tl` module, so the dispatcher's assembly must reference every
+# command's runner.
 case|selfhost_main|src/main.tl|assembly|exactly-one|direct
 contains|_tl_cli_dispatch:
 contains|_tl_build_run_from:
@@ -130,12 +131,14 @@ contains|_tl_fmt_run_from:
 contains|_tl_selfhost_lint_run_from:
 contains|_tl_tltest_run_from:
 contains|_tl_doc_run_from:
+contains|_tl_diagnostic_explain_run_from:
 contains|_tl_tlci_inspect_run_from:
 contains|_tl_repl_run_from:
 contains|_tl_scaffold_new_run_from:
 contains|_tl_scaffold_init_run_from:
 contains|_tl_lsp_frame_run_from:
 contains|typelisp: unknown subcommand
+contains|typelisp explain
 contains|typelisp inspect
 contains|Enable a compile-time cfg predicate name
 contains|--pic
@@ -232,6 +235,11 @@ contains|doc: expected input and output paths
 # inspect
 contains|_tl_tlci_inspect_render:
 contains|inspect: expected one .tlci path
+# explain
+contains|_tl_diagnostic_explain_lookup:
+contains|E0201: unbound name
+contains|Minimal failing example:
+contains|explain: unknown diagnostic code
 # fmt
 contains|fmt_format_file:
 contains|fmt_files:
@@ -320,6 +328,7 @@ decision|src/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/de
 decision|src/doc_expand.tl|expansion-aware generated module doc extraction helper; main-less, imported by src/doc_cli_core.tl and exercised through the selfhost_main case and doc_expand smoke
 decision|src/doc_site_doc_bridge.tl|doc-site tool bridge for dotted imports over the legacy doc renderer stack; main-less, imported by tools/doc-site and exercised through the doc-site smokes/build path
 decision|src/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/explain_cli_core.tl|diagnostic explanation command logic (#5668): append-only long-form registry plus known-without-prose and unknown-code behavior; main-less, imported by src/main.tl and exercised through the selfhost_main case and public command-surface smokes
 decision|src/inspect_cli_core.tl|inspect command logic (#2655): parse and render tlci comptime image headers/metadata; main-less, imported by src/main.tl and exercised through the selfhost_main case and public command-surface smoke
 decision|src/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by src/main.tl; main-less and exercised through the selfhost_main case

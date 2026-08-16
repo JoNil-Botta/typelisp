@@ -1,28 +1,28 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	497
-# count	total	all	annotations	497
+# count	total	all	rows	504
+# count	total	all	annotations	504
 # count	total	all	sources	3
-# count	total	all	source-sites	371
-# count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	314
-# count	gate	public-tools	source-sites	205
-# count	gate	public-tools	expanded-cases	125
-# count	gate	selfhost-cli	rows	79
-# count	gate	selfhost-cli	source-sites	78
-# count	gate	selfhost-cli	expanded-cases	16
+# count	total	all	source-sites	376
+# count	total	all	expanded-cases	162
+# count	gate	public-tools	rows	320
+# count	gate	public-tools	source-sites	209
+# count	gate	public-tools	expanded-cases	127
+# count	gate	selfhost-cli	rows	80
+# count	gate	selfhost-cli	source-sites	79
+# count	gate	selfhost-cli	expanded-cases	17
 # count	gate	stage1-wrapper	rows	104
 # count	gate	stage1-wrapper	source-sites	88
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	372
+# count	host	all	rows	379
 # count	host	linux	rows	122
 # count	host	windows	rows	3
-# count	platform	linux	rows	494
-# count	platform	windows	rows	375
+# count	platform	linux	rows	501
+# count	platform	windows	rows	382
 # count	kind	delegated	rows	9
 # count	kind	direct	rows	53
-# count	kind	wrapper	rows	435
-# count	process	compiler	rows	324
+# count	kind	wrapper	rows	442
+# count	process	compiler	rows	331
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -160,8 +160,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	stage1-wrapper-opt2-handoff-missing-release	stage1-wrapper	scripts/check-stage1-wrapper.sh	delegated	linux	stage1/opt2-handoff-fixture	check-opt2-cli-regression.sh	seed-skips-generated-compiler	inherited	repository	gate+seed-process	none;OPT2_HANDOFF_TEST_SKIP_GENERATED=1	nonzero	not-asserted	contains:generated-compiler-missing-or-empty	none	stage1-wrapper-opt2-handoff-missing-release	-
 1	stage1-wrapper-opt2-handoff-cross-mismatch	stage1-wrapper	scripts/check-stage1-wrapper.sh	delegated	linux	stage1/opt2-handoff-fixture	check-opt2-cli-regression.sh	generated-cross-fixpoint-mismatch	inherited	repository	gate+seed+generated-compiler-processes	none;OPT2_HANDOFF_TEST_CROSS_MISMATCH=1	nonzero	not-asserted	contains:CROSS-FIXPOINT-MISMATCH	writes:mismatching-assembly	stage1-wrapper-opt2-handoff-cross-mismatch	-
 # source	scripts/verify-public-tools.sh
-# public-tools inventory: 183 source sites and 292 behavior rows; expansions cover 28 command-help cases, 18 inline backend/opt cases, 3 backend modes, 2 target aliases, 4 run-backend branches, 5 SPMD execution branches, 27 formatter cases, and 37 executable SPEC cases.
-1	usage	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr repl;assert_contains stderr fmt;assert_contains stderr doc;assert_contains stderr Synopsis:;assert_contains stderr Commands:;assert_contains stderr typelisp repl;assert_contains stderr typelisp lsp;assert_contains stderr typelisp fmt;assert_contains stderr typelisp doc;assert_contains stderr typelisp clean;assert_contains stderr Global Options:;assert_contains stderr Common Command Options:;assert_contains stderr Environment:;assert_contains stderr typelisp compile        Generate assembly or IR;assert_contains stderr --opt-level <0|1|2>            Select optimizer level;assert_contains stderr 'Run `typelisp <command> --help` for command-specific usage.'	none	usage	-
+# public-tools inventory: 187 source sites and 298 behavior rows; expansions cover 30 command-help cases, 18 inline backend/opt cases, 3 backend modes, 2 target aliases, 4 run-backend branches, 5 SPMD execution branches, 27 formatter cases, and 37 executable SPEC cases.
+1	usage	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr repl;assert_contains stderr fmt;assert_contains stderr doc;assert_contains stderr Synopsis:;assert_contains stderr Commands:;assert_contains stderr typelisp repl;assert_contains stderr typelisp lsp;assert_contains stderr typelisp fmt;assert_contains stderr typelisp doc;assert_contains stderr typelisp explain;assert_contains stderr typelisp clean;assert_contains stderr Global Options:;assert_contains stderr Common Command Options:;assert_contains stderr Environment:;assert_contains stderr typelisp compile        Generate assembly or IR;assert_contains stderr --opt-level <0|1|2>            Select optimizer level;assert_contains stderr 'Run `typelisp <command> --help` for command-specific usage.'	none	usage	-
 1	version	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp --version	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout typelisp ;assert_contains stdout  built	empty	none	version	-
 1	lsp-command-probe	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_stdin	typelisp lsp	prepared-by-gate	file:<lsp-command-probe>	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	any-capability-probe	not-asserted	not-asserted	none	lsp-command-probe	-
 1	build-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp build --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	build-help	-
@@ -180,6 +180,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	doc-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp doc -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	doc-short-help	-
 1	compile-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	compile-help	-
 1	compile-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	compile-short-help	-
+1	explain-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp explain --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	explain-help	-
+1	explain-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp explain -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	explain-short-help	-
 1	inspect-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	inspect-help	-
 1	inspect-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	inspect-short-help	-
 1	repl-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp repl --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	repl-help	-
@@ -192,6 +194,10 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	clean-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:;assert_contains stderr --experiments	none	clean-short-help	-
 1	lsp-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lsp --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	lsp-help	-
 1	lsp-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lsp -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	lsp-short-help	-
+1	explain-detailed	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp explain E0201	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout E0201: unbound name;assert_contains stdout Description:;assert_contains stdout Minimal failing example:;assert_contains stdout Fix:	empty	none	explain-detailed	-
+1	explain-known-without-prose	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp explain E0100	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout recognized;assert_contains stdout no-long-form-explanation	empty	none	explain-known-without-prose	-
+1	explain-unknown	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp explain E9999	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr unknown-diagnostic-code-E9999	none	explain-unknown	-
+1	explain-missing-code	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp explain	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr expected-one-diagnostic-code	none	explain-missing-code	-
 1	missing-command	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp	-	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains_any stderr Usage: usage:	none	missing-command	-
 1	check-hello	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check examples/hello.tl	examples/hello.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Type checking passed!	empty	none	check-hello	-
 1	check-parser-recovery-diagnostics	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check <check-parser-recovery-src>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr parse: malformed define;assert_contains stderr typecheck: unbound name missing-a;assert_contains stderr typecheck: unbound name missing-b	assert parser recovery diagnostics preserve source order	check-parser-recovery-diagnostics	-
@@ -476,8 +482,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	spec-print-string	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run <spec-work>/print-string.tl	<spec-work>/print-string.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	check_text_file_exact stdout <spec-work>/print-string.stdout	empty	none	spec-print-string	-
 1	spec-extern-tl-alloc	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run <spec-work>/extern-tl-alloc.tl	<spec-work>/extern-tl-alloc.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	check_text_file_exact stdout <spec-work>/extern-tl-alloc.stdout	empty	none	spec-extern-tl-alloc	-
 # source	scripts/verify-selfhost-cli-build-run.sh
-# selfhost-cli inventory: 78 source sites and 79 behavior rows; the command
-# surface contributes 14 explicit one-case expansions, and the host-specific
+# selfhost-cli inventory: 79 source sites and 80 behavior rows; the command
+# surface contributes 15 explicit one-case expansions, and the host-specific
 # REPL session expands one source site into Linux and Windows behavior rows.
 # The former delegated public LSP corpus duplicate was removed by #4923; its
 # surviving canonical behavior is the public-lsp-corpus row above.
@@ -507,6 +513,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	selfhost-cli-surface-doc-package-mixed-input	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --test --manifest-path <cli-surface>/doc-package/typelisp.pkg <cli-surface>/doc-main.tl	manifest-and-input-conflict	inherited	repository	compiler	inherited	1	empty	contains:cannot-combine-input-paths-with-manifest	none	selfhost-cli-surface-doc-package-mixed-input	-
 1	selfhost-cli-surface-doc-batch-mixed-input	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --test --batch <cli-surface>/doc-batch.txt <cli-surface>/doc-main.tl	batch-and-input-conflict	inherited	repository	compiler	inherited	1	empty	contains:cannot-combine-input-paths-with-batch	none	selfhost-cli-surface-doc-batch-mixed-input	-
 1	selfhost-cli-surface-doc-batch-empty	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --test --batch <cli-surface>/doc-empty-batch.txt	empty-doc-batch-list	inherited	repository	compiler	inherited	1	empty	contains:batch-list-is-empty	none	selfhost-cli-surface-doc-batch-empty	-
+1	selfhost-cli-surface-explain	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp explain E0206	prepared-by-gate	inherited	repository	compiler	inherited	0	contains:E0206-type-mismatch,minimal-failing-example,fix	empty	none	selfhost-cli-surface-explain	-
 1	selfhost-cli-surface-compile	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp compile <cli-surface>/main.tl -o <cli-surface>/compile.s	main-returns-0	inherited	repository	compiler	inherited	0	contains:Wrote	empty	writes:assembly-containing-main	selfhost-cli-surface-compile	-
 1	selfhost-cli-surface-clean-dry-run	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp clean --dry-run <cli-surface>/clean-surface.tl	source-with-six-adjacent-artifacts	inherited	repository	compiler	inherited	0	contains:Would-remove,clean-surface.s	empty	preserves:source-and-artifacts	selfhost-cli-surface-clean-dry-run	-
 1	selfhost-cli-surface-clean	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp clean <cli-surface>/clean-surface.tl	source-with-six-adjacent-artifacts	inherited	repository	compiler	inherited	0	contains:Removed	empty	preserves:source;removes:s,ir,o,obj,host-executables	selfhost-cli-surface-clean	-

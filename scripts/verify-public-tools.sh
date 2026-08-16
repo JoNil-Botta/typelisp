@@ -296,6 +296,7 @@ else
     assert_contains "$err" "typelisp lsp"
     assert_contains "$err" "typelisp fmt"
     assert_contains "$err" "typelisp doc"
+    assert_contains "$err" "typelisp explain"
     assert_contains "$err" "typelisp clean"
     assert_contains "$err" "Global Options:"
     assert_contains "$err" "Common Command Options:"
@@ -330,6 +331,11 @@ if grep -q "typelisp inspect" "$USAGE_ERR"; then
 else
     HAS_INSPECT_COMMAND=0
 fi
+if grep -q "typelisp explain" "$USAGE_ERR"; then
+    HAS_EXPLAIN_COMMAND=1
+else
+    HAS_EXPLAIN_COMMAND=0
+fi
 # cli-gate-case version wrapper run_cmd
 run_cmd version "$COMPILER" --version
 assert_success
@@ -351,7 +357,7 @@ assert_subcommand_help() {
     _command=$2
     _flag=$3
     _usage=$4
-    # cli-gate-expand {command}-{flag} wrapper run_cmd command=build,run,check,fmt,lint,test,doc,compile,inspect,repl,new,init,clean,lsp flag=help,short-help
+    # cli-gate-expand {command}-{flag} wrapper run_cmd command=build,run,check,fmt,lint,test,doc,compile,explain,inspect,repl,new,init,clean,lsp flag=help,short-help
     run_cmd "$_case" "$COMPILER" "$_command" "$_flag"
     assert_success
     assert_stdout_empty
@@ -393,6 +399,9 @@ fi
 if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_subcommand_help_pair inspect "typelisp inspect"
 fi
+if [ "$HAS_EXPLAIN_COMMAND" -eq 1 ]; then
+    assert_subcommand_help_pair explain "typelisp explain"
+fi
 assert_subcommand_help_pair repl "typelisp repl"
 if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
     assert_contains "$err" "REPL Commands:"
@@ -407,6 +416,36 @@ if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
 fi
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     assert_subcommand_help_pair lsp "typelisp lsp"
+fi
+
+if [ "$HAS_EXPLAIN_COMMAND" -eq 1 ]; then
+    # cli-gate-case explain-detailed wrapper run_cmd
+    run_cmd explain-detailed "$COMPILER" explain E0201
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "E0201: unbound name"
+    assert_contains "$out" "Description:"
+    assert_contains "$out" "Minimal failing example:"
+    assert_contains "$out" "Fix:"
+
+    # cli-gate-case explain-known-without-prose wrapper run_cmd
+    run_cmd explain-known-without-prose "$COMPILER" explain E0100
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "E0100: this diagnostic code is recognized"
+    assert_contains "$out" "no long-form explanation is available yet"
+
+    # cli-gate-case explain-unknown wrapper run_cmd
+    run_cmd explain-unknown "$COMPILER" explain E9999
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" 'explain: unknown diagnostic code `E9999`'
+
+    # cli-gate-case explain-missing-code wrapper run_cmd
+    run_cmd explain-missing-code "$COMPILER" explain
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "explain: expected one diagnostic code"
 fi
 
 # cli-gate-case missing-command wrapper run_cmd

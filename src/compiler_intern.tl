@@ -1081,8 +1081,6 @@
   false)
 (define intern-reset-generation : i64
   0)
-(define intern-name-cache-name : String
-  "")
 (define intern-name-cache-id : i64
   -1)
 (define intern-name-cache-ready : bool
@@ -1541,12 +1539,6 @@
                   state
                   (intern-substring name base-start (- n base-start)))))))))))
 
-(define (intern-compat-state-record-qualified-metadata!
-  [state : InternCompatState]
-  [id : i64]
-  [name : String]) : unit
-  (intern-compat-state-record-qualified-metadata-ref! (& state) id name))
-
 ;; State-owned interning mirrors the compatibility table without installing it
 ;; into process globals. Compile-job setup and reset paths use this API while
 ;; the legacy parser/typecheck/lower call graph is migrated incrementally.
@@ -1686,15 +1678,6 @@
                     (set! steps (+ steps 1))))))))
         out))))
 
-(define (intern-compat-state-intern-slice
-  [state : InternCompatState]
-  [text : String]
-  [start : i64]
-  [len : i64]) : i64
-  (begin
-    (intern-compat-state-ensure-ready! state)
-    (intern-compat-state-intern-slice-ready-ref (& state) text start len)))
-
 (define (intern-compat-state-source-slice-id-ready-ref
   [state : (& state InternCompatState)]
   [text : String]
@@ -1776,11 +1759,6 @@
 
 (define (intern-compat-state-first-dot [state : InternCompatState] [id : i64]) : i64
   (cast (array-ref state.pool-first-dot-slots id) : i64))
-
-(define (intern-compat-state-leading-dot-id
-  [state : InternCompatState]
-  [id : i64]) : i64
-  (intern-id-slot-decode (array-ref state.pool-leading-dot-id-slots id)))
 
 (define (intern-compat-state-dotted-prefix-id
   [state : InternCompatState]
@@ -2480,28 +2458,6 @@
                 module-id
                 base-id))))))))
 
-;; Canonical generated symbols deduplicate inside the supplied state without
-;; installing it as the process compatibility table.
-(define (intern-compat-state-generated-canonical-name
-  [state : InternCompatState]
-  [name : String]) : i64
-  (begin
-    (if (array-ref state.map-ready 0)
-      unit
-      (intern-compat-state-reset! state))
-    (let
-      [capacity : i64 (array-length state.generated-map-id-slots)]
-      [hash : i64 (intern-hash name)]
-      (intern-compat-state-generated-canonical-name-at
-        state
-        name
-        hash
-        (intern-bucket hash capacity)
-        0
-        false
-        -1
-        -1))))
-
 (define (intern-compat-state-generated-canonical-qualified-name
   [state : InternCompatState]
   [name : String]
@@ -3048,27 +3004,6 @@
       [key : i64 (intern-generated-role-key role 0 components)]
       (intern-generated-role-symbol-id-from-key role key false -1 -1))))
 
-(define (intern-generated-role-qualified-symbol-id
-  [role : i64]
-  [components : i64]
-  [module-id : i64]
-  [base-id : i64]) : i64
-  (if (or (< module-id 0) (< base-id 0))
-    (tl_oob_abort)
-    (begin
-      (if intern-map-ready
-        unit
-        (intern-reset!))
-      (let
-        [qualification : i64 (intern-composite-pair-id module-id base-id)]
-        [key : i64 (intern-generated-role-key role qualification components)]
-        (intern-generated-role-symbol-id-from-key
-          role
-          key
-          true
-          module-id
-          base-id)))))
-
 (define (intern-generated-role-symbol-materialize!
   [role : i64]
   [id : i64]
@@ -3107,16 +3042,6 @@
     (>= (intern-generated-symbol-role-index role) 0)
     (intern-compat-state-generated-id-active? state id)
     (= (cast (array-ref state.pool-first-dot-slots id) : i64) role)))
-
-(define (intern-generated-role-symbol? [id : i64] [role : i64]) : bool
-  (and
-    (>= (intern-generated-symbol-role-index role) 0)
-    (intern-generated-id-active? id)
-    (=
-      (cast
-        (array-ref (intern-global-shared-view intern-pool-first-dot-slots) id)
-        : i64)
-      role)))
 
 (define (intern-compat-state-generated-role-record-count
   [state : InternCompatState]) : i64

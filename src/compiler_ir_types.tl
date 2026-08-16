@@ -13,6 +13,7 @@
 (import stdlib.hashmap)
 (import stdlib.arena)
 (import (hashmap.hashmap String i64) as ir_label_map)
+(import (hashmap.hashmap i64 i64) as ir_i64_i64_map)
 
 (defmacro (compiler-ir-global-shared-view [place : Expr]) : Expr
   (cfg
@@ -999,6 +1000,50 @@
 
 (defenum CompilerIrProgram
   (Program CompilerIrGlobalSeq CompilerIrFunctionList CompilerIrExternList))
+
+;; Immutable, job-owned nominal representation facts captured from lowered
+;; whole-program IR before optimization. The count map uses 0 for conflicting
+;; evidence, 1 for a positively known one-word nominal handle, and >=2 for a
+;; register group. Absence is intentionally distinct from KnownOneWord: both an
+;; absent entry and an explicit conflict query as Unknown.
+(defstruct CompilerIrRepresentationIndex
+  (word-counts ir_i64_i64_map.Map)
+  (class-masks ir_i64_i64_map.Map))
+
+(defenum CompilerIrRepresentationKind
+  (KnownOneWord)
+  (RegisterGroup i64 i64)
+  (Unknown))
+
+(define (compiler-ir-representation-index-empty) : CompilerIrRepresentationIndex
+  (CompilerIrRepresentationIndex
+    (ir_i64_i64_map.with-capacity 1)
+    (ir_i64_i64_map.with-capacity 1)))
+
+(define (compiler-ir-representation-index-kind-for-key
+  [index : CompilerIrRepresentationIndex]
+  [key : i64]) : CompilerIrRepresentationKind
+  (match (ir_i64_i64_map.get (& index.word-counts) key)
+    [(ir_i64_i64_map.LookupMissing) CompilerIrRepresentationKind.Unknown]
+    [(ir_i64_i64_map.LookupFound count)
+      (if (= count 1)
+        CompilerIrRepresentationKind.KnownOneWord
+        (if (> count 1)
+          (match (ir_i64_i64_map.get (& index.class-masks) key)
+            [(ir_i64_i64_map.LookupFound mask)
+              (CompilerIrRepresentationKind.RegisterGroup count mask)]
+            [(ir_i64_i64_map.LookupMissing)
+              (CompilerIrRepresentationKind.RegisterGroup count 0)])
+          CompilerIrRepresentationKind.Unknown))]))
+
+(define (compiler-ir-representation-index-kind
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex]
+  [ty : ast.AstType]) : CompilerIrRepresentationKind
+  (match (ast.ast-aggregate-type-key type-segment-bases ty)
+    [(ast.AstMaybeNominalKey.Some key)
+      (compiler-ir-representation-index-kind-for-key index key)]
+    [(ast.AstMaybeNominalKey.None) CompilerIrRepresentationKind.Unknown]))
 
 (define (compiler-ir-value-cons-linked
   [value : CompilerIrValue]
@@ -7729,6 +7774,871 @@
             (compiler-ir-value-var-eq? len 2)
             (= lanes 8))]
         [_ false]))))
+
+(defstruct CompilerIrRepresentationVarTypes
+  (present (__tl_dyn-array i64))
+  (items (__tl_dyn-array ast.AstType)))
+
+(define (compiler-ir-representation-name-prefix?
+  [name : String]
+  [prefix : String]) : bool
+  (let
+    [prefix-len : i64 (string.string-length prefix)]
+    (and
+      (>= (string.string-length name) prefix-len)
+      (string.eq (string.substring name 0 prefix-len) prefix))))
+
+;; The physical group spelling is an IR-owned capability produced by lowering,
+;; never a user-name convention. The encoded mask is two bits because all
+;; currently lowered nominal register groups contain exactly two machine words.
+(define (compiler-ir-representation-abi-group-mask-from-name [name : String]) : i64
+  (let
+    [prefix : String "__tl_internal_abi_group_m"]
+    [prefix-len : i64 (string.string-length prefix)]
+    (if (not (compiler-ir-representation-name-prefix? name prefix))
+      -1
+      (let
+        [n : i64 (string.string-length name)]
+        [delimiter : i64 (+ prefix-len 2)]
+        (if (or
+          (>= (+ prefix-len 2) n)
+          (not (= (cast (string.string-ref name (+ prefix-len 1)) : i64) 95))
+          (not (= (cast (string.string-ref name delimiter) : i64) 95))
+          (>= (+ delimiter 1) n))
+          -1
+          (let
+            [digit : i64 (cast (string.string-ref name prefix-len) : i64)]
+            (if (and (>= digit 48) (<= digit 51))
+              (- digit 48)
+              -1)))))))
+
+(define (compiler-ir-representation-owned-aggregate-name
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (match ty
+    [(ast.AstType.Struct name)
+      (if (compiler-ir-symbol-owned? name)
+        name
+        -1)]
+    [(ast.AstType.StructArgs name _)
+      (if (compiler-ir-symbol-owned? name)
+        name
+        -1)]
+    [(ast.AstType.Region _ inner)
+      (compiler-ir-representation-owned-aggregate-name
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ -1]))
+
+(define (compiler-ir-representation-abi-group-mask
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (let
+    [name : i64
+      (compiler-ir-representation-owned-aggregate-name type-segment-bases ty)]
+    (if (< name 0)
+      -1
+      (compiler-ir-representation-abi-group-mask-from-name
+        (compiler-ir-symbol-text name)))))
+
+(define (compiler-ir-representation-internal-transport?
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : bool
+  (let
+    [name : i64
+      (compiler-ir-representation-owned-aggregate-name type-segment-bases ty)]
+    (and
+      (>= name 0)
+      (compiler-ir-representation-name-prefix?
+        (compiler-ir-symbol-text name)
+        "__tl_internal_abi_"))))
+
+(define (compiler-ir-representation-index-merge-group
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [key : i64]
+  [word-count : i64]
+  [class-mask : i64]) : CompilerIrRepresentationIndex
+  (let
+    [counts : ir_i64_i64_map.Map index.word-counts]
+    [masks : ir_i64_i64_map.Map index.class-masks]
+    (if (< word-count 2)
+      (begin
+        ;; A malformed group is explicit unresolved evidence, not a one-word
+        ;; proof. Preserve any prior conflict and fail closed deterministically.
+        (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
+        (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
+        (CompilerIrRepresentationIndex counts masks))
+      (match (ir_i64_i64_map.get (& counts) key)
+        [(ir_i64_i64_map.LookupMissing)
+          (begin
+            (ir_i64_i64_map.insert-ref! (&mut counts) key word-count)
+            (ir_i64_i64_map.insert-ref! (&mut masks) key class-mask)
+            (CompilerIrRepresentationIndex counts masks))]
+        [(ir_i64_i64_map.LookupFound found-count)
+          (match (ir_i64_i64_map.get (& masks) key)
+            [(ir_i64_i64_map.LookupFound found-mask)
+              (if (and (= found-count word-count) (= found-mask class-mask))
+                index
+                (begin
+                  (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
+                  (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
+                  (CompilerIrRepresentationIndex counts masks)))]
+            [(ir_i64_i64_map.LookupMissing)
+              (begin
+                (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
+                (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
+                (CompilerIrRepresentationIndex counts masks))])]))))
+
+(define (compiler-ir-representation-index-merge-one-word
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [key : i64]) : CompilerIrRepresentationIndex
+  (if (ir_i64_i64_map.contains? (& index.word-counts) key)
+    index
+    (let
+      [counts : ir_i64_i64_map.Map index.word-counts]
+      (begin
+        (ir_i64_i64_map.insert-ref! (&mut counts) key 1)
+        (CompilerIrRepresentationIndex counts index.class-masks)))))
+
+(define (compiler-ir-representation-var-type-set!
+  [types : CompilerIrRepresentationVarTypes]
+  [var : i64]
+  [ty : ast.AstType]) : unit
+  (if (or (< var 0) (>= var (array-length types.present)))
+    unit
+    (begin
+      (set! (array-ref types.present var) 1)
+      (set! (array-ref types.items var) ty))))
+
+(define (compiler-ir-representation-param-types!
+  [params : CompilerIrParamList]
+  [types : CompilerIrRepresentationVarTypes]) : unit
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Array seq)
+      (compiler-ir-representation-param-types!
+        (compiler-ir-param-seq-to-list seq)
+        types)]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param _ ty var)
+          (begin
+            (compiler-ir-representation-var-type-set! types var ty)
+            (compiler-ir-representation-param-types!
+              (__tl-box-place rest)
+              types))])]))
+
+(define (compiler-ir-representation-instr-def-type!
+  [instr : CompilerIrInstr]
+  [types : CompilerIrRepresentationVarTypes]) : unit
+  (match instr
+    [(CompilerIrInstr.Mov dst _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.Load dst _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.Cast dst _ _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.Bitcast dst _ _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.BinOp dst op _ _ ty)
+      (compiler-ir-representation-var-type-set!
+        types
+        dst
+        (compiler-ir-binop-result-type op ty))]
+    [(CompilerIrInstr.UnOp dst _ _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.MaskReduce dst _ _ _)
+      (compiler-ir-representation-var-type-set! types dst (ast.AstType.Bool))]
+    [(CompilerIrInstr.Call dst _ _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.SpmdCall payload-box)
+      (match (__tl-project-field (__tl-box-place payload-box) result)
+        [(CompilerIrSpmdCallResult.Unit) unit]
+        [(CompilerIrSpmdCallResult.Value dst _ ty)
+          (compiler-ir-representation-var-type-set! types dst ty)])]
+    [(CompilerIrInstr.Phi dst _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.Pack dst _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.Word dst _ _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [_ unit]))
+
+(define (compiler-ir-representation-instr-types!
+  [instrs : CompilerIrInstrSeq]
+  [types : CompilerIrRepresentationVarTypes]) : unit
+  (let
+    [i : i64 0]
+    (while (< i (compiler-ir-instr-seq-count instrs))
+      (begin
+        (compiler-ir-representation-instr-def-type!
+          (compiler-ir-instr-seq-ref instrs i)
+          types)
+        (set! i (+ i 1))))))
+
+(define (compiler-ir-representation-block-types!
+  [blocks : CompilerIrBlockList]
+  [types : CompilerIrRepresentationVarTypes]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (begin
+            (compiler-ir-representation-instr-types! instrs types)
+            (compiler-ir-representation-block-types!
+              (__tl-box-place rest)
+              types))])]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        (while (< i (compiler-ir-block-seq-count seq))
+          (begin
+            (match (compiler-ir-block-seq-ref seq i)
+              [(CompilerIrBlock.Block _ instrs)
+                (compiler-ir-representation-instr-types! instrs types)])
+            (set! i (+ i 1)))))]))
+
+(define (compiler-ir-representation-function-var-types
+  [func : CompilerIrFunction]) : CompilerIrRepresentationVarTypes
+  (match func
+    [(CompilerIrFunction.Function _ params _ vars blocks)
+      (let
+        [types : CompilerIrRepresentationVarTypes
+          (CompilerIrRepresentationVarTypes
+            (array.make-array i64 vars)
+            (array.make-array ast.AstType vars))]
+        (begin
+          (compiler-ir-representation-param-types! params types)
+          (compiler-ir-representation-block-types! blocks types)
+          types))]))
+
+(define (compiler-ir-representation-float-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.F64) true]
+    [(ast.AstType.F32) true]
+    [_ false]))
+
+(define (compiler-ir-representation-pack-word-sse?
+  [types : CompilerIrRepresentationVarTypes]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.F64 _) true]
+    [(CompilerIrValue.Var var)
+      (and
+        (>= var 0)
+        (< var (array-length types.present))
+        (not (= (array-ref types.present var) 0))
+        (compiler-ir-representation-float-type? (array-ref types.items var)))]
+    [_ false]))
+
+(define (compiler-ir-representation-pack-class-mask
+  [types : CompilerIrRepresentationVarTypes]
+  [words : CompilerIrValueList]
+  [position : i64]
+  [mask : i64]) : i64
+  (match (compiler-ir-value-list-force-cons words)
+    [(CompilerIrValueList.Nil) mask]
+    [(CompilerIrValueList.Array seq)
+      (compiler-ir-representation-pack-class-mask
+        types
+        (compiler-ir-value-seq-to-list seq)
+        position
+        mask)]
+    [(CompilerIrValueList.Cons value rest)
+      (compiler-ir-representation-pack-class-mask
+        types
+        (__tl-box-place rest)
+        (+ position 1)
+        (if (compiler-ir-representation-pack-word-sse? types value)
+          (bit-or
+            mask
+            (if (= position 0)
+              1
+              2))
+          mask))]))
+
+(define (compiler-ir-representation-merge-group-type
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [ty : ast.AstType]
+  [word-count : i64]
+  [class-mask : i64]) : CompilerIrRepresentationIndex
+  (match (ast.ast-aggregate-type-key type-segment-bases ty)
+    [(ast.AstMaybeNominalKey.Some key)
+      (compiler-ir-representation-index-merge-group
+        index
+        key
+        word-count
+        class-mask)]
+    [(ast.AstMaybeNominalKey.None) index]))
+
+(define (compiler-ir-representation-collect-signature-type
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [ty : ast.AstType]) : CompilerIrRepresentationIndex
+  (let
+    [mask : i64
+      (compiler-ir-representation-abi-group-mask type-segment-bases ty)]
+    (if (< mask 0)
+      index
+      (compiler-ir-representation-merge-group-type
+        type-segment-bases
+        index
+        ty
+        2
+        mask))))
+
+(define (compiler-ir-representation-collect-signature-params
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [params : CompilerIrParamList]) : CompilerIrRepresentationIndex
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) index]
+    [(CompilerIrParamList.Array seq)
+      (compiler-ir-representation-collect-signature-params
+        type-segment-bases
+        index
+        (compiler-ir-param-seq-to-list seq))]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param _ ty _)
+          (compiler-ir-representation-collect-signature-params
+            type-segment-bases
+            (compiler-ir-representation-collect-signature-type
+              type-segment-bases
+              index
+              ty)
+            (__tl-box-place rest))])]))
+
+(define (compiler-ir-representation-collect-group-instrs-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [types : CompilerIrRepresentationVarTypes]
+  [instrs : CompilerIrInstrSeq]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position (compiler-ir-instr-seq-count instrs))
+    index
+    (match (compiler-ir-instr-seq-ref instrs position)
+      [(CompilerIrInstr.Pack _ words ty)
+        (compiler-ir-representation-collect-group-instrs-from
+          type-segment-bases
+          (compiler-ir-representation-merge-group-type
+            type-segment-bases
+            index
+            ty
+            (compiler-ir-value-list-count words)
+            (compiler-ir-representation-pack-class-mask types words 0 0))
+          types
+          instrs
+          (+ position 1))]
+      [_
+        (compiler-ir-representation-collect-group-instrs-from
+          type-segment-bases
+          index
+          types
+          instrs
+          (+ position 1))])))
+
+(define (compiler-ir-representation-collect-group-instrs
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [types : CompilerIrRepresentationVarTypes]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrRepresentationIndex
+  (compiler-ir-representation-collect-group-instrs-from
+    type-segment-bases
+    index
+    types
+    instrs
+    0))
+
+(define (compiler-ir-representation-collect-group-block-seq-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [types : CompilerIrRepresentationVarTypes]
+  [blocks : CompilerIrBlockSeq]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position (compiler-ir-block-seq-count blocks))
+    index
+    (match (compiler-ir-block-seq-ref blocks position)
+      [(CompilerIrBlock.Block _ instrs)
+        (compiler-ir-representation-collect-group-block-seq-from
+          type-segment-bases
+          (compiler-ir-representation-collect-group-instrs
+            type-segment-bases
+            index
+            types
+            instrs)
+          types
+          blocks
+          (+ position 1))])))
+
+(define (compiler-ir-representation-collect-group-blocks
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [types : CompilerIrRepresentationVarTypes]
+  [blocks : CompilerIrBlockList]) : CompilerIrRepresentationIndex
+  (match blocks
+    [(CompilerIrBlockList.Nil) index]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-ir-representation-collect-group-blocks
+            type-segment-bases
+            (compiler-ir-representation-collect-group-instrs
+              type-segment-bases
+              index
+              types
+              instrs)
+            types
+            (__tl-box-place rest))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-ir-representation-collect-group-block-seq-from
+        type-segment-bases
+        index
+        types
+        seq
+        0)]))
+
+(define (compiler-ir-representation-collect-group-function
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [func : CompilerIrFunction]) : CompilerIrRepresentationIndex
+  (match func
+    [(CompilerIrFunction.Function _ params ret-ty _ blocks)
+      (let
+        [types : CompilerIrRepresentationVarTypes
+          (compiler-ir-representation-function-var-types func)]
+        (compiler-ir-representation-collect-group-blocks
+          type-segment-bases
+          (compiler-ir-representation-collect-signature-type
+            type-segment-bases
+            (compiler-ir-representation-collect-signature-params
+              type-segment-bases
+              index
+              params)
+            ret-ty)
+          types
+          blocks))]))
+
+(define (compiler-ir-representation-collect-group-function-seq-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [functions : CompilerIrFunctionSeq]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position (compiler-ir-function-seq-count functions))
+    index
+    (compiler-ir-representation-collect-group-function-seq-from
+      type-segment-bases
+      (compiler-ir-representation-collect-group-function
+        type-segment-bases
+        index
+        (compiler-ir-function-seq-ref functions position))
+      functions
+      (+ position 1))))
+
+(define (compiler-ir-representation-collect-group-functions
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [functions : CompilerIrFunctionList]) : CompilerIrRepresentationIndex
+  (match functions
+    [(CompilerIrFunctionList.Nil) index]
+    [(CompilerIrFunctionList.Cons func rest)
+      (compiler-ir-representation-collect-group-functions
+        type-segment-bases
+        (compiler-ir-representation-collect-group-function
+          type-segment-bases
+          index
+          func)
+        (__tl-box-place rest))]
+    [(CompilerIrFunctionList.Array seq)
+      (compiler-ir-representation-collect-group-function-seq-from
+        type-segment-bases
+        index
+        seq
+        0)]))
+
+(define (compiler-ir-representation-collect-one-type-list-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [types : ast.AstTypeList]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position types.len)
+    index
+    (compiler-ir-representation-collect-one-type-list-from
+      type-segment-bases
+      (compiler-ir-representation-collect-one-type
+        type-segment-bases
+        index
+        (ast.ast-type-segment-bases-get
+          type-segment-bases
+          (array-ref types.slots position)))
+      types
+      (+ position 1))))
+
+(define (compiler-ir-representation-collect-one-type-list
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [types : ast.AstTypeList]) : CompilerIrRepresentationIndex
+  (compiler-ir-representation-collect-one-type-list-from
+    type-segment-bases
+    index
+    types
+    0))
+
+(define (compiler-ir-representation-collect-one-type
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [ty : ast.AstType]) : CompilerIrRepresentationIndex
+  (let
+    [with-nominal : CompilerIrRepresentationIndex
+      (match (ast.ast-aggregate-type-key type-segment-bases ty)
+        [(ast.AstMaybeNominalKey.Some key)
+          (if (compiler-ir-representation-internal-transport?
+            type-segment-bases
+            ty)
+            index
+            (compiler-ir-representation-index-merge-one-word index key))]
+        [(ast.AstMaybeNominalKey.None) index])]
+    (match ty
+      [(ast.AstType.Func args ret)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          (compiler-ir-representation-collect-one-type-list
+            type-segment-bases
+            with-nominal
+            (__tl-box-place args))
+          (ast.ast-type-segment-bases-get type-segment-bases ret))]
+      [(ast.AstType.Tuple items)
+        (compiler-ir-representation-collect-one-type-list
+          type-segment-bases
+          with-nominal
+          (__tl-box-place items))]
+      [(ast.AstType.Array elem _)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases elem))]
+      [(ast.AstType.DynArray elem)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases elem))]
+      [(ast.AstType.Box inner)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      [(ast.AstType.Ref _ inner)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      [(ast.AstType.MutRef _ inner)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      [(ast.AstType.Ptr inner)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      [(ast.AstType.MutPtr inner)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      ;; Region was already transparently classified by the canonical-key
+      ;; query; recurse only to discover nested container types.
+      [(ast.AstType.Region _ inner)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      [_ with-nominal])))
+
+(define (compiler-ir-representation-collect-one-param-list
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [params : CompilerIrParamList]) : CompilerIrRepresentationIndex
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) index]
+    [(CompilerIrParamList.Array seq)
+      (compiler-ir-representation-collect-one-param-list
+        type-segment-bases
+        index
+        (compiler-ir-param-seq-to-list seq))]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param _ ty _)
+          (compiler-ir-representation-collect-one-param-list
+            type-segment-bases
+            (compiler-ir-representation-collect-one-type
+              type-segment-bases
+              index
+              ty)
+            (__tl-box-place rest))])]))
+
+(define (compiler-ir-representation-collect-one-instr
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [instr : CompilerIrInstr]) : CompilerIrRepresentationIndex
+  (match instr
+    [(CompilerIrInstr.Mov _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Alloc _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Gep _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Load _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.StorePtr _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Cast _ _ from-ty to-ty)
+      (compiler-ir-representation-collect-one-type
+        type-segment-bases
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          index
+          from-ty)
+        to-ty)]
+    [(CompilerIrInstr.Bitcast _ _ from-ty to-ty)
+      (compiler-ir-representation-collect-one-type
+        type-segment-bases
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          index
+          from-ty)
+        to-ty)]
+    [(CompilerIrInstr.BinOp _ _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.UnOp _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Splat _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Call _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.CallIndirect _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.CallIndirectC _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.TailCall _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Store _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Phi _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Pack _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.Word _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.TailCallIndirect _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [_ index]))
+
+(define (compiler-ir-representation-collect-one-instrs-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [instrs : CompilerIrInstrSeq]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position (compiler-ir-instr-seq-count instrs))
+    index
+    (compiler-ir-representation-collect-one-instrs-from
+      type-segment-bases
+      (compiler-ir-representation-collect-one-instr
+        type-segment-bases
+        index
+        (compiler-ir-instr-seq-ref instrs position))
+      instrs
+      (+ position 1))))
+
+(define (compiler-ir-representation-collect-one-instrs
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrRepresentationIndex
+  (compiler-ir-representation-collect-one-instrs-from
+    type-segment-bases
+    index
+    instrs
+    0))
+
+(define (compiler-ir-representation-collect-one-block-seq-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [blocks : CompilerIrBlockSeq]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position (compiler-ir-block-seq-count blocks))
+    index
+    (match (compiler-ir-block-seq-ref blocks position)
+      [(CompilerIrBlock.Block _ instrs)
+        (compiler-ir-representation-collect-one-block-seq-from
+          type-segment-bases
+          (compiler-ir-representation-collect-one-instrs
+            type-segment-bases
+            index
+            instrs)
+          blocks
+          (+ position 1))])))
+
+(define (compiler-ir-representation-collect-one-blocks
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [blocks : CompilerIrBlockList]) : CompilerIrRepresentationIndex
+  (match blocks
+    [(CompilerIrBlockList.Nil) index]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-ir-representation-collect-one-blocks
+            type-segment-bases
+            (compiler-ir-representation-collect-one-instrs
+              type-segment-bases
+              index
+              instrs)
+            (__tl-box-place rest))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-ir-representation-collect-one-block-seq-from
+        type-segment-bases
+        index
+        seq
+        0)]))
+
+(define (compiler-ir-representation-collect-one-function
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [func : CompilerIrFunction]) : CompilerIrRepresentationIndex
+  (match func
+    [(CompilerIrFunction.Function _ params ret-ty _ blocks)
+      (compiler-ir-representation-collect-one-blocks
+        type-segment-bases
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          (compiler-ir-representation-collect-one-param-list
+            type-segment-bases
+            index
+            params)
+          ret-ty)
+        blocks)]))
+
+(define (compiler-ir-representation-collect-one-function-seq-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [functions : CompilerIrFunctionSeq]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position (compiler-ir-function-seq-count functions))
+    index
+    (compiler-ir-representation-collect-one-function-seq-from
+      type-segment-bases
+      (compiler-ir-representation-collect-one-function
+        type-segment-bases
+        index
+        (compiler-ir-function-seq-ref functions position))
+      functions
+      (+ position 1))))
+
+(define (compiler-ir-representation-collect-one-functions
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [functions : CompilerIrFunctionList]) : CompilerIrRepresentationIndex
+  (match functions
+    [(CompilerIrFunctionList.Nil) index]
+    [(CompilerIrFunctionList.Cons func rest)
+      (compiler-ir-representation-collect-one-functions
+        type-segment-bases
+        (compiler-ir-representation-collect-one-function
+          type-segment-bases
+          index
+          func)
+        (__tl-box-place rest))]
+    [(CompilerIrFunctionList.Array seq)
+      (compiler-ir-representation-collect-one-function-seq-from
+        type-segment-bases
+        index
+        seq
+        0)]))
+
+(define (compiler-ir-representation-collect-one-globals-from
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [globals : CompilerIrGlobalSeq]
+  [position : i64]) : CompilerIrRepresentationIndex
+  (if (>= position (compiler-ir-global-seq-count globals))
+    index
+    (match (compiler-ir-global-seq-ref globals position)
+      [(CompilerIrGlobal.Global _ ty _)
+        (compiler-ir-representation-collect-one-globals-from
+          type-segment-bases
+          (compiler-ir-representation-collect-one-type
+            type-segment-bases
+            index
+            ty)
+          globals
+          (+ position 1))])))
+
+(define (compiler-ir-representation-collect-one-globals
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [globals : CompilerIrGlobalSeq]) : CompilerIrRepresentationIndex
+  (compiler-ir-representation-collect-one-globals-from
+    type-segment-bases
+    index
+    globals
+    0))
+
+(define (compiler-ir-representation-collect-one-externs
+  [type-segment-bases : i64]
+  [index : CompilerIrRepresentationIndex (:consume)]
+  [externs : CompilerIrExternList]) : CompilerIrRepresentationIndex
+  (match externs
+    [(CompilerIrExternList.Nil) index]
+    [(CompilerIrExternList.Cons extern rest)
+      (match extern
+        [(CompilerIrExtern.Extern _ _ _ ty _ _ _ _)
+          (compiler-ir-representation-collect-one-externs
+            type-segment-bases
+            (compiler-ir-representation-collect-one-type
+              type-segment-bases
+              index
+              ty)
+            (__tl-box-place rest))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-ir-representation-collect-one-externs
+        type-segment-bases
+        index
+        (compiler-ir-extern-seq-to-list seq))]))
+
+(define (compiler-ir-representation-index-build
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]) : CompilerIrRepresentationIndex
+  (match program
+    [(CompilerIrProgram.Program globals functions externs)
+      (let
+        ;; Group evidence is complete before positive one-word evidence is
+        ;; admitted. Thus an ordinary occurrence of a real group can never
+        ;; conflict with its Pack/signature, while genuinely contradictory
+        ;; group observations remain explicit Unknown.
+        [groups : CompilerIrRepresentationIndex
+          (compiler-ir-representation-collect-group-functions
+            type-segment-bases
+            (compiler-ir-representation-index-empty)
+            functions)]
+        (compiler-ir-representation-collect-one-externs
+          type-segment-bases
+          (compiler-ir-representation-collect-one-functions
+            type-segment-bases
+            (compiler-ir-representation-collect-one-globals
+              type-segment-bases
+              groups
+              globals)
+            functions)
+          externs))]))
 
 (define (compiler-ir-display-self-test-ok?) : bool
   (and

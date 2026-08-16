@@ -11749,7 +11749,10 @@
           (set! (array-ref present index) 1)
           (set! (array-ref types index) (compiler-reg-i64-ty))
           (set! index (+ index 1))))
-      (reg.CompilerRegVarTypes present types))))
+      (reg.CompilerRegVarTypes
+        present
+        types
+        (ir.compiler-ir-representation-index-empty)))))
 
 (define (compiler-reg-coalesce-test-flat-index) : reg.CompilerRegIntervalIndex
   (reg.compiler-reg-interval-index-build

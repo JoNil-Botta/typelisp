@@ -960,7 +960,19 @@
   (frame-offset-cache-values (__tl_dyn-array String))
   (frame-offset-cache-epochs (__tl_dyn-array i64))
   (immediate-cache-values (__tl_dyn-array String))
-  (immediate-cache-epochs (__tl_dyn-array i64)))
+  (immediate-cache-epochs (__tl_dyn-array i64))
+  ;; Append-only state extension: hot backend accessors address earlier lanes
+  ;; in place, so new job capabilities must not perturb their established
+  ;; offsets. Production drivers install this once immediately after lowering;
+  ;; compatibility entrypoints build an equivalent index at their boundary.
+  (representations compiler_ir_types.CompilerIrRepresentationIndex)
+  (has-representations bool)
+  ;; Batch states outlive individual compile entries. Representation facts do
+  ;; not: their maps are rebuilt from each entry's lowered program. Keep those
+  ;; maps in a dedicated reusable arena so replacing the capability cannot grow
+  ;; the persistent backend-state owner once per batch entry.
+  (representation-arena i64)
+  (representation-mark i64))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1016,13 +1028,79 @@
           (array.make-array String 0)
           (array.make-array i64 0)
           (array.make-array String 0)
-          (array.make-array i64 0)))
+          (array.make-array i64 0)
+          (compiler_ir_types.compiler-ir-representation-index-empty)
+          false
+          0
+          0))
       (CompilerBackendState
         (cast
           (unsafe
             (ptr->int
               (ptr-cast (array-data cell) : (Ptr CompilerBackendStateData))))
           : i64)))))
+
+(define (compiler-backend-state-set-representations!
+  [state : CompilerBackendState]
+  [representations : compiler_ir_types.CompilerIrRepresentationIndex]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    (begin
+      (set! data.representations representations)
+      (set! data.has-representations true)
+      (compiler-backend-state-data-set! state data))))
+
+(define (compiler-backend-state-prepare-representation-arena!
+  [state : CompilerBackendState]) : arena.Arena
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    [home : arena.Arena (arena.current)]
+    (if (= data.representation-arena 0)
+      (let
+        [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+        [_set-owner : unit
+          (unsafe
+            (arena.set! owner))]
+        [mark : arena.ArenaMark (arena.mark)]
+        (begin
+          (unsafe
+            (arena.set! home))
+          (set! data.representation-arena (arena.raw-handle owner))
+          (set! data.representation-mark (arena.mark-raw-handle mark))
+          (set! data.has-representations false)
+          (compiler-backend-state-data-set! state data)
+          owner))
+      (let
+        [owner : arena.Arena (arena.Arena data.representation-arena)]
+        [mark : arena.ArenaMark (arena.ArenaMark data.representation-mark)]
+        (begin
+          ;; Clear the validity bit before invalidating the old maps. The stale
+          ;; carrier is overwritten immediately after the replacement build and
+          ;; is never observed while `has-representations` is false.
+          (set! data.has-representations false)
+          (compiler-backend-state-data-set! state data)
+          (unsafe
+            (begin
+              (arena.set! owner)
+              (arena.rewind mark)
+              (arena.set! home)))
+          owner)))))
+
+(define (compiler-backend-state-representations
+  [state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [externs : compiler_ir_types.CompilerIrExternList]) : compiler_ir_types.CompilerIrRepresentationIndex
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    (if data.has-representations
+      data.representations
+      (compiler_ir_types.compiler-ir-representation-index-build
+        type-segment-bases
+        (compiler_ir_types.CompilerIrProgram.Program
+          (compiler_ir_types.compiler-ir-global-seq-empty)
+          functions
+          externs)))))
 
 (define (compiler-backend-state-data [state : CompilerBackendState]) : CompilerBackendStateData
   (unsafe
@@ -1470,13 +1548,9 @@
   (extern-link-references backend_i64_i64_map.Map)
   (extern-link-symbols (__tl_dyn-array i64))
   (extern-provided (__tl_dyn-array bool))
-  ;; Canonical aggregate nominal key -> machine-word count, for every register-group
-  ;; type constructed anywhere in the program (whole-program compile). Drives the
-  ;; backend/regalloc 2-word-vs-handle decision that the type name alone cannot.
-  (group-word-counts backend_i64_i64_map.Map)
-  ;; Canonical aggregate nominal key -> bit mask of SSE-class words. Bit 0 marks
-  ;; word0, bit 1 marks word1. A missing/zero mask means all INTEGER words.
-  (group-word-class-masks backend_i64_i64_map.Map)
+  ;; Shared pre-optimization nominal representation capability. It positively
+  ;; distinguishes one-word handles, register groups, and unresolved forms.
+  (representations compiler_ir_types.CompilerIrRepresentationIndex)
   ;; Explicit type-reader handle for this backend job. It is snapshotted from
   ;; the job's pools once and then travels with the already-ubiquitous index.
   (type-segment-bases i64)
@@ -3795,11 +3869,7 @@
   (uses-f64-neg bool))
 
 (defenum CompilerBackendCollectState
-  (Collections CompilerBackendProgramCollections)
-  (GroupCounts backend_i64_i64_map.Map)
-  (GroupClassMasks
-    backend_i64_i64_map.Map
-    compiler_regalloc.CompilerRegVarTypes))
+  (Collections CompilerBackendProgramCollections))
 
 (define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
   (BackendStringSet
@@ -35100,8 +35170,6 @@
 ;; share a prefix.  All numeric fields are parsed with a bounded digit walk so
 ;; malformed/overflowing names fail closed instead of trapping in integer
 ;; conversion.
-(define compiler-backend-abi-group-prefix : String
-  "__tl_internal_abi_group_m")
 (define compiler-backend-abi-memory-prefix : String
   "__tl_internal_abi_mem_s")
 
@@ -35111,29 +35179,6 @@
     (and
       (>= (string.string-length name) prefix-len)
       (string.eq (string.substring name 0 prefix-len) prefix))))
-
-(define (compiler-backend-abi-group-mask-from-name [name : String]) : i64
-  (let
-    [prefix-len : i64 (string.string-length compiler-backend-abi-group-prefix)]
-    (if (not
-      (compiler-backend-abi-name-prefix-at?
-        name
-        (compiler-backend-global-shared-view compiler-backend-abi-group-prefix)))
-      -1
-      (let
-        [n : i64 (string.string-length name)]
-        [delimiter : i64 (+ prefix-len 2)]
-        (if (or
-          (>= (+ prefix-len 2) n)
-          (not (= (cast (string.string-ref name (+ prefix-len 1)) : i64) 95))
-          (not (= (cast (string.string-ref name delimiter) : i64) 95))
-          (>= (+ delimiter 1) n))
-          -1
-          (let
-            [digit : i64 (cast (string.string-ref name prefix-len) : i64)]
-            (if (and (>= digit 48) (<= digit 51))
-              (- digit 48)
-              -1)))))))
 
 (define (compiler-backend-abi-memory-size-from-name [name : String]) : i64
   (let
@@ -35185,26 +35230,6 @@
             value
             0))))))
 
-(define (compiler-backend-abi-group-mask
-  [type-segment-bases : i64]
-  [ty : compiler_ast_types.AstType]) : i64
-  (match ty
-    [(compiler_ast_types.AstType.Struct name)
-      (if (compiler_ir_types.compiler-ir-symbol-owned? name)
-        (compiler-backend-abi-group-mask-from-name
-          (compiler_ir_types.compiler-ir-symbol-text name))
-        -1)]
-    [(compiler_ast_types.AstType.StructArgs name _)
-      (if (compiler_ir_types.compiler-ir-symbol-owned? name)
-        (compiler-backend-abi-group-mask-from-name
-          (compiler_ir_types.compiler-ir-symbol-text name))
-        -1)]
-    [(compiler_ast_types.AstType.Region _ inner)
-      (compiler-backend-abi-group-mask
-        type-segment-bases
-        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
-    [_ -1]))
-
 (define (compiler-backend-abi-memory-size
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : i64
@@ -35225,158 +35250,9 @@
         (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [_ 0]))
 
-(define (compiler-backend-collect-group-counts-instr
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map (:consume)]
-  [instr : compiler_ir_types.CompilerIrInstr]) : backend_i64_i64_map.Map
-  (match instr
-    [(compiler_ir_types.CompilerIrInstr.Pack _ words ty)
-      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
-        [(compiler_ast_types.AstMaybeNominalKey.Some key)
-          (if (backend_i64_i64_map.contains? (& map) key)
-            map
-            (begin
-              (backend_i64_i64_map.insert-ref!
-                (&mut map)
-                key
-                (compiler_ir_types.compiler-ir-value-list-count words))
-              map))]
-        [(compiler_ast_types.AstMaybeNominalKey.None) map])]
-    [_ map]))
-
-(define (compiler-backend-collect-signature-group-counts-type
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map (:consume)]
-  [ty : compiler_ast_types.AstType]) : backend_i64_i64_map.Map
-  (let
-    [mask : i64 (compiler-backend-abi-group-mask type-segment-bases ty)]
-    (if (< mask 0)
-      map
-      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
-        [(compiler_ast_types.AstMaybeNominalKey.Some key)
-          (begin
-            ;; Encoded groups are always exactly two words, independent of
-            ;; whether a Pack survived optimization into this function.
-            (backend_i64_i64_map.insert-ref! (&mut map) key 2)
-            map)]
-        [(compiler_ast_types.AstMaybeNominalKey.None) map]))))
-
-(define (compiler-backend-collect-signature-group-counts-params
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map (:consume)]
-  [params : compiler_ir_types.CompilerIrParamList]) : backend_i64_i64_map.Map
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) map]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-collect-signature-group-counts-params
-        type-segment-bases
-        map
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ ty _)
-          (compiler-backend-collect-signature-group-counts-params
-            type-segment-bases
-            (compiler-backend-collect-signature-group-counts-type
-              type-segment-bases
-              map
-              ty)
-            (__tl-box-place rest))])]))
-
-(define (compiler-backend-collect-group-counts-functions
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : backend_i64_i64_map.Map
-  (match (compiler-backend-collect-functions-shared
-    type-segment-bases
-    (CompilerBackendCollectState.GroupCounts map)
-    functions)
-    [(CompilerBackendCollectState.GroupCounts out) out]
-    [_ map]))
-
-(define (compiler-backend-group-word-sse-bit [index : i64]) : i64
-  (if (= index 0)
-    1
-    2))
-
-(define (compiler-backend-pack-word-value-sse?
-  [type-info : compiler_regalloc.CompilerRegVarTypes]
-  [value : compiler_ir_types.CompilerIrValue]) : bool
-  (match value
-    [(compiler_ir_types.CompilerIrValue.Var id)
-      (match (compiler_regalloc.compiler-reg-var-types-lookup type-info id)
-        [(compiler_regalloc.CompilerRegMaybeType.Some ty)
-          (compiler-backend-float-type? ty)]
-        [(compiler_regalloc.CompilerRegMaybeType.No) false])]
-    [(compiler_ir_types.CompilerIrValue.F64 _) true]
-    [_ false]))
-
-(define (compiler-backend-pack-word-class-mask
-  [type-info : compiler_regalloc.CompilerRegVarTypes]
-  [words : compiler_ir_types.CompilerIrValueList]
-  [index : i64]
-  [mask : i64]) : i64
-  (match words
-    [(compiler_ir_types.CompilerIrValueList.Nil) mask]
-    [(compiler_ir_types.CompilerIrValueList.Array seq)
-      (compiler-backend-pack-word-class-mask
-        type-info
-        (compiler_ir_types.compiler-ir-value-seq-to-list seq)
-        index
-        mask)]
-    [(compiler_ir_types.CompilerIrValueList.Cons word rest)
-      (compiler-backend-pack-word-class-mask
-        type-info
-        (__tl-box-place rest)
-        (+ index 1)
-        (if (compiler-backend-pack-word-value-sse? type-info word)
-          (bit-or mask (compiler-backend-group-word-sse-bit index))
-          mask))]))
-
-(define (compiler-backend-empty-reg-var-types) : compiler_regalloc.CompilerRegVarTypes
-  (compiler_regalloc.CompilerRegVarTypes
-    (array.make-array i64 0)
-    (array.make-array compiler_ast_types.AstType 0)))
-
-(define (compiler-backend-collect-group-counts-instr-seq
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map (:consume)]
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [index : i64]) : backend_i64_i64_map.Map
-  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
-    map
-    (compiler-backend-collect-group-counts-instr-seq
-      type-segment-bases
-      (compiler-backend-collect-group-counts-instr
-        type-segment-bases
-        map
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))
-      instrs
-      (+ index 1))))
-
-(define (compiler-backend-collect-group-class-masks-instr-seq
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map (:consume)]
-  [type-info : compiler_regalloc.CompilerRegVarTypes]
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [index : i64]) : backend_i64_i64_map.Map
-  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
-    map
-    (compiler-backend-collect-group-class-masks-instr-seq
-      type-segment-bases
-      (compiler-backend-collect-group-class-masks-instr
-        type-segment-bases
-        map
-        type-info
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))
-      type-info
-      instrs
-      (+ index 1))))
-
 ;; Share the function/block traversal while keeping each instruction
 ;; sequence leaf direct, avoiding a callback or tagged dispatch per instruction.
 (define (compiler-backend-collect-block-shared
-  [type-segment-bases : i64]
   [state : CompilerBackendCollectState (:consume)]
   [block : compiler_ir_types.CompilerIrBlock]) : CompilerBackendCollectState
   (match block
@@ -35384,212 +35260,64 @@
       (match state
         [(CompilerBackendCollectState.Collections collections)
           (CompilerBackendCollectState.Collections
-            (compiler-backend-collect-instr-seq-collections collections instrs))]
-        [(CompilerBackendCollectState.GroupCounts map)
-          (CompilerBackendCollectState.GroupCounts
-            (compiler-backend-collect-group-counts-instr-seq
-              type-segment-bases
-              map
-              instrs
-              0))]
-        [(CompilerBackendCollectState.GroupClassMasks map type-info)
-          (CompilerBackendCollectState.GroupClassMasks
-            (compiler-backend-collect-group-class-masks-instr-seq
-              type-segment-bases
-              map
-              type-info
-              instrs
-              0)
-            type-info)])]))
+            (compiler-backend-collect-instr-seq-collections collections instrs))])]))
 
 (define (compiler-backend-collect-block-seq-shared
-  [type-segment-bases : i64]
   [state : CompilerBackendCollectState (:consume)]
   [seq : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]) : CompilerBackendCollectState
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count seq))
     state
     (compiler-backend-collect-block-seq-shared
-      type-segment-bases
       (compiler-backend-collect-block-shared
-        type-segment-bases
         state
         (compiler_ir_types.compiler-ir-block-seq-ref seq index))
       seq
       (+ index 1))))
 
 (define (compiler-backend-collect-blocks-shared
-  [type-segment-bases : i64]
   [state : CompilerBackendCollectState (:consume)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendCollectState
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) state]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (compiler-backend-collect-blocks-shared
-        type-segment-bases
-        (compiler-backend-collect-block-shared type-segment-bases state block)
+        (compiler-backend-collect-block-shared state block)
         (__tl-box-place rest))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-collect-block-seq-shared type-segment-bases state seq 0)]))
-
-(define (compiler-backend-collect-enter-function-shared
-  [type-segment-bases : i64]
-  [state : CompilerBackendCollectState]
-  [func : compiler_ir_types.CompilerIrFunction]) : CompilerBackendCollectState
-  (match state
-    [(CompilerBackendCollectState.GroupCounts map)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ params ret-ty _ _)
-          (CompilerBackendCollectState.GroupCounts
-            (compiler-backend-collect-signature-group-counts-type
-              type-segment-bases
-              (compiler-backend-collect-signature-group-counts-params
-                type-segment-bases
-                map
-                params)
-              ret-ty))])]
-    [(CompilerBackendCollectState.GroupClassMasks map _)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ params ret-ty _ _)
-          (let
-            [with-params : backend_i64_i64_map.Map
-              (compiler-backend-collect-signature-group-class-mask-params
-                type-segment-bases
-                map
-                params)]
-            (CompilerBackendCollectState.GroupClassMasks
-              (compiler-backend-merge-signature-group-class-mask-type
-                type-segment-bases
-                with-params
-                ret-ty)
-              (compiler_regalloc.compiler-reg-function-var-types func)))])]
-    [_ state]))
-
-(define (compiler-backend-merge-signature-group-class-mask-type
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map (:consume)]
-  [ty : compiler_ast_types.AstType]) : backend_i64_i64_map.Map
-  (let
-    [mask : i64 (compiler-backend-abi-group-mask type-segment-bases ty)]
-    (if (< mask 0)
-      map
-      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
-        [(compiler_ast_types.AstMaybeNominalKey.Some key)
-          (compiler-backend-merge-group-class-mask map key mask)]
-        [(compiler_ast_types.AstMaybeNominalKey.None) map]))))
-
-(define (compiler-backend-collect-signature-group-class-mask-params
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map (:consume)]
-  [params : compiler_ir_types.CompilerIrParamList]) : backend_i64_i64_map.Map
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) map]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-collect-signature-group-class-mask-params
-        type-segment-bases
-        map
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ ty _)
-          (compiler-backend-collect-signature-group-class-mask-params
-            type-segment-bases
-            (compiler-backend-merge-signature-group-class-mask-type
-              type-segment-bases
-              map
-              ty)
-            (__tl-box-place rest))])]))
+      (compiler-backend-collect-block-seq-shared state seq 0)]))
 
 (define (compiler-backend-collect-function-shared
-  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [func : compiler_ir_types.CompilerIrFunction]) : CompilerBackendCollectState
   (match func
     [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-backend-collect-blocks-shared
-        type-segment-bases
-        (compiler-backend-collect-enter-function-shared
-          type-segment-bases
-          state
-          func)
-        blocks)]))
+      (compiler-backend-collect-blocks-shared state blocks)]))
 
 (define (compiler-backend-collect-function-seq-shared
-  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [seq : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]) : CompilerBackendCollectState
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count seq))
     state
     (compiler-backend-collect-function-seq-shared
-      type-segment-bases
       (compiler-backend-collect-function-shared
-        type-segment-bases
         state
         (compiler_ir_types.compiler-ir-function-seq-ref seq index))
       seq
       (+ index 1))))
 
 (define (compiler-backend-collect-functions-shared
-  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [functions : compiler_ir_types.CompilerIrFunctionList]) : CompilerBackendCollectState
   (match functions
     [(compiler_ir_types.CompilerIrFunctionList.Nil) state]
     [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
       (compiler-backend-collect-functions-shared
-        type-segment-bases
-        (compiler-backend-collect-function-shared type-segment-bases state func)
+        (compiler-backend-collect-function-shared state func)
         (__tl-box-place rest))]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-collect-function-seq-shared
-        type-segment-bases
-        state
-        seq
-        0)]))
-
-(define (compiler-backend-merge-group-class-mask
-  [map : backend_i64_i64_map.Map (:consume)]
-  [key : i64]
-  [mask : i64]) : backend_i64_i64_map.Map
-  (match (backend_i64_i64_map.get (& map) key)
-    [(backend_i64_i64_map.LookupFound found)
-      (begin
-        (backend_i64_i64_map.insert-ref! (&mut map) key (bit-or found mask))
-        map)]
-    [(backend_i64_i64_map.LookupMissing)
-      (begin
-        (backend_i64_i64_map.insert-ref! (&mut map) key mask)
-        map)]))
-
-(define (compiler-backend-collect-group-class-masks-instr
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map (:consume)]
-  [type-info : compiler_regalloc.CompilerRegVarTypes]
-  [instr : compiler_ir_types.CompilerIrInstr]) : backend_i64_i64_map.Map
-  (match instr
-    [(compiler_ir_types.CompilerIrInstr.Pack _ words ty)
-      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
-        [(compiler_ast_types.AstMaybeNominalKey.Some key)
-          (compiler-backend-merge-group-class-mask
-            map
-            key
-            (compiler-backend-pack-word-class-mask type-info words 0 0))]
-        [(compiler_ast_types.AstMaybeNominalKey.None) map])]
-    [_ map]))
-
-(define (compiler-backend-collect-group-class-masks-functions
-  [type-segment-bases : i64]
-  [map : backend_i64_i64_map.Map]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : backend_i64_i64_map.Map
-  (match (compiler-backend-collect-functions-shared
-    type-segment-bases
-    (CompilerBackendCollectState.GroupClassMasks
-      map
-      (compiler-backend-empty-reg-var-types))
-    functions)
-    [(CompilerBackendCollectState.GroupClassMasks out _) out]
-    [_ map]))
+      (compiler-backend-collect-function-seq-shared state seq 0)]))
 
 (define (compiler-backend-param-list-has-private-memory?
   [type-segment-bases : i64]
@@ -35709,16 +35437,12 @@
         extern-link-symbols
         extern-provided
         0)]
-    [group-word-counts : backend_i64_i64_map.Map
-      (compiler-backend-collect-group-counts-functions
+    [representations : compiler_ir_types.CompilerIrRepresentationIndex
+      (compiler-backend-state-representations
+        backend-state
         type-segment-bases
-        (backend_i64_i64_map.with-capacity (+ (* function-count 2) 1))
-        functions)]
-    [group-word-class-masks : backend_i64_i64_map.Map
-      (compiler-backend-collect-group-class-masks-functions
-        type-segment-bases
-        (backend_i64_i64_map.with-capacity (+ (* function-count 2) 1))
-        functions)]
+        functions
+        externs)]
     (CompilerBackendProgramIndex
       function-ids
       function-names
@@ -35731,8 +35455,7 @@
       extern-link-references
       extern-link-symbols
       extern-provided
-      group-word-counts
-      group-word-class-masks
+      representations
       type-segment-bases
       profile-state
       backend-state)))
@@ -35774,18 +35497,16 @@
       (if (compiler-backend-reference-to-slice? type-segment-bases inner)
         2
         1)]
-    [(compiler_ast_types.AstType.Region _ inner)
-      (compiler-backend-group-word-count
-        type-segment-bases
-        index
-        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [_
-      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
-        [(compiler_ast_types.AstMaybeNominalKey.Some key)
-          (match (backend_i64_i64_map.get (& index.group-word-counts) key)
-            [(backend_i64_i64_map.LookupFound count) count]
-            [(backend_i64_i64_map.LookupMissing) 1])]
-        [(compiler_ast_types.AstMaybeNominalKey.None) 1])]))
+      (match (compiler_ir_types.compiler-ir-representation-index-kind
+        type-segment-bases
+        index.representations
+        ty)
+        [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup count _)
+          count]
+        ;; Unknown values retain the backend's conservative one-slot fallback;
+        ;; only KnownOneWord is positive proof exposed to optimization clients.
+        [_ 1])]))
 
 (define (compiler-backend-group-type?
   [type-segment-bases : i64]
@@ -36067,18 +35788,19 @@
   (match ty
     [(compiler_ast_types.AstType.Ref _ _) 0]
     [(compiler_ast_types.AstType.MutRef _ _) 0]
-    [(compiler_ast_types.AstType.Region _ inner)
-      (compiler-backend-group-word-class-mask
-        type-segment-bases
-        index
-        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [_
-      (match (compiler_ast_types.ast-aggregate-type-key type-segment-bases ty)
-        [(compiler_ast_types.AstMaybeNominalKey.Some key)
-          (match (backend_i64_i64_map.get (& index.group-word-class-masks) key)
-            [(backend_i64_i64_map.LookupFound mask) mask]
-            [(backend_i64_i64_map.LookupMissing) 0])]
-        [(compiler_ast_types.AstMaybeNominalKey.None) 0])]))
+      (match (compiler_ir_types.compiler-ir-representation-index-kind
+        type-segment-bases
+        index.representations
+        ty)
+        [(compiler_ir_types.CompilerIrRepresentationKind.RegisterGroup _ mask)
+          mask]
+        [_ 0])]))
+
+(define (compiler-backend-group-word-sse-bit [index : i64]) : i64
+  (if (= index 0)
+    1
+    2))
 
 (define (compiler-backend-group-word-sse?
   [type-segment-bases : i64]
@@ -67048,24 +66770,8 @@
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
-        ;; Ensure the register allocator can see the program-wide group
-        ;; word-count map (so a group-typed call result / param / mov gets a
-        ;; register PAIR, not a single register). Idempotent per function.
-        ;;
-        ;; INVARIANT: this install must precede every reader of the map in this
-        ;; function, not merely the register plan. The map is read through
-        ;; `compiler-reg-type-register-group?` and its two `-sse?` siblings; the
-        ;; installed value does NOT survive from one `compiler-backend-emit-function`
-        ;; call into the next, so a read taken before this binding faults on the
-        ;; first aggregate-typed query rather than returning a stale answer. The
-        ;; earliest reader is the cold-call rewrite below, whose
-        ;; `compiler-reg-cold-call-protectable-type?` asks exactly that question
-        ;; of every live value it considers protecting; the register plan, the
-        ;; parameter pin/greedy eligibility tests and the frame coloring are the
-        ;; later ones. Binding it first here keeps the requirement trivially
-        ;; true for any pass added to this function in future -- it depends only
-        ;; on `program-index`, which is constant across the program, so nothing
-        ;; forces it later.
+        ;; Every representation-aware register-allocation view below carries the
+        ;; same pre-optimization job capability from `program-index`.
         [backend-state : CompilerBackendState program-index.backend-state]
         [function-state : CompilerBackendFunctionState
           (compiler-backend-state-function-state backend-state)]
@@ -67076,12 +66782,6 @@
             name)]
         [scalar-registers-enabled : bool
           (compiler-backend-state-scalar-registers-enabled? backend-state)]
-        [_ra-grp : unit
-          (compiler_regalloc.compiler-reg-set-group-counts!
-            program-index.group-word-counts)]
-        [_ra-grp-mask : unit
-          (compiler_regalloc.compiler-reg-set-group-class-masks!
-            program-index.group-word-class-masks)]
         ;; Prefix dry-emission is part of shrink-wrap admission and precedes
         ;; this function's const-hoist build. Fail closed unless its scratch
         ;; state was reset successfully for this function.
@@ -67124,9 +66824,10 @@
           (if (and
             (compiler-backend-mode-scalar? mode)
             scalar-registers-enabled)
-            (compiler_regalloc.compiler-reg-cold-call-rewrite-function
+            (compiler_regalloc.compiler-reg-cold-call-rewrite-function-with-representations
               type-segment-bases
-              early-exit-func)
+              early-exit-func
+              program-index.representations)
             (compiler_regalloc.CompilerRegColdCallRewrite.Rewrite
               early-exit-func
               (- 0 1)))]
@@ -67187,8 +66888,11 @@
           (and (compiler-backend-mode-scalar? mode) scalar-registers-enabled)]
         [walk-types : compiler_regalloc.CompilerRegVarTypes
           (if scalar-plan?
-            (compiler_regalloc.compiler-reg-function-var-types walk-func)
-            (compiler_regalloc.compiler-reg-var-types-empty))]
+            (compiler_regalloc.compiler-reg-function-var-types-with-representations
+              walk-func
+              program-index.representations)
+            (compiler_regalloc.compiler-reg-var-types-empty-with-representations
+              program-index.representations))]
         [reg-plan : compiler_regalloc.CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if scalar-registers-enabled
@@ -67198,17 +66902,20 @@
                 walk-func
                 cold-call-temp-start
                 walk-types)
-              (compiler_regalloc.compiler-reg-plan-function-stack-only
-                walk-func))
+              (compiler_regalloc.compiler-reg-plan-function-stack-only-with-representations
+                walk-func
+                program-index.representations))
             (if (compiler-backend-mode-avx2? mode)
-              (compiler_regalloc.compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi
+              (compiler_regalloc.compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
                 type-segment-bases
                 fn-abi
-                walk-func)
-              (compiler_regalloc.compiler-reg-plan-function-with-type-segment-bases-for-abi
+                walk-func
+                program-index.representations)
+              (compiler_regalloc.compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
                 type-segment-bases
                 fn-abi
-                walk-func)))]
+                walk-func
+                program-index.representations)))]
         ;; A call-free natural loop can leave one volatile register dead before
         ;; the loop and another dead inside it while the whole-range greedy pays
         ;; for a callee-saved home. Detect that shape against the initial plan,
@@ -70217,11 +69924,9 @@
       out)))
 
 (define (compiler-backend-collect-function-collections
-  [type-segment-bases : i64]
   [collections : CompilerBackendProgramCollections]
   [functions : compiler_ir_types.CompilerIrFunctionList]) : CompilerBackendProgramCollections
   (match (compiler-backend-collect-functions-shared
-    type-segment-bases
     (CompilerBackendCollectState.Collections collections)
     functions)
     [(CompilerBackendCollectState.Collections out) out]
@@ -70246,12 +69951,10 @@
   (compiler-backend-collect-global-collections-from collections globals 0))
 
 (define (compiler-backend-collect-program-collections
-  [type-segment-bases : i64]
   [program : compiler_ir_types.CompilerIrProgram]) : CompilerBackendProgramCollections
   (match program
     [(compiler_ir_types.CompilerIrProgram.Program globals functions _)
       (compiler-backend-collect-function-collections
-        type-segment-bases
         (compiler-backend-collect-global-collections
           (compiler-backend-program-collections-new)
           globals)
@@ -72143,9 +71846,7 @@
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-source-path-strings
         program-index.backend-state
-        (compiler-backend-collect-program-collections
-          type-segment-bases
-          program)
+        (compiler-backend-collect-program-collections program)
         spans)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
@@ -75795,7 +75496,7 @@
   [crt-entry : bool]) : cobj.CompilerObjectImage
   (let
     [collections : CompilerBackendProgramCollections
-      (compiler-backend-collect-program-collections type-segment-bases program)]
+      (compiler-backend-collect-program-collections program)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringSeq
@@ -76189,17 +75890,6 @@
                   entry-functions
                   externs
                   profile-state)]
-              ;; Object lowering performs the same aggregate group discovery as
-              ;; assembly lowering. Install this image's maps before that walk:
-              ;; a prior batch entry may have left arena-owned maps in the
-              ;; register allocator globals, and aggregate functions are the
-              ;; first consumers that dereference them.
-              [_ra-groups : unit
-                (compiler_regalloc.compiler-reg-set-group-counts!
-                  program-index.group-word-counts)]
-              [_ra-group-masks : unit
-                (compiler_regalloc.compiler-reg-set-group-class-masks!
-                  program-index.group-word-class-masks)]
               (match (compiler-backend-validate-function-symbols
                 globals
                 entry-functions

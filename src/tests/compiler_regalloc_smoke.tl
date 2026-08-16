@@ -158,6 +158,8 @@
   (let
     [func : ir.CompilerIrFunction (compiler-reg-smoke-descriptor-pair-function)]
     [types : reg.CompilerRegVarTypes (reg.compiler-reg-function-var-types func)]
+    [representations : ir.CompilerIrRepresentationIndex
+      (ir.compiler-ir-representation-index-empty)]
     [groups : live.CompilerLiveI64Set
       (reg.compiler-reg-function-group-vars
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -169,10 +171,12 @@
       (not
         (reg.compiler-reg-type-register-group?
           (ast.ast-node-pool-reader-type-segment-bases)
+          representations
           (ast.AstType.String)))
       (not
         (reg.compiler-reg-type-register-group?
           (ast.ast-node-pool-reader-type-segment-bases)
+          representations
           (ast.AstType.DynArray 1)))
       (= (live.compiler-live-set-count groups) 2)
       (not (live.compiler-live-set-contains? groups 0))

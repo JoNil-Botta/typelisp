@@ -887,28 +887,22 @@
       (if (< old-capacity 1)
         16
         (* old-capacity 2))]
-    [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 data.fixed-storage-arena]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [new-records : (__tl_dyn-array i64)
-      (array.make-array i64 (* new-capacity tc-macro-call-site-record-stride))]
-    [index : i64 0]
-    (begin
-      (while (< index (* data.len tc-macro-call-site-record-stride))
+    (in-arena
+      (arena.Arena data.fixed-storage-arena)
+      (let
+        [new-records : (__tl_dyn-array i64)
+          (array.make-array
+            i64
+            (* new-capacity tc-macro-call-site-record-stride))]
+        [index : i64 0]
         (begin
-          (set! (array-ref new-records index) (array-ref old-records index))
-          (set! index (+ index 1))))
-      (set! data.records new-records)
-      (set! data.capacity new-capacity)
-      (set! data.fixed-storage-arena (arena.tl_arena_current))
-      (tc-macro-call-site-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            data.fixed-storage-arena
-            previous))))))
+          (while (< index (* data.len tc-macro-call-site-record-stride))
+            (begin
+              (set! (array-ref new-records index) (array-ref old-records index))
+              (set! index (+ index 1))))
+          (set! data.records new-records)
+          (set! data.capacity new-capacity)
+          (tc-macro-call-site-state-data-set! state data))))))
 
 (define (tc-macro-call-site-record-key-eq?
   [data : TcMacroCallSiteStateData]
@@ -1015,24 +1009,14 @@
     (match (tc_i64_i64_map.get (& data.seen-sites) site-hash)
       [(tc_i64_i64_map.LookupFound _) unit]
       [(tc_i64_i64_map.LookupMissing)
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 data.fixed-storage-arena]
-          [_set-owner : unit
-            (unsafe
-              (arena.tl_arena_set owner))]
+        (in-arena
+          (arena.Arena data.fixed-storage-arena)
           (begin
             (tc_i64_i64_map.insert-ref!
               (&mut data.seen-sites)
               site-hash
               record-index)
-            (set! data.fixed-storage-arena (arena.tl_arena_current))
-            (tc-macro-call-site-state-data-set! state data)
-            (unsafe
-              (arena.tl_arena_set
-                (if (= previous owner)
-                  data.fixed-storage-arena
-                  previous)))))])))
+            (tc-macro-call-site-state-data-set! state data)))])))
 
 (define (tc-macro-call-site-state-record!
   [state : TcMacroCallSiteState]
@@ -3004,30 +2988,20 @@
   [module : String]
   [module-id : i64]
   [summary : CompilerTypecheckSummary]) : bool
-  (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    (begin
-      (tc-prefix-snapshot-cache-ensure-for-state! state)
-      (unsafe
-        (arena.tl_arena_set
-          (tc-prefix-snapshot-cache-arena-handle-for-state state)))
+  (begin
+    (tc-prefix-snapshot-cache-ensure-for-state! state)
+    (in-arena
+      (arena.Arena (tc-prefix-snapshot-cache-arena-handle-for-state state))
       (let
         [persistent-key : String (string.copy (& key))]
         [persistent-module : String (string.copy (& module))]
-        [stored : bool
-          (tc-prefix-snapshot-cache-store-for-state
-            state
-            persistent-key
-            count
-            persistent-module
-            module-id
-            summary)]
-        [cache-head : i64 (arena.tl_arena_current)]
-        (begin
-          (set! (array-ref state.arena 0) cache-head)
-          (unsafe
-            (arena.tl_arena_set prev-arena))
-          stored)))))
+        (tc-prefix-snapshot-cache-store-for-state
+          state
+          persistent-key
+          count
+          persistent-module
+          module-id
+          summary)))))
 
 ;; Serial/test compatibility surface. These adapters are intentionally the only
 ;; prefix-cache APIs that consult the serial loader selector.
@@ -5957,24 +5931,14 @@
         macro-name
         arity
         elapsed-ms)
-      (let
-        [enclosing : i64 (arena.tl_arena_current)]
-        [scratch : i64 (macro-expand-scratch-arena-get state)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set scratch))
-          (compiler-tc-macro-profile-record-in!
-            (&mut compiler-tc-macro-profile-entries)
-            macro-id
-            macro-name
-            arity
-            elapsed-ms)
-          (tc-macro-walk-set!
-            state
-            macro-expand-scratch-arena
-            (arena.tl_arena_current))
-          (unsafe
-            (arena.tl_arena_set enclosing)))))))
+      (in-arena
+        (arena.Arena (macro-expand-scratch-arena-get state))
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-id
+          macro-name
+          arity
+          elapsed-ms)))))
 
 (cfg
   compile-profile
@@ -12155,11 +12119,9 @@
       existing
       (let
         [owner : i64 (tc-chain-store-owner store-handle)]
-        [previous : i64 (arena.tl_arena_current)]
         [cell : i64
-          (begin
-            (unsafe
-              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+          (in-arena
+            (arena.Arena owner)
             (let
               [slots : (__tl_dyn-array TcChainIndex)
                 (array.make-array TcChainIndex 1)]
@@ -12172,7 +12134,6 @@
                     (ptr->int (ptr-cast (array-data slots) : (Ptr u8)))
                     : i64)))))]
         (begin
-          (tc-type-env-store-restore-after-owner-alloc! previous owner)
           (tc-chain-state-set! store-handle cell)
           cell)))))
 
@@ -12360,14 +12321,12 @@
       (let
         [state-addr : i64 (tc-chain-state-ensure! store-handle)]
         [owner : i64 (tc-chain-store-owner store-handle)]
-        [previous : i64 (arena.tl_arena_current)]
         [levels : i64 (tc-chain-jump-levels depth)]
-        (begin
-          ;; The jump and version arrays are reached from the index by node
-          ;; address, so they must live exactly as long as the node: allocate
-          ;; them in the store's owner arena, not the ambient one.
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+        ;; The jump and version arrays are reached from the index by node
+        ;; address, so they must live exactly as long as the node: allocate
+        ;; them in the store's owner arena, not the ambient one.
+        (in-arena
+          (arena.Arena owner)
           (let
             [jumps : (__tl_dyn-array i64)
               (if (= levels 0)
@@ -12397,7 +12356,6 @@
                           (tc-chain-jump-at (array-ref jumps (- k 1)) (- k 1)))
                         (set! k (+ k 1)))))))
               (tc-chain-node-set-fields! node-addr depth seq jumps prev)
-              (tc-type-env-store-restore-after-owner-alloc! previous owner)
               (tc-chain-register-layer!
                 store-handle
                 state-addr
@@ -13018,17 +12976,14 @@
   [state : TcMacroState]
   [root : i64]) : unit
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
     (begin
       (set! data.hygiene-cache-arena-root root)
       (set! data.hygiene-cache-arena root)
-      (unsafe
-        (arena.tl_arena_set root))
-      (set! data.hygiene-cache-arena-mark (arena.tl_region_mark))
-      (tc-macro-module-env-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set previous)))))
+      (in-arena
+        (arena.Arena root)
+        (set! data.hygiene-cache-arena-mark (arena.tl_region_mark)))
+      (tc-macro-module-env-state-data-set! state data))))
 
 (define (tc-hygiene-module-env-cache-arena-handle [state : TcMacroState]) : i64
   (let
@@ -13042,6 +12997,14 @@
       (__tl-project-field
         (tc-macro-module-env-state-data state)
         hygiene-cache-arena))))
+
+;; Installing the owner publishes three ownership fields into the job state.
+;; Return a post-install snapshot so callers can safely update another field
+;; and write the aggregate back without erasing that newly published state.
+(define (tc-hygiene-module-env-cache-owned-data [state : TcMacroState]) : TcMacroModuleEnvStateData
+  (begin
+    (tc-hygiene-module-env-cache-arena-handle state)
+    (tc-macro-module-env-state-data state)))
 
 (define (tc-hygiene-module-env-cache-arena-reset! [state : TcMacroState]) : unit
   (let
@@ -13111,6 +13074,34 @@
       (set! data.hygiene-cache-arena-root 0)
       (set! data.hygiene-cache-arena-mark 0)
       (tc-macro-module-env-state-data-set! state data))))
+
+(test
+  tc-hygiene-module-env-cache-lazy-owner-state
+  (let
+    [job : TcJobState (tc-job-state-new)]
+    [state : TcMacroState (tc-job-state-macro-state job)]
+    [before : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    [owned : TcMacroModuleEnvStateData
+      (tc-hygiene-module-env-cache-owned-data state)]
+    (begin
+      ;; Mirror the cache success arm: update unrelated aggregate state and
+      ;; publish it after the lazy owner install.
+      (set! owned.hygiene-active-top-env-ready true)
+      (tc-macro-module-env-state-data-set! state owned)
+      (let
+        [after : TcMacroModuleEnvStateData
+          (tc-macro-module-env-state-data state)]
+        [preserved? : bool
+          (and
+            (= before.hygiene-cache-arena-root 0)
+            (> after.hygiene-cache-arena-root 0)
+            (= after.hygiene-cache-arena after.hygiene-cache-arena-root)
+            after.hygiene-active-top-env-ready)]
+        (begin
+          (tc-hygiene-module-env-cache-release! state)
+          (test.assert-true
+            preserved?
+            "hygiene cache writes preserve a lazily installed owner"))))))
 
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -16847,38 +16838,22 @@
         ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
         ;; survives the scratch arenas active during per-decl typechecking.
         (let
-          [prev-arena : i64 (arena.tl_arena_current)]
-          [_switched : unit
-            (unsafe
-              (arena.tl_arena_set
-                (tc-hygiene-module-env-cache-arena-handle state)))]
           [current : TcMacroModuleEnvStateData
-            (tc-macro-module-env-state-data state)]
-          (match (tc-module-local-env-cached-id
-            ctx
-            current.hygiene-active-top-env
-            module
-            module-id
-            current.hygiene-module-env-cache)
-            [(ResultTcModuleLocalEnv.Ok def-env next-cache)
-              (let
-                [cache-head : i64 (arena.tl_arena_current)]
+            (tc-hygiene-module-env-cache-owned-data state)]
+          (in-arena
+            (arena.Arena current.hygiene-cache-arena)
+            (match (tc-module-local-env-cached-id
+              ctx
+              current.hygiene-active-top-env
+              module
+              module-id
+              current.hygiene-module-env-cache)
+              [(ResultTcModuleLocalEnv.Ok def-env next-cache)
                 (begin
-                  (set! current.hygiene-cache-arena cache-head)
                   (set! current.hygiene-module-env-cache next-cache)
                   (tc-macro-module-env-state-data-set! state current)
-                  (unsafe
-                    (arena.tl_arena_set prev-arena))
-                  (ResultTcEnv.Ok def-env)))]
-            [(ResultTcModuleLocalEnv.Err message)
-              (let
-                [cache-head : i64 (arena.tl_arena_current)]
-                (begin
-                  (set! current.hygiene-cache-arena cache-head)
-                  (tc-macro-module-env-state-data-set! state current)
-                  (unsafe
-                    (arena.tl_arena_set prev-arena))
-                  (ResultTcEnv.Err message)))])))
+                  (ResultTcEnv.Ok def-env))]
+              [(ResultTcModuleLocalEnv.Err message) (ResultTcEnv.Err message)]))))
       (ResultTcEnv.Err
         "typecheck: macro hygiene definition context unavailable"))))
 
@@ -40368,23 +40343,19 @@
 
 (define (tc-clone-root-collection-use! [retained : ast.AstProgram]) : unit
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
     [arena-handle : i64 (arena.tl_arena_make)]
-    [_switch : unit
-      (unsafe
-        (arena.tl_arena_set arena-handle))]
-    [selected : tc_i64_i64_map.Map
-      (tc-clone-root-collection-selected-from-program retained)]
     (begin
-      (set! tc-clone-root-collection-selected selected)
+      (in-arena
+        (arena.Arena arena-handle)
+        (set!
+          tc-clone-root-collection-selected
+          (tc-clone-root-collection-selected-from-program retained)))
       (set!
         tc-clone-root-collection-roots
         (clone_support.CloneRootEntries.Empty))
       (set! tc-clone-root-collection-current-decl false)
-      (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-      (set! tc-clone-root-collection-active true)
-      (unsafe
-        (arena.tl_arena_set prev-arena)))))
+      (set! tc-clone-root-collection-arena arena-handle)
+      (set! tc-clone-root-collection-active true))))
 
 (define (tc-clone-root-collection-select-decl!
   [decl : ast.AstDecl]
@@ -40428,46 +40399,41 @@
     tc-clone-root-collection-current-decl)
     (match (tc-context-program ctx)
       [(ast.AstProgram.Program decls-box)
-        (let
-          [prev-arena : i64 (arena.tl_arena_current)]
-          [_switch : unit
-            (unsafe
-              (arena.tl_arena_set tc-clone-root-collection-arena))]
-          [resolved : ast.AstType
-            (tc-type-without-regions (tc-resolve-type ctx ty))]
-          (begin
-            (cfg
-              (any
-                compiler-surface-producer
-                compiler-build-identity
-                embedded-stdlib-tlci)
-              (tc-clone-root-collection-record-surface-roots!
-                (if (surface_facts.surface-typecheck-facts-recording?)
-                  (clone_support.clone-root-add-type
-                    (tc-context-pools ctx)
-                    (__tl-box-place decls-box)
-                    (tc-clone-able-set ctx)
-                    (clone_support.CloneRootEntries.Empty)
-                    resolved
-                    cbi.compiler-builtin-id-fix-empty)
-                  (clone_support.CloneRootEntries.Empty)))
-              unit)
-            ;; Resolve the nominal closure while `ty` and all nested type-pool
-            ;; ids are still live in this function's semantic scratch scope.
-            ;; Retaining the shallow AstType until the declaration walk ends
-            ;; would leave those nested ids pointing past a pool rewind.
-            (set!
-              tc-clone-root-collection-roots
-              (clone_support.clone-root-add-type
-                (tc-context-pools ctx)
-                (__tl-box-place decls-box)
-                (tc-clone-able-set ctx)
-                (tc-global-shared-view tc-clone-root-collection-roots)
-                resolved
-                cbi.compiler-builtin-id-fix-empty))
-            (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-            (unsafe
-              (arena.tl_arena_set prev-arena))))])
+        (in-arena
+          (arena.Arena tc-clone-root-collection-arena)
+          (let
+            [resolved : ast.AstType
+              (tc-type-without-regions (tc-resolve-type ctx ty))]
+            (begin
+              (cfg
+                (any
+                  compiler-surface-producer
+                  compiler-build-identity
+                  embedded-stdlib-tlci)
+                (tc-clone-root-collection-record-surface-roots!
+                  (if (surface_facts.surface-typecheck-facts-recording?)
+                    (clone_support.clone-root-add-type
+                      (tc-context-pools ctx)
+                      (__tl-box-place decls-box)
+                      (tc-clone-able-set ctx)
+                      (clone_support.CloneRootEntries.Empty)
+                      resolved
+                      cbi.compiler-builtin-id-fix-empty)
+                    (clone_support.CloneRootEntries.Empty)))
+                unit)
+              ;; Resolve the nominal closure while `ty` and all nested type-pool
+              ;; ids are still live in this function's semantic scratch scope.
+              ;; Retaining the shallow AstType until the declaration walk ends
+              ;; would leave those nested ids pointing past a pool rewind.
+              (set!
+                tc-clone-root-collection-roots
+                (clone_support.clone-root-add-type
+                  (tc-context-pools ctx)
+                  (__tl-box-place decls-box)
+                  (tc-clone-able-set ctx)
+                  (tc-global-shared-view tc-clone-root-collection-roots)
+                  resolved
+                  cbi.compiler-builtin-id-fix-empty)))))])
     unit))
 
 (define (tc-clone-root-collection-copy-roots
@@ -40518,10 +40484,8 @@
       [call-indices : (__tl_dyn-array i64) facts.clone-call-indices]
       [count : i64 (array-length decl-keys)]
       [index : i64 0]
-      [previous-arena : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set tc-clone-root-collection-arena))
+      (in-arena
+        (arena.Arena tc-clone-root-collection-arena)
         (while (< index count)
           (let
             [call-index : i64 (array-ref call-indices index)]
@@ -40553,10 +40517,7 @@
                               root-key)))
                         (set! cursor (- cursor 1))))))
                 unit)
-              (set! index end))))
-        (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set previous-arena))))
+              (set! index end))))))
     unit))
 
 (define (tc-clone-able-cache-reset!) : unit
@@ -42195,25 +42156,13 @@
     [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     (if (= (array-length data.lines) tc-inlay-hint-capacity)
       unit
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 data.fixed-storage-arena]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
+      (in-arena
+        (arena.Arena data.fixed-storage-arena)
         (begin
           (set! data.lines (array.make-array i64 tc-inlay-hint-capacity))
           (set! data.cols (array.make-array i64 tc-inlay-hint-capacity))
           (set! data.types (array.make-array String tc-inlay-hint-capacity))
-          ;; Arena allocation chains segments; retain the newest owner head so
-          ;; a later switch keeps allocating on the live chain.
-          (set! data.fixed-storage-arena (arena.tl_arena_current))
-          (tc-inlay-hint-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                data.fixed-storage-arena
-                previous))))))))
+          (tc-inlay-hint-state-data-set! state data))))))
 
 (define (tc-inlay-hint-string-arena-ensure-for-state!
   [state : TcInlayHintState]) : i64
@@ -50036,35 +49985,35 @@
       [count : i64 decls.len]
       [decl-offset : i64 decls.offset]
       [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-      [prev-arena : i64 (arena.tl_arena_current)]
       [index-arena : i64 (arena.tl_arena_make)]
-      [_switch : unit
-        (unsafe
-          (arena.tl_arena_set index-arena))]
-      [positions : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8192)]
-      [module-id : i64 (csym.compiler-symbol-root-module-id)]
-      [position : i64 0]
       (begin
-        (while (< position count)
+        (in-arena
+          (arena.Arena index-arena)
           (let
-            [decl : ast.AstDecl (array-ref decl-slots (+ decl-offset position))]
+            [positions : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8192)]
+            [module-id : i64 (csym.compiler-symbol-root-module-id)]
+            [position : i64 0]
             (begin
-              (match decl
-                [(ast.AstDecl.Module next-module) (set! module-id next-module)]
-                [_
-                  (tc-program-enum-index-bind-decl!
-                    (&mut positions)
-                    module-id
-                    decl
-                    position)])
-              (set! position (+ position 1)))))
-        (set! tc-program-enum-index-positions positions)
+              (while (< position count)
+                (let
+                  [decl : ast.AstDecl
+                    (array-ref decl-slots (+ decl-offset position))]
+                  (begin
+                    (match decl
+                      [(ast.AstDecl.Module next-module)
+                        (set! module-id next-module)]
+                      [_
+                        (tc-program-enum-index-bind-decl!
+                          (&mut positions)
+                          module-id
+                          decl
+                          position)])
+                    (set! position (+ position 1)))))
+              (set! tc-program-enum-index-positions positions))))
         (set! tc-program-enum-index-decl-count count)
         (set! tc-program-enum-index-decl-offset decl-offset)
         (set! tc-program-enum-index-generation (ci.intern-generation))
-        (set! tc-program-enum-index-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set prev-arena))
+        (set! tc-program-enum-index-arena index-arena)
         (set! tc-program-enum-index-ready true)))))
 
 (define (tc-program-enum-variants-from-indexed-decl
@@ -62254,7 +62203,6 @@
   [state : TcMacroState]
   [macro-key : (& macro-key str)]) : String
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64
       (if (= (tc-macro-proof-field state qualified-arena) 0)
         (begin
@@ -62264,21 +62212,7 @@
             (arena.tl_arena_make_small))
           (tc-macro-proof-field state qualified-arena))
         (tc-macro-proof-field state qualified-arena))]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [copied : String (string.copy macro-key)]
-    (begin
-      (let
-        [head : i64 (arena.tl_arena_current)]
-        (begin
-          (tc-macro-proof-set! state qualified-arena head)
-          (unsafe
-            (arena.tl_arena_set
-              (if (= previous owner)
-                head
-                previous)))))
-      copied)))
+    (in-arena (arena.Arena owner) (string.copy macro-key))))
 
 (define (text-copy [text : (& text str)]) : String
   (text-copy-for-state (tc-job-state-macro-state (tc-serial-job-state)) text))
@@ -66772,13 +66706,31 @@
   (kind TcMovedPathKind)
   (origin i64))
 
+;; Moved-path facts are persistent snapshots over an append-only node store.
+;; The singleton stays inline; larger snapshots carry only the stable store
+;; address, their newest node, and their logical length.
+(defstruct TcMovedPathFactNode
+  (fact TcMovedPathFact)
+  (parent i64))
+
+(defstruct TcMovedPathFactStoreData
+  (nodes (__tl_dyn-array TcMovedPathFactNode))
+  (len i64)
+  (owner-arena i64))
+
 (defenum TcMovedPathFacts
   (Nil)
-  (Cons TcMovedPathFact (Box TcMovedPathFacts)))
+  (One TcMovedPathFact)
+  (Dense (Box TcMovedPathFactStoreData) i64 i64))
 
 (defenum TcMovedPathFactsRemove
   (Missing)
   (Removed TcMovedPathFacts))
+
+(defenum TcMovedPathFactsFilter
+  (Root i64)
+  (Lending TcMovePath)
+  (Pending i64))
 
 (defstruct TcParamStorageOriginNode
   (name-id i64)
@@ -66934,11 +66886,145 @@
 (define (tc-moved-paths [set : TcMovedSet]) : TcMovedPathFacts
   set.paths)
 
+(define (tc-moved-path-fact-store-new [first : TcMovedPathFact]) : (Box
+    TcMovedPathFactStoreData)
+  (let
+    [nodes : (__tl_dyn-array TcMovedPathFactNode)
+      (array.make-array TcMovedPathFactNode 4)]
+    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    (begin
+      (set! (array-ref nodes 0) (TcMovedPathFactNode first -1))
+      (box (TcMovedPathFactStoreData nodes 1 owner)))))
+
+(define (tc-moved-path-fact-store-grow!
+  [data : (&mut data TcMovedPathFactStoreData)]
+  [required : i64]) : unit
+  (let
+    [old : (__tl_dyn-array TcMovedPathFactNode) data.nodes]
+    [old-capacity : i64 (array.length old)]
+    [next-capacity : i64 old-capacity]
+    (if (<= required old-capacity)
+      unit
+      (begin
+        (while (< next-capacity required)
+          (set! next-capacity (* next-capacity 2)))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [next : (__tl_dyn-array TcMovedPathFactNode)
+              (array.make-array TcMovedPathFactNode next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index data.len)
+                (let
+                  [node : TcMovedPathFactNode (array-ref old index)]
+                  [kind : TcMovedPathKind
+                    (match node.fact.kind
+                      [(TcMovedPathKind.Move) (TcMovedPathKind.Move)]
+                      [(TcMovedPathKind.BorrowShared)
+                        (TcMovedPathKind.BorrowShared)]
+                      [(TcMovedPathKind.BorrowMut) (TcMovedPathKind.BorrowMut)]
+                      [(TcMovedPathKind.BorrowTwoPhaseMut)
+                        (TcMovedPathKind.BorrowTwoPhaseMut)]
+                      [(TcMovedPathKind.BorrowLending binding-id)
+                        (TcMovedPathKind.BorrowLending binding-id)]
+                      [(TcMovedPathKind.BorrowLendingUsed binding-id)
+                        (TcMovedPathKind.BorrowLendingUsed binding-id)]
+                      [(TcMovedPathKind.BorrowPending scope-id)
+                        (TcMovedPathKind.BorrowPending scope-id)])]
+                  (begin
+                    (set!
+                      (array-ref next index)
+                      (TcMovedPathFactNode
+                        (TcMovedPathFact
+                          (TcMovePath
+                            node.fact.path.root
+                            (TcMovePathSegments
+                              node.fact.path.segments.store-address
+                              node.fact.path.segments.tail
+                              node.fact.path.segments.len))
+                          kind
+                          node.fact.origin)
+                        node.parent))
+                    (set! index (+ index 1)))))
+              (set! data.nodes next))))))))
+
+(define (tc-moved-path-fact-store-push!
+  [data : (&mut data TcMovedPathFactStoreData)]
+  [parent : i64]
+  [fact : TcMovedPathFact]) : i64
+  (let
+    [index : i64 data.len]
+    (begin
+      (tc-moved-path-fact-store-grow! data (+ index 1))
+      (set! (array-ref data.nodes index) (TcMovedPathFactNode fact parent))
+      (set! data.len (+ index 1))
+      index)))
+
+(define (tc-moved-path-fact-store-node
+  [data : (& data TcMovedPathFactStoreData)]
+  [index : i64]) : TcMovedPathFactNode
+  (unsafe
+    (ptr-read (ptr-offset (array-data data.nodes) index))))
+
+(define (tc-moved-path-facts-empty? [facts : TcMovedPathFacts]) : bool
+  (match facts
+    [(TcMovedPathFacts.Nil) true]
+    [_ false]))
+
 (define (tc-moved-path-facts-len [facts : TcMovedPathFacts]) : i64
   (match facts
     [(TcMovedPathFacts.Nil) 0]
-    [(TcMovedPathFacts.Cons _ rest)
-      (+ 1 (tc-moved-path-facts-len (__tl-box-place rest)))]))
+    [(TcMovedPathFacts.One _) 1]
+    [(TcMovedPathFacts.Dense _ _ len) len]))
+
+(define (tc-moved-path-facts-head [facts : TcMovedPathFacts]) : TcMovedPathFact
+  (match facts
+    [(TcMovedPathFacts.Nil)
+      (io.panic "typecheck: moved-path fact head of empty snapshot")]
+    [(TcMovedPathFacts.One fact) fact]
+    [(TcMovedPathFacts.Dense store tail _)
+      (__tl-project-field
+        (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
+        fact)]))
+
+(define (tc-moved-path-facts-rest [facts : TcMovedPathFacts]) : TcMovedPathFacts
+  (match facts
+    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
+    [(TcMovedPathFacts.One _) TcMovedPathFacts.Nil]
+    [(TcMovedPathFacts.Dense store tail len)
+      (let
+        [parent : i64
+          (__tl-project-field
+            (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
+            parent)]
+        (if (= len 2)
+          (TcMovedPathFacts.One
+            (__tl-project-field
+              (tc-moved-path-fact-store-node (& (__tl-box-place store)) parent)
+              fact))
+          (TcMovedPathFacts.Dense store parent (- len 1))))]))
+
+(define (tc-moved-path-facts-cons
+  [facts : TcMovedPathFacts]
+  [fact : TcMovedPathFact]) : TcMovedPathFacts
+  (match facts
+    [(TcMovedPathFacts.Nil) (TcMovedPathFacts.One fact)]
+    [(TcMovedPathFacts.One previous)
+      (let
+        [store : (Box TcMovedPathFactStoreData)
+          (tc-moved-path-fact-store-new previous)]
+        [tail : i64
+          (tc-moved-path-fact-store-push! (&mut (__tl-box-place store)) 0 fact)]
+        (TcMovedPathFacts.Dense store tail 2))]
+    [(TcMovedPathFacts.Dense store tail len)
+      (let
+        [next-tail : i64
+          (tc-moved-path-fact-store-push!
+            (&mut (__tl-box-place store))
+            tail
+            fact)]
+        (TcMovedPathFacts.Dense store next-tail (+ len 1)))]))
 
 (define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
   set.hidden-atomic-users)
@@ -67520,8 +67606,9 @@
 (define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
   fact.origin)
 
-;; An index that owns its storage. Used wherever a fact is known up front, so
-;; the seed cell that only a deferred index needs is never created.
+(define (tc-moved-path-fact-path [fact : TcMovedPathFact]) : TcMovePath
+  fact.path)
+
 (define (tc-moved-base-path-kind? [kind : TcMovedPathKind]) : bool
   (match kind
     [(TcMovedPathKind.Move) true]
@@ -67577,37 +67664,35 @@
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMovedPathFactsRemove
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcMovedPathFactsRemove.Missing)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    (TcMovedPathFactsRemove.Missing)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (tc-moved-path-kind-eq? fact.kind kind))
-        (TcMovedPathFactsRemove.Removed (__tl-box-place rest))
-        (match (tc-moved-path-facts-remove-exact
-          (__tl-box-place rest)
-          path
-          kind)
+        (TcMovedPathFactsRemove.Removed rest)
+        (match (tc-moved-path-facts-remove-exact rest path kind)
           [(TcMovedPathFactsRemove.Missing) (TcMovedPathFactsRemove.Missing)]
           [(TcMovedPathFactsRemove.Removed tail)
             (TcMovedPathFactsRemove.Removed
-              (TcMovedPathFacts.Cons fact (box tail)))]))]))
+              (tc-moved-path-facts-cons tail fact))])))))
 
 (define (tc-moved-path-facts-contains-exact-kind?
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (tc-moved-path-kind-eq? fact.kind kind))
         true
-        (tc-moved-path-facts-contains-exact-kind?
-          (__tl-box-place rest)
-          path
-          kind))]))
+        (tc-moved-path-facts-contains-exact-kind? rest path kind)))))
 
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
@@ -67621,7 +67706,7 @@
       (TcMovedSet
         (tc-moved-roots set)
         (tc-moved-partials set)
-        (TcMovedPathFacts.Cons fact (box (tc-moved-paths set)))
+        (tc-moved-path-facts-cons (tc-moved-paths set) fact)
         (tc-moved-hidden-atomic-users set)
         (tc-moved-param-storage-origins set)))))
 
@@ -67643,16 +67728,18 @@
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (tc-moved-path-kind-eq? fact.kind kind))
         (TcMoveConflict.Some
           (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-exact-conflict-kind-at (__tl-box-place rest) path kind))]))
+        (tc-moved-path-exact-conflict-kind-at rest path kind)))))
 
 (define (tc-moved-path-exact-conflict-kind
   [set : TcMovedSet]
@@ -67906,31 +67993,35 @@
 (define (tc-moved-path-conflict-at
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-moved-base-path-kind? fact.kind)
         (tc-move-path-conflicts? fact.path path))
         (TcMoveConflict.Some
           (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-conflict-at (__tl-box-place rest) path))]))
+        (tc-moved-path-conflict-at rest path)))))
 
 (define (tc-moved-path-conflict-kind-at
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-moved-path-kind-eq? fact.kind kind)
         (tc-move-path-conflicts? fact.path path))
         (TcMoveConflict.Some
           (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-conflict-kind-at (__tl-box-place rest) path kind))]))
+        (tc-moved-path-conflict-kind-at rest path kind)))))
 
 (define (tc-moved-path-conflict-kind
   [set : TcMovedSet]
@@ -67946,18 +68037,56 @@
     [(TcMoveConflict.Some _ _) true]
     [TcMoveConflict.No false]))
 
+(define (tc-moved-path-fact-filter-remove?
+  [fact : TcMovedPathFact]
+  [filter : TcMovedPathFactsFilter]) : bool
+  (match filter
+    [(TcMovedPathFactsFilter.Root root-id)
+      (= (tc-move-path-root-id fact.path) root-id)]
+    [(TcMovedPathFactsFilter.Lending path)
+      (and
+        (tc-move-path-eq? fact.path path)
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending _) true]
+          [(TcMovedPathKind.BorrowLendingUsed _) true]
+          [_ false]))]
+    [(TcMovedPathFactsFilter.Pending scope-id)
+      (match fact.kind
+        [(TcMovedPathKind.BorrowPending fact-scope-id)
+          (= fact-scope-id scope-id)]
+        [_ false])]))
+
+(define (tc-moved-path-facts-filter-step
+  [facts : TcMovedPathFacts]
+  [filter : TcMovedPathFactsFilter]) : TcMovedPathFactsRemove
+  (if (tc-moved-path-facts-empty? facts)
+    (TcMovedPathFactsRemove.Missing)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [remove : bool (tc-moved-path-fact-filter-remove? fact filter)]
+      (match (tc-moved-path-facts-filter-step rest filter)
+        [(TcMovedPathFactsRemove.Missing)
+          (if remove
+            (TcMovedPathFactsRemove.Removed rest)
+            (TcMovedPathFactsRemove.Missing))]
+        [(TcMovedPathFactsRemove.Removed tail)
+          (if remove
+            (TcMovedPathFactsRemove.Removed tail)
+            (TcMovedPathFactsRemove.Removed
+              (tc-moved-path-facts-cons tail fact)))]))))
+
+(define (tc-moved-path-facts-filter
+  [facts : TcMovedPathFacts]
+  [filter : TcMovedPathFactsFilter]) : TcMovedPathFacts
+  (match (tc-moved-path-facts-filter-step facts filter)
+    [(TcMovedPathFactsRemove.Missing) facts]
+    [(TcMovedPathFactsRemove.Removed tail) tail]))
+
 (define (tc-moved-path-facts-remove-root
   [facts : TcMovedPathFacts]
   [root-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-root (__tl-box-place rest) root-id)]
-        (if (= (tc-move-path-root-id fact.path) root-id)
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Root root-id)))
 
 (define (tc-moved-remove-root-state [set : TcMovedSet] [name-id : i64]) : TcMovedSet
   (let
@@ -67975,16 +68104,18 @@
         name-id))))
 
 (define (tc-moved-any-root-path-at? [facts : TcMovedPathFacts] [root-id : i64]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (match fact.kind
           [(TcMovedPathKind.Move) true]
           [_ false])
         (= (tc-move-path-root-id fact.path) root-id))
         true
-        (tc-moved-any-root-path-at? (__tl-box-place rest) root-id))]))
+        (tc-moved-any-root-path-at? rest root-id)))))
 
 (define (tc-moved-any-root-path? [set : TcMovedSet] [root-id : i64]) : bool
   (tc-moved-any-root-path-at? (tc-moved-paths set) root-id))
@@ -67992,9 +68123,11 @@
 (define (tc-moved-root-path-conflict-loop
   [facts : TcMovedPathFacts]
   [root-id : i64]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (match fact.kind
           [(TcMovedPathKind.Move) true]
@@ -68003,7 +68136,7 @@
         (TcMoveConflict.Some
           (tc-move-path-render fact.path)
           (tc-moved-path-fact-origin fact))
-        (tc-moved-root-path-conflict-loop (__tl-box-place rest) root-id))]))
+        (tc-moved-root-path-conflict-loop rest root-id)))))
 
 (define (tc-moved-root-path-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
   (tc-moved-root-path-conflict-loop (tc-moved-paths set) root-id))
@@ -68029,16 +68162,18 @@
       (tc-moved-remove-partial without-path root-id))))
 
 (define (tc-moved-union-path-loop [a : TcMovedPathFacts] [out : TcMovedSet]) : TcMovedSet
-  (match a
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? a)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head a)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest a)]
       (tc-moved-union-path-loop
-        (__tl-box-place rest)
+        rest
         (tc-moved-add-path-fact
           out
           fact.path
           fact.kind
-          (tc-moved-path-fact-origin fact)))]))
+          (tc-moved-path-fact-origin fact))))))
 
 (define (tc-moved-union-id-loop
   [a : (& a tc_i64_i64_map.Map)]
@@ -76155,15 +76290,17 @@
 (define (tc-borrow-check-lending-binding-at
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMaybeNameId
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcMaybeNameId.No)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    (TcMaybeNameId.No)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (tc-move-path-eq? fact.path path)
         (match fact.kind
           [(TcMovedPathKind.BorrowLending binding-id)
             (TcMaybeNameId.Some binding-id)]
-          [_ (tc-borrow-check-lending-binding-at (__tl-box-place rest) path)])
-        (tc-borrow-check-lending-binding-at (__tl-box-place rest) path))]))
+          [_ (tc-borrow-check-lending-binding-at rest path)])
+        (tc-borrow-check-lending-binding-at rest path)))))
 
 (define (tc-borrow-check-lending-binding
   [facts : TcMovedPathFacts]
@@ -76186,43 +76323,40 @@
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [binding-id : i64]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (match fact.kind
           [(TcMovedPathKind.BorrowLendingUsed used-id) (= used-id binding-id)]
           [_ false]))
         true
-        (tc-borrow-check-lending-binding-used-at?
-          (__tl-box-place rest)
-          path
-          binding-id))]))
+        (tc-borrow-check-lending-binding-used-at? rest path binding-id)))))
 
 (define (tc-borrow-check-note-lending-use-at
   [facts : TcMovedPathFacts]
   [binding-id : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending fact-binding-id)
-              (if (= fact-binding-id binding-id)
-                (tc-moved-add-path-fact
-                  out
-                  fact.path
-                  (TcMovedPathKind.BorrowLendingUsed binding-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-note-lending-use-at
-          (__tl-box-place rest)
-          binding-id
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending fact-binding-id)
+            (if (= fact-binding-id binding-id)
+              (tc-moved-add-path-fact
+                out
+                fact.path
+                (TcMovedPathKind.BorrowLendingUsed binding-id)
+                (tc-moved-path-fact-origin fact))
+              out)]
+          [_ out])]
+      (tc-borrow-check-note-lending-use-at rest binding-id out2))))
 
 (define (tc-borrow-check-note-lending-use
   [borrowed : TcMovedSet]
@@ -76235,27 +76369,26 @@
 (define (tc-borrow-check-propagate-lending-uses-at
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLendingUsed _)
-              (let
-                [path : TcMovePath fact.path]
-                (match (tc-borrow-check-lending-binding
-                  (tc-moved-paths out)
-                  path)
-                  [(TcMaybeNameId.Some binding-id)
-                    (tc-moved-add-path-fact
-                      out
-                      path
-                      (TcMovedPathKind.BorrowLendingUsed binding-id)
-                      (tc-moved-path-fact-origin fact))]
-                  [(TcMaybeNameId.No) out]))]
-            [_ out])]
-        (tc-borrow-check-propagate-lending-uses-at (__tl-box-place rest) out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLendingUsed _)
+            (let
+              [path : TcMovePath fact.path]
+              (match (tc-borrow-check-lending-binding (tc-moved-paths out) path)
+                [(TcMaybeNameId.Some binding-id)
+                  (tc-moved-add-path-fact
+                    out
+                    path
+                    (TcMovedPathKind.BorrowLendingUsed binding-id)
+                    (tc-moved-path-fact-origin fact))]
+                [(TcMaybeNameId.No) out]))]
+          [_ out])]
+      (tc-borrow-check-propagate-lending-uses-at rest out2))))
 
 (define (tc-borrow-check-propagate-lending-uses
   [from : TcMovedSet]
@@ -76272,31 +76405,32 @@
   [bound : TcStringList]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending binding-id)
-              (if (tc-expr-uses-free-name?
-                expr-bases
-                body
-                (tc-env-key-name-text binding-id)
-                bound)
-                (tc-moved-add-path-fact
-                  out
-                  fact.path
-                  (TcMovedPathKind.BorrowLendingUsed binding-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-note-called-lambda-capture-uses-at
-          expr-bases
-          body
-          bound
-          (__tl-box-place rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending binding-id)
+            (if (tc-expr-uses-free-name?
+              expr-bases
+              body
+              (tc-env-key-name-text binding-id)
+              bound)
+              (tc-moved-add-path-fact
+                out
+                fact.path
+                (TcMovedPathKind.BorrowLendingUsed binding-id)
+                (tc-moved-path-fact-origin fact))
+              out)]
+          [_ out])]
+      (tc-borrow-check-note-called-lambda-capture-uses-at
+        expr-bases
+        body
+        bound
+        rest
+        out2))))
 
 (define (tc-borrow-check-note-called-lambda-capture-uses
   [expr-bases : i64]
@@ -76330,9 +76464,11 @@
   [binding-id : i64]
   [half : i64]
   [select-half : bool]) : TcMaybeMovePath
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcMaybeMovePath.No)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    (TcMaybeMovePath.No)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (match fact.kind
           [(TcMovedPathKind.BorrowLending fact-binding-id)
@@ -76345,10 +76481,10 @@
             (tc-move-path-slice-half? fact.path 1))))
         (TcMaybeMovePath.Some fact.path)
         (tc-borrow-check-split-provenance-for-binding-at
-          (__tl-box-place rest)
+          rest
           binding-id
           half
-          select-half))]))
+          select-half)))))
 
 (define (tc-borrow-check-split-provenance
   [expr-bases : i64]
@@ -76417,42 +76553,45 @@
   [half : i64]
   [binding-id : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [copy : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending fact-binding-id)
-              (and
-                (= fact-binding-id source-binding-id)
-                (or
-                  (and
-                    (not (tc-move-path-slice-half? fact.path 0))
-                    (not (tc-move-path-slice-half? fact.path 1)))
-                  (tc-move-path-slice-half? fact.path half)))]
-            [_ false])]
-        [out2 : TcMovedSet
-          (if copy
-            (tc-moved-add-path-fact
-              out
-              fact.path
-              (TcMovedPathKind.BorrowLending binding-id)
-              (tc-moved-path-fact-origin fact))
-            out)]
-        (tc-borrow-check-rebind-split-projection-at
-          (__tl-box-place rest)
-          source-binding-id
-          half
-          binding-id
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [copy : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending fact-binding-id)
+            (and
+              (= fact-binding-id source-binding-id)
+              (or
+                (and
+                  (not (tc-move-path-slice-half? fact.path 0))
+                  (not (tc-move-path-slice-half? fact.path 1)))
+                (tc-move-path-slice-half? fact.path half)))]
+          [_ false])]
+      [out2 : TcMovedSet
+        (if copy
+          (tc-moved-add-path-fact
+            out
+            fact.path
+            (TcMovedPathKind.BorrowLending binding-id)
+            (tc-moved-path-fact-origin fact))
+          out)]
+      (tc-borrow-check-rebind-split-projection-at
+        rest
+        source-binding-id
+        half
+        binding-id
+        out2))))
 
 (define (tc-borrow-check-binding-has-split-provenance?
   [facts : TcMovedPathFacts]
   [binding-id : i64]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (match fact.kind
           [(TcMovedPathKind.BorrowLending fact-binding-id)
@@ -76462,9 +76601,7 @@
           (tc-move-path-slice-half? fact.path 0)
           (tc-move-path-slice-half? fact.path 1)))
         true
-        (tc-borrow-check-binding-has-split-provenance?
-          (__tl-box-place rest)
-          binding-id))]))
+        (tc-borrow-check-binding-has-split-provenance? rest binding-id)))))
 
 (define (tc-borrow-check-rebind-split-projection
   [expr-bases : i64]
@@ -76493,20 +76630,7 @@
 (define (tc-moved-path-facts-remove-lending
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-lending (__tl-box-place rest) path)]
-        (if (and
-          (tc-move-path-eq? fact.path path)
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending _) true]
-            [(TcMovedPathKind.BorrowLendingUsed _) true]
-            [_ false]))
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Lending path)))
 
 (define (tc-borrow-check-remove-borrow-path
   [borrowed : TcMovedSet]
@@ -76780,53 +76904,53 @@
   [result-lifetimes : TcNameIdList]
   [direct-path : TcMaybeMovePath]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [keep-kind : bool
-          (match kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [(TcMovedPathKind.BorrowMut) true]
-            [_ false])]
-        [keep-direct : bool
-          (match direct-path
-            [(TcMaybeMovePath.Some direct)
-              (tc-move-path-conflicts? path direct)]
-            [(TcMaybeMovePath.No) true])]
-        [missing : bool
-          (match (tc-moved-path-exact-conflict-kind out path kind)
-            [(TcMoveConflict.Some _ _) false]
-            [TcMoveConflict.No true])]
-        [out2 : TcMovedSet
-          (if (and
-            keep-kind
-            (tc-borrow-check-root-in-scope?
-              ctx
-              env
-              outer-locals
-              (tc-move-path-root-id path))
-            (tc-name-id-list-contains
-              result-lifetimes
-              (tc-borrow-check-path-lifetime ctx env path))
-            keep-direct
-            missing)
-            (tc-moved-add-path-fact
-              out
-              path
-              kind
-              (tc-moved-path-fact-origin fact))
-            out)]
-        (tc-borrow-check-propagate-return-borrows-at
-          ctx
-          env
-          outer-locals
-          (__tl-box-place rest)
-          result-lifetimes
-          direct-path
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [keep-kind : bool
+        (match kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [(TcMovedPathKind.BorrowMut) true]
+          [_ false])]
+      [keep-direct : bool
+        (match direct-path
+          [(TcMaybeMovePath.Some direct) (tc-move-path-conflicts? path direct)]
+          [(TcMaybeMovePath.No) true])]
+      [missing : bool
+        (match (tc-moved-path-exact-conflict-kind out path kind)
+          [(TcMoveConflict.Some _ _) false]
+          [TcMoveConflict.No true])]
+      [out2 : TcMovedSet
+        (if (and
+          keep-kind
+          (tc-borrow-check-root-in-scope?
+            ctx
+            env
+            outer-locals
+            (tc-move-path-root-id path))
+          (tc-name-id-list-contains
+            result-lifetimes
+            (tc-borrow-check-path-lifetime ctx env path))
+          keep-direct
+          missing)
+          (tc-moved-add-path-fact
+            out
+            path
+            kind
+            (tc-moved-path-fact-origin fact))
+          out)]
+      (tc-borrow-check-propagate-return-borrows-at
+        ctx
+        env
+        outer-locals
+        rest
+        result-lifetimes
+        direct-path
+        out2))))
 
 (define (tc-borrow-check-propagate-return-borrows
   [ctx : TcContext]
@@ -76870,43 +76994,44 @@
   [result-lifetimes : TcNameIdList]
   [origin : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [shared : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [_ false])]
-        [new : bool
-          (match (tc-moved-path-exact-conflict-kind prior path fact.kind)
-            [(TcMoveConflict.Some _ _) false]
-            [TcMoveConflict.No true])]
-        [out2 : TcMovedSet
-          (if (and
-            shared
-            new
-            (tc-borrow-check-root-in-scope?
-              ctx
-              env
-              locals
-              (tc-move-path-root-id path))
-            (tc-name-id-list-contains
-              result-lifetimes
-              (tc-borrow-check-path-lifetime ctx env path)))
-            (tc-borrow-check-add-lending-marker out path binding-id origin)
-            out)]
-        (tc-borrow-check-mark-new-return-borrows-at
-          ctx
-          env
-          locals
-          prior
-          (__tl-box-place rest)
-          binding-id
-          result-lifetimes
-          origin
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [shared : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [_ false])]
+      [new : bool
+        (match (tc-moved-path-exact-conflict-kind prior path fact.kind)
+          [(TcMoveConflict.Some _ _) false]
+          [TcMoveConflict.No true])]
+      [out2 : TcMovedSet
+        (if (and
+          shared
+          new
+          (tc-borrow-check-root-in-scope?
+            ctx
+            env
+            locals
+            (tc-move-path-root-id path))
+          (tc-name-id-list-contains
+            result-lifetimes
+            (tc-borrow-check-path-lifetime ctx env path)))
+          (tc-borrow-check-add-lending-marker out path binding-id origin)
+          out)]
+      (tc-borrow-check-mark-new-return-borrows-at
+        ctx
+        env
+        locals
+        prior
+        rest
+        binding-id
+        result-lifetimes
+        origin
+        out2))))
 
 ;; A propagated returned borrow needs an NLL marker for the outer result
 ;; binding. Mark only source paths newly introduced by the initializer; this
@@ -76962,16 +77087,18 @@
 (define (tc-borrow-check-pending-path-at?
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
         (match fact.kind
           [(TcMovedPathKind.BorrowPending _) true]
           [_ false]))
         true
-        (tc-borrow-check-pending-path-at? (__tl-box-place rest) path))]))
+        (tc-borrow-check-pending-path-at? rest path)))))
 
 ;; Sequence walkers do not need to scan their full remaining syntax eagerly.
 ;; Guard every lending borrow while a later sibling exists; if the current
@@ -76981,23 +77108,21 @@
   [scope-id : i64]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending _)
-              (tc-moved-add-path-fact
-                out
-                fact.path
-                (TcMovedPathKind.BorrowPending scope-id)
-                (tc-moved-path-fact-origin fact))]
-            [_ out])]
-        (tc-borrow-check-add-all-pending-markers-at
-          scope-id
-          (__tl-box-place rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (match fact.kind
+          [(TcMovedPathKind.BorrowLending _)
+            (tc-moved-add-path-fact
+              out
+              fact.path
+              (TcMovedPathKind.BorrowPending scope-id)
+              (tc-moved-path-fact-origin fact))]
+          [_ out])]
+      (tc-borrow-check-add-all-pending-markers-at scope-id rest out2))))
 
 (define (tc-borrow-check-add-all-pending-markers
   [borrowed : TcMovedSet]
@@ -77015,20 +77140,7 @@
 (define (tc-moved-path-facts-remove-pending-scope
   [facts : TcMovedPathFacts]
   [scope-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-pending-scope
-            (__tl-box-place rest)
-            scope-id)]
-        (if (match fact.kind
-          [(TcMovedPathKind.BorrowPending fact-scope-id)
-            (= fact-scope-id scope-id)]
-          [_ false])
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (tc-moved-path-facts-filter facts (TcMovedPathFactsFilter.Pending scope-id)))
 
 (define (tc-borrow-check-remove-pending-markers
   [borrowed : TcMovedSet]
@@ -77051,69 +77163,70 @@
   [protected : TcMovedSet]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [shared : bool
-          (match fact.kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [_ false])]
-        [out2 : TcMovedSet
-          (if (or
-            (not shared)
-            (tc-borrow-check-pending-path-at? (tc-moved-paths out) path)
-            (and
-              (not (tc-borrow-check-has-lending-binding? out path))
-              (tc-borrow-check-protected-path? protected path)))
-            out
-            (match (tc-borrow-check-lending-binding (tc-moved-paths out) path)
-              [(TcMaybeNameId.Some lending-binding-id)
-                (cond
-                  [(not
-                      (tc-borrow-check-lending-binding-used-at?
-                        (tc-moved-paths out)
-                        path
-                        lending-binding-id))
-                    out]
-                  [(tc-expr-list-uses-free-name?
-                      expr-bases
-                      exprs
-                      (tc-env-key-name-text lending-binding-id)
-                      TcStringList.Nil)
-                    out]
-                  [(tc-borrow-check-lifetime-used-in-exprs?
-                      expr-bases
-                      ctx
-                      env
-                      locals
-                      exprs
-                      (tc-borrow-check-path-lifetime ctx env path))
-                    (tc-moved-remove-path-kind
-                      out
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [shared : bool
+        (match fact.kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [_ false])]
+      [out2 : TcMovedSet
+        (if (or
+          (not shared)
+          (tc-borrow-check-pending-path-at? (tc-moved-paths out) path)
+          (and
+            (not (tc-borrow-check-has-lending-binding? out path))
+            (tc-borrow-check-protected-path? protected path)))
+          out
+          (match (tc-borrow-check-lending-binding (tc-moved-paths out) path)
+            [(TcMaybeNameId.Some lending-binding-id)
+              (cond
+                [(not
+                    (tc-borrow-check-lending-binding-used-at?
+                      (tc-moved-paths out)
                       path
-                      (TcMovedPathKind.BorrowLending lending-binding-id))]
-                  [else (tc-borrow-check-remove-borrow-path out path)])]
-              [(TcMaybeNameId.No)
-                (if (tc-borrow-check-lifetime-used-in-exprs?
-                  expr-bases
-                  ctx
-                  env
-                  locals
-                  exprs
-                  (tc-borrow-check-path-lifetime ctx env path))
-                  out
-                  (tc-borrow-check-remove-borrow-path out path))]))]
-        (tc-borrow-check-prune-before-exprs-loop
-          expr-bases
-          ctx
-          env
-          locals
-          exprs
-          protected
-          (__tl-box-place rest)
-          out2))]))
+                      lending-binding-id))
+                  out]
+                [(tc-expr-list-uses-free-name?
+                    expr-bases
+                    exprs
+                    (tc-env-key-name-text lending-binding-id)
+                    TcStringList.Nil)
+                  out]
+                [(tc-borrow-check-lifetime-used-in-exprs?
+                    expr-bases
+                    ctx
+                    env
+                    locals
+                    exprs
+                    (tc-borrow-check-path-lifetime ctx env path))
+                  (tc-moved-remove-path-kind
+                    out
+                    path
+                    (TcMovedPathKind.BorrowLending lending-binding-id))]
+                [else (tc-borrow-check-remove-borrow-path out path)])]
+            [(TcMaybeNameId.No)
+              (if (tc-borrow-check-lifetime-used-in-exprs?
+                expr-bases
+                ctx
+                env
+                locals
+                exprs
+                (tc-borrow-check-path-lifetime ctx env path))
+                out
+                (tc-borrow-check-remove-borrow-path out path))]))]
+      (tc-borrow-check-prune-before-exprs-loop
+        expr-bases
+        ctx
+        env
+        locals
+        exprs
+        protected
+        rest
+        out2))))
 
 (define (tc-borrow-check-prune-before-exprs
   [expr-bases : i64]
@@ -77737,54 +77850,55 @@
   [facts : TcMovedPathFacts]
   [value : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [borrow-kind : bool
-          (match kind
-            [(TcMovedPathKind.BorrowShared) true]
-            [(TcMovedPathKind.BorrowMut) true]
-            [(TcMovedPathKind.BorrowTwoPhaseMut) true]
-            [_ false])]
-        [new : bool
-          (not
-            (tc-moved-path-facts-contains-exact-kind?
-              (tc-moved-paths prior)
-              path
-              kind))]
-        [remove : bool
-          (if (and borrow-kind new)
-            (let
-              [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
-              (not
-                (or
-                  (tc-borrow-check-expr-type-contains-lifetime?
-                    ctx
-                    env
-                    value
-                    lifetime)
-                  (tc-borrow-check-expr-stores-lifetime?
-                    ctx
-                    expr-bases
-                    env
-                    value
-                    lifetime))))
-            false)]
-        [out2 : TcMovedSet
-          (if remove
-            (tc-moved-remove-path-kind out path kind)
-            out)]
-        (tc-borrow-check-prune-value-temporaries-at
-          ctx
-          expr-bases
-          env
-          prior
-          (__tl-box-place rest)
-          value
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [borrow-kind : bool
+        (match kind
+          [(TcMovedPathKind.BorrowShared) true]
+          [(TcMovedPathKind.BorrowMut) true]
+          [(TcMovedPathKind.BorrowTwoPhaseMut) true]
+          [_ false])]
+      [new : bool
+        (not
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths prior)
+            path
+            kind))]
+      [remove : bool
+        (if (and borrow-kind new)
+          (let
+            [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
+            (not
+              (or
+                (tc-borrow-check-expr-type-contains-lifetime?
+                  ctx
+                  env
+                  value
+                  lifetime)
+                (tc-borrow-check-expr-stores-lifetime?
+                  ctx
+                  expr-bases
+                  env
+                  value
+                  lifetime))))
+          false)]
+      [out2 : TcMovedSet
+        (if remove
+          (tc-moved-remove-path-kind out path kind)
+          out)]
+      (tc-borrow-check-prune-value-temporaries-at
+        ctx
+        expr-bases
+        env
+        prior
+        rest
+        value
+        out2))))
 
 ;; Argument auto-borrows created while evaluating an assignment RHS end after
 ;; that value is produced unless the result or a nested store retains their
@@ -78397,9 +78511,11 @@
   [borrowed : TcMovedSet]
   [facts : TcMovedPathFacts]
   [primary : ast.AstExpr]) : TcBorrowCheckResult
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcBorrowCheckResult.Ok borrowed)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (tc-moved-path-facts-empty? facts)
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (match fact.kind
         [(TcMovedPathKind.BorrowTwoPhaseMut)
           (let
@@ -78419,14 +78535,14 @@
                 (tc-borrow-check-activate-two-phase-mut-borrows-loop
                   expr-bases
                   borrowed
-                  (__tl-box-place rest)
+                  rest
                   primary)]))]
         [_
           (tc-borrow-check-activate-two-phase-mut-borrows-loop
             expr-bases
             borrowed
-            (__tl-box-place rest)
-            primary)])]))
+            rest
+            primary)]))))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows
   [expr-bases : i64]
@@ -79455,32 +79571,33 @@
   [before : TcMovedSet]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [out2 : TcMovedSet
-          (if (or
-            (match (tc-moved-path-exact-conflict-kind before path kind)
-              [(TcMoveConflict.Some _ _) true]
-              [TcMoveConflict.No false])
-            (match (tc-moved-path-exact-conflict-kind out path kind)
-              [(TcMoveConflict.Some _ _) true]
-              [TcMoveConflict.No false]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [out2 : TcMovedSet
+        (if (or
+          (match (tc-moved-path-exact-conflict-kind before path kind)
+            [(TcMoveConflict.Some _ _) true]
+            [TcMoveConflict.No false])
+          (match (tc-moved-path-exact-conflict-kind out path kind)
+            [(TcMoveConflict.Some _ _) true]
+            [TcMoveConflict.No false]))
+          out
+          (tc-moved-add-path-fact
             out
-            (tc-moved-add-path-fact
-              out
-              path
-              kind
-              (tc-moved-path-fact-origin fact)))]
-        (tc-borrow-check-loop-protect-carried-facts-loop
-          ctx
-          loop-env
-          before
-          (__tl-box-place rest)
-          out2))]))
+            path
+            kind
+            (tc-moved-path-fact-origin fact)))]
+      (tc-borrow-check-loop-protect-carried-facts-loop
+        ctx
+        loop-env
+        before
+        rest
+        out2))))
 
 (define (tc-borrow-check-loop-protect-carried-facts
   [ctx : TcContext]
@@ -79502,38 +79619,39 @@
   [expr : ast.AstExpr]
   [facts : TcMovedPathFacts]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [kind : TcMovedPathKind fact.kind]
-        [out2 : TcMovedSet
-          (if (match (tc-moved-path-exact-conflict-kind out path kind)
-            [(TcMoveConflict.Some _ _) true]
-            [TcMoveConflict.No false])
-            out
-            (let
-              [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
-              (if (tc-borrow-check-expr-stores-lifetime?
-                ctx
-                expr-bases
-                env
-                expr
-                lifetime)
-                (tc-moved-add-path-fact
-                  out
-                  path
-                  kind
-                  (tc-moved-path-fact-origin fact))
-                out)))]
-        (tc-borrow-check-loop-protect-stored-facts-loop
-          ctx
-          expr-bases
-          env
-          expr
-          (__tl-box-place rest)
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [kind : TcMovedPathKind fact.kind]
+      [out2 : TcMovedSet
+        (if (match (tc-moved-path-exact-conflict-kind out path kind)
+          [(TcMoveConflict.Some _ _) true]
+          [TcMoveConflict.No false])
+          out
+          (let
+            [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
+            (if (tc-borrow-check-expr-stores-lifetime?
+              ctx
+              expr-bases
+              env
+              expr
+              lifetime)
+              (tc-moved-add-path-fact
+                out
+                path
+                kind
+                (tc-moved-path-fact-origin fact))
+              out)))]
+      (tc-borrow-check-loop-protect-stored-facts-loop
+        ctx
+        expr-bases
+        env
+        expr
+        rest
+        out2))))
 
 (define (tc-borrow-check-loop-protect-stored-facts
   [ctx : TcContext]
@@ -80761,44 +80879,45 @@
   [body : ast.AstExpr]
   [closure-id : i64]
   [facts : TcMovedPathFacts]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-borrow-check-rebind-lambda-lending-facts
-            ctx
-            expr-bases
-            env
-            locals
-            bound
-            body
-            closure-id
-            (__tl-box-place rest))]
-        (match fact.kind
-          [(TcMovedPathKind.BorrowLending binding-id)
-            (let
-              [captured : bool
-                (tc-expr-uses-free-name?
-                  expr-bases
-                  body
-                  (tc-env-key-name-text binding-id)
-                  bound)]
-              (if captured
-                (let
-                  [rebound : TcMovedPathFact
-                    (TcMovedPathFact
-                      fact.path
-                      (TcMovedPathKind.BorrowLending closure-id)
-                      fact.origin)]
-                  (if (tc-closure-local-fact-copyable-code?
-                    (tc-closure-local-fact-code locals binding-id))
-                    (TcMovedPathFacts.Cons
-                      fact
-                      (box (TcMovedPathFacts.Cons rebound (box tail))))
-                    (TcMovedPathFacts.Cons rebound (box tail))))
-                (TcMovedPathFacts.Cons fact (box tail))))]
-          [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
+  (if (tc-moved-path-facts-empty? facts)
+    TcMovedPathFacts.Nil
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [tail : TcMovedPathFacts
+        (tc-borrow-check-rebind-lambda-lending-facts
+          ctx
+          expr-bases
+          env
+          locals
+          bound
+          body
+          closure-id
+          rest)]
+      (match fact.kind
+        [(TcMovedPathKind.BorrowLending binding-id)
+          (let
+            [captured : bool
+              (tc-expr-uses-free-name?
+                expr-bases
+                body
+                (tc-env-key-name-text binding-id)
+                bound)]
+            (if captured
+              (let
+                [rebound : TcMovedPathFact
+                  (TcMovedPathFact
+                    fact.path
+                    (TcMovedPathKind.BorrowLending closure-id)
+                    fact.origin)]
+                (if (tc-closure-local-fact-copyable-code?
+                  (tc-closure-local-fact-code locals binding-id))
+                  (tc-moved-path-facts-cons
+                    (tc-moved-path-facts-cons tail rebound)
+                    fact)
+                  (tc-moved-path-facts-cons tail rebound)))
+              (tc-moved-path-facts-cons tail fact)))]
+        [_ (tc-moved-path-facts-cons tail fact)]))))
 
 ;; A Copy closure alias keeps the source closure live and gains the same
 ;; lending provenance. Duplicate only the checker-only lending marker; the
@@ -80807,29 +80926,26 @@
   [facts : TcMovedPathFacts]
   [source-id : i64]
   [closure-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-borrow-check-copy-lambda-lending-facts
-            (__tl-box-place rest)
-            source-id
-            closure-id)]
-        (match fact.kind
-          [(TcMovedPathKind.BorrowLending binding-id)
-            (if (= binding-id source-id)
-              (TcMovedPathFacts.Cons
-                fact
-                (box
-                  (TcMovedPathFacts.Cons
-                    (TcMovedPathFact
-                      fact.path
-                      (TcMovedPathKind.BorrowLending closure-id)
-                      fact.origin)
-                    (box tail))))
-              (TcMovedPathFacts.Cons fact (box tail)))]
-          [_ (TcMovedPathFacts.Cons fact (box tail))]))]))
+  (if (tc-moved-path-facts-empty? facts)
+    TcMovedPathFacts.Nil
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [tail : TcMovedPathFacts
+        (tc-borrow-check-copy-lambda-lending-facts rest source-id closure-id)]
+      (match fact.kind
+        [(TcMovedPathKind.BorrowLending binding-id)
+          (if (= binding-id source-id)
+            (tc-moved-path-facts-cons
+              (tc-moved-path-facts-cons
+                tail
+                (TcMovedPathFact
+                  fact.path
+                  (TcMovedPathKind.BorrowLending closure-id)
+                  fact.origin))
+              fact)
+            (tc-moved-path-facts-cons tail fact))]
+        [_ (tc-moved-path-facts-cons tail fact)]))))
 
 (define (tc-borrow-check-add-closure-lending-for-lifetimes
   [ctx : TcContext]
@@ -80839,29 +80955,30 @@
   [closure-id : i64]
   [origin : ast.AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [out2 : TcMovedSet
-          (if (and
-            (match fact.kind
-              [(TcMovedPathKind.BorrowShared) true]
-              [_ false])
-            (tc-name-id-list-contains
-              lifetimes
-              (tc-borrow-check-path-lifetime ctx env path)))
-            (tc-borrow-check-add-lending-marker out path closure-id origin)
-            out)]
-        (tc-borrow-check-add-closure-lending-for-lifetimes
-          ctx
-          env
-          (__tl-box-place rest)
-          lifetimes
-          closure-id
-          origin
-          out2))]))
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [path : TcMovePath fact.path]
+      [out2 : TcMovedSet
+        (if (and
+          (match fact.kind
+            [(TcMovedPathKind.BorrowShared) true]
+            [_ false])
+          (tc-name-id-list-contains
+            lifetimes
+            (tc-borrow-check-path-lifetime ctx env path)))
+          (tc-borrow-check-add-lending-marker out path closure-id origin)
+          out)]
+      (tc-borrow-check-add-closure-lending-for-lifetimes
+        ctx
+        env
+        rest
+        lifetimes
+        closure-id
+        origin
+        out2))))
 
 (define (tc-borrow-check-add-lambda-capture-lending-scan
   [ctx : TcContext]
@@ -84562,66 +84679,63 @@
                 (or
                   (> required-layouts (array.length layouts.slots))
                   (> required-reflections (array.length reflections.slots)))]
-              [previous-arena : i64 (arena.tl_arena_current)]
               [_profile-start : unit
                 (cfg
                   compile-profile
                   (compiler-tc-walk-ctfe-extension-start!)
                   unit)]
-              [_switch-owner : unit
-                (unsafe
-                  (arena.tl_arena_set
-                    (tc-type-env-store-owner-current-head
-                      (tc-macro-walk-field
-                        state
-                        macro-expand-ctfe-env-owner-arena))))]
-              [grown-layouts : ctfe_support.CtfeLayoutInfoList
-                (ctfe_support.ctfe-layout-info-list-ensure-capacity
-                  layouts
-                  required-layouts)]
-              [grown-reflections : ctfe_support.CtfeReflectInfoList
-                (ctfe_support.ctfe-reflect-info-list-ensure-capacity
-                  reflections
-                  required-reflections)]
-              [next-layouts : ctfe_support.CtfeLayoutInfoList
-                (tc-ctfe-layouts-from-decls
-                  ctx
-                  decls
-                  module
-                  module-id
-                  grown-layouts)]
-              [next-reflections : ctfe_support.CtfeReflectInfoList
-                (ctfe_support.ctfe-reflections-from-decls
-                  decls
-                  module
-                  module-id
-                  grown-reflections)]
-              (begin
-                (tc-macro-walk-set!
-                  state
-                  macro-expand-ctfe-env-value
-                  (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
-                    next-layouts
-                    next-reflections
-                    (ctfe_support.ctfe-env-pools
-                      (tc-macro-walk-field state macro-expand-ctfe-env-value))
-                    (ctfe_support.ctfe-env-source-names
-                      (tc-macro-walk-field state macro-expand-ctfe-env-value))
-                    (tc-macro-ctfe-state state)))
-                (tc-type-env-store-restore-after-owner-alloc!
-                  previous-arena
+              (in-arena
+                (arena.Arena
                   (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))
-                (if grew?
-                  (cfg
-                    compile-profile
-                    (compiler-tc-walk-ctfe-extension-reject-note! 3)
-                    unit)
-                  unit)
-                (cfg
-                  compile-profile
-                  (compiler-tc-walk-ctfe-extension-finish!)
-                  unit)
-                CompilerCtfeSpliceExtensionResult.Extended))
+                (let
+                  [grown-layouts : ctfe_support.CtfeLayoutInfoList
+                    (ctfe_support.ctfe-layout-info-list-ensure-capacity
+                      layouts
+                      required-layouts)]
+                  [grown-reflections : ctfe_support.CtfeReflectInfoList
+                    (ctfe_support.ctfe-reflect-info-list-ensure-capacity
+                      reflections
+                      required-reflections)]
+                  [next-layouts : ctfe_support.CtfeLayoutInfoList
+                    (tc-ctfe-layouts-from-decls
+                      ctx
+                      decls
+                      module
+                      module-id
+                      grown-layouts)]
+                  [next-reflections : ctfe_support.CtfeReflectInfoList
+                    (ctfe_support.ctfe-reflections-from-decls
+                      decls
+                      module
+                      module-id
+                      grown-reflections)]
+                  (begin
+                    (tc-macro-walk-set!
+                      state
+                      macro-expand-ctfe-env-value
+                      (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
+                        next-layouts
+                        next-reflections
+                        (ctfe_support.ctfe-env-pools
+                          (tc-macro-walk-field
+                            state
+                            macro-expand-ctfe-env-value))
+                        (ctfe_support.ctfe-env-source-names
+                          (tc-macro-walk-field
+                            state
+                            macro-expand-ctfe-env-value))
+                        (tc-macro-ctfe-state state)))
+                    (if grew?
+                      (cfg
+                        compile-profile
+                        (compiler-tc-walk-ctfe-extension-reject-note! 3)
+                        unit)
+                      unit)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-walk-ctfe-extension-finish!)
+                      unit)
+                    CompilerCtfeSpliceExtensionResult.Extended))))
             (begin
               (cfg
                 compile-profile
@@ -84666,39 +84780,39 @@
             0)
             (tc-type-env-store-owner-root previous-arena)
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))]
-        [_switch-owner : unit
-          (unsafe
-            (arena.tl_arena_set
-              (tc-type-env-store-owner-current-head owner-arena)))]
-        (begin
-          (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-owner-arena
-            owner-arena)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-value
-            (tc-ctfe-env ctx))
-          (tc-type-env-store-restore-after-owner-alloc!
-            previous-arena
-            owner-arena)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-has-metadata
-            (tc-macro-walk-field state ctfe-needs-metadata))
-          (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
-          (tc-macro-walk-set!
-            state
-            macro-expand-ctfe-env-build-generation
-            (+
-              (tc-macro-walk-field state macro-expand-ctfe-env-build-generation)
-              1))
-          (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending false)
-          (cfg
-            compile-profile
-            (compiler-tc-walk-ctfe-build-finish! _rebuild?)
-            unit))))))
+        (in-arena
+          (arena.Arena owner-arena)
+          (begin
+            (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-owner-arena
+              owner-arena)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-value
+              (tc-ctfe-env ctx))
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-has-metadata
+              (tc-macro-walk-field state ctfe-needs-metadata))
+            (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-build-generation
+              (+
+                (tc-macro-walk-field
+                  state
+                  macro-expand-ctfe-env-build-generation)
+                1))
+            (tc-macro-walk-set!
+              state
+              macro-expand-ctfe-env-rebuild-pending
+              false)
+            (cfg
+              compile-profile
+              (compiler-tc-walk-ctfe-build-finish! _rebuild?)
+              unit)))))))
 
 (define (compiler-typecheck-ctfe-env-rebuild-for-splice!
   [ctx : TcContext]
@@ -85040,18 +85154,10 @@
   [decls : ast.AstDeclList]) : unit
   (if (tc-macro-walk-field state macro-expand-scratch-enabled)
     (let
-      [enclosing : i64 (arena.tl_arena_current)]
       [scratch : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (macro-live-prescan-ensure-current! state decls)
-        (tc-macro-walk-set!
-          state
-          macro-expand-scratch-arena
-          (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set enclosing))))
+      (in-arena
+        (arena.Arena scratch)
+        (macro-live-prescan-ensure-current! state decls)))
     (macro-live-prescan-ensure-current! state decls)))
 
 (define (macro-live-prescan-ensure!
@@ -85606,26 +85712,17 @@
         (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
       [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
       [display : String (macro-decl-name-display macro-name-id module-id)]
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 data.fixed-storage-arena]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (tc_i64_i64_map.insert-ref!
-          (&mut data.definition-paths)
-          (ci.intern display)
-          (ci.intern path))
-        ;; Hash-table growth must remain owned by the job state. Indexing also
-        ;; runs inside per-declaration generations, which are destroyed after
-        ;; each splice; retaining their current arena would leave stale slots.
-        (set! data.fixed-storage-arena (arena.tl_arena_current))
-        (tc-macro-call-site-state-data-set! state data)
-        (unsafe
-          (arena.tl_arena_set
-            (if (= previous owner)
-              data.fixed-storage-arena
-              previous)))))))
+      ;; Hash-table growth must remain owned by the job state. Indexing also
+      ;; runs inside per-declaration generations, which are destroyed after
+      ;; each splice; retaining their current arena would leave stale slots.
+      (in-arena
+        (arena.Arena data.fixed-storage-arena)
+        (begin
+          (tc_i64_i64_map.insert-ref!
+            (&mut data.definition-paths)
+            (ci.intern display)
+            (ci.intern path))
+          (tc-macro-call-site-state-data-set! state data))))))
 
 (define (macro-definition-path-id
   [ctx : TcContext]
@@ -86486,27 +86583,15 @@
       (if (tc-macro-walk-field macro-state macro-expand-scratch-enabled)
         (macro-expand-scratch-arena-get macro-state)
         enclosing)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [address : i64
-          (macro-segmented-program-view-new-current
-            prefix-rev
-            prefix-paths-rev
-            decls
-            paths)]
-        [storage-head : i64 (arena.tl_arena_current)]
-        (begin
-          (if (tc-macro-walk-field macro-state macro-expand-scratch-enabled)
-            (tc-macro-walk-set!
-              macro-state
-              macro-expand-scratch-arena
-              storage-head)
-            unit)
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          (tc-job-state-set-macro-program-view-address! state address))))))
+    [address : i64
+      (in-arena
+        (arena.Arena storage)
+        (macro-segmented-program-view-new-current
+          prefix-rev
+          prefix-paths-rev
+          decls
+          paths))]
+    (tc-job-state-set-macro-program-view-address! state address)))
 
 (define (macro-segmented-program-end! [state : TcJobState]) : unit
   (tc-job-state-set-macro-program-view-address! state 0))
@@ -86725,21 +86810,13 @@
   [middle-paths : ast.AstDeclPathList]) : unit
   (let
     [macro-state : TcMacroState (tc-job-state-macro-state state)]
-    [enclosing : i64 (arena.tl_arena_current)]
     [storage : i64 (macro-expand-scratch-arena-get macro-state)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
+    (in-arena
+      (arena.Arena storage)
       (macro-segmented-program-splice-current-in-scratch!
         state
         middle
-        middle-paths)
-      (tc-macro-walk-set!
-        macro-state
-        macro-expand-scratch-arena
-        (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set enclosing)))))
+        middle-paths))))
 
 (define (macro-segmented-program-decl-count [state : TcJobState]) : i64
   (let
@@ -87691,20 +87768,9 @@
   [state : TcMacroState]
   [decls : ast.AstDeclList]) : ast.AstProgram
   (if (tc-macro-walk-field state macro-expand-scratch-enabled)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [program : ast.AstProgram (ast.ast-program decls)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (tc-macro-walk-set! state macro-expand-scratch-arena storage-head)
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            program))))
+    (in-arena
+      (arena.Arena (macro-expand-scratch-arena-get state))
+      (ast.ast-program decls))
     (ast.ast-program decls)))
 
 (define (macro-paths-for-decls
@@ -92081,27 +92147,12 @@
             state
             target-module-id
             base-id)
-          (let
-            [enclosing : i64 (arena.tl_arena_current)]
-            [scratch : i64 (macro-expand-scratch-arena-get state)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set scratch))
-              (let
-                [out : MacroMaybeDecl
-                  (macro-surface-call-decl-fill-in-module
-                    state
-                    target-module-id
-                    base-id)]
-                [scratch-head : i64 (arena.tl_arena_current)]
-                (begin
-                  (tc-macro-walk-set!
-                    state
-                    macro-expand-scratch-arena
-                    scratch-head)
-                  (unsafe
-                    (arena.tl_arena_set enclosing))
-                  out)))))])))
+          (in-arena
+            (arena.Arena (macro-expand-scratch-arena-get state))
+            (macro-surface-call-decl-fill-in-module
+              state
+              target-module-id
+              base-id)))])))
 
 (define (macro-expr-uses-expr-type? [expr-bases : i64] [expr : ast.AstExpr]) : bool
   (or
@@ -92667,8 +92718,9 @@
         [storage : i64 (macro-hygiene-env-storage-handle state)]
         (begin
           ;; Snapshots can cross every scratch rewind involved in an expansion.
-          ;; Allocate initial storage and every growth in one retained arena, then
-          ;; restore the caller's active owner.
+          ;; This path intentionally retains its explicit restoration helper:
+          ;; when growth advances a nested caller's physical head, restoring the
+          ;; pre-growth handle causes severe selfhost retention on Windows.
           (unsafe
             (arena.tl_arena_set storage))
           (let
@@ -93410,18 +93462,11 @@
         (begin
           (while (< capacity needed)
             (set! capacity (* capacity 2)))
-          (let
-            [previous-arena : i64 (arena.tl_arena_current)]
-            [owner : i64 (tc-macro-state-owner-arena state)]
+          (in-arena
+            (arena.Arena (tc-macro-state-owner-arena state))
             (begin
-              (unsafe
-                (arena.tl_arena_set
-                  (tc-type-env-store-owner-current-head owner)))
               (set! produced.refcounts (array.make-array i64 capacity))
-              (tc-macro-hygiene-produced-state-data-set! state produced)
-              (tc-type-env-store-restore-after-owner-alloc!
-                previous-arena
-                owner))))))))
+              (tc-macro-hygiene-produced-state-data-set! state produced))))))))
 
 (define (macro-hygiene-produced-note-id!
   [produced : TcMacroHygieneProducedStateData]
@@ -97897,24 +97942,9 @@
   [current-module-id : i64]) : MacroFlatImportTargetList
   (if (not (macro-generation-any-live? state))
     (macro-flat-import-targets-into-current state decls current-module-id)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (macro-expand-scratch-arena-get state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (let
-          [out : MacroFlatImportTargetList
-            (macro-flat-import-targets-into-current
-              state
-              decls
-              current-module-id)]
-          [scratch-head : i64 (arena.tl_arena_current)]
-          (begin
-            (tc-macro-walk-set! state macro-expand-scratch-arena scratch-head)
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))))
+    (in-arena
+      (arena.Arena (macro-expand-scratch-arena-get state))
+      (macro-flat-import-targets-into-current state decls current-module-id))))
 
 (define (macro-flat-import-targets-into-current
   [state : TcMacroState]

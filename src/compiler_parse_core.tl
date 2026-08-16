@@ -9471,6 +9471,11 @@
 (define (parse-ast-dotted-import-default-alias-id [name-id : i64]) : i64
   (ci.intern-dotted-final-id name-id))
 
+(define (parse-ast-dotted-import-wildcard? [name : String]) : bool
+  (let
+    [n : i64 (string.string-length name)]
+    (and (>= n 2) (string.eq (string.substring name (- n 2) 2) ".*"))))
+
 (define (parse-ast-dotted-import-tail
   [module-name-id : i64]
   [tail : reader.SpannedSexpr]
@@ -9479,30 +9484,44 @@
     [module-name : String (compiler-parse-name-text module-name-id)]
     (if (not (parse-ast-dotted-import-name-valid? module-name))
       (ResultAstDecl.Err "parse: invalid dotted import module name")
-      (match (reader.spanned-sexpr-view tail)
-        [(reader.SpannedSexprView.Nil _)
-          (parse-ast-import-spec
-            (ast.AstImportKind.Module)
-            module-name
-            (ast.AstMaybeModuleName.Some module-name-id)
-            (ast.AstMaybeImportAlias.Some
-              (parse-ast-dotted-import-default-alias-id module-name-id))
-            span)]
-        [(reader.SpannedSexprView.Cons head-node _ _)
-          (match (reader.spanned-sexpr-view head-node)
-            [(reader.SpannedSexprView.Sym head _)
-              (if (=
-                (ci.intern-syntax-id-value head)
-                (cbi.compiler-builtin-ctfe-ref 260))
-                (parse-ast-import-alias
-                  (ast.AstImportKind.Module)
-                  module-name
-                  (ast.AstMaybeModuleName.Some module-name-id)
-                  tail
-                  span)
-                (ResultAstDecl.Err "parse: malformed import"))]
-            [_ (ResultAstDecl.Err "parse: malformed import")])]
-        [_ (ResultAstDecl.Err "parse: malformed import")]))))
+      (if (parse-ast-dotted-import-wildcard? module-name)
+        (match (reader.spanned-sexpr-view tail)
+          [(reader.SpannedSexprView.Nil _)
+            (let
+              [target-id : i64 (ci.intern-dotted-prefix-id module-name-id)]
+              (parse-ast-import-spec
+                (ast.AstImportKind.ModuleAll)
+                (ci.intern-syntax-name-text-or target-id "")
+                (ast.AstMaybeModuleName.Some target-id)
+                (ast.AstMaybeImportAlias.Some cbi.compiler-builtin-id-fix-empty)
+                span))]
+          [_
+            (ResultAstDecl.Err
+              "parse: wildcard import cannot use as; import a selected item instead")])
+        (match (reader.spanned-sexpr-view tail)
+          [(reader.SpannedSexprView.Nil _)
+            (parse-ast-import-spec
+              (ast.AstImportKind.Module)
+              module-name
+              (ast.AstMaybeModuleName.Some module-name-id)
+              (ast.AstMaybeImportAlias.Some
+                (parse-ast-dotted-import-default-alias-id module-name-id))
+              span)]
+          [(reader.SpannedSexprView.Cons head-node _ _)
+            (match (reader.spanned-sexpr-view head-node)
+              [(reader.SpannedSexprView.Sym head _)
+                (if (=
+                  (ci.intern-syntax-id-value head)
+                  (cbi.compiler-builtin-ctfe-ref 260))
+                  (parse-ast-import-alias
+                    (ast.AstImportKind.Module)
+                    module-name
+                    (ast.AstMaybeModuleName.Some module-name-id)
+                    tail
+                    span)
+                  (ResultAstDecl.Err "parse: malformed import"))]
+              [_ (ResultAstDecl.Err "parse: malformed import")])]
+          [_ (ResultAstDecl.Err "parse: malformed import")])))))
 
 (define (parse-ast-import
   [dispatch : sym_i64_env.SymI64Env]
@@ -10938,10 +10957,37 @@
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-parse-dotted-import-wildcard-ok?) : bool
+  (match (parse-ast-source "(import stdlib.core_macros.*)")
+    [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      (let
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        (match (ast.ast-decl-list-step decls)
+          [(ast.AstDeclListStep.Cons
+              (ast.AstDecl.Import
+                _
+                (ast.AstImportSpec.Spec
+                  (ast.AstImportKind.ModuleAll)
+                  module-path
+                  (ast.AstMaybeModuleName.Some module-name)
+                  (ast.AstMaybeImportAlias.Some alias)
+                  _))
+              rest)
+            (let
+              [rest : ast.AstDeclList rest]
+              (and
+                (ast.ast-decl-list-empty? (& rest))
+                (string.eq module-path "stdlib.core_macros")
+                (string.eq (ci.intern-str module-name) "stdlib.core_macros")
+                (= alias cbi.compiler-builtin-id-fix-empty)))]
+          [_ false]))]
+    [(ResultAstProgram.Err _) false]))
+
 (define (compiler-parse-dotted-import-metadata-ok?) : bool
   (and
     (compiler-parse-dotted-import-explicit-alias-ok?)
-    (compiler-parse-dotted-import-default-alias-ok?)))
+    (compiler-parse-dotted-import-default-alias-ok?)
+    (compiler-parse-dotted-import-wildcard-ok?)))
 
 (define (compiler-parse-module-macro-call-ok?) : bool
   (match (parse-ast-source "(point-vec i64)")
@@ -11027,6 +11073,9 @@
     (compiler-parse-error-ok?
       "(import pkg:math.core)"
       "parse: invalid dotted import module name")
+    (compiler-parse-error-ok?
+      "(import stdlib.core.* as core)"
+      "parse: wildcard import cannot use as; import a selected item instead")
     (compiler-parse-error-ok?
       "(import stdlib.core_macros module stdlib.core_macros)"
       "parse: malformed import")))

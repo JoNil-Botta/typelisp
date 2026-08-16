@@ -213,7 +213,7 @@
               [(ast.AstDecl.Import
                   decl-meta
                   (ast.AstImportSpec.Spec
-                    _
+                    (ast.AstImportKind.Module)
                     _
                     (ast.AstMaybeModuleName.Some target)
                     (ast.AstMaybeImportAlias.Some alias)

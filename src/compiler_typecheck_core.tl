@@ -32776,6 +32776,84 @@
     [(tc_i64_i64_map.LookupFound _) true]
     [(tc_i64_i64_map.LookupMissing) false]))
 
+(define (tc-bind-selected-import-item
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [importer-module : i64]
+  [target-module : i64]
+  [item : i64]
+  [alias : i64]) : ResultTcEnv
+  (match (tc-import-alias-source-value-type env target-module item)
+    [(ResultTcType.Ok ty)
+      (let
+        [source-name : i64 (tc-module-name-id-by-id target-module item)]
+        [unsafe-binding : bool (tc-binding-unsafe-id? env source-name)]
+        [c-abi-fnptr-binding : bool
+          (tc-binding-c-abi-fnptr-id? env source-name)]
+        (ResultTcEnv.Ok
+          (if unsafe-binding
+            (if c-abi-fnptr-binding
+              (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
+                ctx
+                env
+                importer-module
+                importer-module
+                target-module
+                true
+                alias
+                ty)
+              (tc-bind-import-alias-value-unsafe-id
+                ctx
+                env
+                importer-module
+                importer-module
+                target-module
+                true
+                alias
+                ty))
+            (if c-abi-fnptr-binding
+              (tc-bind-import-alias-value-c-abi-fnptr-id
+                ctx
+                env
+                importer-module
+                importer-module
+                target-module
+                true
+                alias
+                ty)
+              (tc-bind-import-alias-value-id
+                ctx
+                env
+                importer-module
+                importer-module
+                target-module
+                true
+                alias
+                ty)))))]
+    [(ResultTcType.Err _)
+      (let
+        [symbols : csym.CompilerSymbols (tc-context-symbols ctx)]
+        (if (or
+          (csym.compiler-symbols-handle-found?
+            (csym.compiler-symbols-lookup-type-in-module-id-or
+              symbols
+              target-module
+              item
+              (csym.compiler-symbols-missing-handle)))
+          (csym.compiler-symbols-handle-found?
+            (csym.compiler-symbols-lookup-macro-in-module-id-or
+              symbols
+              target-module
+              item
+              (csym.compiler-symbols-missing-handle))))
+          (ResultTcEnv.Ok env)
+          (ResultTcEnv.Err
+            (str_cat.str-cat
+              "typecheck: selected import "
+              (str_cat.str-cat
+                (tc-env-key-name-text target-module)
+                (str_cat.str-cat " has no item " (tc-env-key-name-text item)))))))]))
+
 (define (tc-build-top-env-aliases-list
   [ctx : TcContext]
   [all-decls : ast.AstDeclList]
@@ -32804,6 +32882,37 @@
           (match (ast.ast-decl-unwrapped
             (array-ref decl-slots (+ decl-offset index)))
             [(ast.AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(ast.AstDecl.Import
+                decl-meta
+                (ast.AstImportSpec.Spec
+                  (ast.AstImportKind.ModuleItem item)
+                  _
+                  (ast.AstMaybeModuleName.Some target-module)
+                  (ast.AstMaybeImportAlias.Some alias)
+                  _))
+              (let
+                [alias-key : i64
+                  (csym.compiler-symbols-import-alias-key-id
+                    cur-module-id
+                    alias)]
+                [seen-key : i64
+                  (tc-import-alias-materialized-key-id alias-key target-module)]
+                (if (tc-import-alias-materialized? seen-aliases seen-key)
+                  unit
+                  (begin
+                    (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
+                    (match (tc-bind-selected-import-item
+                      ctx
+                      cur-env
+                      cur-module-id
+                      target-module
+                      item
+                      alias)
+                      [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                      [(ResultTcEnv.Err step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))]))))]
             [(ast.AstDecl.Import
                 decl-meta
                 (ast.AstImportSpec.Spec
@@ -91506,6 +91615,18 @@
           module-id
           name)
         (tc-name-id-list-add acc name))]
+    [(ast.AstDecl.Import
+        decl-meta
+        (ast.AstImportSpec.Spec
+          (ast.AstImportKind.ModuleItem _)
+          _
+          _
+          (ast.AstMaybeImportAlias.Some alias)
+          _))
+      ;; Selected imports can rename a macro. Include the local spelling in
+      ;; the prescan so the call reaches normal symbol-table resolution; a
+      ;; selected value/type is harmless here and resolves as a non-macro.
+      (tc-name-id-list-add acc alias)]
     [(ast.AstDecl.Unsafe inner-box)
       (macro-collect-decl-name state (__tl-box-place inner-box) module-id acc)]
     [_ acc]))
@@ -95892,15 +96013,19 @@
   [spec : ast.AstImportSpec]
   [alias-id : i64]) : TcMaybeNameId
   (match spec
-    [(ast.AstImportSpec.Spec _ _ expected maybe-alias _)
-      (match maybe-alias
-        [(ast.AstMaybeImportAlias.Some import-alias)
-          (if (= import-alias alias-id)
-            (match expected
-              [(ast.AstMaybeModuleName.Some target) (TcMaybeNameId.Some target)]
-              [(ast.AstMaybeModuleName.No) (TcMaybeNameId.Some alias-id)])
-            (TcMaybeNameId.No))]
-        [(ast.AstMaybeImportAlias.No) (TcMaybeNameId.No)])]))
+    [(ast.AstImportSpec.Spec kind _ expected maybe-alias _)
+      (match kind
+        [(ast.AstImportKind.Module)
+          (match maybe-alias
+            [(ast.AstMaybeImportAlias.Some import-alias)
+              (if (= import-alias alias-id)
+                (match expected
+                  [(ast.AstMaybeModuleName.Some target)
+                    (TcMaybeNameId.Some target)]
+                  [(ast.AstMaybeModuleName.No) (TcMaybeNameId.Some alias-id)])
+                (TcMaybeNameId.No))]
+            [(ast.AstMaybeImportAlias.No) (TcMaybeNameId.No)])]
+        [_ (TcMaybeNameId.No)])]))
 
 (define (macro-import-alias-target-from-wrapped-decl
   [decl : ast.AstDecl]
@@ -98173,7 +98298,12 @@
                 (set! cur-module-id next-module)]
               [(ast.AstDecl.Import
                   decl-meta
-                  (ast.AstImportSpec.Spec _ _ expected maybe-alias _))
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.Module)
+                    _
+                    expected
+                    maybe-alias
+                    _))
                 (match maybe-alias
                   [(ast.AstMaybeImportAlias.Some alias)
                     (let
@@ -98219,7 +98349,12 @@
                 (set! cur-module-id next-module)]
               [(ast.AstDecl.Import
                   _decl-meta
-                  (ast.AstImportSpec.Spec _ _ expected maybe-alias _))
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.Module)
+                    _
+                    expected
+                    maybe-alias
+                    _))
                 (match maybe-alias
                   [(ast.AstMaybeImportAlias.Some alias)
                     (let
@@ -109589,6 +109724,7 @@
                       resolved
                       after-import-expected
                       after-import-alias
+                      span
                       module
                       module-id
                       imported-decls

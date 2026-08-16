@@ -3404,6 +3404,10 @@
 
 (defenum AstImportKind
   (Module)
+  ;; File-backed unqualified imports are classified by the loader after it
+  ;; establishes the longest loadable dotted module prefix.
+  (ModuleAll)
+  (ModuleItem i64)
   (Macro i64 AstMaybeModuleName)
   (MacroDecls i64 AstMaybeModuleName))
 
@@ -7928,6 +7932,8 @@
   [kind : AstImportKind]) : AstImportKind
   (match kind
     [(AstImportKind.Module) AstImportKind.Module]
+    [(AstImportKind.ModuleAll) AstImportKind.ModuleAll]
+    [(AstImportKind.ModuleItem item) (AstImportKind.ModuleItem item)]
     [(AstImportKind.Macro call module-name)
       (AstImportKind.Macro
         (ast-compaction-remap-expr-id remap call)

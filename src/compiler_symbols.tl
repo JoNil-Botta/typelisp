@@ -2228,6 +2228,45 @@
     importer-module
     alias))
 
+(define (compiler-symbols-add-selected-item-alias
+  [symbols : CompilerSymbols]
+  [target-module-id : i64]
+  [item-id : i64]
+  [importer-module-id : i64]
+  [alias-id : i64]) : CompilerSymbols
+  (let
+    [alias-key : i64
+      (compiler-symbol-module-key-id-by-id importer-module-id alias-id)]
+    [value-handle : option_i64.Option
+      (compiler-symbols-lookup-value-in-module-id
+        symbols
+        target-module-id
+        item-id)]
+    [type-handle : option_i64.Option
+      (compiler-symbols-lookup-type-in-module-id
+        symbols
+        target-module-id
+        item-id)]
+    [macro-handle : option_i64.Option
+      (compiler-symbols-lookup-macro-in-module-id
+        symbols
+        target-module-id
+        item-id)]
+    [with-value : CompilerSymbols
+      (match value-handle
+        [(option_i64.Some handle)
+          (compiler-symbols-add-value-alias-key-id symbols alias-key handle)]
+        [(option_i64.None) symbols])]
+    [with-type : CompilerSymbols
+      (match type-handle
+        [(option_i64.Some handle)
+          (compiler-symbols-add-type-alias-key-id with-value alias-key handle)]
+        [(option_i64.None) with-value])]
+    (match macro-handle
+      [(option_i64.Some handle)
+        (compiler-symbols-add-macro-alias-key-id with-type alias-key handle)]
+      [(option_i64.None) with-type])))
+
 (define (build-compiler-symbol-aliases-list-with-index-offset
   [all-decls : ast.AstDeclList]
   [decls : ast.AstDeclList]
@@ -2249,6 +2288,20 @@
           [decl : ast.AstDecl (array-ref decls.slots (+ decl-offset index))]
           [next-symbols : CompilerSymbols
             (match decl
+              [(ast.AstDecl.Import
+                  decl-meta
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.ModuleItem item)
+                    _
+                    (ast.AstMaybeModuleName.Some target-module)
+                    (ast.AstMaybeImportAlias.Some alias)
+                    _))
+                (compiler-symbols-add-selected-item-alias
+                  cur-symbols
+                  target-module
+                  item
+                  cur-module-id
+                  alias)]
               [(ast.AstDecl.Import
                   decl-meta
                   (ast.AstImportSpec.Spec

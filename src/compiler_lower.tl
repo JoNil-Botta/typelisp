@@ -7044,6 +7044,60 @@
                 (set! j (+ j 1)))))
           cur-names)))))
 
+(define (lower-name-env-add-selected-item-alias
+  [lower-state : CompilerLowerState]
+  [names : LowerNameEnv]
+  [importer-module-id : i64]
+  [target-module-id : i64]
+  [item-id : i64]
+  [alias-id : i64]) : LowerNameEnv
+  (let
+    [target-key : i64 (lower-module-name-key-id-by-id target-module-id item-id)]
+    [alias-key : i64
+      (lower-module-name-key-id-by-id importer-module-id alias-id)]
+    [logical-id : i64 (lower-name-env-lookup-logical-id names target-key -1)]
+    [symbol-id : i64 (lower-name-env-lookup-symbol-id names target-key -1)]
+    (if (or (< logical-id 0) (< symbol-id 0))
+      names
+      (lower-name-env-add-import-alias-binding-symbol-id
+        lower-state
+        names
+        (ci.intern-str alias-id)
+        ""
+        alias-key
+        ""
+        logical-id
+        symbol-id))))
+
+(define (lower-name-env-add-selected-item-alias-cache
+  [names : LowerNameEnv]
+  [base-cache : LowerNameCache]
+  [importer-module-id : i64]
+  [target-module-id : i64]
+  [item-id : i64]
+  [alias-id : i64]) : LowerNameEnv
+  (let
+    [target-key : i64 (lower-module-name-key-id-by-id target-module-id item-id)]
+    [alias-key : i64
+      (lower-module-name-key-id-by-id importer-module-id alias-id)]
+    [logical-id : i64
+      (lower-name-cache-lookup-logical-id (& base-cache) target-key -1)]
+    [symbol-id : i64
+      (if (< logical-id 0)
+        -1
+        (lower-name-cache-lookup-symbol-id (& base-cache) logical-id -1))]
+    (if (or (< logical-id 0) (< symbol-id 0))
+      names
+      (lower-name-env-add-import-alias-binding-symbol-id
+        (compiler-lower-state-from-name-cache base-cache)
+        names
+        (ci.intern-str alias-id)
+        ""
+        alias-key
+        ""
+        logical-id
+        symbol-id))))
+
 (define (lower-name-env-from-import-aliases
   [lower-state : CompilerLowerState]
   [all-decls : ast.AstDeclList]
@@ -7075,6 +7129,23 @@
           [decl : ast.AstDecl (array-ref decls.slots (+ decls.offset index))]
           (begin
             (match decl
+              [(ast.AstDecl.Import
+                  decl-meta
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.ModuleItem item)
+                    _
+                    (ast.AstMaybeModuleName.Some target-module)
+                    (ast.AstMaybeImportAlias.Some alias)
+                    _))
+                (set!
+                  cur-names
+                  (lower-name-env-add-selected-item-alias
+                    lower-state
+                    cur-names
+                    cur-module-id
+                    target-module
+                    item
+                    alias))]
               [(ast.AstDecl.Import
                   decl-meta
                   (ast.AstImportSpec.Spec
@@ -7170,6 +7241,23 @@
                     (+ decls.offset (array-ref positions j)))]
                 (begin
                   (match decl
+                    [(ast.AstDecl.Import
+                        decl-meta
+                        (ast.AstImportSpec.Spec
+                          (ast.AstImportKind.ModuleItem item)
+                          _
+                          (ast.AstMaybeModuleName.Some target-module)
+                          (ast.AstMaybeImportAlias.Some alias)
+                          _))
+                      (set!
+                        cur-names
+                        (lower-name-env-add-selected-item-alias-cache
+                          cur-names
+                          base-cache
+                          target-current-module-id
+                          target-module
+                          item
+                          alias))]
                     [(ast.AstDecl.Import
                         decl-meta
                         (ast.AstImportSpec.Spec

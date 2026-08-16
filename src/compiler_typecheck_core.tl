@@ -12998,6 +12998,14 @@
         (tc-macro-module-env-state-data state)
         hygiene-cache-arena))))
 
+;; Installing the owner publishes three ownership fields into the job state.
+;; Return a post-install snapshot so callers can safely update another field
+;; and write the aggregate back without erasing that newly published state.
+(define (tc-hygiene-module-env-cache-owned-data [state : TcMacroState]) : TcMacroModuleEnvStateData
+  (begin
+    (tc-hygiene-module-env-cache-arena-handle state)
+    (tc-macro-module-env-state-data state)))
+
 (define (tc-hygiene-module-env-cache-arena-reset! [state : TcMacroState]) : unit
   (let
     [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
@@ -13066,6 +13074,34 @@
       (set! data.hygiene-cache-arena-root 0)
       (set! data.hygiene-cache-arena-mark 0)
       (tc-macro-module-env-state-data-set! state data))))
+
+(test
+  tc-hygiene-module-env-cache-lazy-owner-state
+  (let
+    [job : TcJobState (tc-job-state-new)]
+    [state : TcMacroState (tc-job-state-macro-state job)]
+    [before : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    [owned : TcMacroModuleEnvStateData
+      (tc-hygiene-module-env-cache-owned-data state)]
+    (begin
+      ;; Mirror the cache success arm: update unrelated aggregate state and
+      ;; publish it after the lazy owner install.
+      (set! owned.hygiene-active-top-env-ready true)
+      (tc-macro-module-env-state-data-set! state owned)
+      (let
+        [after : TcMacroModuleEnvStateData
+          (tc-macro-module-env-state-data state)]
+        [preserved? : bool
+          (and
+            (= before.hygiene-cache-arena-root 0)
+            (> after.hygiene-cache-arena-root 0)
+            (= after.hygiene-cache-arena after.hygiene-cache-arena-root)
+            after.hygiene-active-top-env-ready)]
+        (begin
+          (tc-hygiene-module-env-cache-release! state)
+          (test.assert-true
+            preserved?
+            "hygiene cache writes preserve a lazily installed owner"))))))
 
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -16802,27 +16838,22 @@
         ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
         ;; survives the scratch arenas active during per-decl typechecking.
         (let
-          [owner : i64 (tc-hygiene-module-env-cache-arena-handle state)]
+          [current : TcMacroModuleEnvStateData
+            (tc-hygiene-module-env-cache-owned-data state)]
           (in-arena
-            (arena.Arena owner)
-            (let
-              ;; Resolving the handle can install the cache arena and publish
-              ;; it into state. Reload after that side effect so a later cache
-              ;; write cannot overwrite the freshly installed ownership fields.
-              [current : TcMacroModuleEnvStateData
-                (tc-macro-module-env-state-data state)]
-              (match (tc-module-local-env-cached-id
-                ctx
-                current.hygiene-active-top-env
-                module
-                module-id
-                current.hygiene-module-env-cache)
-                [(ResultTcModuleLocalEnv.Ok def-env next-cache)
-                  (begin
-                    (set! current.hygiene-module-env-cache next-cache)
-                    (tc-macro-module-env-state-data-set! state current)
-                    (ResultTcEnv.Ok def-env))]
-                [(ResultTcModuleLocalEnv.Err message) (ResultTcEnv.Err message)])))))
+            (arena.Arena current.hygiene-cache-arena)
+            (match (tc-module-local-env-cached-id
+              ctx
+              current.hygiene-active-top-env
+              module
+              module-id
+              current.hygiene-module-env-cache)
+              [(ResultTcModuleLocalEnv.Ok def-env next-cache)
+                (begin
+                  (set! current.hygiene-module-env-cache next-cache)
+                  (tc-macro-module-env-state-data-set! state current)
+                  (ResultTcEnv.Ok def-env))]
+              [(ResultTcModuleLocalEnv.Err message) (ResultTcEnv.Err message)]))))
       (ResultTcEnv.Err
         "typecheck: macro hygiene definition context unavailable"))))
 

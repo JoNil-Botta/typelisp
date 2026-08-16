@@ -341,6 +341,7 @@ float_exponent_literals|tests/integration/float_exponent_literals.tl|42|-|-|stdl
 private_intrinsic_provenance|tests/integration/private_intrinsic_provenance.tl|42|-|-|private_intrinsic_provenance_provider.tl private_intrinsic_provenance_shadow_provider.tl
 stdlib_math_exp|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl
 stdlib_math_log|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl
+stdlib_math_pow|tests/integration/stdlib_math_pow.tl|0|-|-|stdlib/math.tl
 stdlib_math_trig|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl
 string_length|tests/integration/string_length.tl|5|-|-|stdlib/string.tl
 string_match|tests/integration/string_match.tl|42|-|-|-

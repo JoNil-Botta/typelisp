@@ -51,6 +51,12 @@
   (Definition)
   (Use))
 
+(defenum CompilerSemanticAccess
+  (None)
+  (Read)
+  (Write)
+  (ReadWrite))
+
 (defenum CompilerSemanticProvenance
   (EditableSource)
   (Generated String String String))
@@ -73,6 +79,10 @@
   ;; key obtained from any independently retained source index.
   (canonical-index i64)
   (role CompilerSemanticRecordRole)
+  ;; Source-level binding access proven by the checked semantic walk. A
+  ;; declaration has no access; unresolved syntax produces no record rather
+  ;; than a guessed classification.
+  (access CompilerSemanticAccess)
   (kind CompilerSemanticSymbolKind)
   (display-name String)
   ;; Empty only when the checked walk cannot reproduce a reliable local type
@@ -310,6 +320,7 @@
     (CompilerSemanticSymbolId 0 -1 -1)
     -1
     CompilerSemanticRecordRole.Definition
+    CompilerSemanticAccess.None
     CompilerSemanticSymbolKind.Value
     ""
     ""
@@ -2418,13 +2429,17 @@
 (define (compiler-semantic-record-use-with-binding!
   [state : CompilerSemanticWalkState]
   [binding : CompilerSemanticBinding]
-  [span : CompilerSemanticSpan]) : unit
+  [span : CompilerSemanticSpan]
+  [access : CompilerSemanticAccess]) : unit
   (compiler-semantic-record-vec-push!
     (&mut (__tl-box-place state.records))
     (CompilerSemanticRecord
       binding.symbol
       -1
       CompilerSemanticRecordRole.Use
+      (if state.generated
+        CompilerSemanticAccess.None
+        access)
       binding.kind
       (string.copy (& binding.display-name))
       (string.copy (& binding.resolved-type))
@@ -2437,7 +2452,8 @@
 (define (compiler-semantic-record-top-use!
   [state : CompilerSemanticWalkState]
   [name-id : i64]
-  [span : CompilerSemanticSpan]) : unit
+  [span : CompilerSemanticSpan]
+  [access : CompilerSemanticAccess]) : unit
   (let
     [ctx : tc.TcContext state.ctx]
     [env : tc.TcTypeEnv state.top-env]
@@ -2490,6 +2506,9 @@
                           -1)
                         -1
                         CompilerSemanticRecordRole.Use
+                        (if state.generated
+                          CompilerSemanticAccess.None
+                          access)
                         kind
                         (string.copy (& display-name))
                         (string.copy (& type-text))
@@ -2533,20 +2552,36 @@
             -1)])]
     (match (compiler-semantic-binding-lookup state scope name-id)
       [(CompilerSemanticMaybeBinding.Some binding)
-        (compiler-semantic-record-use-with-binding! state binding span)]
+        (compiler-semantic-record-use-with-binding!
+          state
+          binding
+          span
+          CompilerSemanticAccess.Read)]
       [(CompilerSemanticMaybeBinding.None)
-        (compiler-semantic-record-top-use! state name-id span)])))
+        (compiler-semantic-record-top-use!
+          state
+          name-id
+          span
+          CompilerSemanticAccess.Read)])))
 
-(define (compiler-semantic-record-name-use-span!
+(define (compiler-semantic-record-name-write-span!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
   [span : CompilerSemanticSpan]) : unit
   (match (compiler-semantic-binding-lookup state scope name-id)
     [(CompilerSemanticMaybeBinding.Some binding)
-      (compiler-semantic-record-use-with-binding! state binding span)]
+      (compiler-semantic-record-use-with-binding!
+        state
+        binding
+        span
+        CompilerSemanticAccess.Write)]
     [(CompilerSemanticMaybeBinding.None)
-      (compiler-semantic-record-top-use! state name-id span)]))
+      (compiler-semantic-record-top-use!
+        state
+        name-id
+        span
+        CompilerSemanticAccess.Write)]))
 
 (define (compiler-semantic-bind-local!
   [state : CompilerSemanticWalkState]
@@ -2598,6 +2633,7 @@
               symbol
               -1
               CompilerSemanticRecordRole.Definition
+              CompilerSemanticAccess.None
               kind
               (string.copy (& name))
               (string.copy (& type-text))
@@ -3466,7 +3502,7 @@
         (compiler-semantic-form-head-end state.source form-start)
         value-start)]
     (begin
-      (compiler-semantic-record-name-use-span! state scope name-id span)
+      (compiler-semantic-record-name-write-span! state scope name-id span)
       (compiler-semantic-walk-node! state scope env value-id))))
 
 (define (compiler-semantic-bind-pattern!
@@ -4367,6 +4403,9 @@
         symbol
         -1
         CompilerSemanticRecordRole.Use
+        (if editable
+          CompilerSemanticAccess.Read
+          CompilerSemanticAccess.None)
         CompilerSemanticSymbolKind.Macro
         (string.copy (& display-name))
         (string.copy (& resolved-type))
@@ -5441,6 +5480,7 @@
                                   symbol
                                   -1
                                   CompilerSemanticRecordRole.Definition
+                                  CompilerSemanticAccess.None
                                   kind
                                   (string.copy (& name))
                                   (string.copy (& type-text))
@@ -5939,6 +5979,21 @@
     (= left.module-id right.module-id)
     (= left.declaration-ordinal right.declaration-ordinal)
     (= left.local-ordinal right.local-ordinal)))
+
+(define (compiler-semantic-access-none? [access : CompilerSemanticAccess]) : bool
+  (match access
+    [(CompilerSemanticAccess.None) true]
+    [_ false]))
+
+(define (compiler-semantic-access-read? [access : CompilerSemanticAccess]) : bool
+  (match access
+    [(CompilerSemanticAccess.Read) true]
+    [_ false]))
+
+(define (compiler-semantic-access-write? [access : CompilerSemanticAccess]) : bool
+  (match access
+    [(CompilerSemanticAccess.Write) true]
+    [_ false]))
 
 (define (compiler-semantic-source-index-find-record
   [index : (& index CompilerSemanticSourceIndex)]
@@ -6867,6 +6922,19 @@
                           source
                           function-use
                           "use")
+                        (compiler-semantic-access-none? answer.access)
+                        (compiler-semantic-access-none? param-definition.access)
+                        (compiler-semantic-access-read? param-use.access)
+                        (compiler-semantic-access-none? local-definition.access)
+                        (compiler-semantic-access-read? local-use.access)
+                        (compiler-semantic-access-none?
+                          import-definition.access)
+                        (compiler-semantic-access-read? import-use.access)
+                        (compiler-semantic-access-read? function-use.access)
+                        (compiler-semantic-access-none? generated.access)
+                        (compiler-semantic-access-none?
+                          pattern-definition.access)
+                        (compiler-semantic-access-read? pattern-use.access)
                         (not generated.editable)
                         (match generated.provenance
                           [(CompilerSemanticProvenance.Generated _ _ _) true]
@@ -7119,6 +7187,14 @@
           (compiler-semantic-symbol-id-eq?
             shadow-definition.symbol
             shadow-use.symbol)
+          (compiler-semantic-access-none? local-definition.access)
+          (compiler-semantic-access-none? import-definition.access)
+          (compiler-semantic-access-read? local-use-zero.access)
+          (compiler-semantic-access-none? generated-use.access)
+          (compiler-semantic-access-read? import-use.access)
+          (compiler-semantic-access-read? emit-use.access)
+          (compiler-semantic-access-read? module-use.access)
+          (compiler-semantic-access-read? outer-use.access)
           (string.eq
             local-definition.resolved-type
             local-use-zero.resolved-type)
@@ -8956,9 +9032,250 @@
     (compiler-check-semantic-index-canonical-collision-ok?)
     (compiler-check-semantic-index-canonical-rename-ok?)))
 
+(define (compiler-check-semantic-index-access-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_access_entry.tl"]
+    [source : String
+      "(module semantic.access)
+(define top : i64 2)
+(define (bump [slot : i64]) : i64
+  (begin
+    (set! slot (+ slot top))
+    slot))
+(define result : i64 (bump top))
+(define (shadow [shadowed : i64]) : i64
+  (let
+    [shadowed : i64 (+ shadowed 1)]
+    (begin
+      (set! shadowed (+ shadowed 1))
+      shadowed)))"]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [slot-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "slot"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [slot-write-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "slot"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [slot-rhs-read-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "slot"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [slot-result-read-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "slot"
+              CompilerSemanticRecordRole.Use
+              2)]
+          [shadow-param-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [shadow-local-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              CompilerSemanticRecordRole.Definition
+              1)]
+          [shadow-param-read-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [shadow-local-write-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [shadow-local-read-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              CompilerSemanticRecordRole.Use
+              2)]
+          [shadow-local-result-read-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "shadowed"
+              CompilerSemanticRecordRole.Use
+              3)]
+          [bump-call-index : i64
+            (compiler-semantic-source-index-find-record
+              (& index)
+              path
+              "bump"
+              CompilerSemanticRecordRole.Use
+              -1)]
+          [top-read-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "top"
+              CompilerSemanticRecordRole.Use
+              0)]
+          (if (or
+            (< slot-definition-index 0)
+            (< slot-write-index 0)
+            (< slot-rhs-read-index 0)
+            (< slot-result-read-index 0)
+            (< shadow-param-definition-index 0)
+            (< shadow-local-definition-index 0)
+            (< shadow-param-read-index 0)
+            (< shadow-local-write-index 0)
+            (< shadow-local-read-index 0)
+            (< shadow-local-result-read-index 0)
+            (< bump-call-index 0)
+            (< top-read-index 0))
+            (begin
+              (compiler-semantic-source-index-release! (&mut index))
+              false)
+            (let
+              [slot-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  slot-definition-index)]
+              [slot-write : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& index) slot-write-index)]
+              [slot-rhs-read : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  slot-rhs-read-index)]
+              [slot-result-read : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  slot-result-read-index)]
+              [shadow-param-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  shadow-param-definition-index)]
+              [shadow-local-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  shadow-local-definition-index)]
+              [shadow-param-read : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  shadow-param-read-index)]
+              [shadow-local-write : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  shadow-local-write-index)]
+              [shadow-local-read : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  shadow-local-read-index)]
+              [shadow-local-result-read : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& index)
+                  shadow-local-result-read-index)]
+              [bump-call : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& index) bump-call-index)]
+              [top-read : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& index) top-read-index)]
+              [unknown-ok : bool
+                (match (compiler-check-source-index-with-roots
+                  "src/tests/semantic_access_unknown.tl"
+                  "(module semantic.access.unknown)
+(define (broken) : i64 unresolved-name)"
+                  (svec.new))
+                  [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+                    (let
+                      [ok : bool
+                        (<
+                          (compiler-semantic-source-index-find-name-occurrence
+                            (& partial)
+                            "src/tests/semantic_access_unknown.tl"
+                            "unresolved-name"
+                            CompilerSemanticRecordRole.Use
+                            0)
+                          0)]
+                      (begin
+                        (compiler-semantic-source-index-release! (&mut partial))
+                        ok))]
+                  [(ResultCompilerCheckWithSemanticIndex.Ok _ complete)
+                    (begin
+                      (compiler-semantic-source-index-release! (&mut complete))
+                      false)]
+                  [(ResultCompilerCheckWithSemanticIndex.Err _) false])]
+              [ok : bool
+                (and
+                  (compiler-semantic-access-none? slot-definition.access)
+                  (compiler-semantic-access-write? slot-write.access)
+                  (compiler-semantic-access-read? slot-rhs-read.access)
+                  (compiler-semantic-access-read? slot-result-read.access)
+                  (compiler-semantic-symbol-id-eq?
+                    slot-definition.symbol
+                    slot-write.symbol)
+                  (compiler-semantic-symbol-id-eq?
+                    slot-write.symbol
+                    slot-rhs-read.symbol)
+                  (compiler-semantic-symbol-id-eq?
+                    slot-write.symbol
+                    slot-result-read.symbol)
+                  (compiler-semantic-access-none?
+                    shadow-param-definition.access)
+                  (compiler-semantic-access-none?
+                    shadow-local-definition.access)
+                  (compiler-semantic-access-read? shadow-param-read.access)
+                  (compiler-semantic-access-write? shadow-local-write.access)
+                  (compiler-semantic-access-read? shadow-local-read.access)
+                  (compiler-semantic-access-read?
+                    shadow-local-result-read.access)
+                  (compiler-semantic-symbol-id-eq?
+                    shadow-param-definition.symbol
+                    shadow-param-read.symbol)
+                  (compiler-semantic-symbol-id-eq?
+                    shadow-local-definition.symbol
+                    shadow-local-write.symbol)
+                  (compiler-semantic-symbol-id-eq?
+                    shadow-local-write.symbol
+                    shadow-local-read.symbol)
+                  (compiler-semantic-symbol-id-eq?
+                    shadow-local-write.symbol
+                    shadow-local-result-read.symbol)
+                  (not
+                    (compiler-semantic-symbol-id-eq?
+                      shadow-param-definition.symbol
+                      shadow-local-definition.symbol))
+                  (compiler-semantic-access-read? bump-call.access)
+                  (compiler-semantic-access-read? top-read.access)
+                  unknown-ok)]
+              (begin
+                (compiler-semantic-source-index-release! (&mut index))
+                ok))))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-ok?) : bool
   (and
     (compiler-check-semantic-index-base-ok?)
+    (compiler-check-semantic-index-access-ok?)
     (compiler-check-semantic-index-macro-call-sites-ok?)
     (compiler-check-semantic-index-inferred-locals-ok?)
     (compiler-check-semantic-index-dense-scopes-ok?)

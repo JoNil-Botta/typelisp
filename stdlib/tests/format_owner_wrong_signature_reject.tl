@@ -6,7 +6,7 @@
   (value i64))
 
 ;; Owner hooks must borrow the displayed value.
-(define (to-string [value : WrongDisplay]) : String
+(define (to-string [_value : WrongDisplay]) : String
   "wrong")
 
 (define (main) : i64

@@ -4,6 +4,8 @@
 (import stdlib.io)
 
 (define (main) : i64
-  (begin
-    (io.println "{}|{}" (first.Token 1) (second.Token 2))
-    0))
+  (let
+    [separator : String (format.format "|")]
+    (begin
+      (io.println "{}{}{}" (first.Token 1) separator (second.Token 2))
+      0)))

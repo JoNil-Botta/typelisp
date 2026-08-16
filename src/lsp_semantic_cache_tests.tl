@@ -105,23 +105,20 @@
   test
   (define (lsp-workspace-semantic-smoke-query-complete?
     [query : (& query lsp.LspWorkspaceSemanticQuery)]) : bool
-    (match query.completeness
-      [(lsp_vector_families.LspWorkspaceSemanticCompleteness.Complete) true]
-      [_ false])))
+    (= query.completeness (lsp.lsp-workspace-semantic-completeness-complete))))
 
 (cfg
   test
   (define (lsp-workspace-semantic-smoke-query-incomplete?
     [query : (& query lsp.LspWorkspaceSemanticQuery)]) : bool
-    (match query.completeness
-      [(lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete)
-        true]
-      [_ false])))
+    (=
+      query.completeness
+      (lsp.lsp-workspace-semantic-completeness-currently-incomplete))))
 
 (cfg
   test
   (define (lsp-workspace-semantic-smoke-fact-at?
-    [facts : (& facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+    [facts : (& facts lsp.LspWorkspaceSemanticQuery)]
     [path : String]
     [role : compiler_semantic_index.CompilerSemanticRecordRole]) : bool
     (let
@@ -138,7 +135,7 @@
               (if (and
                 (string.eq fact.path normalized)
                 (=
-                  (lsp.lsp-workspace-semantic-role-tag (& fact.record.role))
+                  (lsp.lsp-workspace-semantic-role-tag (& fact.role))
                   wanted-role))
                 (set! found true)
                 unit)
@@ -148,7 +145,7 @@
 (cfg
   test
   (define (lsp-workspace-semantic-smoke-facts-sorted?
-    [facts : (& facts lsp_vector_families.LspWorkspaceSemanticFacts)]) : bool
+    [facts : (& facts lsp.LspWorkspaceSemanticQuery)]) : bool
     (let
       [index : i64 1]
       [sorted : bool true]
@@ -219,9 +216,8 @@
           noise-path
           noise-text)]
       [roots : lsp_svec.Vec (lsp_svec.new)]
-      [cold : lsp.LspWorkspaceSemanticRefreshResult
+      [cold-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache workspace-state roots)]
-      [cold-state : lsp_vector_families.LspServerState cold.state]
       [shared-doc-index : i64
         (lsp.lsp-documents-find-index cold-state.documents shared-uri)]
       [shared-doc : lsp_vector_families.LspDocument
@@ -244,56 +240,54 @@
           (& definition))]
       [cold-query : lsp.LspWorkspaceSemanticQuery
         (lsp.lsp-workspace-semantic-query (& cold-state) roots canonical-key)]
-      [cold-records : i64 cold.metrics.retained-records]
-      [warm : lsp.LspWorkspaceSemanticRefreshResult
+      [cold-records : i64 cold-state.semantic-cache.retained-records]
+      [warm-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache cold-state roots)]
-      [warm-state : lsp_vector_families.LspServerState warm.state]
       [warm-query : lsp.LspWorkspaceSemanticQuery
         (lsp.lsp-workspace-semantic-query (& warm-state) roots canonical-key)]
       [invalidated-state : lsp_vector_families.LspServerState
         (lsp-workspace-semantic-smoke-invalidate-state warm-state shared-path)]
       [affected-only : bool (= invalidated-state.semantic-cache.len 1)]
-      [rebuilt : lsp.LspWorkspaceSemanticRefreshResult
+      [final-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache invalidated-state roots)]
-      [final-state : lsp_vector_families.LspServerState rebuilt.state]
       [ok : bool
         (and
           (>= definition-index 0)
           (> (string.string-length canonical-key) 0)
-          (= cold.metrics.source-checks 2)
-          (= cold.metrics.cache-entries 2)
-          (= cold.metrics.retained-owners 4)
-          (> cold.metrics.retained-records 0)
+          (= cold-state.semantic-cache.source-checks 2)
+          (= cold-state.semantic-cache.len 2)
+          (= cold-state.semantic-cache.retained-owners 4)
+          (> cold-state.semantic-cache.retained-records 0)
           (lsp-workspace-semantic-smoke-query-complete? (& cold-query))
-          (= cold-query.facts.len 3)
-          (lsp-workspace-semantic-smoke-facts-sorted? (& cold-query.facts))
+          (= cold-query.len 3)
+          (lsp-workspace-semantic-smoke-facts-sorted? (& cold-query))
           (lsp-workspace-semantic-smoke-fact-at?
-            (& cold-query.facts)
+            (& cold-query)
             shared-path
             compiler_semantic_index.CompilerSemanticRecordRole.Definition)
           (lsp-workspace-semantic-smoke-fact-at?
-            (& cold-query.facts)
+            (& cold-query)
             open-path
             compiler_semantic_index.CompilerSemanticRecordRole.Use)
           (lsp-workspace-semantic-smoke-fact-at?
-            (& cold-query.facts)
+            (& cold-query)
             closed-path
             compiler_semantic_index.CompilerSemanticRecordRole.Use)
           (not
             (lsp-workspace-semantic-smoke-fact-at?
-              (& cold-query.facts)
+              (& cold-query)
               noise-path
               compiler_semantic_index.CompilerSemanticRecordRole.Definition))
-          (= warm.metrics.source-checks 0)
-          (= warm.metrics.retained-owners 4)
-          (= warm.metrics.retained-records cold-records)
+          (= warm-state.semantic-cache.source-checks 0)
+          (= warm-state.semantic-cache.retained-owners 4)
+          (= warm-state.semantic-cache.retained-records cold-records)
           (lsp-workspace-semantic-smoke-query-complete? (& warm-query))
-          (= warm-query.facts.len cold-query.facts.len)
-          (lsp-workspace-semantic-smoke-facts-sorted? (& warm-query.facts))
+          (= warm-query.len cold-query.len)
+          (lsp-workspace-semantic-smoke-facts-sorted? (& warm-query))
           affected-only
-          (= rebuilt.metrics.source-checks 1)
-          (= rebuilt.metrics.cache-entries 2)
-          (= rebuilt.metrics.retained-owners 4))]
+          (= final-state.semantic-cache.source-checks 1)
+          (= final-state.semantic-cache.len 2)
+          (= final-state.semantic-cache.retained-owners 4))]
       (begin
         (lsp.lsp-server-state-destroy! final-state)
         (and
@@ -384,27 +378,29 @@
           path
           text
           false)]
-      [cold : lsp.LspWorkspaceSemanticRefreshResult
+      [cold-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache state roots)]
-      [cold-state : lsp_vector_families.LspServerState cold.state]
       [query : lsp.LspWorkspaceSemanticQuery
         (lsp.lsp-workspace-semantic-query
           (& cold-state)
           roots
           "missing-canonical-key")]
-      [warm : lsp.LspWorkspaceSemanticRefreshResult
+      [final-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache cold-state roots)]
-      [final-state : lsp_vector_families.LspServerState warm.state]
       [ok : bool
         (and
-          (= cold.metrics.source-checks 1)
-          (= cold.metrics.cache-entries 1)
+          (= cold-state.semantic-cache.source-checks 1)
+          (= cold-state.semantic-cache.len 1)
           (lsp-workspace-semantic-smoke-query-incomplete? (& query))
-          (= query.facts.len 0)
-          (= warm.metrics.source-checks 0)
-          (= warm.metrics.cache-entries 1)
-          (= warm.metrics.retained-owners cold.metrics.retained-owners)
-          (= warm.metrics.retained-records cold.metrics.retained-records))]
+          (= query.len 0)
+          (= final-state.semantic-cache.source-checks 0)
+          (= final-state.semantic-cache.len 1)
+          (=
+            final-state.semantic-cache.retained-owners
+            cold-state.semantic-cache.retained-owners)
+          (=
+            final-state.semantic-cache.retained-records
+            cold-state.semantic-cache.retained-records))]
       (begin
         (lsp.lsp-server-state-destroy! final-state)
         (and
@@ -456,9 +452,8 @@
           closed-text
           false)]
       [roots : lsp_svec.Vec (lsp_svec.new)]
-      [cold : lsp.LspWorkspaceSemanticRefreshResult
+      [cold-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache workspace-state roots)]
-      [cold-state : lsp_vector_families.LspServerState cold.state]
       [doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get
           (& cold-state.documents)
@@ -488,30 +483,29 @@
                 0)
               present))
           false)]
-      [warm : lsp.LspWorkspaceSemanticRefreshResult
+      [final-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache cold-state roots)]
-      [final-state : lsp_vector_families.LspServerState warm.state]
       [ok : bool
         (and
           (>= definition-index 0)
-          (= cold.metrics.source-checks 1)
-          (= cold.metrics.cache-entries 1)
-          (= cold.metrics.retained-owners 1)
+          (= cold-state.semantic-cache.source-checks 1)
+          (= cold-state.semantic-cache.len 1)
+          (= cold-state.semantic-cache.retained-owners 1)
           negative
           (lsp-workspace-semantic-smoke-query-incomplete? (& query))
-          (= query.facts.len 1)
+          (= query.len 1)
           (lsp-workspace-semantic-smoke-fact-at?
-            (& query.facts)
+            (& query)
             shared-path
             compiler_semantic_index.CompilerSemanticRecordRole.Definition)
           (not
             (lsp-workspace-semantic-smoke-fact-at?
-              (& query.facts)
+              (& query)
               closed-path
               compiler_semantic_index.CompilerSemanticRecordRole.Use))
-          (= warm.metrics.source-checks 0)
-          (= warm.metrics.cache-entries 1)
-          (= warm.metrics.retained-owners 1))]
+          (= final-state.semantic-cache.source-checks 0)
+          (= final-state.semantic-cache.len 1)
+          (= final-state.semantic-cache.retained-owners 1))]
       (begin
         (lsp.lsp-server-state-destroy! final-state)
         (and

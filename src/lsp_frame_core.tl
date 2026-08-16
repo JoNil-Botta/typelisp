@@ -160,24 +160,11 @@
   (slots (__tl_dyn-array LspWorkspaceSymbolCandidate))
   (len i64))
 
-(defenum LspWorkspaceSemanticSourceRead
-  (Ok String i64 i64)
-  (Err))
-
-(defstruct LspWorkspaceSemanticRefreshMetrics
-  (source-checks i64)
-  (elapsed-ms i64)
-  (retained-owners i64)
-  (retained-records i64)
-  (cache-entries i64))
-
-(defstruct LspWorkspaceSemanticRefreshResult
-  (state lsp_vector_families.LspServerState)
-  (metrics LspWorkspaceSemanticRefreshMetrics))
-
 (defstruct LspWorkspaceSemanticQuery
-  (facts lsp_vector_families.LspWorkspaceSemanticFacts)
-  (completeness lsp_vector_families.LspWorkspaceSemanticCompleteness))
+  (slots (__tl_dyn-array lsp_vector_families.LspWorkspaceSemanticFact))
+  (len i64)
+  ;; 0 complete, 1 refreshable, 2 currently incomplete.
+  (completeness i64))
 
 (defstruct LspLineCol
   (line i64)
@@ -7519,6 +7506,10 @@
   (lsp_vector_families.LspWorkspaceSemanticCache
     ""
     (__tl_make-array lsp_vector_families.LspWorkspaceSemanticCacheEntry 0)
+    0
+    0
+    0
+    0
     0))
 
 (define (lsp-workspace-semantic-cache-get
@@ -7621,7 +7612,11 @@
           (lsp-workspace-semantic-cache-release-entry! cache index)
           (set! index (+ index 1))))
       (set! cache.len 0)
-      (set! cache.context-key ""))))
+      (set! cache.context-key "")
+      (set! cache.source-checks 0)
+      (set! cache.elapsed-ms 0)
+      (set! cache.retained-owners 0)
+      (set! cache.retained-records 0))))
 
 (define (lsp-workspace-semantic-cache-entry-copy
   [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry]) : lsp_vector_families.LspWorkspaceSemanticCacheEntry
@@ -7643,6 +7638,10 @@
     [index : i64 0]
     (begin
       (set! copy.context-key (string.copy (& cache.context-key)))
+      (set! copy.source-checks cache.source-checks)
+      (set! copy.elapsed-ms cache.elapsed-ms)
+      (set! copy.retained-owners cache.retained-owners)
+      (set! copy.retained-records cache.retained-records)
       (while (< index cache.len)
         (begin
           (lsp-workspace-semantic-cache-push!
@@ -8019,16 +8018,8 @@
             (set! index (+ index 1)))))
       (+ (* hash-a modulus-b) hash-b))))
 
-(define (lsp-workspace-semantic-read-source [path : String]) : LspWorkspaceSemanticSourceRead
-  (match (io.try-read-file (& path))
-    [(io.OkIoBytes contents)
-      (let
-        [text : String (byte_buf.to-string contents)]
-        (LspWorkspaceSemanticSourceRead.Ok
-          text
-          (lsp-workspace-semantic-source-fingerprint text)
-          (string.string-length text)))]
-    [(io.ErrIoBytes _) LspWorkspaceSemanticSourceRead.Err]))
+(define (lsp-workspace-semantic-read-source [path : String]) : io.ResultIoBytes
+  (io.try-read-file (& path)))
 
 (define (lsp-workspace-semantic-index-overlay-mismatch?
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
@@ -8048,15 +8039,19 @@
                 index
                 doc.path))
               (match (lsp-workspace-semantic-read-source doc.path)
-                [(LspWorkspaceSemanticSourceRead.Ok _ fingerprint source-len)
-                  (if (and
-                    (=
-                      fingerprint
-                      (lsp-workspace-semantic-source-fingerprint doc.text))
-                    (= source-len (string.string-length doc.text)))
-                    unit
-                    (set! mismatch true))]
-                [(LspWorkspaceSemanticSourceRead.Err) (set! mismatch true)])
+                [(io.OkIoBytes contents)
+                  (let
+                    [text : String (byte_buf.to-string contents)]
+                    (if (and
+                      (=
+                        (lsp-workspace-semantic-source-fingerprint text)
+                        (lsp-workspace-semantic-source-fingerprint doc.text))
+                      (=
+                        (string.string-length text)
+                        (string.string-length doc.text)))
+                      unit
+                      (set! mismatch true)))]
+                [(io.ErrIoBytes _) (set! mismatch true)])
               unit)
             (set! doc-index (+ doc-index 1)))))
       mismatch)))
@@ -8127,7 +8122,7 @@
   [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : i64
   (match (lsp-workspace-semantic-read-source source.path)
-    [(LspWorkspaceSemanticSourceRead.Err)
+    [(io.ErrIoBytes _)
       (let
         [existing : i64
           (lsp-workspace-semantic-cache-find-uri cache source.uri)]
@@ -8136,8 +8131,11 @@
             (lsp-workspace-semantic-cache-remove-index! cache existing)
             unit)
           0))]
-    [(LspWorkspaceSemanticSourceRead.Ok text fingerprint source-len)
+    [(io.OkIoBytes contents)
       (let
+        [text : String (byte_buf.to-string contents)]
+        [fingerprint : i64 (lsp-workspace-semantic-source-fingerprint text)]
+        [source-len : i64 (string.string-length text)]
         [existing : i64
           (lsp-workspace-semantic-cache-find-uri cache source.uri)]
         [fresh : bool
@@ -8336,7 +8334,7 @@
 ;; reports zero source checks and retains the same bounded owners.
 (define (lsp-server-state-refresh-semantic-cache
   [state : lsp_vector_families.LspServerState]
-  [stdlib-roots : lsp_svec.Vec]) : LspWorkspaceSemanticRefreshResult
+  [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspServerState
   (let
     [started : i64 (profile.now-ms)]
     [previous : i64 (arena.tl_arena_current)]
@@ -8355,16 +8353,29 @@
     [next : lsp_vector_families.LspServerState
       (lsp-server-state-finish-swap state draft previous)]
     [elapsed : i64 (- (profile.now-ms) started)]
-    (LspWorkspaceSemanticRefreshResult
-      next
-      (LspWorkspaceSemanticRefreshMetrics
-        source-checks
+    (begin
+      (set! next.semantic-cache.source-checks source-checks)
+      (set!
+        next.semantic-cache.elapsed-ms
         (if (< elapsed 0)
           0
-          elapsed)
-        (lsp-server-state-semantic-retained-owner-count (& next))
-        (lsp-server-state-semantic-retained-record-count (& next))
-        next.semantic-cache.len))))
+          elapsed))
+      (set!
+        next.semantic-cache.retained-owners
+        (lsp-server-state-semantic-retained-owner-count (& next)))
+      (set!
+        next.semantic-cache.retained-records
+        (lsp-server-state-semantic-retained-record-count (& next)))
+      next)))
+
+(define (lsp-workspace-semantic-completeness-complete) : i64
+  0)
+
+(define (lsp-workspace-semantic-completeness-refreshable) : i64
+  1)
+
+(define (lsp-workspace-semantic-completeness-currently-incomplete) : i64
+  2)
 
 (define (lsp-workspace-semantic-fact-fallback) : lsp_vector_families.LspWorkspaceSemanticFact
   (lsp_vector_families.LspWorkspaceSemanticFact
@@ -8373,22 +8384,32 @@
     ""
     false
     -1
-    (compiler_semantic_index.compiler-semantic-record-fallback)))
+    compiler_semantic_index.CompilerSemanticRecordRole.Definition
+    -1
+    -1
+    -1
+    -1
+    -1
+    -1
+    -1
+    -1
+    false))
 
-(define (lsp-workspace-semantic-facts-new) : lsp_vector_families.LspWorkspaceSemanticFacts
-  (lsp_vector_families.LspWorkspaceSemanticFacts
+(define (lsp-workspace-semantic-facts-new) : LspWorkspaceSemanticQuery
+  (LspWorkspaceSemanticQuery
     (__tl_make-array lsp_vector_families.LspWorkspaceSemanticFact 0)
-    0))
+    0
+    (lsp-workspace-semantic-completeness-complete)))
 
 (define (lsp-workspace-semantic-facts-get
-  [facts : (& facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+  [facts : (& facts LspWorkspaceSemanticQuery)]
   [index : i64]) : lsp_vector_families.LspWorkspaceSemanticFact
   (if (and (>= index 0) (< index facts.len))
     (array-ref facts.slots index)
     (lsp-workspace-semantic-fact-fallback)))
 
 (define (lsp-workspace-semantic-facts-grow!
-  [facts : (&mut facts lsp_vector_families.LspWorkspaceSemanticFacts)]) : unit
+  [facts : (&mut facts LspWorkspaceSemanticQuery)]) : unit
   (let
     [old-cap : i64 (array-length facts.slots)]
     [new-cap : i64
@@ -8417,18 +8438,14 @@
 (define (lsp-workspace-semantic-facts-same?
   [left : (& left lsp_vector_families.LspWorkspaceSemanticFact)]
   [right : (& right lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
-  (let
-    [left-span : compiler_semantic_index.CompilerSemanticSpan left.record.span]
-    [right-span : compiler_semantic_index.CompilerSemanticSpan
-      right.record.span]
-    (and
-      (string.eq left.canonical-key right.canonical-key)
-      (string.eq left.path right.path)
-      (= left-span.start-byte right-span.start-byte)
-      (= left-span.end-byte right-span.end-byte)
-      (=
-        (lsp-workspace-semantic-role-tag (& left.record.role))
-        (lsp-workspace-semantic-role-tag (& right.record.role))))))
+  (and
+    (string.eq left.canonical-key right.canonical-key)
+    (string.eq left.path right.path)
+    (= left.start-byte right.start-byte)
+    (= left.end-byte right.end-byte)
+    (=
+      (lsp-workspace-semantic-role-tag (& left.role))
+      (lsp-workspace-semantic-role-tag (& right.role)))))
 
 (define (lsp-workspace-semantic-string-less?
   [left : (& left str)]
@@ -8460,28 +8477,24 @@
 (define (lsp-workspace-semantic-fact-less?
   [left : (& left lsp_vector_families.LspWorkspaceSemanticFact)]
   [right : (& right lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
-  (let
-    [left-span : compiler_semantic_index.CompilerSemanticSpan left.record.span]
-    [right-span : compiler_semantic_index.CompilerSemanticSpan
-      right.record.span]
-    (cond
-      [(not (string.eq left.canonical-key right.canonical-key))
-        (lsp-workspace-semantic-string-less?
-          (& left.canonical-key)
-          (& right.canonical-key))]
-      [(not (string.eq left.path right.path))
-        (lsp-workspace-semantic-string-less? (& left.path) (& right.path))]
-      [(< left-span.start-byte right-span.start-byte) true]
-      [(> left-span.start-byte right-span.start-byte) false]
-      [(< left-span.end-byte right-span.end-byte) true]
-      [(> left-span.end-byte right-span.end-byte) false]
-      [else
-        (<
-          (lsp-workspace-semantic-role-tag (& left.record.role))
-          (lsp-workspace-semantic-role-tag (& right.record.role)))])))
+  (cond
+    [(not (string.eq left.canonical-key right.canonical-key))
+      (lsp-workspace-semantic-string-less?
+        (& left.canonical-key)
+        (& right.canonical-key))]
+    [(not (string.eq left.path right.path))
+      (lsp-workspace-semantic-string-less? (& left.path) (& right.path))]
+    [(< left.start-byte right.start-byte) true]
+    [(> left.start-byte right.start-byte) false]
+    [(< left.end-byte right.end-byte) true]
+    [(> left.end-byte right.end-byte) false]
+    [else
+      (<
+        (lsp-workspace-semantic-role-tag (& left.role))
+        (lsp-workspace-semantic-role-tag (& right.role)))]))
 
 (define (lsp-workspace-semantic-facts-sort!
-  [facts : (&mut facts lsp_vector_families.LspWorkspaceSemanticFacts)]) : unit
+  [facts : (&mut facts LspWorkspaceSemanticQuery)]) : unit
   (let
     [order : (__tl_dyn-array i64) (__tl_make-array i64 facts.len)]
     [index : i64 1]
@@ -8524,7 +8537,7 @@
         unit))))
 
 (define (lsp-workspace-semantic-facts-contain?
-  [facts : (& facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+  [facts : (& facts LspWorkspaceSemanticQuery)]
   [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
   (let
     [index : i64 0]
@@ -8541,7 +8554,7 @@
       found)))
 
 (define (lsp-workspace-semantic-facts-push!
-  [facts : (&mut facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+  [facts : (&mut facts LspWorkspaceSemanticQuery)]
   [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : unit
   (if (lsp-workspace-semantic-facts-contain? facts candidate)
     unit
@@ -8553,21 +8566,13 @@
         (ptr-write! (ptr-offset (array-data facts.slots) facts.len) candidate))
       (set! facts.len (+ facts.len 1)))))
 
-(define (lsp-workspace-semantic-completeness-merge
-  [left : lsp_vector_families.LspWorkspaceSemanticCompleteness]
-  [right : lsp_vector_families.LspWorkspaceSemanticCompleteness]) : lsp_vector_families.LspWorkspaceSemanticCompleteness
-  (match left
-    [(lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete)
-      left]
-    [(lsp_vector_families.LspWorkspaceSemanticCompleteness.Refreshable)
-      (match right
-        [(lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete)
-          right]
-        [_ left])]
-    [(lsp_vector_families.LspWorkspaceSemanticCompleteness.Complete) right]))
+(define (lsp-workspace-semantic-completeness-merge [left : i64] [right : i64]) : i64
+  (if (> left right)
+    left
+    right))
 
 (define (lsp-workspace-semantic-facts-add-index!
-  [facts : (&mut facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+  [facts : (&mut facts LspWorkspaceSemanticQuery)]
   [semantic-index
     : (& semantic-index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [docs : (& docs lsp_document_vec.Vec)]
@@ -8620,8 +8625,20 @@
                   path
                   open
                   version
-                  (compiler_semantic_index.compiler-semantic-record-owned-copy
-                    (& record)))))
+                  (match record.role
+                    [(compiler_semantic_index.CompilerSemanticRecordRole.Definition)
+                      compiler_semantic_index.CompilerSemanticRecordRole.Definition]
+                    [(compiler_semantic_index.CompilerSemanticRecordRole.Use)
+                      compiler_semantic_index.CompilerSemanticRecordRole.Use])
+                  record.span.start-byte
+                  record.span.end-byte
+                  (cast record.span.source.start-line : i64)
+                  (cast record.span.source.start-col : i64)
+                  (cast record.span.source.end-line : i64)
+                  (cast record.span.source.end-col : i64)
+                  record.span.utf16-start-col
+                  record.span.utf16-end-col
+                  record.editable)))
             unit)
           (set! record-index (+ record-index 1)))))))
 
@@ -8649,10 +8666,8 @@
   [stdlib-roots : lsp_svec.Vec]
   [canonical-key : String]) : LspWorkspaceSemanticQuery
   (let
-    [facts : lsp_vector_families.LspWorkspaceSemanticFacts
-      (lsp-workspace-semantic-facts-new)]
-    [completeness : lsp_vector_families.LspWorkspaceSemanticCompleteness
-      lsp_vector_families.LspWorkspaceSemanticCompleteness.Complete]
+    [facts : LspWorkspaceSemanticQuery (lsp-workspace-semantic-facts-new)]
+    [completeness : i64 (lsp-workspace-semantic-completeness-complete)]
     [doc-index : i64 0]
     [source-index : i64 0]
     [context-current : bool
@@ -8684,13 +8699,13 @@
                       completeness
                       (lsp-workspace-semantic-completeness-merge
                         completeness
-                        lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete))))]
+                        (lsp-workspace-semantic-completeness-currently-incomplete)))))]
               [_
                 (set!
                   completeness
                   (lsp-workspace-semantic-completeness-merge
                     completeness
-                    lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete))])
+                    (lsp-workspace-semantic-completeness-currently-incomplete)))])
             (set! doc-index (+ doc-index 1)))))
       (while (<
         source-index
@@ -8713,54 +8728,57 @@
                     completeness
                     (lsp-workspace-semantic-completeness-merge
                       completeness
-                      lsp_vector_families.LspWorkspaceSemanticCompleteness.Refreshable))
+                      (lsp-workspace-semantic-completeness-refreshable)))
                   (let
                     [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
                       (lsp-workspace-semantic-cache-get
                         (& state.semantic-cache)
                         cache-index)]
                     (match (lsp-workspace-semantic-read-source source.path)
-                      [(LspWorkspaceSemanticSourceRead.Err)
+                      [(io.ErrIoBytes _)
                         (set!
                           completeness
                           (lsp-workspace-semantic-completeness-merge
                             completeness
-                            lsp_vector_families.LspWorkspaceSemanticCompleteness.Refreshable))]
-                      [(LspWorkspaceSemanticSourceRead.Ok
-                          _
-                          fingerprint
-                          source-len)
-                        (if (or
-                          (not (= fingerprint entry.source-fingerprint))
-                          (not (= source-len entry.source-len)))
-                          (set!
-                            completeness
-                            (lsp-workspace-semantic-completeness-merge
-                              completeness
-                              lsp_vector_families.LspWorkspaceSemanticCompleteness.Refreshable))
-                          (if entry.present
-                            (begin
-                              (lsp-workspace-semantic-facts-add-index!
-                                (&mut facts)
-                                (& entry.index)
-                                (& state.documents)
-                                canonical-key)
-                              (if (compiler_semantic_index.compiler-semantic-source-index-complete?
-                                (& entry.index))
-                                unit
-                                (set!
-                                  completeness
-                                  (lsp-workspace-semantic-completeness-merge
-                                    completeness
-                                    lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete))))
+                            (lsp-workspace-semantic-completeness-refreshable)))]
+                      [(io.OkIoBytes contents)
+                        (let
+                          [text : String (byte_buf.to-string contents)]
+                          [fingerprint : i64
+                            (lsp-workspace-semantic-source-fingerprint text)]
+                          [source-len : i64 (string.string-length text)]
+                          (if (or
+                            (not (= fingerprint entry.source-fingerprint))
+                            (not (= source-len entry.source-len)))
                             (set!
                               completeness
                               (lsp-workspace-semantic-completeness-merge
                                 completeness
-                                lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete))))])))))
+                                (lsp-workspace-semantic-completeness-refreshable)))
+                            (if entry.present
+                              (begin
+                                (lsp-workspace-semantic-facts-add-index!
+                                  (&mut facts)
+                                  (& entry.index)
+                                  (& state.documents)
+                                  canonical-key)
+                                (if (compiler_semantic_index.compiler-semantic-source-index-complete?
+                                  (& entry.index))
+                                  unit
+                                  (set!
+                                    completeness
+                                    (lsp-workspace-semantic-completeness-merge
+                                      completeness
+                                      (lsp-workspace-semantic-completeness-currently-incomplete)))))
+                              (set!
+                                completeness
+                                (lsp-workspace-semantic-completeness-merge
+                                  completeness
+                                  (lsp-workspace-semantic-completeness-currently-incomplete))))))])))))
             (set! source-index (+ source-index 1)))))
       (lsp-workspace-semantic-facts-sort! (&mut facts))
-      (LspWorkspaceSemanticQuery facts completeness))))
+      (set! facts.completeness completeness)
+      facts)))
 
 (define (lsp-server-state-initialize-workspaces
   [state : lsp_vector_families.LspServerState]

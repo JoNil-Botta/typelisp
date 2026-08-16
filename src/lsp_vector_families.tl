@@ -107,31 +107,31 @@
 (defstruct LspWorkspaceSemanticCache
   (context-key String)
   (slots (__tl_dyn-array LspWorkspaceSemanticCacheEntry))
-  (len i64))
+  (len i64)
+  (source-checks i64)
+  (elapsed-ms i64)
+  (retained-owners i64)
+  (retained-records i64))
 
-(defenum LspWorkspaceSemanticCompleteness
-  (Complete)
-  ;; One or more unopened entries are missing or stale and can be checked.
-  (Refreshable)
-  ;; Current open/disk text has no complete semantic index. Partial current
-  ;; recovery facts may still be present in the result.
-  (CurrentlyIncomplete))
-
-;; Provider-neutral immutable occurrence fact. `record` and `canonical-key`
-;; borrow immutable bytes from one current owned semantic snapshot. `path` is
-;; normalized, while `uri`, `open`, and `version` describe provider edit policy
-;; without deciding it here.
+;; Provider-neutral immutable occurrence fact. The copied identity, location,
+;; role, and edit-policy fields remain valid after the source snapshot is
+;; invalidated; consumers never retain a snapshot-local record reference.
 (defstruct LspWorkspaceSemanticFact
   (canonical-key String)
   (uri String)
   (path String)
   (open bool)
   (version i64)
-  (record compiler_semantic_index.CompilerSemanticRecord))
-
-(defstruct LspWorkspaceSemanticFacts
-  (slots (__tl_dyn-array LspWorkspaceSemanticFact))
-  (len i64))
+  (role compiler_semantic_index.CompilerSemanticRecordRole)
+  (start-byte i64)
+  (end-byte i64)
+  (start-line i64)
+  (start-col i64)
+  (end-line i64)
+  (end-col i64)
+  (utf16-start-col i64)
+  (utf16-end-col i64)
+  (editable bool))
 
 ;; Immutable flattened declaration returned by the workspace query boundary.
 ;; Callers receive a value row, never either mutable index collection.

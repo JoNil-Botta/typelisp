@@ -319,60 +319,6 @@
     false
     CompilerSemanticProvenance.EditableSource))
 
-;; Copy one tool-facing occurrence into the caller's current arena.  Query
-;; consumers can retain this value after the source index that produced it is
-;; invalidated or released.
-(define (compiler-semantic-record-owned-copy
-  [record : (& record CompilerSemanticRecord)]) : CompilerSemanticRecord
-  (CompilerSemanticRecord
-    (CompilerSemanticSymbolId
-      record.symbol.module-id
-      record.symbol.declaration-ordinal
-      record.symbol.local-ordinal)
-    record.canonical-index
-    (match record.role
-      [(CompilerSemanticRecordRole.Definition)
-        CompilerSemanticRecordRole.Definition]
-      [(CompilerSemanticRecordRole.Use) CompilerSemanticRecordRole.Use])
-    (match record.kind
-      [(CompilerSemanticSymbolKind.Value) CompilerSemanticSymbolKind.Value]
-      [(CompilerSemanticSymbolKind.Function)
-        CompilerSemanticSymbolKind.Function]
-      [(CompilerSemanticSymbolKind.Macro) CompilerSemanticSymbolKind.Macro]
-      [(CompilerSemanticSymbolKind.ExternValue)
-        CompilerSemanticSymbolKind.ExternValue]
-      [(CompilerSemanticSymbolKind.ExternFunction)
-        CompilerSemanticSymbolKind.ExternFunction]
-      [(CompilerSemanticSymbolKind.Struct) CompilerSemanticSymbolKind.Struct]
-      [(CompilerSemanticSymbolKind.Enum) CompilerSemanticSymbolKind.Enum]
-      [(CompilerSemanticSymbolKind.Parameter)
-        CompilerSemanticSymbolKind.Parameter]
-      [(CompilerSemanticSymbolKind.Local) CompilerSemanticSymbolKind.Local])
-    (string.copy (& record.display-name))
-    (string.copy (& record.resolved-type))
-    (string.copy (& record.documentation))
-    record.module-id
-    (CompilerSemanticSpan
-      (string.copy (& record.span.path))
-      record.span.start-byte
-      record.span.end-byte
-      (ast.ast-source-span
-        (cast record.span.source.start-line : i64)
-        (cast record.span.source.start-col : i64)
-        (cast record.span.source.end-line : i64)
-        (cast record.span.source.end-col : i64))
-      record.span.utf16-start-col
-      record.span.utf16-end-col)
-    record.editable
-    (match record.provenance
-      [(CompilerSemanticProvenance.EditableSource)
-        CompilerSemanticProvenance.EditableSource]
-      [(CompilerSemanticProvenance.Generated generator item key)
-        (CompilerSemanticProvenance.Generated
-          (string.copy (& generator))
-          (string.copy (& item))
-          (string.copy (& key)))])))
-
 (define (compiler-semantic-binding-namespace-value-mask) : i64
   1)
 

@@ -26,8 +26,11 @@
 # targets through the named host ABI, moving stdlib.text_buf/append! off the
 # final registration shell. All 108 checked-in entries are now fully native,
 # so every fallback dimension is pinned to zero rather than allowing a future
-# catalog addition to hide one.
-native-entries-min 108
+# catalog addition to hide one. Issue #6645 removes stdlib.io's duplicate
+# format-with transformer after moving the canonical implementation to
+# stdlib.format, shrinking the catalog to 107 without reintroducing any
+# fallback route.
+native-entries-min 107
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

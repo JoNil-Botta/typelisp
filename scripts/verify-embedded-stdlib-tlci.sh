@@ -121,7 +121,7 @@ fi
 
 # Ratchet the native-coverage numbers. The native entry count overstates
 # coverage on its own: a native entry can still hand single match arms back to
-# the interpreter, so both bounds are checked. Refs #5596.
+# the interpreter, so every fallback dimension is checked. Refs #5596.
 coverage_field() {
     sed -n 's/^embedded stdlib tlci: coverage .*'"$1"'=\([0-9][0-9]*\).*$/\1/p' \
         "$COVERAGE_LOG"
@@ -133,15 +133,21 @@ floor_field() {
 
 NATIVE_ENTRIES=$(coverage_field native-entries)
 SHELL_ENTRIES=$(coverage_field shell-entries)
+PARTIAL_ENTRIES=$(coverage_field partial-entries)
 INTERPRETED_ARMS=$(coverage_field interpreted-arms)
 NATIVE_ENTRIES_MIN=$(floor_field native-entries-min)
+SHELL_ENTRIES_MAX=$(floor_field shell-entries-max)
+PARTIAL_ENTRIES_MAX=$(floor_field partial-entries-max)
 INTERPRETED_ARMS_MAX=$(floor_field interpreted-arms-max)
 
 for pair in \
     "native entry count:$NATIVE_ENTRIES" \
     "shell entry count:$SHELL_ENTRIES" \
+    "partial entry count:$PARTIAL_ENTRIES" \
     "interpreted arm count:$INTERPRETED_ARMS" \
     "native-entries-min:$NATIVE_ENTRIES_MIN" \
+    "shell-entries-max:$SHELL_ENTRIES_MAX" \
+    "partial-entries-max:$PARTIAL_ENTRIES_MAX" \
     "interpreted-arms-max:$INTERPRETED_ARMS_MAX"; do
     if [ -z "${pair#*:}" ]; then
         echo "embedded stdlib tlci: cannot read ${pair%%:*}" >&2
@@ -204,12 +210,13 @@ if [ "$BLOCKED_SHELLS" -ne "$SHELL_ENTRIES" ]; then
 fi
 # Pin the landed families, not just the aggregate ratchet. Each identity must
 # exist in the catalog and, because every shell is accounted for by the blocked
-# relation above, must not be one of those blocked identities. Refs #6552,
-# #6554, #6555, #6556.
+# relation above, must not be one of those blocked identities. Refs #6550,
+# #6552, #6554, #6555, #6556.
 for NATIVE_IDENTITY in \
     stdlib.clone/synthesize-helpers \
     stdlib.serialize/serialize \
     stdlib.sort/vec \
+    stdlib.text_buf/append! \
     stdlib.vector/vector; do
     if ! grep -aFq "$NATIVE_IDENTITY" "$IMAGE_A"; then
         echo "embedded stdlib tlci image is missing $NATIVE_IDENTITY" >&2
@@ -233,6 +240,16 @@ if [ "$NATIVE_ENTRIES" -lt "$NATIVE_ENTRIES_MIN" ]; then
     echo "embedded stdlib tlci native coverage regressed:" \
         "$NATIVE_ENTRIES native entries, floor is $NATIVE_ENTRIES_MIN" >&2
     echo "lower the floor in $COVERAGE_FLOOR only with an explicit reason" >&2
+    exit 1
+fi
+if [ "$SHELL_ENTRIES" -gt "$SHELL_ENTRIES_MAX" ]; then
+    echo "embedded stdlib tlci shell coverage regressed:" \
+        "$SHELL_ENTRIES shell entries, ceiling is $SHELL_ENTRIES_MAX" >&2
+    exit 1
+fi
+if [ "$PARTIAL_ENTRIES" -gt "$PARTIAL_ENTRIES_MAX" ]; then
+    echo "embedded stdlib tlci partial coverage regressed:" \
+        "$PARTIAL_ENTRIES partial entries, ceiling is $PARTIAL_ENTRIES_MAX" >&2
     exit 1
 fi
 if [ "$INTERPRETED_ARMS" -gt "$INTERPRETED_ARMS_MAX" ]; then
@@ -303,16 +320,14 @@ fi
 # corruption after ~13.5k catalog calls, while the loader verifier above makes
 # three dispatches -- four orders of magnitude below the failure scale.
 #
-# The three tiers exist so a failure names a layer instead of a symptom. Tier 1
-# crosses the raw call bridge with no host callback. Tier 2 adds real host
-# callbacks over one persistent set of pools/operands built before the loop,
-# with the fresh per-invocation host session required by SPEC 5.17.1.1, and
-# audits the count, operand, cookie and stack state the callbacks read after
-# every dispatch -- the argument integrity #5460's status-1 sentinel actually
-# implicates. Tier 3 runs the same entry but captures pools and pushes a fresh
-# operand each iteration, so it adds pool/operand cycling on top. All three run
-# above the observed threshold and on both hosts regardless of the production
-# route gate, which Windows still disables for #5460.
+# The three tiers exist so a failure names an entry/session shape instead of a
+# symptom. With #6550 there are no production shells left: tier 1 now sustains
+# the newly native text_buf/append! two-operand dynamic set!-place callback
+# chain. Tier 2 runs array/length over one persistent set of pools/operands and
+# audits the count, operand, cookie and stack state after every fresh session.
+# Tier 3 runs that same entry but captures pools and pushes a fresh operand each
+# iteration, adding pool/operand cycling. All three run above the observed
+# #5460 threshold and on both hosts.
 STRESS_ITERATIONS=${TYPELISP_TLCI_STRESS_ITERATIONS:-25000}
 for STRESS_TIER in 1 2 3; do
     STRESS_PROGRESS="$WORKDIR/stress-tier$STRESS_TIER.txt"

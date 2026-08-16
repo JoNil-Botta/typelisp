@@ -1031,6 +1031,13 @@
 (define tlci-host-callback-name-expr-struct-set-from-value : String
   "expr-struct-set-from-value")
 
+;; A quasiquoted `(set! ,place value)` only knows its assignment shape after
+;; the unquoted place has produced an Expr session value. Pop that place and
+;; the value expression, then reconstruct the matching variable, struct-field,
+;; or box assignment. Refs #6550.
+(define tlci-host-callback-name-expr-set-from-place : String
+  "expr-set-from-place")
+
 ;; Computed enum variant names likewise retain their source-name identity as a
 ;; session value. Pop a PatternList after the name and push the resulting
 ;; variant pattern. Refs #5626.

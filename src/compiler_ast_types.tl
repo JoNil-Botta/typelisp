@@ -5568,14 +5568,8 @@
 (define (ast-expr-tuple-ref [target : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.TupleRef target index)))
 
-(define (ast-expr-make-array [elem : AstType] [size : i64]) : i64
-  (ast-node-push (AstExpr.MakeArray (ty-node-push elem) size)))
-
 (define (ast-expr-make-array-id [elem-id : i64] [size : i64]) : i64
   (ast-node-push (AstExpr.MakeArray elem-id size)))
-
-(define (ast-expr-type-literal [ty : AstType]) : i64
-  (ast-node-push (AstExpr.TypeLiteral (ty-node-push ty))))
 
 (define (ast-expr-array-ref [target : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.ArrayRef target index)))
@@ -5591,12 +5585,6 @@
 
 (define (ast-expr-replace [place : i64] [replacement : i64]) : i64
   (ast-node-push (AstExpr.Replace place replacement)))
-
-(define (ast-expr-array-push [target : i64] [value : i64]) : i64
-  (ast-node-push (AstExpr.ArrayPush target value)))
-
-(define (ast-expr-string-ref [target : i64] [index : i64]) : i64
-  (ast-node-push (AstExpr.StringRef target index)))
 
 (define (ast-expr-while [cond : i64] [body : i64]) : i64
   (ast-node-push (AstExpr.While cond body)))
@@ -5735,50 +5723,6 @@
   (ast-node-push
     (AstExpr.Foreach (box (AstForeach.Foreach name index-ty start end body)))))
 
-(define (ast-expr-spmd-reduce-id
-  [op : AstReduceOp]
-  [name : i64]
-  [index-ty : AstType]
-  [start : i64]
-  [end : i64]
-  [init : i64]
-  [value : i64]) : i64
-  (ast-node-push
-    (AstExpr.SpmdReduce
-      (box (AstSpmdReduce.Reduce op name index-ty start end init value)))))
-
-(define (ast-expr-spmd-scan-id
-  [op : AstReduceOp]
-  [index : i64]
-  [index-ty : AstType]
-  [start : i64]
-  [end : i64]
-  [prefix : i64]
-  [prefix-ty : AstType]
-  [init : i64]
-  [value : i64]
-  [body : i64]) : i64
-  (ast-node-push
-    (AstExpr.SpmdScan
-      (box
-        (AstSpmdScan.Scan
-          op
-          index
-          index-ty
-          start
-          end
-          prefix
-          prefix-ty
-          init
-          value
-          body)))))
-
-(define (ast-expr-spmd-broadcast [value : i64] [lane : i64]) : i64
-  (ast-node-push (AstExpr.SpmdBroadcast value lane)))
-
-(define (ast-expr-spmd-shuffle [value : i64] [lane : i64]) : i64
-  (ast-node-push (AstExpr.SpmdShuffle value lane)))
-
 (define (ast-expr-spmd-program-index) : i64
   (ast-node-push (AstExpr.SpmdProgramIndex)))
 
@@ -5852,9 +5796,6 @@
 (define (ast-expr-quasiquote [inner : i64]) : i64
   (ast-node-push (AstExpr.Quasiquote inner)))
 
-(define (ast-expr-try [inner : i64]) : i64
-  (ast-node-push (AstExpr.Try inner)))
-
 (define (ast-expr-return [inner : i64]) : i64
   (ast-node-push (AstExpr.Return inner)))
 
@@ -5882,17 +5823,11 @@
 (define (ast-expr-ptr-cast-id [ptr : i64] [ty-id : i64]) : i64
   (ast-node-push (AstExpr.PtrCast ptr ty-id)))
 
-(define (ast-expr-ptr-cast [ptr : i64] [ty : AstType]) : i64
-  (ast-expr-ptr-cast-id ptr (ty-node-push ty)))
-
 (define (ast-expr-ptr-to-int [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrToInt ptr)))
 
 (define (ast-expr-int-to-ptr-id [value : i64] [ty-id : i64]) : i64
   (ast-node-push (AstExpr.IntToPtr value ty-id)))
-
-(define (ast-expr-int-to-ptr [value : i64] [ty : AstType]) : i64
-  (ast-expr-int-to-ptr-id value (ty-node-push ty)))
 
 (define (ast-expr-string-data [value : i64]) : i64
   (ast-node-push (AstExpr.StringData value)))

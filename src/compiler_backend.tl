@@ -19642,25 +19642,6 @@
       "%rdx"
       "%rax")))
 
-;; Internal aggregate copies are not ABI returns. Their second GP staging
-;; register may be any register free at this instruction; prefer the historical
-;; %rdx staging register when it is free to keep common codegen unchanged.
-(define (compiler-backend-group-copy-reg1
-  [type-segment-bases : i64]
-  [program-index : CompilerBackendProgramIndex]
-  [ty : compiler_ast_types.AstType]
-  [reg0 : String]) : String
-  (let
-    [abi-reg1 : String
-      (compiler-backend-group-return-reg type-segment-bases program-index ty 1)]
-    (if (string.eq abi-reg1 "%rdx")
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-one-exclude reg0)
-        1
-        abi-reg1
-        program-index.backend-state)
-      abi-reg1)))
-
 (define (compiler-backend-group-copy-xmm-scratch
   [dst : i64]
   [src0 : String]
@@ -19854,27 +19835,6 @@
           (compiler_diagnostic.compiler-diagnostic-at-start
             ""
             "backend: register-group load requires var operand")))]))
-
-(define (compiler-backend-emit-group-copy
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [src : compiler_ir_types.CompilerIrValue]
-  [vars : i64]
-  [ty : compiler_ast_types.AstType]
-  [program-index : CompilerBackendProgramIndex]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (compiler-backend-emit-group-copy-with-plan
-    type-segment-bases
-    assignments
-    dst
-    src
-    vars
-    ty
-    program-index
-    ""
-    ""
-    backend-state))
 
 (define (compiler-backend-group-stack-exclude [operand : String]) : (__tl_dyn-array
     String)
@@ -29552,38 +29512,6 @@
                     backend-state)]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))])))))
-
-(define (compiler-backend-emit-binop-return
-  [type-segment-bases : i64]
-  [backend-state : CompilerBackendState]
-  [source-function : i64]
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [types : compiler_regalloc.CompilerRegVarTypes]
-  [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [vars : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [lhs : compiler_ir_types.CompilerIrValue]
-  [rhs : compiler_ir_types.CompilerIrValue]
-  [ty : compiler_ast_types.AstType]) : ResultCompilerBackend
-  (compiler-backend-emit-binop-return-with-plan
-    type-segment-bases
-    backend-state
-    source-function
-    blocks
-    types
-    global-types
-    assignments
-    vars
-    op
-    lhs
-    rhs
-    ty
-    ""
-    ""
-    ""
-    ""
-    ""))
 
 (define (compiler-backend-emit-compare-branch
   [type-segment-bases : i64]

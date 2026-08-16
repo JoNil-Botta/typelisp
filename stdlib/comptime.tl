@@ -213,6 +213,14 @@
 (define (expr-call [callee : Expr] [args : ExprList]) : Expr
   (expr-call callee args))
 
+;: Build a one-argument shared-borrow call during macro CTFE.
+;:
+;: Borrowable places are passed directly. A temporary is evaluated once into a
+;: fresh inferred local before the call, so the expanded call can lend it for
+;: the duration of the invocation.
+(define (expr-shared-call1 [callee : Expr] [value : Expr]) : Expr
+  (expr-shared-call1 callee value))
+
 ;: Build a call with an inferred mutable borrow of `place` and no other arguments.
 (define (expr-mut-call0 [callee : Expr] [place : Expr]) : Expr
   (expr-mut-call0 callee place))
@@ -441,6 +449,17 @@
 ;: Missing values produce a compile-time diagnostic.
 (define (module-value-type [_module : String] [_name : String]) : Expr
   (comptime-error "module-value-type is compile-time only"))
+
+;: Build an expression that refers to an indexed public module value.
+;: Missing values produce a compile-time diagnostic.
+(define (module-value-expr [_module : String] [_name : String]) : Expr
+  (comptime-error "module-value-expr is compile-time only"))
+
+;: Return true when `signature` is exactly `(& T) -> String` for `value-type`.
+(define (function-shared-borrow-returns-string?
+  [_signature : Expr]
+  [_value-type : Expr]) : bool
+  false)
 
 ;: Return true when a module strategy exports a macro hook with `name`.
 (define (module-export-macro? [_module : String] [_name : String]) : bool

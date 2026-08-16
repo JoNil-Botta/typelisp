@@ -2805,7 +2805,7 @@ if ! cmp -s "$STDLIB_TLCI_WILD_EMBEDDED_ASM"     "$STDLIB_TLCI_WILD_MODIFIED_ASM
     fail "native and interpreted wildcard arms produced different assembly"
 fi
 
-# #5701: `stdlib.io/format-from` is a comptime string scanner -- it walks the
+# #5701: `stdlib.format/format-from` is a comptime string scanner -- it walks the
 # template one byte at a time and re-invokes itself at the next offset. An
 # off-by-one in any index, a dropped escape byte, or a wrong positional
 # argument still compiles and still runs, producing a subtly wrong string, so
@@ -2858,8 +2858,8 @@ assert_profile_counter_eq_in \
     "$STDLIB_TLCI_FMT_MODIFIED_STDERR"
 # The scanner itself has to run, not just its wrapper, so a fixture edit
 # cannot silently stop covering the recursive walk.
-assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.io/format-with arity="
-assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.io/format-from arity="
+assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format arity="
+assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format-from arity="
 if ! cmp -s "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
     "$STDLIB_TLCI_FMT_MODIFIED_ASM"; then
     diff -u "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \

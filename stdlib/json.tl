@@ -17,6 +17,7 @@
 ;# (define sample : String (json.stringify (json.JsonBool true)))
 ;# ```
 (import stdlib.comptime)
+(import stdlib.format)
 (import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.io)
@@ -1097,7 +1098,7 @@
 ;: NaN and infinity are rejected; negative zero renders as `-0`.
 (define (f64->number-text [value : f64]) : JsonNumberTextResult
   (if (io.float-f64-finite? value)
-    (OkJsonNumberText (io.format-float-core value))
+    (OkJsonNumberText (format.format-float-core value))
     (ErrJsonNumberText "json: non-finite f64 cannot be rendered as a number")))
 
 ;: Render a finite f32 as deterministic JSON number text.
@@ -1105,7 +1106,7 @@
 ;: Widens to f64 so the binary32-rounded value is formatted deterministically.
 (define (f32->number-text [value : f32]) : JsonNumberTextResult
   (if (io.float-f32-finite? value)
-    (OkJsonNumberText (io.format-float-core (cast value : f64)))
+    (OkJsonNumberText (format.format-float-core (cast value : f64)))
     (ErrJsonNumberText "json: non-finite f32 cannot be rendered as a number")))
 
 ;: Convert a JSON number rendering result into a JSON value, panicking only for

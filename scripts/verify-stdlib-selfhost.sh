@@ -55,6 +55,12 @@ reject_diag() {
             printf 'is missing protocol function into-iterator' ;;
         stdlib/tests/format_nonliteral_template_reject.tl)
             printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_owner_ambiguous_reject.tl)
+            printf 'format: ambiguous owner hooks for' ;;
+        stdlib/tests/format_owner_missing_reject.tl)
+            printf 'format: unsupported nominal type' ;;
+        stdlib/tests/format_owner_wrong_signature_reject.tl)
+            printf 'format: owner hook has wrong signature for' ;;
         stdlib/tests/format_specifier_reject.tl)
             printf 'format: format specifiers are not supported' ;;
         stdlib/tests/format_too_few_args_reject.tl)

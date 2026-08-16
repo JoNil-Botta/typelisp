@@ -3990,6 +3990,31 @@
                 expr
                 (str_cat.str-cat name " expects a String argument"))))])]))
 
+;; Module indexes use parser-established Name identities for generated owners,
+;; but a computed String must be re-interned from its evaluated text. The
+;; generic String helper intentionally preserves both raw IDs, so keep this
+;; normalization local to module value lookup.
+(define (ctfe-eval-module-index-arg
+  [arg : ast.AstExpr]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [name : String]) : ResultCtfeStringArg
+  (match (compiler-ctfe-eval arg env fuel)
+    [(ResultCtfe.Err d) (ResultCtfeStringArg.Err d)]
+    [(ResultCtfe.Ok value arg-fuel)
+      (match value
+        [(CompilerCtfeValue.String text _)
+          (ResultCtfeStringArg.Ok text (ci.intern text) arg-fuel)]
+        [(CompilerCtfeValue.Name text name-id)
+          (ResultCtfeStringArg.Ok text name-id arg-fuel)]
+        [_
+          (ResultCtfeStringArg.Err
+            (box
+              (ctfe-diagnostic-at-expr
+                expr
+                (str_cat.str-cat name " expects a String argument"))))])]))
+
 ;; Binding-oriented syntax constructors preserve an inspected or explicitly
 ;; fresh `Name` identity. Ordinary strings retain the public spelling lookup
 ;; used for references to caller and module names.
@@ -6385,9 +6410,14 @@
     (let
       [module-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [name-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-string-arg module-arg expr env fuel query-name)
+      (match (ctfe-eval-module-index-arg module-arg expr env fuel query-name)
         [(ResultCtfeStringArg.Ok module module-id module-fuel)
-          (match (ctfe-eval-string-arg name-arg expr env module-fuel query-name)
+          (match (ctfe-eval-module-index-arg
+            name-arg
+            expr
+            env
+            module-fuel
+            query-name)
             [(ResultCtfeStringArg.Ok name name-id name-fuel)
               (match (ctfe-module-value-type-id-for-state
                 (ctfe-env-macro-state env)
@@ -6414,6 +6444,142 @@
         (ctfe-diagnostic-at-expr
           expr
           (str_cat.str-cat query-name " expects exactly two args"))))))
+
+(define (ctfe-eval-module-value-expr-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [module-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
+      [name-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
+      (match (ctfe-eval-module-index-arg
+        module-arg
+        expr
+        env
+        fuel
+        "module-value-expr")
+        [(ResultCtfeStringArg.Ok module module-id module-fuel)
+          (match (ctfe-eval-module-index-arg
+            name-arg
+            expr
+            env
+            module-fuel
+            "module-value-expr")
+            [(ResultCtfeStringArg.Ok name name-id name-fuel)
+              (match (ctfe-module-value-type-id-for-state
+                (ctfe-env-macro-state env)
+                module-id
+                name-id)
+                [(CtfeMaybeModuleValueType.Some _)
+                  (ResultCtfe.Ok
+                    (CompilerCtfeValue.Expr
+                      (ctfe-ast-push
+                        env
+                        (ast.AstExpr.Var
+                          (if (string.eq module "")
+                            name-id
+                            (ci.intern
+                              (str_cat.str-cat
+                                module
+                                (str_cat.str-cat "." name))))))
+                      (ctfe-untyped-expr-type))
+                    name-fuel)]
+                [(CtfeMaybeModuleValueType.None)
+                  (ResultCtfe.Err
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        (str_cat.str-cat
+                          "module-value-expr: module "
+                          module
+                          " does not define value "
+                          name))))])]
+            [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
+        [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "module-value-expr expects exactly two args")))))
+
+;; Owner-module formatting accepts only an immutable shared borrow of the
+;; nominal value and a String result. Borrowed field projections expose one
+;; Region wrapper around the nominal type; compare that wrapper's element so
+;; the protocol behaves identically for lvalues, projections, and rvalues.
+(define (ctfe-function-shared-borrow-returns-string?
+  [env : CtfeEnv]
+  [signature : ast.AstType]
+  [value-type : ast.AstType]) : bool
+  (let
+    [expected-type : ast.AstType
+      (match value-type
+        [(ast.AstType.Region _ inner) (ctfe-ty-get env inner)]
+        [_ value-type])]
+    (match signature
+      [(ast.AstType.Func params ret)
+        (if (= (ctfe-type-list-count (__tl-box-place params)) 1)
+          (let
+            [parameter : ast.AstType
+              (ctfe-ty-get
+                env
+                (ast.ast-type-list-get
+                  (__tl-box-place params)
+                  0
+                  (ast.ast-type-id-fallback)))]
+            (match parameter
+              [(ast.AstType.Ref _ inner)
+                (and
+                  (ctfe-type-eq-in-env
+                    env
+                    (ctfe-ty-get env inner)
+                    expected-type)
+                  (ctfe-type-eq-in-env
+                    env
+                    (ctfe-ty-get env ret)
+                    (ast.AstType.String)))]
+              [_ false]))
+          false)]
+      [_ false])))
+
+(define (ctfe-eval-function-shared-borrow-returns-string-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [signature-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
+      [value-type-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
+      (match (ctfe-eval-type-arg
+        signature-arg
+        expr
+        env
+        fuel
+        "function-shared-borrow-returns-string?")
+        [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+        [(ResultCtfeTypeArg.Ok signature signature-fuel)
+          (match (ctfe-eval-type-arg
+            value-type-arg
+            expr
+            env
+            signature-fuel
+            "function-shared-borrow-returns-string?")
+            [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+            [(ResultCtfeTypeArg.Ok value-type value-type-fuel)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (ctfe-function-shared-borrow-returns-string?
+                    env
+                    signature
+                    value-type))
+                value-type-fuel)])]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "function-shared-borrow-returns-string? expects exactly two type arguments")))))
 
 (define (ctfe-module-hook-missing-message [module : String] [name : String]) : String
   (str_cat.str-cat
@@ -6886,6 +7052,105 @@
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-call expects exactly two args")))))
+
+;; Shared-borrow calls may lend an existing place directly. A temporary needs a
+;; lexical owner for the duration of the call, so synthesize one inferred local
+;; and call through that local. This preserves single evaluation without moving
+;; caller-owned lvalues.
+(define (ctfe-expr-borrowable-place-node-with-pools?
+  [pools : ast.AstNodePoolContext]
+  [node : i64]) : bool
+  (match (ast.ast-expr-unspan-with-pools
+    pools
+    (ast.ast-node-pool-context-expr-get pools node))
+    [(ast.AstExpr.Var _) true]
+    [(ast.AstExpr.StructGet receiver _)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [(ast.AstExpr.TupleRef receiver _)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [(ast.AstExpr.ArrayRef receiver _)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [(ast.AstExpr.BoxGet receiver)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [(ast.AstExpr.BoxTake receiver)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [_ false]))
+
+(define (ctfe-expr-shared-call1-node-with-pools
+  [state : CompilerCtfeMacroState]
+  [pools : ast.AstNodePoolContext]
+  [callee-node : i64]
+  [value-node : i64]) : i64
+  (if (ctfe-expr-borrowable-place-node-with-pools? pools value-node)
+    (ctfe-ast-expr-call-with-provenance
+      state
+      pools
+      callee-node
+      (ast.ast-expr-cons value-node (ast.ast-expr-list-new)))
+    (let
+      [value-name : i64
+        (ctfe-materialize-generated-name-id "__tl_shared_call_value")]
+      [bindings : ast.AstLetBindingList (ast.ast-let-binding-list-new)]
+      [local-node : i64
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var value-name))]
+      [call-node : i64
+        (ctfe-ast-expr-call-with-provenance
+          state
+          pools
+          callee-node
+          (ast.ast-expr-cons local-node (ast.ast-expr-list-new)))]
+      (begin
+        (ast.ast-let-binding-list-push
+          (&mut bindings)
+          (ast.ast-let-binding-id value-name ast.AstMaybeType.No value-node))
+        (ast.ast-expr-let-with-pools pools bindings call-node)))))
+
+(define (ctfe-eval-expr-shared-call1-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [callee-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
+      [value-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
+      (match (compiler-ctfe-eval callee-arg env fuel)
+        [(ResultCtfe.Ok callee-value callee-fuel)
+          (let
+            [callee-node : i64 (ctfe-syntax-expr-value-node callee-value)]
+            (if (< callee-node 0)
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-shared-call1 callee expects Expr")))
+              (match (compiler-ctfe-eval value-arg env callee-fuel)
+                [(ResultCtfe.Ok value value-fuel)
+                  (let
+                    [value-node : i64 (ctfe-syntax-expr-value-node value)]
+                    (if (< value-node 0)
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-shared-call1 value expects Expr")))
+                      (ResultCtfe.Ok
+                        (ctfe-syntax-expr-value
+                          env
+                          (ctfe-expr-shared-call1-node-with-pools
+                            (ctfe-env-macro-state env)
+                            (ctfe-env-syntax-pool-context env)
+                            callee-node
+                            value-node)
+                          (ctfe-untyped-expr-type))
+                        value-fuel)))]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])))]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "expr-shared-call1 expects exactly two args")))))
 
 ;; Build a call whose receiver is an explicit inferred-lifetime mutable borrow.
 (define (ctfe-expr-mut-call-result
@@ -9181,6 +9446,16 @@
               expr
               env
               fuel)]
+          [(= call-id (ctfe-builtin-ref 285))
+            (ctfe-eval-module-value-expr-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 286))
+            (ctfe-eval-function-shared-borrow-returns-string-call
+              args
+              expr
+              env
+              fuel)]
+          [(= call-id (ctfe-builtin-ref 287))
+            (ctfe-eval-expr-shared-call1-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 215))
             (ctfe-eval-expr-list-type-nth-call args expr env fuel)]
           [else

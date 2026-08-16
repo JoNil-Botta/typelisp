@@ -3037,6 +3037,19 @@
                     tlci_core.tlci-host-callback-name-module-value-type)
                   ops
                   ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.module-value-expr")
+                    (string.eq head "module-value-expr"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-module-value-expr)
+                  ops
+                  ops-count)]
               ;; `(comptime.expr-type e)`: the checked type of an Expr operand
               ;; or let-bound expression value. Refs #5626, #5606.
               [(and
@@ -3492,6 +3505,19 @@
                   (compiler_ast_types.ast-expr-list-get (& args) 1 0)
                   (tlci_core.tlci-host-callback-name-shared-view
                     tlci_core.tlci-host-callback-name-expr-call)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-shared-call1")
+                    (string.eq head "expr-shared-call1"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-shared-call1)
                   ops
                   ops-count)]
               [(and
@@ -4775,6 +4801,32 @@
         [_ (embedded-native-data-value-none)])]
     [_ (embedded-native-data-value-none)]))
 
+(define (embedded-native-data-function-shared-borrow-returns-string-value
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [node : i64]) : EmbeddedNativeDataValue
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(compiler_ast_types.AstExpr.Call func args)
+      (match (embedded-stdlib-tlci-unwrap-expr func)
+        [(compiler_ast_types.AstExpr.Var head-id)
+          (let
+            [head : String (ci.intern-str head-id)]
+            (if (and
+              (= (compiler_ast_types.ast-expr-list-len (& args)) 2)
+              (or
+                (string.eq
+                  head
+                  "comptime.function-shared-borrow-returns-string?")
+                (string.eq head "function-shared-borrow-returns-string?")))
+              (embedded-native-stacked-binary-data-probe-value
+                params
+                (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                (tlci_core.tlci-host-callback-name-shared-view
+                  tlci_core.tlci-host-callback-name-function-shared-borrow-returns-string?))
+              (embedded-native-data-value-none)))]
+        [_ (embedded-native-data-value-none)])]
+    [_ (embedded-native-data-value-none)]))
+
 (define (embedded-native-data-call-value
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
@@ -4797,56 +4849,67 @@
         (if (not (string.eq string-eq.text ""))
           string-eq
           (let
-            [module-value : EmbeddedNativeDataValue
-              (embedded-native-data-module-value-exists-value params node)]
-            (if (not (string.eq module-value.text ""))
-              module-value
+            [signature-match : EmbeddedNativeDataValue
+              (embedded-native-data-function-shared-borrow-returns-string-value
+                params
+                node)]
+            (if (not (string.eq signature-match.text ""))
+              signature-match
               (let
-                [has-type : EmbeddedNativeDataValue
-                  (embedded-native-binding-clause-has-type-value params node)]
-                (if (not (string.eq has-type.text ""))
-                  has-type
+                [module-value : EmbeddedNativeDataValue
+                  (embedded-native-data-module-value-exists-value params node)]
+                (if (not (string.eq module-value.text ""))
+                  module-value
                   (let
-                    [binding-operand : i64
-                      (embedded-native-expr-binding-clause-list-length-param
+                    [has-type : EmbeddedNativeDataValue
+                      (embedded-native-binding-clause-has-type-value
                         params
                         node)]
-                    (if (>= binding-operand 0)
-                      (embedded-native-data-probe-value
-                        (tlci_core.tlci-host-callback-name-shared-view
-                          tlci_core.tlci-host-callback-name-expr-binding-clause-list-length)
-                        (string.int->string binding-operand)
-                        "0")
+                    (if (not (string.eq has-type.text ""))
+                      has-type
                       (let
-                        [operand : i64
-                          (embedded-native-expr-list-length-param params node)]
-                        (if (>= operand 0)
+                        [binding-operand : i64
+                          (embedded-native-expr-binding-clause-list-length-param
+                            params
+                            node)]
+                        (if (>= binding-operand 0)
                           (embedded-native-data-probe-value
                             (tlci_core.tlci-host-callback-name-shared-view
-                              tlci_core.tlci-host-callback-name-expr-list-length)
-                            (string.int->string operand)
+                              tlci_core.tlci-host-callback-name-expr-binding-clause-list-length)
+                            (string.int->string binding-operand)
                             "0")
                           (let
-                            [slot : i64
-                              (embedded-native-expr-list-length-local
+                            [operand : i64
+                              (embedded-native-expr-list-length-param
                                 params
                                 node)]
-                            (if (>= slot 0)
+                            (if (>= operand 0)
                               (embedded-native-data-probe-value
                                 (tlci_core.tlci-host-callback-name-shared-view
-                                  tlci_core.tlci-host-callback-name-local-expr-list-length)
-                                (string.int->string slot)
+                                  tlci_core.tlci-host-callback-name-expr-list-length)
+                                (string.int->string operand)
                                 "0")
                               (let
-                                [reflection : EmbeddedNativeDataValue
-                                  (embedded-native-reflection-count-value
+                                [slot : i64
+                                  (embedded-native-expr-list-length-local
                                     params
                                     node)]
-                                (if (string.eq reflection.text "")
-                                  (embedded-native-string-scan-value
-                                    params
-                                    node)
-                                  reflection)))))))))))))))))
+                                (if (>= slot 0)
+                                  (embedded-native-data-probe-value
+                                    (tlci_core.tlci-host-callback-name-shared-view
+                                      tlci_core.tlci-host-callback-name-local-expr-list-length)
+                                    (string.int->string slot)
+                                    "0")
+                                  (let
+                                    [reflection : EmbeddedNativeDataValue
+                                      (embedded-native-reflection-count-value
+                                        params
+                                        node)]
+                                    (if (string.eq reflection.text "")
+                                      (embedded-native-string-scan-value
+                                        params
+                                        node)
+                                      reflection)))))))))))))))))))
 
 ;; `(string.string-length <String local>)` and
 ;; `(string.string-ref <String local> <data>)`: the stdlib string functions the
@@ -7698,11 +7761,14 @@
     "(extern comptime-host-module-hook (:symbol \"_tl_comptime_host_module-hook\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-module-value? (:symbol \"_tl_comptime_host_module-value?\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-module-value-type (:symbol \"_tl_comptime_host_module-value-type\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-module-value-expr (:symbol \"_tl_comptime_host_module-value-expr\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-function-shared-borrow-returns-string? (:symbol \"_tl_comptime_host_function-shared-borrow-returns-string?\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-list-empty (:symbol \"_tl_comptime_host_expr-list-empty\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-list-cons (:symbol \"_tl_comptime_host_expr-list-cons\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-list-append (:symbol \"_tl_comptime_host_expr-list-append\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-push-operand (:symbol \"_tl_comptime_host_push-operand\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-call (:symbol \"_tl_comptime_host_expr-call\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-shared-call1 (:symbol \"_tl_comptime_host_expr-shared-call1\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-span (:symbol \"_tl_comptime_host_expr-span\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-span-unquoted (:symbol \"_tl_comptime_host_expr-span-unquoted\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-tuple (:symbol \"_tl_comptime_host_expr-tuple\") : (-> i64 i64 i64 i64 i64 i64))\n"

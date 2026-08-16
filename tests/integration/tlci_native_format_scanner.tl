@@ -3,7 +3,8 @@
 ;; and comment-modified-root (interpreted) routes can be compared for
 ;; byte-identical assembly.
 ;;
-;; `stdlib.io/format-with` guards the literal template and `stdlib.io/format-from`
+;; `stdlib.format/format` guards the literal template and
+;; `stdlib.format/format-from`
 ;; walks it one byte at a time, re-invoking itself at the next offset. Every
 ;; piece of that walk is arithmetic on a comptime string index: a scanner that
 ;; mis-indexes by one, drops the byte after a `{{` escape, consumes the wrong

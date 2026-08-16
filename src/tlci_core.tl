@@ -623,6 +623,10 @@
   "module-value?")
 (define tlci-host-callback-name-module-value-type : String
   "module-value-type")
+(define tlci-host-callback-name-module-value-expr : String
+  "module-value-expr")
+(define tlci-host-callback-name-function-shared-borrow-returns-string? : String
+  "function-shared-borrow-returns-string?")
 (define tlci-host-callback-name-reference-element-type : String
   "reference-element-type")
 
@@ -645,6 +649,8 @@
   "push-operand")
 (define tlci-host-callback-name-expr-call : String
   "expr-call")
+(define tlci-host-callback-name-expr-shared-call1 : String
+  "expr-shared-call1")
 (define tlci-host-callback-name-commit-result : String
   "commit-result")
 

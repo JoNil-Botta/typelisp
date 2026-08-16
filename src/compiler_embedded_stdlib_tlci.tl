@@ -1725,7 +1725,7 @@
   [module-id : i64]
   [name : String]
   [name-id : i64]
-  [type-query : bool]) : i64
+  [query-kind : i64]) : i64
   (match (ctfe_support.ctfe-module-value-type-id-for-state
     (compiler-comptime-host-session-macro-state-value)
     module-id
@@ -1735,22 +1735,42 @@
         (set!
           compiler-comptime-host-stack-len
           (- compiler-comptime-host-stack-len 2))
-        (if type-query
+        (if (= query-kind 1)
           (compiler-comptime-host-push!
             (ctfe_support.CompilerCtfeValue.Type ty))
-          1))]
+          (if (= query-kind 2)
+            (compiler-comptime-host-push!
+              (ctfe_support.CompilerCtfeValue.Expr
+                (ast.ast-node-pool-context-expr-push
+                  (array-ref
+                    (compiler-comptime-host-global-shared-view
+                      compiler-comptime-host-pools)
+                    0)
+                  (ast.AstExpr.Var
+                    (if (string.eq module "")
+                      (ci.intern name)
+                      (ci.intern
+                        (str_cat.str-cat module (str_cat.str-cat "." name))))))
+                (ctfe_support.ctfe-untyped-expr-type)))
+            1)))]
     [(ctfe_support.CtfeMaybeModuleValueType.None)
-      (if type-query
-        (begin
-          (set!
-            (array-ref compiler-comptime-host-diagnostic 0)
-            (ctfe_support.ctfe-module-value-missing-message module name))
-          tlci.tlci-host-callback-status-diagnostic)
+      (if (= query-kind 0)
         (begin
           (set!
             compiler-comptime-host-stack-len
             (- compiler-comptime-host-stack-len 2))
-          0))]))
+          0)
+        (begin
+          (set!
+            (array-ref compiler-comptime-host-diagnostic 0)
+            (if (= query-kind 1)
+              (ctfe_support.ctfe-module-value-missing-message module name)
+              (str_cat.str-cat
+                "module-value-expr: module "
+                module
+                " does not define value "
+                name)))
+          tlci.tlci-host-callback-status-diagnostic))]))
 
 ;; `module-value?` is a data callback: 1/0 are the query result, while a
 ;; negative return is a malformed stack request.
@@ -1783,47 +1803,45 @@
                 compiler-comptime-host-stack)
               (- compiler-comptime-host-stack-len 2))]
           (match module-value
-            [(ctfe_support.CompilerCtfeValue.String module module-id)
+            [(ctfe_support.CompilerCtfeValue.String module _)
               (match name-value
-                [(ctfe_support.CompilerCtfeValue.String name name-id)
+                [(ctfe_support.CompilerCtfeValue.String name _)
                   (compiler-comptime-host-resolve-module-value!
                     module
-                    module-id
+                    (ci.intern module)
                     name
-                    name-id
-                    false)]
+                    (ci.intern name)
+                    0)]
                 [(ctfe_support.CompilerCtfeValue.Name name name-id)
                   (compiler-comptime-host-resolve-module-value!
                     module
-                    module-id
+                    (ci.intern module)
                     name
                     name-id
-                    false)]
+                    0)]
                 [_ -3])]
             [(ctfe_support.CompilerCtfeValue.Name module module-id)
               (match name-value
-                [(ctfe_support.CompilerCtfeValue.String name name-id)
+                [(ctfe_support.CompilerCtfeValue.String name _)
                   (compiler-comptime-host-resolve-module-value!
                     module
                     module-id
                     name
-                    name-id
-                    false)]
+                    (ci.intern name)
+                    0)]
                 [(ctfe_support.CompilerCtfeValue.Name name name-id)
                   (compiler-comptime-host-resolve-module-value!
                     module
                     module-id
                     name
                     name-id
-                    false)]
+                    0)]
                 [_ -3])]
             [_ -3]))))))
 
-(define (compiler-comptime-host-callback-module-value-type
+(define (compiler-comptime-host-callback-module-value-result
   [session : i64]
-  [_arg-a : i64]
-  [_arg-b : i64]
-  [_arg-c : i64]) : i64
+  [query-kind : i64]) : i64
   (if (or
     (= compiler-comptime-host-session-cookie 0)
     (not (= session compiler-comptime-host-session-cookie)))
@@ -1849,39 +1867,39 @@
                     compiler-comptime-host-stack)
                   (- compiler-comptime-host-stack-len 2))]
               (match module-value
-                [(ctfe_support.CompilerCtfeValue.String module module-id)
+                [(ctfe_support.CompilerCtfeValue.String module _)
                   (match name-value
-                    [(ctfe_support.CompilerCtfeValue.String name name-id)
+                    [(ctfe_support.CompilerCtfeValue.String name _)
                       (compiler-comptime-host-resolve-module-value!
                         module
-                        module-id
+                        (ci.intern module)
                         name
-                        name-id
-                        true)]
+                        (ci.intern name)
+                        query-kind)]
                     [(ctfe_support.CompilerCtfeValue.Name name name-id)
                       (compiler-comptime-host-resolve-module-value!
                         module
-                        module-id
+                        (ci.intern module)
                         name
                         name-id
-                        true)]
+                        query-kind)]
                     [_ tlci.tlci-host-callback-status-bad-request])]
                 [(ctfe_support.CompilerCtfeValue.Name module module-id)
                   (match name-value
-                    [(ctfe_support.CompilerCtfeValue.String name name-id)
+                    [(ctfe_support.CompilerCtfeValue.String name _)
                       (compiler-comptime-host-resolve-module-value!
                         module
                         module-id
                         name
-                        name-id
-                        true)]
+                        (ci.intern name)
+                        query-kind)]
                     [(ctfe_support.CompilerCtfeValue.Name name name-id)
                       (compiler-comptime-host-resolve-module-value!
                         module
                         module-id
                         name
                         name-id
-                        true)]
+                        query-kind)]
                     [_ tlci.tlci-host-callback-status-bad-request])]
                 [_ tlci.tlci-host-callback-status-bad-request])))]
         (begin
@@ -1889,6 +1907,68 @@
             (not (= result tlci.tlci-host-callback-status-ok))
             (set! compiler-comptime-host-session-status result))
           result)))))
+
+(define (compiler-comptime-host-callback-module-value-type
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-callback-module-value-result session 1))
+
+(define (compiler-comptime-host-callback-module-value-expr
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-callback-module-value-result session 2))
+
+;; Validate the formatting protocol signature as a data callback. Both Type
+;; values are consumed; 1/0 is the predicate result and negative values retain
+;; the callback ABI's malformed-request meaning.
+(define (compiler-comptime-host-callback-function-shared-borrow-returns-string?
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (if (< compiler-comptime-host-stack-len 2)
+        -3
+        (let
+          [value-type-value : ctfe_support.CompilerCtfeValue
+            (array-ref
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-stack)
+              (- compiler-comptime-host-stack-len 1))]
+          [signature-value : ctfe_support.CompilerCtfeValue
+            (array-ref
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-stack)
+              (- compiler-comptime-host-stack-len 2))]
+          (match signature-value
+            [(ctfe_support.CompilerCtfeValue.Type signature)
+              (match value-type-value
+                [(ctfe_support.CompilerCtfeValue.Type value-type)
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 2))
+                    (if (ctfe_support.ctfe-function-shared-borrow-returns-string?
+                      (compiler-comptime-host-ctfe-env)
+                      signature
+                      value-type)
+                      1
+                      0))]
+                [_ -3])]
+            [_ -3]))))))
 
 (define (compiler-comptime-host-callback-expr-list-empty
   [session : i64]
@@ -2106,6 +2186,65 @@
                             node
                             (ast.AstType.Expr)))))]
                   [_ tlci.tlci-host-callback-status-bad-request]))))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-expr-shared-call1
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci.tlci-host-callback-status-bad-request
+            (let
+              [value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 1))]
+              [callee : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 2))]
+              [value-node : i64 (compiler-comptime-host-value-node value)]
+              [callee-node : i64 (compiler-comptime-host-value-node callee)]
+              (if (or (< value-node 0) (< callee-node 0))
+                tlci.tlci-host-callback-status-bad-request
+                (let
+                  [pools : ast.AstNodePoolContext
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)]
+                  [node : i64
+                    (ctfe_support.ctfe-expr-shared-call1-node-with-pools
+                      (compiler-comptime-host-session-macro-state-value)
+                      pools
+                      callee-node
+                      value-node)]
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 2))
+                    (compiler-comptime-host-push!
+                      (ctfe_support.CompilerCtfeValue.Expr
+                        node
+                        (ast.AstType.Expr))))))))]
         (begin
           (when
             (not (= result tlci.tlci-host-callback-status-ok))
@@ -8761,6 +8900,16 @@
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-module-value-expr)
+        compiler-comptime-host-callback-module-value-expr)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-function-shared-borrow-returns-string?)
+        compiler-comptime-host-callback-function-shared-borrow-returns-string?)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-list-empty)
         compiler-comptime-host-callback-expr-list-empty)
       (compiler-comptime-host-registry-add!
@@ -8783,6 +8932,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-call)
         compiler-comptime-host-callback-expr-call)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-shared-call1)
+        compiler-comptime-host-callback-expr-shared-call1)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

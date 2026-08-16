@@ -89,16 +89,16 @@
 ;; One independently owned compiler snapshot for an unopened workspace entry.
 ;; The row itself lives in the server-state arena, while `index` owns a separate
 ;; arena that is moved across state snapshots and released on invalidation.
-;; `present` is false for a fingerprinted entry whose current source could not
-;; produce even a recovery index; retaining that negative result avoids
-;; repeatedly checking the same invalid source on warm queries.
+;; An ordinary empty index is a fingerprinted current negative result, avoiding
+;; repeated checks of the same invalid source on warm queries.
 (defstruct LspWorkspaceSemanticCacheEntry
   (uri String)
   (path String)
   (source-fingerprint i64)
   (source-len i64)
-  (index compiler_semantic_index.CompilerSemanticSourceIndex)
-  (present bool))
+  ;; `owner-arena > 0` is a retained current index; the ordinary empty index
+  ;; represents a fingerprinted current negative result.
+  (index compiler_semantic_index.CompilerSemanticSourceIndex))
 
 ;; Cache size is bounded by the current unopened `sources` rows: there is at
 ;; most one entry per URI, including negative entries. `context-key` exactly
@@ -108,29 +108,17 @@
   (context-key String)
   (slots (__tl_dyn-array LspWorkspaceSemanticCacheEntry))
   (len i64)
-  (source-checks i64)
-  (elapsed-ms i64)
-  (retained-owners i64)
-  (retained-records i64))
+  (source-checks i64))
 
-;; Provider-neutral immutable occurrence fact. The copied identity, location,
-;; role, and edit-policy fields remain valid after the source snapshot is
-;; invalidated; consumers never retain a snapshot-local record reference.
+;; Provider-neutral immutable occurrence fact. The query supplies the canonical
+;; identity shared by every result; copied location, role, and edit-policy data
+;; remain valid after invalidation without retaining snapshot-local references.
 (defstruct LspWorkspaceSemanticFact
-  (canonical-key String)
   (uri String)
-  (path String)
   (open bool)
   (version i64)
   (role compiler_semantic_index.CompilerSemanticRecordRole)
-  (start-byte i64)
-  (end-byte i64)
-  (start-line i64)
-  (start-col i64)
-  (end-line i64)
-  (end-col i64)
-  (utf16-start-col i64)
-  (utf16-end-col i64)
+  (span compiler_semantic_index.CompilerSemanticSpan)
   (editable bool))
 
 ;; Immutable flattened declaration returned by the workspace query boundary.

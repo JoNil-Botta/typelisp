@@ -166,11 +166,12 @@ Inline stdlib coverage:
   against MPFR-256 results across CORE-MATH hard cases, overflow and gradual
   underflow thresholds, deterministic samples, signed zero, infinities, and
   NaNs. `scripts/generate-math-exp-vectors.sh` independently regenerates or
-  verifies the checked-in results without consulting host libm. The power
-  decision-table and deterministic sampled vectors embedded in `math.tl` are
-  independently checked against MPFR-800 by
-  `scripts/generate-math-pow-vectors.sh`; its `--emit` mode regenerates the
-  checked corpus as six input/result arrays without consulting host libm.
+  verifies the checked-in results without consulting host libm.
+  `tests/integration/stdlib_math_pow.tl` checks the power decision table and
+  deterministic broad samples; `scripts/generate-math-pow-vectors.sh`
+  independently verifies its reference bits against MPFR-800, and `--emit`
+  regenerates the corpus as six input/result arrays without consulting host
+  libm.
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
   collision behavior, hash range normalization, string edge cases, and

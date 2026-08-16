@@ -7,8 +7,9 @@ cd "$ROOT"
 exec python3 - "$@" <<'PY'
 """Verify or emit the checked-in stdlib power vectors with MPFR.
 
-The input pairs and expected bit patterns live in the power tests in
-`stdlib/math.tl`. MPFR is the result oracle; host libm is never consulted.
+The input pairs and expected bit patterns live in
+`tests/integration/stdlib_math_pow.tl`. MPFR is the result oracle; host libm is
+never consulted.
 
     scripts/generate-math-pow-vectors.sh
     scripts/generate-math-pow-vectors.sh --emit
@@ -26,7 +27,7 @@ import sys
 
 
 ROOT = pathlib.Path.cwd()
-VECTORS = ROOT / "stdlib" / "math.tl"
+VECTORS = ROOT / "tests" / "integration" / "stdlib_math_pow.tl"
 PRECISION = 800
 MPFR_RNDN = 0
 EXPECTED_COUNTS = {64: 254, 32: 186}
@@ -98,32 +99,30 @@ def reference_bits(lib: ctypes.CDLL, base: int, exponent: int, width: int) -> in
             lib.mpfr_clear(ctypes.byref(value))
 
 
-def parse_vectors(source: str, width: int) -> list[tuple[int, int, int]]:
-    marker = ";; Power decision-table vectors"
-    if marker not in source:
-        raise RuntimeError("could not find the power vector tests")
-    source = source[source.index(marker) :]
-    scalar = f"f{width}"
-    bits = f"u{width}"
-    pattern = re.compile(
-        rf"{scalar}-pow\s+"
-        rf"\(stdlib\.math\.{scalar}-from-bits\s+"
-        rf"\(cast\s+(0x[0-9a-fA-F]+)\s+:\s+{bits}\)\)\s+"
-        rf"\(stdlib\.math\.{scalar}-from-bits\s+"
-        rf"\(cast\s+(0x[0-9a-fA-F]+)\s+:\s+{bits}\)\)\)\)\s+"
-        rf"\(cast\s+(0x[0-9a-fA-F]+)\s+:\s+{bits}\)",
+def parse_array(source: str, name: str) -> list[int]:
+    match = re.search(
+        rf"\(define\s+{re.escape(name)}\s*:[^)]*\)\s*"
+        rf"\(array(?P<body>.*?)\)\)",
+        source,
         re.DOTALL,
     )
-    vectors = [
-        tuple(int(field, 16) for field in match)
-        for match in pattern.findall(source)
-    ]
+    if not match:
+        raise RuntimeError(f"could not find array {name}")
+    return [int(value, 16) for value in re.findall(r"0x[0-9a-fA-F]+", match["body"])]
+
+
+def parse_vectors(source: str, width: int) -> list[tuple[int, int, int]]:
+    bases = parse_array(source, f"pow-f{width}-bases")
+    exponents = parse_array(source, f"pow-f{width}-exponents")
+    results = parse_array(source, f"pow-f{width}-bits")
     expected = EXPECTED_COUNTS[width]
-    if len(vectors) != expected:
+    lengths = (len(bases), len(exponents), len(results))
+    if lengths != (expected, expected, expected):
         raise RuntimeError(
-            f"expected {expected} parseable f{width} vectors, found {len(vectors)}"
+            f"expected {expected} f{width} base/exponent/result entries, "
+            f"found {lengths}"
         )
-    return vectors
+    return list(zip(bases, exponents, results))
 
 
 def emit_array(name: str, width: int, values: list[int]) -> None:

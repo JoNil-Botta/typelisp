@@ -7136,11 +7136,6 @@
       (compiler-tc-env-profile-reset)
       (compiler-tc-reinfer-profile-reset)
       (compiler-tc-body-fact-profile-reset)
-      (set! compiler-tc-moved-fact-additions 0)
-      (set! compiler-tc-moved-fact-appends 0)
-      (set! compiler-tc-moved-fact-store-allocations 0)
-      (set! compiler-tc-moved-fact-store-growths 0)
-      (set! compiler-tc-moved-fact-store-copied-nodes 0)
       (tc-lp-reset 0))))
 
 (cfg
@@ -7426,16 +7421,6 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-moved-fact-profile-line [phase : String] [value : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "compile-profile|typecheck.moved_facts."
-        phase
-        (compiler-tc-profile-field value)
-        "|0|0|0\n"))))
-
-(cfg
-  compile-profile
   (define (compiler-tc-env-profile-emit-prefix [prefix : String]) : unit
     (begin
       (compiler-tc-env-profile-line
@@ -7617,21 +7602,6 @@
       (compiler-tc-env-profile-line
         "borrow_lifetime_scan_max"
         compiler-tc-env-profile-borrow-lifetime-scan-max)
-      (compiler-tc-moved-fact-profile-line
-        "additions"
-        compiler-tc-moved-fact-additions)
-      (compiler-tc-moved-fact-profile-line
-        "node_appends"
-        compiler-tc-moved-fact-appends)
-      (compiler-tc-moved-fact-profile-line
-        "store_allocations"
-        compiler-tc-moved-fact-store-allocations)
-      (compiler-tc-moved-fact-profile-line
-        "store_growths"
-        compiler-tc-moved-fact-store-growths)
-      (compiler-tc-moved-fact-profile-line
-        "store_copied_nodes"
-        compiler-tc-moved-fact-store-copied-nodes)
       (compiler-tc-macro-counter-profile-line
         "generated_module_materializations"
         compiler-tc-macro-generated-module-materializations)
@@ -66817,7 +66787,7 @@
 (defenum TcMovedPathFacts
   (Nil)
   (One TcMovedPathFact)
-  (Dense i64 i64 i64))
+  (Dense (Box TcMovedPathFactStoreData) i64 i64))
 
 (defenum TcMovedPathFactsRemove
   (Missing)
@@ -66982,59 +66952,15 @@
 (define (tc-moved-paths [set : TcMovedSet]) : TcMovedPathFacts
   set.paths)
 
-(cfg
-  compile-profile
-  (define compiler-tc-moved-fact-additions : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-moved-fact-appends : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-moved-fact-store-allocations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-moved-fact-store-growths : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-moved-fact-store-copied-nodes : i64
-    0))
-
-(define (tc-moved-path-fact-store-read [address : i64]) : TcMovedPathFactStoreData
-  (unsafe
-    (ptr-read (int->ptr (cast address : u64) : (Ptr TcMovedPathFactStoreData)))))
-
-(define (tc-moved-path-fact-store-write!
-  [address : i64]
-  [data : TcMovedPathFactStoreData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast address : u64) : (MutPtr TcMovedPathFactStoreData))
-      data)))
-
-(define (tc-moved-path-fact-store-new [first : TcMovedPathFact]) : i64
+(define (tc-moved-path-fact-store-new [first : TcMovedPathFact]) : (Box
+    TcMovedPathFactStoreData)
   (let
-    [cell : (__tl_dyn-array TcMovedPathFactStoreData)
-      (array.make-array TcMovedPathFactStoreData 1)]
     [nodes : (__tl_dyn-array TcMovedPathFactNode)
       (array.make-array TcMovedPathFactNode 4)]
     [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
     (begin
       (set! (array-ref nodes 0) (TcMovedPathFactNode first -1))
-      (set! (array-ref cell 0) (TcMovedPathFactStoreData nodes 1 owner))
-      (cfg
-        compile-profile
-        (set!
-          compiler-tc-moved-fact-store-allocations
-          (+ compiler-tc-moved-fact-store-allocations 1)))
-      (unsafe
-        (cast
-          (ptr->int
-            (ptr-cast (array-data cell) : (Ptr TcMovedPathFactStoreData)))
-          : i64)))))
+      (box (TcMovedPathFactStoreData nodes 1 owner)))))
 
 (define (tc-moved-path-fact-store-grow!
   [data : (&mut data TcMovedPathFactStoreData)]
@@ -67087,35 +67013,25 @@
                           node.fact.origin)
                         node.parent))
                     (set! index (+ index 1)))))
-              (set! data.nodes next))))
-        (cfg
-          compile-profile
-          (begin
-            (set!
-              compiler-tc-moved-fact-store-growths
-              (+ compiler-tc-moved-fact-store-growths 1))
-            (set!
-              compiler-tc-moved-fact-store-copied-nodes
-              (+ compiler-tc-moved-fact-store-copied-nodes data.len))))))))
+              (set! data.nodes next))))))))
 
 (define (tc-moved-path-fact-store-push!
-  [address : i64]
+  [data : (&mut data TcMovedPathFactStoreData)]
   [parent : i64]
   [fact : TcMovedPathFact]) : i64
   (let
-    [data : TcMovedPathFactStoreData (tc-moved-path-fact-store-read address)]
     [index : i64 data.len]
     (begin
-      (tc-moved-path-fact-store-grow! (&mut data) (+ index 1))
+      (tc-moved-path-fact-store-grow! data (+ index 1))
       (set! (array-ref data.nodes index) (TcMovedPathFactNode fact parent))
       (set! data.len (+ index 1))
-      (tc-moved-path-fact-store-write! address data)
       index)))
 
-(define (tc-moved-path-fact-store-node [address : i64] [index : i64]) : TcMovedPathFactNode
-  (array-ref
-    (__tl-project-field (tc-moved-path-fact-store-read address) nodes)
-    index))
+(define (tc-moved-path-fact-store-node
+  [data : (& data TcMovedPathFactStoreData)]
+  [index : i64]) : TcMovedPathFactNode
+  (unsafe
+    (ptr-read (ptr-offset (array-data data.nodes) index))))
 
 (define (tc-moved-path-facts-empty? [facts : TcMovedPathFacts]) : bool
   (match facts
@@ -67133,45 +67049,48 @@
     [(TcMovedPathFacts.Nil)
       (io.panic "typecheck: moved-path fact head of empty snapshot")]
     [(TcMovedPathFacts.One fact) fact]
-    [(TcMovedPathFacts.Dense address tail _)
-      (__tl-project-field (tc-moved-path-fact-store-node address tail) fact)]))
+    [(TcMovedPathFacts.Dense store tail _)
+      (__tl-project-field
+        (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
+        fact)]))
 
 (define (tc-moved-path-facts-rest [facts : TcMovedPathFacts]) : TcMovedPathFacts
   (match facts
     [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
     [(TcMovedPathFacts.One _) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Dense address tail len)
+    [(TcMovedPathFacts.Dense store tail len)
       (let
         [parent : i64
           (__tl-project-field
-            (tc-moved-path-fact-store-node address tail)
+            (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
             parent)]
         (if (= len 2)
           (TcMovedPathFacts.One
             (__tl-project-field
-              (tc-moved-path-fact-store-node address parent)
+              (tc-moved-path-fact-store-node (& (__tl-box-place store)) parent)
               fact))
-          (TcMovedPathFacts.Dense address parent (- len 1))))]))
+          (TcMovedPathFacts.Dense store parent (- len 1))))]))
 
 (define (tc-moved-path-facts-cons
   [facts : TcMovedPathFacts]
   [fact : TcMovedPathFact]) : TcMovedPathFacts
-  (begin
-    (cfg
-      compile-profile
-      (set! compiler-tc-moved-fact-appends (+ compiler-tc-moved-fact-appends 1)))
-    (match facts
-      [(TcMovedPathFacts.Nil) (TcMovedPathFacts.One fact)]
-      [(TcMovedPathFacts.One previous)
-        (let
-          [address : i64 (tc-moved-path-fact-store-new previous)]
-          [tail : i64 (tc-moved-path-fact-store-push! address 0 fact)]
-          (TcMovedPathFacts.Dense address tail 2))]
-      [(TcMovedPathFacts.Dense address tail len)
-        (TcMovedPathFacts.Dense
-          address
-          (tc-moved-path-fact-store-push! address tail fact)
-          (+ len 1))])))
+  (match facts
+    [(TcMovedPathFacts.Nil) (TcMovedPathFacts.One fact)]
+    [(TcMovedPathFacts.One previous)
+      (let
+        [store : (Box TcMovedPathFactStoreData)
+          (tc-moved-path-fact-store-new previous)]
+        [tail : i64
+          (tc-moved-path-fact-store-push! (&mut (__tl-box-place store)) 0 fact)]
+        (TcMovedPathFacts.Dense store tail 2))]
+    [(TcMovedPathFacts.Dense store tail len)
+      (let
+        [next-tail : i64
+          (tc-moved-path-fact-store-push!
+            (&mut (__tl-box-place store))
+            tail
+            fact)]
+        (TcMovedPathFacts.Dense store next-tail (+ len 1)))]))
 
 (define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
   set.hidden-atomic-users)
@@ -67850,18 +67769,12 @@
     set
     (let
       [fact : TcMovedPathFact (tc-moved-path-fact-new path kind origin)]
-      (begin
-        (cfg
-          compile-profile
-          (set!
-            compiler-tc-moved-fact-additions
-            (+ compiler-tc-moved-fact-additions 1)))
-        (TcMovedSet
-          (tc-moved-roots set)
-          (tc-moved-partials set)
-          (tc-moved-path-facts-cons (tc-moved-paths set) fact)
-          (tc-moved-hidden-atomic-users set)
-          (tc-moved-param-storage-origins set))))))
+      (TcMovedSet
+        (tc-moved-roots set)
+        (tc-moved-partials set)
+        (tc-moved-path-facts-cons (tc-moved-paths set) fact)
+        (tc-moved-hidden-atomic-users set)
+        (tc-moved-param-storage-origins set)))))
 
 (define (tc-moved-remove-path-kind
   [set : TcMovedSet]

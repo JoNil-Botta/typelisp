@@ -11211,10 +11211,36 @@
   [a : tc_core.TcMovedPathFacts]
   [b : tc_core.TcMovedPathFacts]) : bool
   (match a
-    [(tc_core.TcMovedPathFacts.Dense address tail len)
+    [(tc_core.TcMovedPathFacts.Dense store tail len)
       (match b
-        [(tc_core.TcMovedPathFacts.Dense other-address other-tail other-len)
-          (and (= address other-address) (= tail other-tail) (= len other-len))]
+        [(tc_core.TcMovedPathFacts.Dense other-store other-tail other-len)
+          (and
+            (unsafe
+              (=
+                (ptr->int
+                  (array-data (__tl-project-field (__tl-box-place store) nodes)))
+                (ptr->int
+                  (array-data
+                    (__tl-project-field (__tl-box-place other-store) nodes)))))
+            (= tail other-tail)
+            (= len other-len))]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-typecheck-moved-facts-same-dense-store?
+  [a : tc_core.TcMovedPathFacts]
+  [b : tc_core.TcMovedPathFacts]) : bool
+  (match a
+    [(tc_core.TcMovedPathFacts.Dense store _ _)
+      (match b
+        [(tc_core.TcMovedPathFacts.Dense other-store _ _)
+          (unsafe
+            (=
+              (ptr->int
+                (array-data (__tl-project-field (__tl-box-place store) nodes)))
+              (ptr->int
+                (array-data
+                  (__tl-project-field (__tl-box-place other-store) nodes)))))]
         [_ false])]
     [_ false]))
 
@@ -11456,13 +11482,9 @@
     [cross-store-union : tc_core.TcMovedSet
       (tc_core.tc-moved-union retained-parent separate-store)]
     [cross-store-destination-ok : bool
-      (match (tc_core.tc-moved-paths retained-parent)
-        [(tc_core.TcMovedPathFacts.Dense parent-address _ _)
-          (match (tc_core.tc-moved-paths cross-store-union)
-            [(tc_core.TcMovedPathFacts.Dense union-address _ _)
-              (= parent-address union-address)]
-            [_ false])]
-        [_ false])]
+      (compiler-typecheck-moved-facts-same-dense-store?
+        (tc_core.tc-moved-paths retained-parent)
+        (tc_core.tc-moved-paths cross-store-union))]
     [cross-store-order-ok : bool
       (tc_core.tc-move-path-eq?
         (tc_core.tc-moved-path-fact-path
@@ -11495,13 +11517,9 @@
         shadowed-root
         (tc_core.TcMovedPathKind.Move))]
     [missing-removal-preserves-snapshot : bool
-      (match (tc_core.tc-moved-paths cross-store-union)
-        [(tc_core.TcMovedPathFacts.Dense address tail len)
-          (match (tc_core.tc-moved-paths missing-removal)
-            [(tc_core.TcMovedPathFacts.Dense next-address next-tail next-len)
-              (and (= address next-address) (= tail next-tail) (= len next-len))]
-            [_ false])]
-        [_ false])]
+      (compiler-typecheck-moved-facts-same-dense-snapshot?
+        (tc_core.tc-moved-paths cross-store-union)
+        (tc_core.tc-moved-paths missing-removal))]
     [missing-filter : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-root-state cross-store-union shadowed-id)]
     [missing-filter-preserves-snapshot : bool

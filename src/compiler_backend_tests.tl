@@ -258,8 +258,8 @@
     (if (< slot-vars 1)
       (compiler_backend.compiler-backend-set-scavenge-ctx!
         (compiler_backend.compiler-backend-state-function-state backend-state)
-        (make-array i64 1)
-        (make-array i64 1)
+        (__tl_make-array i64 1)
+        (__tl_make-array i64 1)
         assignments
         0)
       (let
@@ -272,8 +272,8 @@
             emit-blocks)]
         [liveness : compiler_liveness.CompilerFunctionLiveness
           (compiler_liveness.compiler-live-analyze-function func)]
-        [starts : (__tl_dyn-array i64) (make-array i64 slot-vars)]
-        [ends : (__tl_dyn-array i64) (make-array i64 slot-vars)]
+        [starts : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
+        [ends : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
         (match (compiler_backend.compiler-backend-scavenge-assignments-build
           assignments
           slot-vars)
@@ -686,7 +686,7 @@
 
 (define (main) : i64
   (let
-    [keep : (Array i64) (make-array i64 1)]
+    [keep : (Array i64) (__tl_make-array i64 1)]
     (let
       [bytes : (MutPtr u8) (tl_alloc 24)]
       (let
@@ -1048,8 +1048,8 @@
 
 (define (main) : i64
   (let
-    [items64 : (Array i64) (make-array i64 1)]
-    [items32 : (Array i32) (make-array i32 1)]
+    [items64 : (Array i64) (__tl_make-array i64 1)]
+    [items32 : (Array i32) (__tl_make-array i32 1)]
     (atomic-wrapper-root
       (unsafe (array-data items64))
       (unsafe (array-data items32)))))")
@@ -1540,7 +1540,7 @@
   (if (< small 3.0) 1 0))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (Array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref items 0) answer)
       (+
@@ -4561,7 +4561,7 @@
 (define greeting : String (string.concat \"he\" \"llo\"))
 (define choice : LocalMaybe (Some 8))
 (define pair : Pair (Pair 10 11))
-(define cells : (Array i64) (make-array i64 3))
+(define cells : (Array i64) (__tl_make-array i64 3))
 (define nested : Nested (Nested (string.concat \"o\" \"k\") (Some 3)))
 
 (define (main) : i64
@@ -4670,7 +4670,7 @@
 
 (define (__tl_lambda_main_0) : String \"hello\")
 (define (__tl_lambda_main_1) : Box (BoxI 11))
-(define (__tl_lambda_main_2) : (Array i64) (make-array i64 13))
+(define (__tl_lambda_main_2) : (Array i64) (__tl_make-array i64 13))
 (define (__tl_lambda_main_3) : Pair (Pair 1 13))
 
 (define (main) : i64
@@ -5921,15 +5921,15 @@
 ;; instructions where one indexed move does the job.
 (define compiler-backend-fusion-pin-pressure-source : String
   "(define g-seed : (Array i64)
-  (make-array i64 4))
+  (__tl_make-array i64 4))
 (define g-reachable : (Array i64)
-  (make-array i64 1))
+  (__tl_make-array i64 1))
 (define g-postorder : (Array i64)
-  (make-array i64 1))
+  (__tl_make-array i64 1))
 (define g-rpo : (Array i64)
-  (make-array i64 1))
+  (__tl_make-array i64 1))
 (define g-rpo-num : (Array i64)
-  (make-array i64 1))
+  (__tl_make-array i64 1))
 (define g-blocks : i64
   0)
 (define g-reach-count : i64
@@ -5966,10 +5966,10 @@
     [n : i64 (array-ref g-seed 0)]
     (begin
       (set! g-blocks n)
-      (set! g-reachable (make-array i64 (+ n 1)))
-      (set! g-postorder (make-array i64 (+ n 1)))
-      (set! g-rpo (make-array i64 (+ n 1)))
-      (set! g-rpo-num (make-array i64 (+ n 1)))
+      (set! g-reachable (__tl_make-array i64 (+ n 1)))
+      (set! g-postorder (__tl_make-array i64 (+ n 1)))
+      (set! g-rpo (__tl_make-array i64 (+ n 1)))
+      (set! g-rpo-num (__tl_make-array i64 (+ n 1)))
       (kernel))))")
 
 ;; Slice one emitted basic block: labels start a line, every instruction is
@@ -21635,8 +21635,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-identity-tail-forwarder-active
         backend-state)]
     [vars : i64 8]
-    [starts : (__tl_dyn-array i64) (make-array i64 vars)]
-    [ends : (__tl_dyn-array i64) (make-array i64 vars)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [test-id : i64 (ci.intern "test")]
     [_ctx : unit
       (begin
@@ -28676,7 +28676,7 @@
 
 (define (compiler-backend-make-array-source) : String
   "(define (make_u32 [n : u32]) : i64
-  (array-length (make-array i64 n)))
+  (array-length (__tl_make-array i64 n)))
 (define (at_i32_max) : i64 (make_u32 2147483647))
 (define (past_i32_max) : i64 (make_u32 2147483648))
 (define (main) : i64 (make_u32 2))")
@@ -30852,8 +30852,8 @@
     [prev-current-count : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
-    [starts : (__tl_dyn-array i64) (make-array i64 2)]
-    [ends : (__tl_dyn-array i64) (make-array i64 2)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -34099,7 +34099,7 @@
       (begin
         (compiler_backend.compiler-backend-function-scratch-fixture-set-scavenge-ctx-occupied-masks!
           function-state
-          (make-array 0 -1))
+          (__tl_make-array 0 -1))
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           index.backend-state
           1)
@@ -36426,7 +36426,9 @@
     i64)
   (let
     [regs : (__tl_dyn-array i64)
-      (make-array i64 compiler-backend-inline-fast-alloc-emergency-live-count)]
+      (__tl_make-array
+        i64
+        compiler-backend-inline-fast-alloc-emergency-live-count)]
     (begin
       (set! (array-ref regs 0) compiler_abi.compiler-reg-id-r9)
       (set! (array-ref regs 1) compiler_abi.compiler-reg-id-rcx)
@@ -37965,22 +37967,22 @@
       (compiler_backend.CompilerBackendTarget.Windows))))
 
 (define (compiler-backend-scavenge-exclude-before-r10) : (__tl_dyn-array String)
-  (make-array "%rax" "%r8" "%r9" "%rcx" "%rdx"))
+  (__tl_make-array "%rax" "%r8" "%r9" "%rcx" "%rdx"))
 
 (define (compiler-backend-scavenge-exclude-before-r11) : (__tl_dyn-array String)
-  (make-array "%rax" "%r8" "%r9" "%rcx" "%rdx" "%r10"))
+  (__tl_make-array "%rax" "%r8" "%r9" "%rcx" "%rdx" "%r10"))
 
 (define (compiler-backend-scavenge-emergency-exclude-fallback) : (__tl_dyn-array
     String)
-  (make-array "%r9" "%rcx" "%rdx" "%r10" "%r11" "%r8" "%rsi" "%rdi" "%rax"))
+  (__tl_make-array "%r9" "%rcx" "%rdx" "%r10" "%r11" "%r8" "%rsi" "%rdi" "%rax"))
 
 (define (compiler-backend-scavenge-pooled-r10-r11-ok?) : bool
   (let
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [starts : (__tl_dyn-array i64) (make-array i64 1)]
-    [ends : (__tl_dyn-array i64) (make-array i64 1)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (and
       (string.eq
         (compiler-backend-scavenge-pick
@@ -38016,8 +38018,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [starts : (__tl_dyn-array i64) (make-array i64 5)]
-    [ends : (__tl_dyn-array i64) (make-array i64 5)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     [r10-free : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -38113,8 +38115,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [starts : (__tl_dyn-array i64) (make-array i64 5)]
-    [ends : (__tl_dyn-array i64) (make-array i64 5)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     [r10-free : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -38210,8 +38212,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [starts : (__tl_dyn-array i64) (make-array i64 7)]
-    [ends : (__tl_dyn-array i64) (make-array i64 7)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 7)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -38300,8 +38302,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [starts : (__tl_dyn-array i64) (make-array i64 1)]
-    [ends : (__tl_dyn-array i64) (make-array i64 1)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (and
       (string.eq
         (compiler-backend-scavenge-pick
@@ -38444,9 +38446,9 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [regs : (__tl_dyn-array i64) (make-array i64 13)]
-    [starts : (__tl_dyn-array i64) (make-array i64 13)]
-    [ends : (__tl_dyn-array i64) (make-array i64 13)]
+    [regs : (__tl_dyn-array i64) (__tl_make-array i64 13)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 13)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 13)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignment-table-empty)]
     [picked : String ""]
@@ -39594,7 +39596,7 @@
           1
           name
           (compiler_ir_types.CompilerIrCallArgs.Array
-            (make-array
+            (__tl_make-array
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.I64 24)
               (compiler_ir_types.CompilerIrValue.Unit)))
@@ -39613,7 +39615,7 @@
           (compiler_ir_types.CompilerIrValue.Var 2)
           (if with-marker
             (compiler_ir_types.CompilerIrCallArgs.Array
-              (make-array
+              (__tl_make-array
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (compiler_ir_types.CompilerIrValue.I64 24)
                 (compiler_ir_types.CompilerIrValue.Unit)))
@@ -42815,8 +42817,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [starts : (__tl_dyn-array i64) (make-array i64 1)]
-    [ends : (__tl_dyn-array i64) (make-array i64 1)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -43051,10 +43053,10 @@
 ;; must be M, N, L even though L occurs first.
 (define (compiler-backend-const-hoist-award-weight-ok?) : bool
   (let
-    [values : (__tl_dyn-array i64) (make-array i64 6)]
-    [wide : (__tl_dyn-array bool) (make-array bool 6)]
-    [order : (__tl_dyn-array i64) (make-array i64 6)]
-    [tally : (__tl_dyn-array i64) (make-array i64 6)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [wide : (__tl_dyn-array bool) (__tl_make-array bool 6)]
+    [order : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [tally : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [_fill : unit
       (begin
         ;; index 0: wide literal L, one site
@@ -43098,10 +43100,10 @@
 ;; each, so the result must be exactly their first-occurrence order 0, 1, 2.
 (define (compiler-backend-const-hoist-award-tie-ok?) : bool
   (let
-    [values : (__tl_dyn-array i64) (make-array i64 6)]
-    [wide : (__tl_dyn-array bool) (make-array bool 6)]
-    [order : (__tl_dyn-array i64) (make-array i64 6)]
-    [tally : (__tl_dyn-array i64) (make-array i64 6)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [wide : (__tl_dyn-array bool) (__tl_make-array bool 6)]
+    [order : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [tally : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [_fill : unit
       (begin
         (set! (array-ref values 0) 5)
@@ -43217,9 +43219,9 @@
 (define (compiler-backend-const-hoist-respects-scratch-plan-ok?) : bool
   (let
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-      (make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
-    [first : (__tl_dyn-array i64) (make-array i64 1)]
-    [slots : (__tl_dyn-array i64) (make-array i64 1)]
+      (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+    [first : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_item : unit
       (set!
         (array-ref items 0)
@@ -43286,7 +43288,7 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [stale-regs : (__tl_dyn-array i64) (make-array i64 1)]
+    [stale-regs : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (compiler_backend.compiler-backend-function-scratch-fixture-set-const-hoist-site-count!
         (compiler_backend.compiler-backend-state-function-state backend-state)
@@ -43416,8 +43418,8 @@
 
 (define (compiler-backend-scavenge-occupancy-cache-ok?) : bool
   (let
-    [starts : (__tl_dyn-array i64) (make-array i64 5)]
-    [ends : (__tl_dyn-array i64) (make-array i64 5)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -43821,8 +43823,8 @@
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-xmm-register-id 2)))
             (compiler_regalloc.compiler-reg-assignment-table-empty))))]
-    [starts : (__tl_dyn-array i64) (make-array i64 3)]
-    [ends : (__tl_dyn-array i64) (make-array i64 3)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [edge-point : i64 8]
     [target-point : i64 26]
     (begin
@@ -44038,8 +44040,8 @@
   [carried? : bool]) : unit
   (let
     [vars : i64 3]
-    [starts : (__tl_dyn-array i64) (make-array i64 vars)]
-    [ends : (__tl_dyn-array i64) (make-array i64 vars)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -46193,18 +46195,19 @@ b_keep:
       (compiler_backend.compiler-backend-state-function-state state-b)]
     [plan-function-a : compiler_backend.CompilerBackendFunctionState
       (compiler_backend.compiler-backend-state-function-state plan-state-a)]
-    [forward-a : (__tl_dyn-array i64) (make-array i64 5)]
-    [forward-b : (__tl_dyn-array i64) (make-array i64 5)]
-    [uses-a : (__tl_dyn-array i64) (make-array i64 5)]
-    [uses-b : (__tl_dyn-array i64) (make-array i64 5)]
-    [free-a : (__tl_dyn-array i64) (make-array i64 5)]
-    [free-b : (__tl_dyn-array i64) (make-array i64 5)]
-    [labels-a : (__tl_dyn-array i64) (make-array i64 1)]
-    [labels-b : (__tl_dyn-array i64) (make-array i64 1)]
-    [scratch-occupied-a : (__tl_dyn-array i64) (make-array i64 2)]
-    [scratch-inject-labels-b : (__tl_dyn-array i64) (make-array i64 1)]
-    [scratch-inject-texts-b : (__tl_dyn-array String) (make-array String 1)]
-    [scratch-inject-pres-b : (__tl_dyn-array bool) (make-array bool 1)]
+    [forward-a : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [forward-b : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [uses-a : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [uses-b : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [free-a : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [free-b : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [labels-a : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [labels-b : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [scratch-occupied-a : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [scratch-inject-labels-b : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [scratch-inject-texts-b : (__tl_dyn-array String)
+      (__tl_make-array String 1)]
+    [scratch-inject-pres-b : (__tl_dyn-array bool) (__tl_make-array bool 1)]
     [b-instrs : compiler_ir_types.CompilerIrInstrList
       (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [_configure : unit
@@ -46511,7 +46514,8 @@ b_keep:
           function-b
           compiler_backend.compiler-backend-scratch-bool-array-const-hoist-inject-pres
           scratch-inject-pres-b))]
-    [fixed-excludes : (__tl_dyn-array String) (make-array "%rcx" "%rax" "%rdx")]
+    [fixed-excludes : (__tl_dyn-array String)
+      (__tl_make-array "%rcx" "%rax" "%rdx")]
     [scratch-gp-a : String
       (compiler_backend.compiler-backend-scavenge-reg-here
         fixed-excludes

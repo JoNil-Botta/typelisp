@@ -7544,7 +7544,7 @@
 ;; Definition counts for the operand-admission arms: vars 0 and 1 have one
 ;; definition each, var 2 none, and var 3 as many as the caller asks for.
 (define (opt-cmp-dup-defs-array [multi-def : i64]) : (__tl_dyn-array i64)
-  (make-array 1 1 0 multi-def))
+  (__tl_make-array 1 1 0 multi-def))
 
 ;; Returns 42 only when every arm of the compare-duplication contract holds.
 (define (compiler-optimize-cmp-dup-self-test) : i64
@@ -56621,7 +56621,7 @@
 (define (compiler-optimize-bit-test-runtime-self-test) : i64
   (let
     [values : (__tl_dyn-array i64)
-      (make-array
+      (__tl_make-array
         -100
         32
         33
@@ -56652,7 +56652,36 @@
         96
         1000)]
     [expected : (__tl_dyn-array i64)
-      (make-array 0 0 1 0 0 1 1 0 0 1 1 0 1 1 1 1 1 1 1 0 1 1 1 1 0 0 1 0 0)]
+      (__tl_make-array
+        0
+        0
+        1
+        0
+        0
+        1
+        1
+        0
+        0
+        1
+        1
+        0
+        1
+        1
+        1
+        1
+        1
+        1
+        1
+        0
+        1
+        1
+        1
+        1
+        0
+        0
+        1
+        0
+        0)]
     [index : i64 0]
     (begin
       (while (< index (array-length values))
@@ -56796,7 +56825,7 @@
 ;; Space-shaped, but six wide: tab, newline, vertical tab, form feed, carriage
 ;; return and space, whose codes span [9, 32].
 (define (opt-bit-test-space-bounds) : (__tl_dyn-array i64)
-  (make-array 32 9 10 13 11 12))
+  (__tl_make-array 32 9 10 13 11 12))
 
 (define (opt-bit-test-space-blocks) : compiler_ir_types.CompilerIrBlockList
   (opt-bit-test-equality-chain (opt-bit-test-space-bounds)))
@@ -57016,11 +57045,11 @@
 
 ;; Six links whose union spans 100: no six of them share a 64-wide window.
 (define (opt-bit-test-wide-blocks) : compiler_ir_types.CompilerIrBlockList
-  (opt-bit-test-equality-chain (make-array 0 10 20 30 40 100)))
+  (opt-bit-test-equality-chain (__tl_make-array 0 10 20 30 40 100)))
 
 ;; Two links: shorter than the profitability floor.
 (define (opt-bit-test-short-blocks) : compiler_ir_types.CompilerIrBlockList
-  (opt-bit-test-equality-chain (make-array 32 9)))
+  (opt-bit-test-equality-chain (__tl_make-array 32 9)))
 
 ;; Six links compared as u64: the window guard reads `v - base` unsigned, which
 ;; only agrees with the chain when the chain itself compared signed 64-bit.

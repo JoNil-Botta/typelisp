@@ -4449,7 +4449,7 @@
   (let
     [ops : (__tl_dyn-array String)
       (array.make-array String embedded-native-ops-cap)]
-    [ops-count : (__tl_dyn-array i64) (make-array 0)]
+    [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [scrutinee-opened : i64
       (embedded-native-computed-expr-ops params scrutinee ops ops-count)]
     (if (< scrutinee-opened 0)

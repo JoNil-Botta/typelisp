@@ -665,8 +665,6 @@
   10)
 (define tc-macro-state-slot-identity : i64
   11)
-(define tc-macro-state-slot-source-names : i64
-  13)
 (define tc-macro-state-slot-lazy-import : i64
   14)
 
@@ -22249,11 +22247,6 @@
 (define (tc-lazy-import-stub-storage-ensure-for-job! [state : TcJobState]) : unit
   (tc-lazy-import-stub-storage-ensure-for-state!
     (tc-job-state-lazy-import state)))
-
-;; Serial/test compatibility adapter. Production compiler jobs prewarm their
-;; own lazy-import table through the explicit job-state entry above.
-(define (tc-lazy-import-stub-storage-ensure!) : unit
-  (tc-lazy-import-stub-storage-ensure-for-job! (tc-serial-job-state)))
 
 ;; Return either the matching record-index slot or the first empty slot. Slots
 ;; store record index + 1, so reset can clear the index without touching the

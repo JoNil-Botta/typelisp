@@ -2213,6 +2213,14 @@ verify_residual_route \
     "$ROOT/tests/integration/compile_profile_vector_core.tl" \
     "stdlib.vector/vector"
 
+# The borrowed TextBuf family is the production consumer for unresolved
+# lifetime-parameterized nominal type templates. Pin its exact identity to the
+# mapped native route and require byte-identical assembly from source CTFE.
+verify_residual_route \
+    text-buf-borrowed-lifetime-residual \
+    "$ROOT/tests/integration/stdlib_text_buf.tl" \
+    "stdlib.text_buf_family/borrowed"
+
 # Pin the module generator's public malformed-capability diagnostic on both
 # routes. Successful full/core expansion above covers both body branches; this
 # rejection catches computed-match/control-flow drift before syntax building.
@@ -2520,6 +2528,17 @@ assert_profile_counter_at_least_in \
     "$TEMPLATE_NODES_EMBEDDED_STDERR" \
     "typecheck.macro.stdlib_tlci_native_dispatches" \
     1 \
+    "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR"
+# #6550's final-shell removal must be proven by identity on the bounded
+# native/source differential, not inferred from another macro's dispatch.
+assert_contains \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
+    "stdlib.text_buf/append! arity=2"
+assert_profile_counter_eq_in \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+    0 \
     "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
     "$TEMPLATE_NODES_EMBEDDED_STDERR"
 # text_buf_family.owned commits a Decls result through the real mapped image;

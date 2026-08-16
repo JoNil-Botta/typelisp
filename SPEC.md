@@ -6092,6 +6092,23 @@ signaling-NaN payload behavior are outside the initial contract. The
 implementations allocate no storage and reference no runtime, libc, libm, CRT,
 x87 transcendental, or FMA facility.
 
+`stdlib.math.f64-pow` and `stdlib.math.f32-pow` provide freestanding power
+functions through deterministic logarithm/exponential table reduction and
+polynomial evaluation; binary32 evaluates its logarithm and exponential cores
+in binary64. `stdlib.math.pow` requires both operands to share one `f64` or
+`f32` type, preserves that type, and evaluates each operand once. Under
+default round-to-nearest, ties-to-even mode, finite results are within one
+ULP. The full IEEE-754 decision table is implemented: any base to a zero
+exponent is one, one to any exponent is one, negative one to either infinity
+is one, and NaN in either operand propagates; signed zeros and infinities
+follow the usual sign rules, with negative zero or negative infinity to an
+odd integral exponent staying negative; a negative finite base with a
+nonintegral exponent produces NaN; overflow returns the signed infinity; and
+underflow is gradual through subnormals with the correct signed zero.
+Floating exception flags and signaling-NaN payload behavior are outside the
+initial contract. The implementations allocate no storage and reference no
+runtime, libc, libm, CRT, x87 transcendental, or FMA facility.
+
 **Array and borrowed-Slice element operations.** The public `Array` type is the
 fixed `(Array T N)` form. Core element operations also accept the immediate
 borrowed Slice reference forms described in section 3.2:

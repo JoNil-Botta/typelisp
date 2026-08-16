@@ -272,8 +272,10 @@ assert_profile_sum_eq() {
 assert_profile_sum_at_least stdlib_tlci_native_expr_results 25000
 assert_profile_sum_at_least stdlib_tlci_native_module_results "$ROW_COUNT"
 assert_profile_sum_at_least stdlib_tlci_native_decls_results "$ROW_COUNT"
-assert_profile_sum_at_least stdlib_tlci_shell_learns "$ROW_COUNT"
-assert_profile_sum_at_least stdlib_tlci_interpreted_fallbacks "$ROW_COUNT"
+# #6550 moved text_buf/append! off the final shell. Sustained production
+# routing must now preserve the catalog-wide zero-shell/zero-fallback state.
+assert_profile_sum_eq stdlib_tlci_shell_learns 0
+assert_profile_sum_eq stdlib_tlci_interpreted_fallbacks 0
 assert_profile_sum_at_least stdlib_source_interpreted "$ROW_COUNT"
 assert_profile_sum_eq stdlib_tlci_catalog_misses 0
 assert_profile_sum_eq stdlib_tlci_load_failures 0
@@ -327,10 +329,16 @@ END_RECORDS=$(awk -F '|' '$8 == "result=006" { n++ } END { print n + 0 }' "$RECO
     fail "expected $ROW_COUNT pass-start records, got $START_RECORDS"
 [ "$END_RECORDS" -eq "$ROW_COUNT" ] ||
     fail "expected $ROW_COUNT pass-end records, got $END_RECORDS"
-for result in 002 003 004; do
+# Native Expr, Module, and Decls commits must all appear. Result 004 was the
+# learned-shell marker; #6550's zero-shell end state makes its presence a
+# regression rather than a required coverage point.
+for result in 001 002 003; do
     grep -F "|result=$result|" "$RECORDS" >/dev/null ||
         fail "durable records never observed result kind $result"
 done
+if grep -F '|result=004|' "$RECORDS" >/dev/null; then
+    fail "durable records observed a learned fallback shell"
+fi
 grep -F '|dispatch=000000013552|' "$RECORDS" >/dev/null ||
     fail "durable records missed the historical 13,552-dispatch boundary"
 UNIQUE_IDENTITIES=$(awk -F '|' '
@@ -340,8 +348,12 @@ UNIQUE_IDENTITIES=$(awk -F '|' '
     }
     END { for (key in seen) count++; print count + 0 }
 ' "$RECORDS")
-[ "$UNIQUE_IDENTITIES" -ge 5 ] ||
-    fail "stress observed only $UNIQUE_IDENTITIES stable identity indexes, expected at least 5"
+# The former append! shell forced a result-004 record for a fifth identity.
+# Fully native Expr results are sampled at fixed dispatch boundaries instead;
+# require the four independently sampled identities here, while the explicit
+# profile row below proves append!'s own native identity/arity.
+[ "$UNIQUE_IDENTITIES" -ge 4 ] ||
+    fail "stress observed only $UNIQUE_IDENTITIES stable identity indexes, expected at least 4"
 
 if ! awk -F '|' -v rows="$ROW_COUNT" '
     $8 == "result=006" {

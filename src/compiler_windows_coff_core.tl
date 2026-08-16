@@ -10,6 +10,7 @@
 (import compiler_profile_state as profile_state)
 (import compiler_object_coff)
 (import compiler_driver_core)
+(import compiler_typecheck_core)
 (import compiler_ast_types)
 (import compiler_backend)
 (import compiler_ir_types)
@@ -328,14 +329,16 @@
   [opt-level : i64]
   [force-assembly : bool]
   [emit-side-assembly : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
+  [profile-state : profile_state.CompilerProfileState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerWindowsBatchArtifact.Err
       (box
         (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
           input-path)))
     (begin
-      (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower-for-job!
+        typecheck-state)
       (compiler_driver_core.compiler-driver-retire-frontend-arena!)
       (cfg
         compile-profile
@@ -391,7 +394,8 @@
         spans
         pools
         profile-state
-        backend-state)
+        backend-state
+        typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
@@ -419,7 +423,8 @@
               opt-level
               force-assembly
               emit-side-assembly
-              profile-state))]
+              profile-state
+              typecheck-state))]
         (begin
           (if (= opt-level 0)
             (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)

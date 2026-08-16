@@ -1381,26 +1381,6 @@
     compiler-surface-selftest
     compiler-build-identity
     embedded-stdlib-tlci)
-  (define (surface-ast-seen-count [seen : sym_i64_env.SymI64Env]) : i64
-    (let
-      [cursor : sym_i64_env.SymI64Env seen]
-      [count : i64 0]
-      (begin
-        (while true
-          (match (sym_i64_env.sym-i64-view cursor)
-            [(sym_i64_env.SymI64ViewNil) (return count)]
-            [(sym_i64_env.SymI64ViewBind _ _ rest)
-              (begin
-                (set! count (+ count 1))
-                (set! cursor rest))]))
-        count))))
-
-(cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
   (define (surface-ast-write-paths!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : codec.SurfaceAstWriteContext]

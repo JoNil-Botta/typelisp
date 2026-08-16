@@ -8,16 +8,13 @@
 ;; below that, so nothing proves the raw bridge survives the scale at which the
 ;; failure appears.
 ;;
-;; The three tiers separate the layers so a failure names one of them:
+;; The three tiers separate production entry shapes so a failure names one:
 ;;
-;; - tier 1 dispatches a *shell* entry, which crosses
-;;   `tl_tlci_call_macro_entry` and the inbound trampoline but invokes no host
-;;   callback and commits no AST. A failure here is a pure
-;;   call-bridge/argument-marshalling defect.
-;; - tier 2 dispatches a native entry over one session and one set of operands
-;;   built before the loop, auditing the session arguments the callbacks read
-;;   after every dispatch. A failure here with tier 1 clean is callback
-;;   marshalling.
+;; - tier 1 dispatches the final macro moved off a shell, text_buf/append!,
+;;   through its two fixed operands and dynamic set!-place callback chain.
+;; - tier 2 dispatches array/length over one set of operands built before the
+;;   loop, auditing the session arguments the callbacks read after every
+;;   dispatch.
 ;; - tier 3 runs the same native entry but captures pools and pushes a fresh
 ;;   operand every iteration. A failure here with tier 2 clean is the
 ;;   per-iteration session/pool cycling.
@@ -50,12 +47,11 @@
 (define stress-cookie : i64
   0x5528)
 
-;: Entry dispatched by tier 1. It must be a registration shell so the crossing
-;: performs no host callback; `stress-tier1-shell-ok?` asserts that before the
-;: loop rather than assuming it, so the harness fails loudly if the macro later
-;: becomes native instead of silently testing the wrong path.
-(define stress-shell-identity : String
-  "stdlib.text_buf_family/borrowed")
+;: Entry dispatched by tier 1. This is intentionally the final macro moved off
+;: its registration shell: the stress gate now proves its dynamic unquoted
+;: set!-place path remains native under sustained dispatch. Refs #6550.
+(define stress-tier1-identity : String
+  "stdlib.text_buf/append!")
 
 ;: Canary words written around the dispatch state and re-checked every
 ;: iteration. A wild write from the bridge lands here rather than going
@@ -71,13 +67,13 @@
   42)
 (define stress-status-load-failed : i64
   10)
-(define stress-status-not-a-shell : i64
+(define stress-status-tier1-session : i64
   11)
 (define stress-status-dispatch-error : i64
   12)
 (define stress-status-bad-status : i64
   13)
-(define stress-status-unexpected-result : i64
+(define stress-status-missing-result : i64
   14)
 (define stress-status-canary-clobbered : i64
   15)
@@ -154,25 +150,39 @@
     (= (array-ref canaries 0) stress-canary-a)
     (= (array-ref canaries 1) stress-canary-b)))
 
-;: Confirm the chosen identity really is a registration shell before the loop:
-;: a shell commits no result and reports ok for an ordinary dispatch.
-(define (stress-tier1-shell-ok?
-  [loaded : (& loaded tlci_loader.TlciLoadedImage)]) : bool
-  (match (tlci_loader.tlci-loader-dispatch-macro
-    loaded
-    (stress-global-shared-view stress-shell-identity)
-    stress-cookie
-    (array.make-array i64 0)
-    0)
-    [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
-    [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
-      (and
-        (= dispatch.status tlci_core.tlci-host-callback-status-ok)
-        (not
-          (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))]))
+;: Build the two parsed-call operands for text_buf/append! once. The first is
+;: the Expr place selected by the dynamic set! callback and the second is the
+;: runtime String expression spliced into the expansion. Their pools and
+;: storage remain fixed while each dispatch gets the required fresh session.
+(define (stress-tier1-operands [pools : compiler_ast_types.AstNodePoolContext]) : (__tl_dyn-array
+    compiler_ctfe.CompilerCtfeValue)
+  (let
+    [place-node : i64
+      (compiler_ast_types.ast-expr-spanned-with-pools
+        pools
+        (compiler_ast_types.ast-node-pool-context-expr-push
+          pools
+          (compiler_ast_types.AstExpr.Var (ci.intern "buf")))
+        (compiler_ast_types.ast-source-span 900 7 900 10))]
+    [chunk-node : i64
+      (compiler_ast_types.ast-expr-spanned-with-pools
+        pools
+        (compiler_ast_types.ast-node-pool-context-expr-push
+          pools
+          (compiler_ast_types.AstExpr.Literal
+            (compiler_ast_types.AstLiteral.String (ci.intern "x"))))
+        (compiler_ast_types.ast-source-span 900 12 900 15))]
+    (__tl_make-array
+      (compiler_ctfe.CompilerCtfeValue.Expr
+        place-node
+        (compiler_ast_types.AstType.Expr))
+      (compiler_ctfe.CompilerCtfeValue.Expr
+        chunk-node
+        (compiler_ast_types.AstType.String)))))
 
-;: Tier 1: sustained raw-entry dispatch. Returns `stress-status-ok` or the
-;: first distinguishing failure status; `failed-at` records the iteration.
+;: Tier 1: sustained dispatch of the newly native dynamic set!-place entry.
+;: Returns `stress-status-ok` or the first distinguishing failure status;
+;: `failed-at` records the iteration.
 (define (stress-tier1
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [iterations : i64]
@@ -180,6 +190,10 @@
   [failed-at : (__tl_dyn-array i64)]) : i64
   (let
     [canaries : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (stress-tier1-operands pools)]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
@@ -198,9 +212,16 @@
               0
               (array-ref canaries 0)
               (array-ref canaries 1)))
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+            pools
+            operands
+            2
+            64
+            stress-cookie
+            (compiler_ctfe.ctfe-reflect-info-list-empty))
           (match (tlci_loader.tlci-loader-dispatch-macro
             loaded
-            (stress-global-shared-view stress-shell-identity)
+            (stress-global-shared-view stress-tier1-identity)
             stress-cookie
             (array.make-array i64 0)
             0)
@@ -210,8 +231,6 @@
               (let
                 [status : i64 dispatch.status]
                 (cond
-                  ;; This is #5460's signature: a shell reporting anything but
-                  ;; ok means its `count` argument did not survive the bridge.
                   [(not (= status tlci_core.tlci-host-callback-status-ok))
                     (begin
                       (stress-progress-write!
@@ -222,11 +241,27 @@
                         (array-ref canaries 0)
                         (array-ref canaries 1))
                       (set! outcome stress-status-bad-status))]
-                  [(compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
-                    (set! outcome stress-status-unexpected-result)]
+                  [(not
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))
+                    (set! outcome stress-status-missing-result)]
+                  [(or
+                      (not
+                        (=
+                          compiler_embedded_stdlib_tlci.compiler-comptime-host-operand-count
+                          2))
+                      (not
+                        (=
+                          compiler_embedded_stdlib_tlci.compiler-comptime-host-session-cookie
+                          stress-cookie))
+                      (not
+                        (=
+                          compiler_embedded_stdlib_tlci.compiler-comptime-host-stack-len
+                          0)))
+                    (set! outcome stress-status-tier1-session)]
                   [(not (stress-canaries-ok? canaries))
                     (set! outcome stress-status-canary-clobbered)]
                   [else unit]))])
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (when
             (not (= outcome stress-status-ok))
             (set! (array-ref failed-at 0) i))
@@ -332,13 +367,12 @@
         false)]
     [else true]))
 
-;: Tier 2: the callback layer, between tier 1's bare crossing and tier 3's pool
-;: cycling. It dispatches the same native entry tier 3 uses, so the two tiers
+;: Tier 2 dispatches the same native entry tier 3 uses, so those two tiers
 ;: differ in exactly one variable -- tier 3 captures pools and pushes a fresh
 ;: operand every iteration, while tier 2 holds both for the whole run. Both
 ;: open the fresh per-invocation host session required by SPEC 5.17.1.1. A tier
-;: 2 failure with tier 1 clean therefore isolates callback marshalling; a tier
-;: 3 failure with tier 2 clean isolates per-iteration pool/operand cycling.
+;: 3 failure with tier 2 clean therefore isolates per-iteration pool/operand
+;: cycling; tier 1 independently stresses append!'s two-operand callback chain.
 ;;
 ;; Note on "does not allocate AST nodes" in #5528's tier list: no stdlib entry
 ;; drives host callbacks without allocating its own expansion, so what tier 2
@@ -545,84 +579,31 @@
             stress-status-load-failed)]
         [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
           (let
-            [pools : compiler_ast_types.AstNodePoolContext
-              (compiler_ast_types.ast-node-pool-context-capture-active)]
-            [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-              (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
+            [outcome : i64
+              (cond
+                [(= tier 3)
+                  (stress-tier3 (& loaded) iterations progress-path failed-at)]
+                [(= tier 2)
+                  (stress-tier2 (& loaded) iterations progress-path failed-at)]
+                [else
+                  (stress-tier1 (& loaded) iterations progress-path failed-at)])]
             (begin
-              ;; One session and one mapped-image lifetime for the whole run,
-              ;; which is the shape #5460 failed in.
-              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-                pools
-                operands
-                0
-                0x7FFFFFFF
-                stress-cookie
-                (compiler_ctfe.ctfe-reflect-info-list-empty))
-              (let
-                [outcome : i64
-                  (cond
-                    ;; Tier 3 owns a session per iteration, so retire the outer
-                    ;; one before it starts cycling its own.
-                    [(= tier 3)
-                      (begin
-                        (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
-                        (stress-tier3
-                          (& loaded)
-                          iterations
-                          progress-path
-                          failed-at))]
-                    ;; Tier 2 opens its own single session over its own operands,
-                    ;; for the same reason.
-                    [(= tier 2)
-                      (begin
-                        (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
-                        (stress-tier2
-                          (& loaded)
-                          iterations
-                          progress-path
-                          failed-at))]
-                    [else
-                      (if (not (stress-tier1-shell-ok? (& loaded)))
-                        ;; Record the pre-loop failure too: the issue wants a
-                        ;; durable marker at every state transition, not only
-                        ;; inside the loop.
-                        (begin
-                          (stress-progress-write!
-                            progress-path
-                            1
-                            -1
-                            stress-status-not-a-shell
-                            stress-canary-a
-                            stress-canary-b)
-                          stress-status-not-a-shell)
-                        (let
-                          [tier1 : i64
-                            (stress-tier1
-                              (& loaded)
-                              iterations
-                              progress-path
-                              failed-at)]
-                          (begin
-                            (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
-                            tier1)))])]
-                (begin
-                  (io.print-string
-                    (str_cat.str-cat
-                      "stress tier="
-                      (string.int->string tier)
-                      " identity="
-                      (if (= tier 1)
-                        (stress-global-shared-view stress-shell-identity)
-                        (stress-global-shared-view stress-native-identity))
-                      " iterations="
-                      (string.int->string iterations)
-                      " outcome="
-                      (string.int->string outcome)
-                      " failed-at="
-                      (string.int->string (array-ref failed-at 0))
-                      "\n"))
-                  (match (tlci_loader.tlci-loader-release loaded)
-                    [(tlci_loader.ResultTlciLoaderUnit.Ok) outcome]
-                    [(tlci_loader.ResultTlciLoaderUnit.Err _)
-                      stress-status-release-failed])))))]))))
+              (io.print-string
+                (str_cat.str-cat
+                  "stress tier="
+                  (string.int->string tier)
+                  " identity="
+                  (if (= tier 1)
+                    (stress-global-shared-view stress-tier1-identity)
+                    (stress-global-shared-view stress-native-identity))
+                  " iterations="
+                  (string.int->string iterations)
+                  " outcome="
+                  (string.int->string outcome)
+                  " failed-at="
+                  (string.int->string (array-ref failed-at 0))
+                  "\n"))
+              (match (tlci_loader.tlci-loader-release loaded)
+                [(tlci_loader.ResultTlciLoaderUnit.Ok) outcome]
+                [(tlci_loader.ResultTlciLoaderUnit.Err _)
+                  stress-status-release-failed])))]))))

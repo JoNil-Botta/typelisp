@@ -999,7 +999,9 @@
 ;; pushes the wrapper, so a nested annotation builds bottom-up like an
 ;; expression template does. type-ptr and type-ref select mutability with
 ;; immediate `a`; type-array takes its element count in `a`; type-ref takes the
-;; lifetime name in `b`/`c`.
+;; lifetime name in `b`/`c`. type-var-args takes a lifetime count in `a` and a
+;; count-validated newline-delimited nominal/lifetime payload in `b`/`c`,
+;; preserving the unresolved VarArgs identity and argument order. Refs #6551.
 (define tlci-host-callback-name-type-ptr : String
   "type-ptr")
 (define tlci-host-callback-name-type-box : String
@@ -1014,6 +1016,8 @@
   "type-slice")
 (define tlci-host-callback-name-type-tuple : String
   "type-tuple")
+(define tlci-host-callback-name-type-var-args : String
+  "type-var-args")
 
 ;; A computed struct field name is a stack value rather than caller bytes:
 ;; pop the name after the target expression and push the resulting field
@@ -1026,6 +1030,13 @@
 ;; resulting assignment. Refs #5999.
 (define tlci-host-callback-name-expr-struct-set-from-value : String
   "expr-struct-set-from-value")
+
+;; A quasiquoted `(set! ,place value)` only knows its assignment shape after
+;; the unquoted place has produced an Expr session value. Pop that place and
+;; the value expression, then reconstruct the matching variable, struct-field,
+;; or box assignment. Refs #6550.
+(define tlci-host-callback-name-expr-set-from-place : String
+  "expr-set-from-place")
 
 ;; Computed enum variant names likewise retain their source-name identity as a
 ;; session value. Pop a PatternList after the name and push the resulting

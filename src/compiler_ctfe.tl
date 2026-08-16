@@ -255,11 +255,6 @@
 (define (ctfe-result-hygiene-free-reset!) : unit
   (ctfe-result-hygiene-free-reset-for-state! (compiler-ctfe-serial-macro-state)))
 
-(define (ctfe-result-hygiene-free-note! [node : i64]) : unit
-  (ctfe-result-hygiene-free-note-for-state!
-    (compiler-ctfe-serial-macro-state)
-    node))
-
 (define (ctfe-result-hygiene-free-node-id) : i64
   (ctfe-result-hygiene-free-node-id-for-state
     (compiler-ctfe-serial-macro-state)))
@@ -326,10 +321,6 @@
 
 (define (ctfe-result-macro-provenance-reset!) : unit
   (ctfe-result-macro-provenance-reset-for-state!
-    (compiler-ctfe-serial-macro-state)))
-
-(define (ctfe-result-may-contain-macro-note!) : unit
-  (ctfe-result-may-contain-macro-note-for-state!
     (compiler-ctfe-serial-macro-state)))
 
 (define (ctfe-result-may-contain-macro?) : bool
@@ -487,14 +478,8 @@
 (define (ctfe-pat-binding-id [name-id : i64]) : ast.AstPattern
   (ast.ast-pat-binding-id name-id))
 
-(define (ctfe-pat-binding [name : String]) : ast.AstPattern
-  (ast.ast-pat-binding-id (ctfe-materialize-generated-name-id name)))
-
 (define (ctfe-pat-variant-id [name-id : i64] [items : ast.AstPatternList]) : ast.AstPattern
   (ast.ast-pat-variant-id name-id items))
-
-(define (ctfe-pat-variant [name : String] [items : ast.AstPatternList]) : ast.AstPattern
-  (ast.ast-pat-variant-id (ctfe-materialize-generated-name-id name) items))
 
 (define (ctfe-builtin-refresh!) : unit
   (cbi.compiler-builtin-refresh!))
@@ -1285,16 +1270,6 @@
   [macro-state : CompilerCtfeMacroState]) : CtfeEnv
   (ctfe-env-new pools layouts reflections source-names macro-state))
 
-(define (ctfe-env-with-metadata-and-pools
-  [layouts : CtfeLayoutInfoList]
-  [reflections : CtfeReflectInfoList]
-  [pools : ast.AstNodePoolContext]) : CtfeEnv
-  (ctfe-env-with-metadata-and-pools-and-source-names
-    layouts
-    reflections
-    pools
-    (ci.intern-source-name-session-capture-active-handle)))
-
 (define (ctfe-env-arena-segments-copy-range!
   [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))]
   [src : (& src (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))]
@@ -2068,12 +2043,6 @@
 
 (define (ctfe-module-macro-export-add-id! [module-id : i64] [name-id : i64]) : unit
   (ctfe-module-macro-export-add-id-for-state!
-    (compiler-ctfe-serial-macro-state)
-    module-id
-    name-id))
-
-(define (ctfe-module-macro-export-id? [module-id : i64] [name-id : i64]) : bool
-  (ctfe-module-macro-export-id-for-state?
     (compiler-ctfe-serial-macro-state)
     module-id
     name-id))

@@ -13,6 +13,12 @@ table data derive from musl's `log.c`, `logf.c`, `log_data.c`, and
 `logf_data.c` at that revision. The binary64 port uses the documented non-FMA
 `chi`/`clo` reduction path.
 
+The `f64-pow` and `f32-pow` implementations, coefficient bit patterns, and
+table data derive from musl's `pow.c`, `powf.c`, `pow_data.c`, and
+`powf_data.c` at that revision, reusing the shared `exp_data.c` and
+`exp2f_data.c` tables. The ports use the documented non-FMA, non-TOINT
+evaluation paths.
+
 These Arm-authored files carry:
 
 > Copyright (c) 2017-2018, Arm Limited.

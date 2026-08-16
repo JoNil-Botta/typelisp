@@ -584,11 +584,12 @@
   (let
     [cell : (__tl_dyn-array TcJobStateData) (array.make-array TcJobStateData 1)]
     [owner : i64 (arena.tl_arena_current)]
-    [macro-state-addresses : (__tl_dyn-array i64) (array.make-array i64 14)]
+    [macro-state-addresses : (__tl_dyn-array i64) (array.make-array i64 15)]
     (begin
       ;; The directory never grows, so TcMacroState may carry its data pointer
       ;; directly. Slot 12 keeps the owner beside the lazy addresses, while
-      ;; slot 13 carries the combined source-name/structural-intern session.
+      ;; slot 13 carries the combined source-name/structural-intern session,
+      ;; and slot 14 lazily owns the non-macro lazy-import table.
       (set! (array-ref macro-state-addresses 12) owner)
       (set!
         (array-ref cell 0)
@@ -636,22 +637,6 @@
           (comptime (offset-of (type TcJobStateData) ,field)))
         : (Ptr ,_T)))))
 
-(defmacro (tc-job-state-set-field!
-  [state : Expr]
-  [field : Expr]
-  [_T : type]
-  [value : Expr]) : Expr
-  `(unsafe
-    (ptr-write!
-      (ptr-cast
-        (ptr-offset
-          (int->ptr
-            (cast ,(comptime.expr-struct-get state "address") : u64)
-            : (Ptr u8))
-          (comptime (offset-of (type TcJobStateData) ,field)))
-        : (MutPtr ,_T))
-      ,value)))
-
 (define (tc-macro-state-owner-arena [state : TcMacroState]) : i64
   (unsafe
     (ptr-read (ptr-offset (int->ptr (cast state.address : u64) : (Ptr i64)) 12))))
@@ -680,8 +665,8 @@
   10)
 (define tc-macro-state-slot-identity : i64
   11)
-(define tc-macro-state-slot-source-names : i64
-  13)
+(define tc-macro-state-slot-lazy-import : i64
+  14)
 
 (define (tc-macro-state-slot-address [state : TcMacroState] [slot : i64]) : i64
   (unsafe
@@ -1278,15 +1263,6 @@
 (define (tc-serial-job-state-reset-if-ready!) : unit
   (if tc-serial-job-state-ready
     (tc-job-state-reset-file-state! (array-ref tc-serial-job-state-cell 0))
-    unit))
-
-;; The legacy reset surface historically released only typecheck scratch.
-;; Keep that boundary distinct from a full job reset: standalone callers can
-;; own an inlay generation across internal compiler reset points.
-(define (tc-serial-scratch-arenas-release-if-ready!) : unit
-  (if tc-serial-job-state-ready
-    (tc-job-state-release-scratch-arenas!
-      (array-ref tc-serial-job-state-cell 0))
     unit))
 
 (defstruct TcBodyStateData
@@ -2197,15 +2173,24 @@
   (One i64)
   (Dense i64 i64 i64))
 
-(defstruct TcLazyImportStub
-  (module-id i64)
-  (alias-id i64)
-  (target-id i64)
-  (summary-backed bool))
+;; Lazy import aliases and their summary-use counters are mutable, intern-owned
+;; typecheck state. Keep one lazily allocated table per compiler job so a reset
+;; or lookup in one job cannot observe or clear another job's aliases.
+(defstruct TcLazyImportStateData
+  (owner-arena i64)
+  (module-ids (__tl_dyn-array i64))
+  (alias-ids (__tl_dyn-array i64))
+  (target-ids (__tl_dyn-array i64))
+  (summary-backed (__tl_dyn-array bool))
+  (index-slots (__tl_dyn-array i64))
+  (record-count i64)
+  (intern-table-id i64)
+  (intern-generation i64)
+  (summary-backed-count i64)
+  (summary-macro-force-count i64))
 
-(defstruct TcLazyImportStubList
-  (slots (__tl_dyn-array TcLazyImportStub))
-  (len i64))
+(defstruct TcLazyImportState
+  (address i64))
 
 (defenum TcThreadTransferClass
   (Transferable)
@@ -2481,11 +2466,6 @@
   ;; Keep their owner in the same state as the slots that publish those views.
   (agg-layout-storage-owner arena.Arena)
   (type-needs-resolution-slots (__tl_dyn-array i64))
-  (lazy-import-stub-module-ids (__tl_dyn-array i64))
-  (lazy-import-stub-alias-ids (__tl_dyn-array i64))
-  (lazy-import-stub-target-ids (__tl_dyn-array i64))
-  (lazy-import-stub-summary-backed (__tl_dyn-array bool))
-  (lazy-import-stub-index-slots (__tl_dyn-array i64))
   (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot))
   (agg-size-cache (__tl_dyn-array i64))
   (agg-align-cache (__tl_dyn-array i64))
@@ -2495,11 +2475,6 @@
   (TcLazyGlobalTableState
     (arena.Arena 0)
     (arena.Arena 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array bool 0)
     (array.make-array i64 0)
     (array.make-array TcAggLayoutCacheSlot 0)
     (array.make-array i64 0)
@@ -17990,16 +17965,6 @@
       [_ false])
     false))
 
-(define (tc-signature-lifetime-marker-entry?
-  [key : i64]
-  [ty : ast.AstType]
-  [lifetime-id : i64]) : bool
-  (tc-signature-lifetime-marker-entry-id?
-    key
-    ty
-    lifetime-id
-    (tc-signature-lifetime-marker-id)))
-
 (define (tc-env-binding-matches-lifetime-id?
   [key : i64]
   [ty : ast.AstType]
@@ -22118,197 +22083,278 @@
       value
       handle)))
 
-(define (tc-lazy-import-stub-list-empty) : TcLazyImportStubList
-  (TcLazyImportStubList (array.make-array TcLazyImportStub 0) 0))
-
-(define tc-lazy-import-stubs : TcLazyImportStubList
-  (tc-lazy-import-stub-list-empty))
 (define tc-lazy-import-stub-capacity : i64
   65536)
-(define tc-lazy-import-stub-record-count : i64
-  0)
-(define tc-lazy-import-stub-generation : i64
-  -1)
-(define tc-lazy-import-summary-backed-count : i64
-  0)
-(define tc-lazy-import-summary-macro-force-record-count : i64
-  0)
 
-(define (tc-lazy-import-stub-storage-ensure!) : unit
-  (if (=
-    (array-length
-      (__tl-project-field
-        tc-lazy-global-table-state
-        lazy-import-stub-index-slots))
-    tc-lazy-import-stub-capacity)
-    unit
+(define (tc-lazy-import-state-data-new [owner-arena : i64]) : TcLazyImportStateData
+  (TcLazyImportStateData
+    owner-arena
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array bool 0)
+    (array.make-array i64 0)
+    0
+    -1
+    -1
+    0
+    0))
+
+(define (tc-lazy-import-state-address-initialize [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-lazy-import)]
+    (if (> address 0)
+      address
+      (let
+        [owner : i64 (tc-macro-state-owner-arena state)]
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array TcLazyImportStateData)
+              (array.make-array TcLazyImportStateData 1)]
+            [_init : unit
+              (set!
+                (array-ref cell 0)
+                (tc-lazy-import-state-data-new
+                  (tc-type-env-store-owner-root owner)))]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast (array-data cell) : (Ptr TcLazyImportStateData))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set!
+                state
+                tc-macro-state-slot-lazy-import
+                next)
+              next)))))))
+
+(define (tc-macro-state-lazy-import [state : TcMacroState]) : TcLazyImportState
+  (TcLazyImportState
     (let
-      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
-      (in-arena
-        owner
-        (begin
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            lazy-import-stub-module-ids
-            (array.make-array i64 tc-lazy-import-stub-capacity))
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            lazy-import-stub-alias-ids
-            (array.make-array i64 tc-lazy-import-stub-capacity))
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            lazy-import-stub-target-ids
-            (array.make-array i64 tc-lazy-import-stub-capacity))
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            lazy-import-stub-summary-backed
-            (array.make-array bool tc-lazy-import-stub-capacity))
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            lazy-import-stub-index-slots
-            (array.make-array i64 tc-lazy-import-stub-capacity)))))))
+      [address : i64 (tc-macro-state-slot-address state 14)]
+      (if (> address 0)
+        address
+        (tc-lazy-import-state-address-initialize state)))))
+
+(define (tc-job-state-lazy-import [state : TcJobState]) : TcLazyImportState
+  (tc-macro-state-lazy-import (tc-job-state-macro-state state)))
+
+(define (tc-lazy-import-state-data [state : TcLazyImportState]) : TcLazyImportStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr TcLazyImportStateData)))))
+
+(define (tc-lazy-import-state-data-set!
+  [state : TcLazyImportState]
+  [data : TcLazyImportStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast state.address : u64) : (MutPtr TcLazyImportStateData))
+      data)))
+
+(define (tc-lazy-import-stub-storage-ensure-for-state!
+  [state : TcLazyImportState]) : unit
+  (let
+    [data : TcLazyImportStateData (tc-lazy-import-state-data state)]
+    (if (= (array-length data.index-slots) tc-lazy-import-stub-capacity)
+      unit
+      (let
+        [owner : i64 data.owner-arena]
+        (in-arena
+          (arena.Arena owner)
+          (begin
+            (set!
+              data.module-ids
+              (array.make-array i64 tc-lazy-import-stub-capacity))
+            (set!
+              data.alias-ids
+              (array.make-array i64 tc-lazy-import-stub-capacity))
+            (set!
+              data.target-ids
+              (array.make-array i64 tc-lazy-import-stub-capacity))
+            (set!
+              data.summary-backed
+              (array.make-array bool tc-lazy-import-stub-capacity))
+            (set!
+              data.index-slots
+              (array.make-array i64 tc-lazy-import-stub-capacity))
+            (tc-lazy-import-state-data-set! state data)))))))
+
+(define (tc-lazy-import-stub-storage-ensure-for-job! [state : TcJobState]) : unit
+  (tc-lazy-import-stub-storage-ensure-for-state!
+    (tc-job-state-lazy-import state)))
 
 ;; Return either the matching record-index slot or the first empty slot. Slots
 ;; store record index + 1, so reset can clear the index without touching the
 ;; record arrays. Key equality is checked against those existing arrays.
-(define (tc-lazy-import-stub-index-probe
-  [importer-module-id : i64]
-  [alias-id : i64]
-  [cursor : i64]
-  [probes : i64]) : i64
-  (if (>= probes tc-lazy-import-stub-capacity)
-    -1
-    (let
-      [entry : i64
-        (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            lazy-import-stub-index-slots)
-          cursor)]
-      (if (= entry 0)
-        cursor
-        (let
-          [record-index : i64 (- entry 1)]
-          (if (and
-            (=
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  lazy-import-stub-module-ids)
-                record-index)
-              importer-module-id)
-            (=
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  lazy-import-stub-alias-ids)
-                record-index)
-              alias-id))
-            cursor
-            (tc-lazy-import-stub-index-probe
-              importer-module-id
-              alias-id
-              (bit-and (+ cursor 1) (- tc-lazy-import-stub-capacity 1))
-              (+ probes 1))))))))
-
-(define (tc-lazy-import-stub-index-slot
+(define (tc-lazy-import-stub-index-slot-for-data
+  [data : (& data TcLazyImportStateData)]
   [importer-module-id : i64]
   [alias-id : i64]) : i64
   (let
-    [start : i64
+    [cursor : i64
       (bit-and
         (+ (* importer-module-id 2654435761) (* alias-id 40503))
         (- tc-lazy-import-stub-capacity 1))]
-    (tc-lazy-import-stub-index-probe importer-module-id alias-id start 0)))
+    [probes : i64 0]
+    [out : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< probes tc-lazy-import-stub-capacity))
+        (let
+          [entry : i64 (array-ref data.index-slots cursor)]
+          (if (= entry 0)
+            (begin
+              (set! out cursor)
+              (set! done true))
+            (let
+              [record-index : i64 (- entry 1)]
+              (if (and
+                (= (array-ref data.module-ids record-index) importer-module-id)
+                (= (array-ref data.alias-ids record-index) alias-id))
+                (begin
+                  (set! out cursor)
+                  (set! done true))
+                (begin
+                  (set!
+                    cursor
+                    (bit-and (+ cursor 1) (- tc-lazy-import-stub-capacity 1)))
+                  (set! probes (+ probes 1))))))))
+      out)))
 
-(define (tc-lazy-import-stub-index-reset!) : unit
+(define (tc-lazy-import-stub-index-reset! [state : TcLazyImportState]) : unit
   (let
+    [slots : (__tl_dyn-array i64)
+      (__tl-project-field (tc-lazy-import-state-data state) index-slots)]
     [slot : i64 0]
     (while (< slot tc-lazy-import-stub-capacity)
       (begin
-        (set!
-          (array-ref
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-index-slots)
-            slot)
-          0)
+        (set! (array-ref slots slot) 0)
         (set! slot (+ slot 1))))))
 
 (define (tc-lazy-import-stub-index-record!
+  [state : TcLazyImportState]
   [record-index : i64]
   [importer-module-id : i64]
   [alias-id : i64]
   [target-module-id : i64]) : unit
   (let
-    [slot : i64 (tc-lazy-import-stub-index-slot importer-module-id alias-id)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data state)]
+    [slot : i64
+      (tc-lazy-import-stub-index-slot-for-data
+        (& data)
+        importer-module-id
+        alias-id)]
     (if (< slot 0)
       unit
       (let
-        [entry : i64
-          (array-ref
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-index-slots)
-            slot)]
+        [entry : i64 (array-ref data.index-slots slot)]
         (if (or
           (= entry 0)
           (not (= target-module-id alias-id))
-          (=
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                lazy-import-stub-target-ids)
-              (- entry 1))
-            alias-id))
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                lazy-import-stub-index-slots)
-              slot)
-            (+ record-index 1))
+          (= (array-ref data.target-ids (- entry 1)) alias-id))
+          (set! (array-ref data.index-slots slot) (+ record-index 1))
           unit)))))
 
-(define (tc-lazy-import-stubs-reset!) : unit
-  (begin
-    (tc-lazy-import-stub-storage-ensure!)
-    (set! tc-lazy-import-stubs (tc-lazy-import-stub-list-empty))
-    (set! tc-lazy-import-stub-record-count 0)
-    (set! tc-lazy-import-summary-backed-count 0)
-    (set! tc-lazy-import-summary-macro-force-record-count 0)
-    (tc-lazy-import-stub-index-reset!)
-    (set! tc-lazy-import-stub-generation (ci.intern-generation))
-    (tc-source-dotted-alias-key-cache-reset!)
-    (tc-source-dotted-full-path-key-cache-reset!)
-    (tc-source-qualified-variant-key-cache-reset!)))
+(define (tc-lazy-import-stubs-reset-for-state! [state : TcMacroState]) : unit
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_storage : unit (tc-lazy-import-stub-storage-ensure-for-state! lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (tc-macro-state-source-names state)]
+    (begin
+      (set! data.record-count 0)
+      (set! data.summary-backed-count 0)
+      (set! data.summary-macro-force-count 0)
+      (set!
+        data.intern-table-id
+        (ci.intern-source-name-session-handle-table-id source-names))
+      (set!
+        data.intern-generation
+        (ci.intern-source-name-session-handle-reset-generation source-names))
+      (tc-lazy-import-state-data-set! lazy-state data)
+      (tc-lazy-import-stub-index-reset! lazy-state))))
 
-(define (tc-lazy-import-stubs-ensure!) : unit
-  (if (= tc-lazy-import-stub-generation (ci.intern-generation))
-    unit
-    (tc-lazy-import-stubs-reset!)))
+(define (tc-lazy-import-stubs-reset-for-job! [state : TcJobState]) : unit
+  (tc-lazy-import-stubs-reset-for-state! (tc-job-state-macro-state state)))
 
+(define (tc-lazy-import-stubs-ensure-for-state!
+  [state : TcMacroState]
+  [lazy-state : TcLazyImportState]) : unit
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (tc-macro-state-source-names state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    (if (and
+      (=
+        data.intern-table-id
+        (ci.intern-source-name-session-handle-table-id source-names))
+      (=
+        data.intern-generation
+        (ci.intern-source-name-session-handle-reset-generation source-names)))
+      unit
+      (tc-lazy-import-stubs-reset-for-state! state))))
+
+(define (tc-lazy-import-stub-count-for-state [state : TcMacroState]) : i64
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    (__tl-project-field (tc-lazy-import-state-data lazy-state) record-count)))
+
+(define (tc-lazy-import-summary-backed-stub-count-for-state
+  [state : TcMacroState]) : i64
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    (__tl-project-field
+      (tc-lazy-import-state-data lazy-state)
+      summary-backed-count)))
+
+(define (tc-lazy-import-summary-macro-force-count-for-state
+  [state : TcMacroState]) : i64
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    (__tl-project-field
+      (tc-lazy-import-state-data lazy-state)
+      summary-macro-force-count)))
+
+(define (tc-lazy-import-summary-macro-force-record-for-state!
+  [state : TcMacroState]) : unit
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    (begin
+      (set! data.summary-macro-force-count (+ data.summary-macro-force-count 1))
+      (tc-lazy-import-state-data-set! lazy-state data))))
+
+(define (tc-lazy-import-summary-macro-force-reset-for-state!
+  [state : TcMacroState]) : unit
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    (begin
+      (set! data.summary-macro-force-count 0)
+      (tc-lazy-import-state-data-set! lazy-state data))))
+
+;; Standalone source APIs and focused smokes use the serial compatibility job.
 (define (tc-lazy-import-stub-count) : i64
-  (begin
-    (tc-lazy-import-stubs-ensure!)
-    tc-lazy-import-stub-record-count))
+  (tc-lazy-import-stub-count-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))))
 
 (define (tc-lazy-import-summary-backed-stub-count) : i64
-  (begin
-    (tc-lazy-import-stubs-ensure!)
-    tc-lazy-import-summary-backed-count))
+  (tc-lazy-import-summary-backed-stub-count-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))))
 
 (define (tc-lazy-import-summary-macro-force-count) : i64
-  (begin
-    (tc-lazy-import-stubs-ensure!)
-    tc-lazy-import-summary-macro-force-record-count))
-
-(define (tc-lazy-import-summary-macro-force-record!) : unit
-  (begin
-    (tc-lazy-import-stubs-ensure!)
-    (set!
-      tc-lazy-import-summary-macro-force-record-count
-      (+ tc-lazy-import-summary-macro-force-record-count 1))))
+  (tc-lazy-import-summary-macro-force-count-for-state
+    (tc-job-state-macro-state (tc-serial-job-state))))
 
 (define (tc-lazy-import-stub-record-for-job!
   [job-state : TcJobState]
@@ -22316,83 +22362,64 @@
   [alias-id : i64]
   [target-module-id : i64]
   [summary-backed : bool]) : unit
-  (begin
-    (tc-lazy-import-stubs-ensure!)
-    (if (< tc-lazy-import-stub-record-count tc-lazy-import-stub-capacity)
-      (let
-        [index : i64 tc-lazy-import-stub-record-count]
-        (begin
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                lazy-import-stub-module-ids)
-              index)
-            importer-module-id)
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                lazy-import-stub-alias-ids)
-              index)
-            alias-id)
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                lazy-import-stub-target-ids)
-              index)
-            target-module-id)
-          (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                lazy-import-stub-summary-backed)
-              index)
-            summary-backed)
-          (tc-lazy-import-stub-index-record!
-            index
-            importer-module-id
-            alias-id
-            target-module-id)
-          (set! tc-lazy-import-stub-record-count (+ index 1))))
-      unit)
-    (if summary-backed
-      (set!
-        tc-lazy-import-summary-backed-count
-        (+ tc-lazy-import-summary-backed-count 1))
-      unit)
-    (tc-job-state-reset-derived-caches! job-state)))
-
-(define (tc-lazy-import-stub-target-indexed
-  [importer-module-id : i64]
-  [alias-id : i64]) : TcMaybeNameId
-  (begin
-    (tc-lazy-import-stubs-ensure!)
-    (let
-      [slot : i64 (tc-lazy-import-stub-index-slot importer-module-id alias-id)]
-      (if (< slot 0)
-        (TcMaybeNameId.No)
+  (let
+    [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import macro-state)]
+    [_ready : unit
+      (tc-lazy-import-stubs-ensure-for-state! macro-state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    (begin
+      (if (< data.record-count tc-lazy-import-stub-capacity)
         (let
-          [entry : i64
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                lazy-import-stub-index-slots)
-              slot)]
-          (if (= entry 0)
-            (TcMaybeNameId.No)
-            (TcMaybeNameId.Some
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  lazy-import-stub-target-ids)
-                (- entry 1)))))))))
+          [index : i64 data.record-count]
+          (begin
+            (set! (array-ref data.module-ids index) importer-module-id)
+            (set! (array-ref data.alias-ids index) alias-id)
+            (set! (array-ref data.target-ids index) target-module-id)
+            (set! (array-ref data.summary-backed index) summary-backed)
+            (tc-lazy-import-stub-index-record!
+              lazy-state
+              index
+              importer-module-id
+              alias-id
+              target-module-id)
+            (set! data.record-count (+ index 1))))
+        unit)
+      (if summary-backed
+        (set! data.summary-backed-count (+ data.summary-backed-count 1))
+        unit)
+      (tc-lazy-import-state-data-set! lazy-state data)
+      (tc-job-state-reset-derived-caches! job-state))))
 
-(define (tc-lazy-import-stub-target-id
+(define (tc-lazy-import-stub-target-indexed-for-state
+  [state : TcMacroState]
   [importer-module-id : i64]
   [alias-id : i64]) : TcMaybeNameId
-  (tc-lazy-import-stub-target-indexed importer-module-id alias-id))
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    [slot : i64
+      (tc-lazy-import-stub-index-slot-for-data
+        (& data)
+        importer-module-id
+        alias-id)]
+    (if (< slot 0)
+      (TcMaybeNameId.No)
+      (let
+        [entry : i64 (array-ref data.index-slots slot)]
+        (if (= entry 0)
+          (TcMaybeNameId.No)
+          (TcMaybeNameId.Some (array-ref data.target-ids (- entry 1))))))))
+
+(define (tc-lazy-import-stub-target-id-for-state
+  [state : TcMacroState]
+  [importer-module-id : i64]
+  [alias-id : i64]) : TcMaybeNameId
+  (tc-lazy-import-stub-target-indexed-for-state
+    state
+    importer-module-id
+    alias-id))
 
 ;; Lazy loading retains macro bodies in surface summaries without flattening
 ;; the defining module's import markers into the active program. Preserve that
@@ -22411,7 +22438,8 @@
               (let
                 [alias-id : i64 (ci.intern alias)]
                 [target-module-id : i64 (ci.intern target-module)]
-                (match (tc-lazy-import-stub-target-indexed
+                (match (tc-lazy-import-stub-target-indexed-for-state
+                  (tc-job-state-macro-state job-state)
                   import-edge.module
                   alias-id)
                   [(TcMaybeNameId.Some existing-target)
@@ -22464,59 +22492,54 @@
 ;; concrete recorded target that exports the requested type resolves to the
 ;; same symbol handle; otherwise preserve the ordinary unresolved result.
 (define (tc-lazy-import-unique-type-key-id
+  [state : TcMacroState]
   [symbols : csym.CompilerSymbols]
   [alias-id : i64]
   [base-id : i64]) : TcMaybeNameId
-  (begin
-    (tc-lazy-import-stubs-ensure!)
-    (let
-      [index : i64 (- tc-lazy-import-stub-record-count 1)]
-      [found-key : i64 -1]
-      [found-handle : i64 -1]
-      [ambiguous : bool false]
-      (begin
-        (while (and (not ambiguous) (>= index 0))
-          (let
-            [stub-alias-id : i64
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  lazy-import-stub-alias-ids)
-                index)]
-            [target-id : i64
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  lazy-import-stub-target-ids)
-                index)]
-            (begin
-              (if (and (= stub-alias-id alias-id) (not (= target-id alias-id)))
-                (let
-                  [key-id : i64
-                    (csym.compiler-symbol-module-key-id-by-id target-id base-id)]
-                  [handle : i64
-                    (csym.compiler-symbols-lookup-type-id-or symbols key-id -1)]
-                  (if (csym.compiler-symbols-handle-found? handle)
-                    (if (< found-handle 0)
-                      (begin
-                        (set! found-key key-id)
-                        (set! found-handle handle))
-                      (if (= handle found-handle)
-                        unit
-                        (set! ambiguous true)))
-                    unit))
-                unit)
-              (set! index (- index 1)))))
-        (if (and (not ambiguous) (>= found-handle 0))
-          (TcMaybeNameId.Some found-key)
-          (TcMaybeNameId.No))))))
+  (let
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    [index : i64 (- data.record-count 1)]
+    [found-key : i64 -1]
+    [found-handle : i64 -1]
+    [ambiguous : bool false]
+    (begin
+      (while (and (not ambiguous) (>= index 0))
+        (let
+          [stub-alias-id : i64 (array-ref data.alias-ids index)]
+          [target-id : i64 (array-ref data.target-ids index)]
+          (begin
+            (if (and (= stub-alias-id alias-id) (not (= target-id alias-id)))
+              (let
+                [key-id : i64
+                  (csym.compiler-symbol-module-key-id-by-id target-id base-id)]
+                [handle : i64
+                  (csym.compiler-symbols-lookup-type-id-or symbols key-id -1)]
+                (if (csym.compiler-symbols-handle-found? handle)
+                  (if (< found-handle 0)
+                    (begin
+                      (set! found-key key-id)
+                      (set! found-handle handle))
+                    (if (= handle found-handle)
+                      unit
+                      (set! ambiguous true)))
+                  unit))
+              unit)
+            (set! index (- index 1)))))
+      (if (and (not ambiguous) (>= found-handle 0))
+        (TcMaybeNameId.Some found-key)
+        (TcMaybeNameId.No)))))
 
 (define (tc-source-dotted-alias-target-id
   [state : TcMacroState]
   [decls : ast.AstDeclList]
   [current-module-id : i64]
   [alias-id : i64]) : TcMaybeNameId
-  (match (tc-lazy-import-stub-target-id current-module-id alias-id)
+  (match (tc-lazy-import-stub-target-id-for-state
+    state
+    current-module-id
+    alias-id)
     [(TcMaybeNameId.Some target-module-id)
       (if (= target-module-id alias-id)
         (macro-import-alias-target-cached-id
@@ -22537,7 +22560,10 @@
   [decls : ast.AstDeclList]
   [current-module-id : i64]
   [alias-id : i64]) : TcMaybeNameId
-  (match (tc-lazy-import-stub-target-id current-module-id alias-id)
+  (match (tc-lazy-import-stub-target-id-for-state
+    (tc-context-macro-state ctx)
+    current-module-id
+    alias-id)
     [(TcMaybeNameId.Some target-module-id)
       (if (= target-module-id alias-id)
         (macro-import-alias-target-cached-id-in-context
@@ -23938,6 +23964,7 @@
                             (= target-module-id alias-id))
                             option_i64.None
                             (match (tc-lazy-import-unique-type-key-id
+                              (tc-context-macro-state ctx)
                               symbols
                               alias-id
                               base-id)
@@ -23956,6 +23983,7 @@
                         [(option_i64.Some _) (option_i64.Some key-id)]
                         [(option_i64.None)
                           (match (tc-lazy-import-unique-type-key-id
+                            (tc-context-macro-state ctx)
                             symbols
                             alias-id
                             base-id)
@@ -67381,19 +67409,6 @@
             (set! remaining (- remaining 1)))))
       out)))
 
-(define (tc-moved-path-kind-hash [kind : TcMovedPathKind]) : i64
-  (match kind
-    [(TcMovedPathKind.Move) 1]
-    [(TcMovedPathKind.BorrowShared) 2]
-    [(TcMovedPathKind.BorrowMut) 3]
-    [(TcMovedPathKind.BorrowTwoPhaseMut) 4]
-    [(TcMovedPathKind.BorrowLending binding-id)
-      (tc-move-path-hash-combine 5 binding-id)]
-    [(TcMovedPathKind.BorrowLendingUsed binding-id)
-      (tc-move-path-hash-combine 6 binding-id)]
-    [(TcMovedPathKind.BorrowPending scope-id)
-      (tc-move-path-hash-combine 7 scope-id)]))
-
 (define (tc-moved-path-fact-new
   [path : TcMovePath]
   [kind : TcMovedPathKind]
@@ -75756,20 +75771,6 @@
       (tc-closure-call-capability-mut)
       (tc-closure-call-capability-shared))))
 
-(define (tc-lambda-call-capability-fallback
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [params : ast.AstParamList]
-  [body : ast.AstExpr]) : i64
-  (tc-lambda-call-capability-fallback-with-locals
-    ctx
-    expr-bases
-    env
-    (tc-moved-empty)
-    params
-    body))
-
 (define (tc-lambda-call-capability-with-locals
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -75857,24 +75858,6 @@
     (tc-moved-empty)
     params
     body-id))
-
-(define (tc-lambda-init-call-capability-with-locals
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [init : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan init)
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda params _ body-box)
-          (tc-lambda-call-capability-with-locals ctx env locals params body-box)])]
-    [_ (tc-closure-call-capability-shared)]))
-
-(define (tc-lambda-init-call-capability
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [init : ast.AstExpr]) : i64
-  (tc-lambda-init-call-capability-with-locals ctx env (tc-moved-empty) init))
 
 (define (tc-lambda-init-local-fact-code
   [ctx : TcContext]
@@ -76887,73 +76870,6 @@
           [_ false]))
         true
         (tc-borrow-check-pending-path-at? (__tl-box-place rest) path))]))
-
-(define (tc-borrow-check-add-pending-markers-at
-  [expr-bases : i64]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [scope-id : i64]
-  [facts : TcMovedPathFacts]
-  [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [path : TcMovePath fact.path]
-        [out2 : TcMovedSet
-          (match fact.kind
-            [(TcMovedPathKind.BorrowLending binding-id)
-              (if (or
-                (tc-expr-list-uses-free-name?
-                  expr-bases
-                  exprs
-                  (tc-env-key-name-text binding-id)
-                  TcStringList.Nil)
-                (tc-borrow-check-lifetime-used-in-exprs?
-                  expr-bases
-                  ctx
-                  env
-                  locals
-                  exprs
-                  (tc-borrow-check-path-lifetime ctx env path)))
-                (tc-moved-add-path-fact
-                  out
-                  path
-                  (TcMovedPathKind.BorrowPending scope-id)
-                  (tc-moved-path-fact-origin fact))
-                out)]
-            [_ out])]
-        (tc-borrow-check-add-pending-markers-at
-          expr-bases
-          ctx
-          env
-          locals
-          exprs
-          scope-id
-          (__tl-box-place rest)
-          out2))]))
-
-(define (tc-borrow-check-add-pending-markers
-  [expr-bases : i64]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [locals : TcMovedSet]
-  [borrowed : TcMovedSet]
-  [exprs : ast.AstExprList]
-  [scope-id : i64]) : TcMovedSet
-  (if (or (ast.ast-expr-list-empty? (& exprs)) (= (tc-moved-len borrowed) 0))
-    borrowed
-    (tc-borrow-check-add-pending-markers-at
-      expr-bases
-      ctx
-      env
-      locals
-      exprs
-      scope-id
-      (tc-moved-paths borrowed)
-      borrowed)))
 
 ;; Sequence walkers do not need to scan their full remaining syntax eagerly.
 ;; Guard every lending borrow while a later sibling exists; if the current
@@ -84783,119 +84699,6 @@
         [(csym.ResultCompilerSymbols.Err _) false]))
     false))
 
-;; A direct generated declaration splice is safe to rebase when it has only a
-;; positional registry effect. Imports can add aliases and macro definitions
-;; change the hoisted macro namespace, so both retain the full-rebuild path.
-;; Keep this an explicit whitelist: a future declaration form must opt in only
-;; after proving that registry remapping preserves its semantics.
-(define (macro-decl-registry-incremental-safe? [decl : ast.AstDecl]) : bool
-  (match decl
-    [(ast.AstDecl.Def decl-meta _ _ _) true]
-    [(ast.AstDecl.DefFn decl-meta _ _ _ _ _) true]
-    [(ast.AstDecl.Extern decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefEnum decl-meta _ _ _) true]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefStruct decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
-    [(ast.AstDecl.DefDispatch decl-meta _ _) true]
-    [(ast.AstDecl.Test _ _ _) true]
-    [(ast.AstDecl.Import decl-meta _) false]
-    [(ast.AstDecl.IncludeStr _ _) false]
-    [(ast.AstDecl.IncludeStrComptime _ _) false]
-    [(ast.AstDecl.IncludeStrLzss _ _) false]
-    [(ast.AstDecl.IncludeBin _ _) false]
-    [(ast.AstDecl.DefMacro decl-meta _ _ _ _) false]
-    [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-registry-incremental-safe? (__tl-box-place inner-box))]
-    [_ false]))
-
-(define (macro-decls-registry-incremental-safe? [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) true]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (and
-        (macro-decl-registry-incremental-safe? decl)
-        (macro-decls-registry-incremental-safe? rest))]))
-
-;; An existing unqualified import aliases every nominal member of its target
-;; module. If a generated splice adds a member to that target, repairing only
-;; direct registry entries would leave the import alias stale, so retain the
-;; established whole-registry rebuild in that case.
-(define (macro-decl-has-unqualified-import-of-module?
-  [decl : ast.AstDecl]
-  [module-id : i64]) : bool
-  (match decl
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec
-          _
-          _
-          (ast.AstMaybeModuleName.Some target-module)
-          (ast.AstMaybeImportAlias.Some alias)
-          _))
-      (and
-        (= target-module module-id)
-        (= alias cbi.compiler-builtin-id-fix-empty))]
-    [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-has-unqualified-import-of-module?
-        (__tl-box-place inner-box)
-        module-id)]
-    [(ast.AstDecl.ModuleBody _ body-box)
-      (macro-decls-have-unqualified-import-of-module?
-        (__tl-box-place body-box)
-        module-id)]
-    [_ false]))
-
-;; Index cursor rather than `ast-decl-list-step`. The list is already a flat
-;; array slice, so the step's 104 B row copy and 144 B result exist only to give
-;; the walk a cons shape; the backing slot is handed to the per-declaration
-;; predicate directly, which costs nothing (aggregate arguments are passed by
-;; reference).
-(define (macro-decls-have-unqualified-import-of-module?
-  [decls : ast.AstDeclList]
-  [module-id : i64]) : bool
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-    [decl-offset : i64 decls.offset]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (begin
-          (if (macro-decl-has-unqualified-import-of-module?
-            (array-ref decl-slots (+ decl-offset index))
-            module-id)
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
-
-;; Rebase the cached registry across an additive non-module splice that still
-;; takes the fresh-symbol fallback. Generated modules use the append companion
-;; below so symbol and registry owner handles share one stable index space.
-(define (macro-live-registries-insert-decls!
-  [state : TcMacroState]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [insertion-index : i64]
-  [module-id : i64]) : bool
-  (match (csym.compiler-registries-insert-decls
-    (macro-live-registries-shared-view state)
-    decls
-    paths
-    insertion-index
-    module-id)
-    [(csym.ResultCompilerRegistries.Ok registries)
-      (begin
-        (set!
-          (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
-          registries)
-        (tc-macro-walk-set! state macro-live-registries-ready true)
-        (tc-macro-walk-set! state macro-live-registries-fallback false)
-        true)]
-    [(csym.ResultCompilerRegistries.Err _) false]))
-
 (define (macro-live-registries-append-decls!
   [state : TcMacroState]
   [decls : ast.AstDeclList]
@@ -89782,14 +89585,6 @@
         (macro-collect-module-body-decls decls target-module ""))
       (MacroMaybeDeclList.No))))
 
-(define (macro-find-module-body-decls
-  [decls : ast.AstDeclList]
-  [target-module : String]) : MacroMaybeDeclList
-  (if (macro-module-exists? decls target-module)
-    (MacroMaybeDeclList.Some
-      (macro-collect-module-body-decls decls target-module ""))
-    (MacroMaybeDeclList.No)))
-
 (define (macro-generated-identity-shortcut-safe-params?
   [ctx : TcContext]
   [definition-module : String]
@@ -91976,6 +91771,7 @@
           (tc-macro-surface-call-state-data-set! state cache))))))
 
 (define (macro-surface-decl-call-decl-in-module
+  [state : TcMacroState]
   [decl : cload.CompilerLoadSurfaceDecl]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
@@ -91988,7 +91784,7 @@
     (match decl.signature
       [(CompilerLoadSurfaceMacroSignature params ret body-box)
         (begin
-          (tc-lazy-import-summary-macro-force-record!)
+          (tc-lazy-import-summary-macro-force-record-for-state! state)
           (MacroMaybeDecl.Some
             decl.name
             decl.module
@@ -92000,6 +91796,7 @@
     (MacroMaybeDecl.No)))
 
 (define (macro-surface-decls-call-decl-in-module
+  [state : TcMacroState]
   [decls : cload.CompilerLoadSurfaceDeclList]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
@@ -92008,6 +91805,7 @@
     (begin
       (while (< index (cload.compiler-load-surface-decl-list-count decls))
         (match (macro-surface-decl-call-decl-in-module
+          state
           (cload.compiler-load-surface-decl-list-at decls index)
           target-module-id
           base-id)
@@ -92030,6 +91828,7 @@
       (MacroMaybeDecl.No))))
 
 (define (macro-surface-summaries-call-decl-in-module
+  [state : TcMacroState]
   [summaries : cload.CompilerLoadSurfaceSummaryList]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
@@ -92040,6 +91839,7 @@
         index
         (cload.compiler-load-surface-summary-list-count summaries))
         (match (macro-surface-decls-call-decl-in-module
+          state
           (__tl-project-field
             (cload.compiler-load-surface-summary-list-at summaries index)
             decls)
@@ -92070,6 +91870,7 @@
   (let
     [result : MacroMaybeDecl
       (match (macro-surface-summaries-call-decl-in-module
+        state
         (cload.compiler-load-surface-summaries)
         target-module-id
         base-id)
@@ -93171,6 +92972,7 @@
           owner-module-id)))))
 
 (define (macro-hygiene-global-name-id
+  [state : TcMacroState]
   [source-name-id : i64]
   [hygiene : MacroHygieneContext]) : i64
   (let
@@ -93214,7 +93016,10 @@
           (macro-hygiene-global-id full-binding-owner-module-id final-id false)
           (if (or (< alias-id 0) (< tail-id 0))
             source-name-id
-            (match (tc-lazy-import-stub-target-id lookup-module-id alias-id)
+            (match (tc-lazy-import-stub-target-id-for-state
+              state
+              lookup-module-id
+              alias-id)
               [(TcMaybeNameId.Some target-module-id)
                 (let
                   [binding-owner-module-id : i64
@@ -93283,7 +93088,10 @@
                         (< (tc-name-first-dot-id source-name-id) 0)
                         (macro-hygiene-env-has-output-flat-import? env))
                         source-name-id
-                        (macro-hygiene-global-name-id source-name-id macro-name))))))]))
+                        (macro-hygiene-global-name-id
+                          env.state
+                          source-name-id
+                          macro-name))))))]))
         name-id)]
     result))
 
@@ -95713,19 +95521,21 @@
       (ast.ast-node-pool-context-expr-push
         pools-b
         (ast.AstExpr.TypeLiteral type-b))]
-    [hygiene : MacroHygieneContext
+    [hygiene-a : MacroHygieneContext
+      (MacroHygieneContext 0 0 0 (csym.compiler-symbols-empty))]
+    [hygiene-b : MacroHygieneContext
       (MacroHygieneContext 0 0 0 (csym.compiler-symbols-empty))]
     [out-a : i64
       (macro-hygiene-produced-expr
         root-a
         (macro-hygiene-env-empty state-a pools-a)
-        hygiene
+        hygiene-a
         0)]
     [out-b : i64
       (macro-hygiene-produced-expr
         root-b
         (macro-hygiene-env-empty state-b pools-b)
-        hygiene
+        hygiene-b
         0)]
     [a-ok? : bool
       (match (ast.ast-node-pool-context-expr-get pools-a out-a)
@@ -96440,36 +96250,6 @@
           0)
         (=
           (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-module-ids))
-          0)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-alias-ids))
-          0)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-target-ids))
-          0)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-summary-backed))
-          0)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-index-slots))
-          0)
-        (=
-          (array-length
             (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
           0)
         (= (array-length (tc-macro-proof-field proof-state qualified-keys)) 0))]
@@ -96480,7 +96260,6 @@
     [_size : unit (tc-agg-size-cache-storage-ensure!)]
     [_align : unit (tc-agg-align-cache-storage-ensure!)]
     [_regwords : unit (tc-agg-regwords-cache-storage-ensure!)]
-    [_lazy-import : unit (tc-lazy-import-stub-storage-ensure!)]
     [_layout : unit (tc-agg-layout-cache-table-storage-ensure!)]
     [_macro-proof : unit
       (tc-macro-abstract-proof-qualified-key-storage-ensure! proof-state)]
@@ -96505,36 +96284,6 @@
           (array-length
             (__tl-project-field tc-lazy-global-table-state agg-regwords-cache))
           tc-agg-scalar-cache-capacity)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-module-ids))
-          tc-lazy-import-stub-capacity)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-alias-ids))
-          tc-lazy-import-stub-capacity)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-target-ids))
-          tc-lazy-import-stub-capacity)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-summary-backed))
-          tc-lazy-import-stub-capacity)
-        (=
-          (array-length
-            (__tl-project-field
-              tc-lazy-global-table-state
-              lazy-import-stub-index-slots))
-          tc-lazy-import-stub-capacity)
         (=
           (array-length
             (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
@@ -96571,13 +96320,6 @@
         37)
       (set!
         (array-ref
-          (__tl-project-field
-            tc-lazy-global-table-state
-            lazy-import-stub-module-ids)
-          0)
-        41)
-      (set!
-        (array-ref
           (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
           0)
         (TcAggLayoutCacheSlot.Empty))
@@ -96611,13 +96353,6 @@
                   agg-regwords-cache)
                 0)
               37)
-            (=
-              (array-ref
-                (__tl-project-field
-                  tc-lazy-global-table-state
-                  lazy-import-stub-module-ids)
-                0)
-              41)
             (match (tc-global-array-element-shared-view
               (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
               0)
@@ -96650,13 +96385,6 @@
               0)
             0)
           (set!
-            (array-ref
-              (__tl-project-field
-                tc-lazy-global-table-state
-                lazy-import-stub-module-ids)
-              0)
-            0)
-          (set!
             (array-ref (tc-macro-proof-field proof-state qualified-keys) 0)
             "")
           (let
@@ -96671,6 +96399,155 @@
               survived?
               unused-unsafe-lifetime?
               unused-unsafe-isolation?)))))))
+
+;; Same numeric importer/alias IDs belong to different intern owners here.
+;; Allocate both tables while an unrelated scratch arena is active, then prove
+;; that A-only reset and generation invalidation leave B's lookup and counters
+;; intact after that scratch arena has been destroyed.
+(cfg
+  test
+  (test
+    lazy-import-state-isolation
+    (let
+      [caller : arena.Arena (arena.current)]
+      [installed-table-id : i64 (ci.intern-active-table-id)]
+      [installed-generation : i64 (ci.intern-generation)]
+      [job-a : TcJobState (tc-job-state-new)]
+      [job-b : TcJobState (tc-job-state-new)]
+      [state-a : TcMacroState (tc-job-state-macro-state job-a)]
+      [state-b : TcMacroState (tc-job-state-macro-state job-b)]
+      [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [importer-a : i64 (ci.intern-compat-state-intern intern-a "importer")]
+      [alias-a : i64 (ci.intern-compat-state-intern intern-a "alias")]
+      [target-a : i64 (ci.intern-compat-state-intern intern-a "target-a")]
+      [importer-b : i64 (ci.intern-compat-state-intern intern-b "importer")]
+      [alias-b : i64 (ci.intern-compat-state-intern intern-b "alias")]
+      [_filler-b : i64 (ci.intern-compat-state-intern intern-b "filler")]
+      [target-b : i64 (ci.intern-compat-state-intern intern-b "target-b")]
+      [_bind-a : unit
+        (tc-macro-state-bind-source-names!
+          state-a
+          (ci.intern-source-name-session-handle-from-state intern-a))]
+      [_bind-b : unit
+        (tc-macro-state-bind-source-names!
+          state-b
+          (ci.intern-source-name-session-handle-from-state intern-b))]
+      [initially-lazy? : bool
+        (and
+          (=
+            (tc-macro-state-slot-address
+              state-a
+              tc-macro-state-slot-lazy-import)
+            0)
+          (=
+            (tc-macro-state-slot-address
+              state-b
+              tc-macro-state-slot-lazy-import)
+            0))]
+      [scratch : arena.Arena (arena.make)]
+      (begin
+        (unsafe
+          (arena.set! scratch))
+        (tc-lazy-import-stub-record-for-job!
+          job-a
+          importer-a
+          alias-a
+          target-a
+          true)
+        (tc-lazy-import-summary-macro-force-record-for-state! state-a)
+        (tc-lazy-import-summary-macro-force-record-for-state! state-a)
+        (tc-lazy-import-stub-record-for-job!
+          job-b
+          importer-b
+          alias-b
+          target-b
+          false)
+        (tc-lazy-import-summary-macro-force-record-for-state! state-b)
+        (unsafe
+          (arena.set! caller))
+        (unsafe
+          (arena.destroy scratch))
+        (let
+          [lazy-a : TcLazyImportState (tc-job-state-lazy-import job-a)]
+          [lazy-b : TcLazyImportState (tc-job-state-lazy-import job-b)]
+          [data-a : TcLazyImportStateData (tc-lazy-import-state-data lazy-a)]
+          [data-b : TcLazyImportStateData (tc-lazy-import-state-data lazy-b)]
+          [before-reset? : bool
+            (and
+              initially-lazy?
+              (not (= lazy-a.address lazy-b.address))
+              (= (array-length data-a.index-slots) tc-lazy-import-stub-capacity)
+              (= (array-length data-b.index-slots) tc-lazy-import-stub-capacity)
+              (= importer-a importer-b)
+              (= alias-a alias-b)
+              (not (= target-a target-b))
+              (= (tc-lazy-import-stub-count-for-state state-a) 1)
+              (= (tc-lazy-import-stub-count-for-state state-b) 1)
+              (= (tc-lazy-import-summary-backed-stub-count-for-state state-a) 1)
+              (= (tc-lazy-import-summary-backed-stub-count-for-state state-b) 0)
+              (= (tc-lazy-import-summary-macro-force-count-for-state state-a) 2)
+              (= (tc-lazy-import-summary-macro-force-count-for-state state-b) 1)
+              (match (tc-lazy-import-stub-target-id-for-state
+                state-a
+                importer-a
+                alias-a)
+                [(TcMaybeNameId.Some target) (= target target-a)]
+                [(TcMaybeNameId.No) false])
+              (match (tc-lazy-import-stub-target-id-for-state
+                state-b
+                importer-b
+                alias-b)
+                [(TcMaybeNameId.Some target) (= target target-b)]
+                [(TcMaybeNameId.No) false]))]
+          (begin
+            (tc-lazy-import-stubs-reset-for-job! job-a)
+            (let
+              [a-reset-b-intact? : bool
+                (and
+                  (= (tc-lazy-import-stub-count-for-state state-a) 0)
+                  (=
+                    (tc-lazy-import-summary-backed-stub-count-for-state state-a)
+                    0)
+                  (=
+                    (tc-lazy-import-summary-macro-force-count-for-state state-a)
+                    0)
+                  (match (tc-lazy-import-stub-target-id-for-state
+                    state-a
+                    importer-a
+                    alias-a)
+                    [(TcMaybeNameId.Some _) false]
+                    [(TcMaybeNameId.No) true])
+                  (= (tc-lazy-import-stub-count-for-state state-b) 1)
+                  (=
+                    (tc-lazy-import-summary-macro-force-count-for-state state-b)
+                    1)
+                  (match (tc-lazy-import-stub-target-id-for-state
+                    state-b
+                    importer-b
+                    alias-b)
+                    [(TcMaybeNameId.Some target) (= target target-b)]
+                    [(TcMaybeNameId.No) false]))]
+              (begin
+                (tc-lazy-import-stub-record-for-job!
+                  job-a
+                  importer-a
+                  alias-a
+                  target-a
+                  false)
+                (ci.intern-compat-state-reset! intern-a)
+                (tc-macro-state-bind-source-names!
+                  state-a
+                  (ci.intern-source-name-session-handle-from-state intern-a))
+                (if (and
+                  before-reset?
+                  a-reset-b-intact?
+                  (= (tc-lazy-import-stub-count-for-state state-a) 0)
+                  (= (tc-lazy-import-stub-count-for-state state-b) 1)
+                  (= (ci.intern-active-table-id) installed-table-id)
+                  (= (ci.intern-generation) installed-generation))
+                  unit
+                  (io.panic "typecheck: lazy import state isolation failed"))))))))))
 
 (define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
   (cast
@@ -98248,7 +98125,8 @@
         (macro-alias-cache-get state current-module-id qualifier-id)]
       (cond
         [(= cached -3)
-          (match (tc-lazy-import-stub-target-indexed
+          (match (tc-lazy-import-stub-target-indexed-for-state
+            state
             current-module-id
             qualifier-id)
             [(TcMaybeNameId.Some target-id)
@@ -98263,7 +98141,8 @@
                 (TcMaybeNameId.Some target-id))]
             [(TcMaybeNameId.No) (TcMaybeNameId.Some qualifier-id)])]
         [(= cached -2)
-          (match (tc-lazy-import-stub-target-indexed
+          (match (tc-lazy-import-stub-target-indexed-for-state
+            state
             current-module-id
             qualifier-id)
             [(TcMaybeNameId.Some target-id)
@@ -98302,7 +98181,8 @@
                     (TcMaybeNameId.No))])])]
         [(< cached 0) (TcMaybeNameId.No)]
         [(= cached qualifier-id)
-          (match (tc-lazy-import-stub-target-indexed
+          (match (tc-lazy-import-stub-target-indexed-for-state
+            state
             current-module-id
             qualifier-id)
             [(TcMaybeNameId.Some target-id)
@@ -107937,13 +107817,6 @@
     [(MacroMaybeGeneratedNormalImport.Some _ _ _ _ _ _) true]
     [(MacroMaybeGeneratedNormalImport.No) false]))
 
-(define (macro-decls-start-with-module-import-placeholder?
-  [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Cons decl _)
-      (macro-decl-module-import-placeholder? decl)]
-    [(ast.AstDeclListStep.Nil) false]))
-
 ;; The single demand-driven expansion walk. Every macro placeholder is expanded
 ;; and its splice forced inline: the walk rebuilds the whole-program
 ;; symbols/env over the spliced view (macro-expand-rebuild-context-for-splice)
@@ -109656,24 +109529,6 @@
     cfgs
     (ci.intern-compat-state-capture-active)))
 
-(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
-  [load-state : cload.CompilerLoadSessionState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
-    load-state
-    program
-    paths
-    pools
-    source-names
-    (tc-serial-job-state)
-    stdlib-roots
-    cfgs))
-
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [job-state : TcJobState]
@@ -109785,22 +109640,6 @@
     stdlib-roots
     cfgs
     intern-state))
-
-(define (macro-expand-then-build-envs-with-load-state
-  [load-state : cload.CompilerLoadSessionState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-then-build-envs-with-load-state-and-job-state
-    load-state
-    (tc-serial-job-state)
-    program
-    paths
-    pools
-    stdlib-roots
-    cfgs))
 
 ;; Serial/test compatibility adapter. Production typecheck jobs call the
 ;; explicit load-state, job-state, and intern-state entry above.
@@ -110580,29 +110419,17 @@
         (set! data.fn-return-arena 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
-(define (tc-fn-scratch-arena-release-after-overflow!
-  [state : TcScratchArenaState]
-  [scratch : i64]
-  [scratch-head : i64]) : unit
-  ;; A nonzero region reset deliberately retires overflow segments so stale
-  ;; unsafe pointers are never remapped. Function-body scratch has no surviving
-  ;; values after clone-out, so destroy the whole arena when a body crossed its
-  ;; first segment; otherwise thousands of checked functions retain one 64 MiB
-  ;; mapping apiece until the end of the compile.
-  (if (= scratch scratch-head)
-    unit
-    (tc-fn-scratch-arena-release! state)))
-
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
 ;; delta) and the check returns only unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
-;; frees it. Run each body check in the shared scratch arena and rewind it
-;; afterwards, cloning the error diagnostic out first (the mark/rewind/
-;; clone-out shape of lower-function-escaping; do NOT re-run the check to
-;; regenerate the message -- the body check is not idempotent and a second
-;; run can surface a different diagnostic). The interner owns new spellings
-;; at insertion, so its entries survive this rewind. Node pools already grow
-;; in the persistent base arena.
+;; frees it. Run each body check through with-escape so the checker sees the
+;; scratch extent and clones the error diagnostic out before rewinding (do NOT
+;; re-run the check to regenerate the message -- the body check is not
+;; idempotent and a second run can surface a different diagnostic). Stable-root
+;; arena handles make a post-growth head recapture redundant; rewind retires
+;; overflow segments itself. The interner owns new spellings at insertion, so
+;; its entries survive this rewind. Node pools already grow in the persistent
+;; base arena.
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
@@ -110613,41 +110440,20 @@
   (let
     [scratch-state : TcScratchArenaState
       (tc-job-state-scratch-arenas (tc-context-job-state ctx))]
-    [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (tc-fn-scratch-arena-get scratch-state)]
+    [escaped : ResultTcUnit
+      (with-escape
+        (arena.Arena scratch)
+        (match (tc-check-fn-decl-body ctx global-env name params ret body-box)
+          [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+          [(ResultTcUnit.Err message)
+            (ResultTcUnit.Err (tc-unbound-finalize-located-error message))]))]
     (begin
-      (unsafe
-        (arena.tl_arena_set scratch))
-      (let
-        [mark : i64 (arena.tl_region_mark)]
-        [raw : ResultTcUnit
-          (tc-check-fn-decl-body ctx global-env name params ret body-box)]
-        [scratch-head : i64 (arena.tl_arena_current)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          (let
-            [escaped : ResultTcUnit
-              (match raw
-                [(ResultTcUnit.Ok) ResultTcUnit.Ok]
-                [(ResultTcUnit.Err message)
-                  (ResultTcUnit.Err
-                    (clone (tc-unbound-finalize-located-error message)))])]
-            [new-enclosing : i64 (arena.tl_arena_current)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set scratch-head)
-                (arena.tl_region_reset mark)
-                (arena.tl_arena_set new-enclosing))
-              (tc-fn-scratch-arena-release-after-overflow!
-                scratch-state
-                scratch
-                scratch-head)
-              ;; Single-entry name caches may hold strings allocated in the
-              ;; scratch that was just rewound; invalidate them before
-              ;; anything can compare against freed memory.
-              (tc-nominal-owner-cache-reset!)
-              escaped)))))))
+      ;; Single-entry name caches may hold strings allocated in the scratch
+      ;; that was just rewound; invalidate them before anything can compare
+      ;; against freed memory.
+      (tc-nominal-owner-cache-reset!)
+      escaped)))
 
 ;; Reusable scratch arena for per-declaration checks that are not function
 ;; bodies (Def values, macros, externs, dispatches, enum/struct declarations).
@@ -110708,14 +110514,14 @@
 ;; Non-function declaration checks pin their transient env layers, CTFE eval
 ;; trees, and partial caches in the persistent arena for the rest of the
 ;; compile even though the check returns only unit. Run each such check in the
-;; shared declaration scratch arena and rewind it afterwards, cloning the error
-;; diagnostic out first (the same shape as tc-check-fn-decl-scoped). State that
-;; must persist is unaffected: env bindings are built by the module-env walk
-;; outside this scope, the interner owns new spellings at insertion, node pools
-;; grow in the persistent base arena, and cross-declaration caches live in
-;; dedicated persistent arenas. The one cross-declaration cache that cannot be
-;; rewound safely, the macro helper env, is rebuilt per declaration instead
-;; (reset at the end of this scope).
+;; shared declaration scratch arena through with-escape, cloning the error
+;; diagnostic out before rewind (the same shape as tc-check-fn-decl-scoped).
+;; State that must persist is unaffected: env bindings are built by the
+;; module-env walk outside this scope, the interner owns new spellings at
+;; insertion, node pools grow in the persistent base arena, and
+;; cross-declaration caches live in dedicated persistent arenas. The one
+;; cross-declaration cache that cannot be rewound safely, the macro helper env,
+;; is rebuilt per declaration instead (reset at the end of this scope).
 (define (tc-check-decl-scoped
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -110731,54 +110537,38 @@
       ;; outer scope already provides the required reclamation boundary.
       (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)
       (let
-        [enclosing : i64 (arena.tl_arena_current)]
         [scratch : i64 (tc-decl-scratch-arena-get scratch-state)]
         (begin
           (tc-decl-scratch-depth-set! scratch-state 1)
-          (unsafe
-            (arena.tl_arena_set scratch))
           (let
-            [mark : i64 (arena.tl_region_mark)]
-            [raw : ResultTcUnit
-              (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)]
-            [scratch-head : i64 (arena.tl_arena_current)]
+            [escaped : ResultTcUnit
+              (with-escape
+                (arena.Arena scratch)
+                (match (tc-check-nonfn-decl-with-global-env
+                  ctx
+                  top-env
+                  global-env
+                  decl)
+                  [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+                  [(ResultTcUnit.Err message)
+                    (ResultTcUnit.Err
+                      (tc-unbound-finalize-located-error message))]))]
             (begin
-              (unsafe
-                (arena.tl_arena_set enclosing))
-              (let
-                [escaped : ResultTcUnit
-                  (match raw
-                    [(ResultTcUnit.Ok) ResultTcUnit.Ok]
-                    [(ResultTcUnit.Err message)
-                      (ResultTcUnit.Err
-                        (clone (tc-unbound-finalize-located-error message)))])]
-                [new-enclosing : i64 (arena.tl_arena_current)]
-                (begin
-                  (unsafe
-                    (arena.tl_arena_set scratch-head)
-                    (arena.tl_region_reset mark)
-                    (arena.tl_arena_set new-enclosing))
-                  (tc-decl-scratch-depth-set!
-                    scratch-state
-                    (- (tc-decl-scratch-depth scratch-state) 1))
-                  (if (and
-                    (= (tc-decl-scratch-depth scratch-state) 0)
-                    (not (= scratch scratch-head)))
-                    (tc-decl-scratch-arena-release! scratch-state)
-                    unit)
-                  ;; Single-entry name caches may hold strings allocated in the
-                  ;; scratch that was just rewound; invalidate them before
-                  ;; anything can compare against freed memory.
-                  (tc-nominal-owner-cache-reset!)
-                  ;; The macro helper env cache persists across declarations, but
-                  ;; its spine is extended with per-check partial cache layers
-                  ;; while a DefMacro body is checked; those layers (and any
-                  ;; rewind-sensitive content reached through them) must not
-                  ;; outlive this declaration, so rebuild the cache per
-                  ;; declaration inside the scratch scope.
-                  (tc-macro-helper-env-cache-reset!
-                    (tc-context-macro-state ctx))
-                  escaped)))))))))
+              (tc-decl-scratch-depth-set!
+                scratch-state
+                (- (tc-decl-scratch-depth scratch-state) 1))
+              ;; Single-entry name caches may hold strings allocated in the
+              ;; scratch that was just rewound; invalidate them before anything
+              ;; can compare against freed memory.
+              (tc-nominal-owner-cache-reset!)
+              ;; The macro helper env cache persists across declarations, but
+              ;; its spine is extended with per-check partial cache layers while
+              ;; a DefMacro body is checked; those layers (and any
+              ;; rewind-sensitive content reached through them) must not outlive
+              ;; this declaration, so rebuild the cache per declaration inside
+              ;; the scratch scope.
+              (tc-macro-helper-env-cache-reset! (tc-context-macro-state ctx))
+              escaped)))))))
 
 (define (tc-scratch-arena-state-isolation-self-test) : bool
   (let
@@ -112503,28 +112293,6 @@
         (ResultCompilerTypecheckChecked.Err
           (cdiag.compiler-diagnostic-list-box-single diag))])))
 
-;; Serial/test compatibility adapter. Production jobs pass both explicit state
-;; values to the entry above.
-(cfg
-  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
-    [program : ast.AstProgram]
-    [paths : ast.AstDeclPathList]
-    [stdlib-roots : svec.Vec]
-    [cache-scope : String]
-    [pools : ast.AstNodePoolContext]
-    [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
-    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
-      (cload.compiler-load-serial-test-session-state)
-      (tc-prefix-snapshot-serial-test-cache-state-shared-view)
-      (tc-serial-job-state)
-      program
-      paths
-      stdlib-roots
-      cache-scope
-      pools
-      source-names)))
-
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
@@ -112592,30 +112360,6 @@
             (tc-body-early-exit-facts-abort! body-state)
             (ResultCompilerTypecheckChecked.Err diag))]))))
 
-;; Serial/test compatibility adapter. Production callers pass the explicit
-;; intern state to the entry above; this adapter snapshots the active table.
-(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
-  [load-state : cload.CompilerLoadSessionState]
-  [prefix-cache : TcPrefixSnapshotCacheState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
-  (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
-    load-state
-    prefix-cache
-    job-state
-    program
-    paths
-    stdlib-roots
-    cache-scope
-    pools
-    source-names
-    (ci.intern-compat-state-capture-active)))
-
 (define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
@@ -112674,7 +112418,7 @@
       (macro-live-symbols-reset! macro-state)
       (macro-live-prescan-reset! macro-state)
       (tc-hygiene-clear-active-top-env! macro-state)
-      (set! tc-lazy-import-summary-macro-force-record-count 0)
+      (tc-lazy-import-summary-macro-force-reset-for-state! macro-state)
       (ctfe_support.ctfe-module-macro-export-reset-for-state!
         (tc-macro-ctfe-state macro-state))
       (ctfe_support.ctfe-module-value-reflection-enable-for-state!
@@ -112711,7 +112455,7 @@
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
       (tc-unqualified-import-ambiguity-reset!)
       (macro-alias-derived-cache-reset-for-state! macro-state)
-      (tc-lazy-import-stubs-reset!)
+      (tc-lazy-import-stubs-reset-for-job! job-state)
       (cload.compiler-load-surface-summaries-reset!)
       (ctfe_support.ctfe-build-seen-reset!)
       (tc-hygiene-clear-active-top-env! macro-state)
@@ -112721,7 +112465,7 @@
       (compiler-typecheck-ctfe-env-cache-clear! macro-state)
       (macro-live-symbols-reset! macro-state)
       (macro-live-prescan-reset! macro-state)
-      (set! tc-lazy-import-summary-macro-force-record-count 0)
+      (tc-lazy-import-summary-macro-force-reset-for-state! macro-state)
       (ctfe_support.ctfe-module-macro-export-reset-for-state!
         (tc-macro-ctfe-state macro-state))
       (ctfe_support.ctfe-module-value-reflection-enable-for-state!

@@ -110946,29 +110946,17 @@
         (set! data.fn-return-arena 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
-(define (tc-fn-scratch-arena-release-after-overflow!
-  [state : TcScratchArenaState]
-  [scratch : i64]
-  [scratch-head : i64]) : unit
-  ;; A nonzero region reset deliberately retires overflow segments so stale
-  ;; unsafe pointers are never remapped. Function-body scratch has no surviving
-  ;; values after clone-out, so destroy the whole arena when a body crossed its
-  ;; first segment; otherwise thousands of checked functions retain one 64 MiB
-  ;; mapping apiece until the end of the compile.
-  (if (= scratch scratch-head)
-    unit
-    (tc-fn-scratch-arena-release! state)))
-
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
 ;; delta) and the check returns only unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
-;; frees it. Run each body check in the shared scratch arena and rewind it
-;; afterwards, cloning the error diagnostic out first (the mark/rewind/
-;; clone-out shape of lower-function-escaping; do NOT re-run the check to
-;; regenerate the message -- the body check is not idempotent and a second
-;; run can surface a different diagnostic). The interner owns new spellings
-;; at insertion, so its entries survive this rewind. Node pools already grow
-;; in the persistent base arena.
+;; frees it. Run each body check through with-escape so the checker sees the
+;; scratch extent and clones the error diagnostic out before rewinding (do NOT
+;; re-run the check to regenerate the message -- the body check is not
+;; idempotent and a second run can surface a different diagnostic). Stable-root
+;; arena handles make a post-growth head recapture redundant; rewind retires
+;; overflow segments itself. The interner owns new spellings at insertion, so
+;; its entries survive this rewind. Node pools already grow in the persistent
+;; base arena.
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
@@ -110979,41 +110967,20 @@
   (let
     [scratch-state : TcScratchArenaState
       (tc-job-state-scratch-arenas (tc-context-job-state ctx))]
-    [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (tc-fn-scratch-arena-get scratch-state)]
+    [escaped : ResultTcUnit
+      (with-escape
+        (arena.Arena scratch)
+        (match (tc-check-fn-decl-body ctx global-env name params ret body-box)
+          [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+          [(ResultTcUnit.Err message)
+            (ResultTcUnit.Err (tc-unbound-finalize-located-error message))]))]
     (begin
-      (unsafe
-        (arena.tl_arena_set scratch))
-      (let
-        [mark : i64 (arena.tl_region_mark)]
-        [raw : ResultTcUnit
-          (tc-check-fn-decl-body ctx global-env name params ret body-box)]
-        [scratch-head : i64 (arena.tl_arena_current)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          (let
-            [escaped : ResultTcUnit
-              (match raw
-                [(ResultTcUnit.Ok) ResultTcUnit.Ok]
-                [(ResultTcUnit.Err message)
-                  (ResultTcUnit.Err
-                    (clone (tc-unbound-finalize-located-error message)))])]
-            [new-enclosing : i64 (arena.tl_arena_current)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set scratch-head)
-                (arena.tl_region_reset mark)
-                (arena.tl_arena_set new-enclosing))
-              (tc-fn-scratch-arena-release-after-overflow!
-                scratch-state
-                scratch
-                scratch-head)
-              ;; Single-entry name caches may hold strings allocated in the
-              ;; scratch that was just rewound; invalidate them before
-              ;; anything can compare against freed memory.
-              (tc-nominal-owner-cache-reset!)
-              escaped)))))))
+      ;; Single-entry name caches may hold strings allocated in the scratch
+      ;; that was just rewound; invalidate them before anything can compare
+      ;; against freed memory.
+      (tc-nominal-owner-cache-reset!)
+      escaped)))
 
 ;; Reusable scratch arena for per-declaration checks that are not function
 ;; bodies (Def values, macros, externs, dispatches, enum/struct declarations).
@@ -111074,14 +111041,14 @@
 ;; Non-function declaration checks pin their transient env layers, CTFE eval
 ;; trees, and partial caches in the persistent arena for the rest of the
 ;; compile even though the check returns only unit. Run each such check in the
-;; shared declaration scratch arena and rewind it afterwards, cloning the error
-;; diagnostic out first (the same shape as tc-check-fn-decl-scoped). State that
-;; must persist is unaffected: env bindings are built by the module-env walk
-;; outside this scope, the interner owns new spellings at insertion, node pools
-;; grow in the persistent base arena, and cross-declaration caches live in
-;; dedicated persistent arenas. The one cross-declaration cache that cannot be
-;; rewound safely, the macro helper env, is rebuilt per declaration instead
-;; (reset at the end of this scope).
+;; shared declaration scratch arena through with-escape, cloning the error
+;; diagnostic out before rewind (the same shape as tc-check-fn-decl-scoped).
+;; State that must persist is unaffected: env bindings are built by the
+;; module-env walk outside this scope, the interner owns new spellings at
+;; insertion, node pools grow in the persistent base arena, and
+;; cross-declaration caches live in dedicated persistent arenas. The one
+;; cross-declaration cache that cannot be rewound safely, the macro helper env,
+;; is rebuilt per declaration instead (reset at the end of this scope).
 (define (tc-check-decl-scoped
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -111097,54 +111064,38 @@
       ;; outer scope already provides the required reclamation boundary.
       (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)
       (let
-        [enclosing : i64 (arena.tl_arena_current)]
         [scratch : i64 (tc-decl-scratch-arena-get scratch-state)]
         (begin
           (tc-decl-scratch-depth-set! scratch-state 1)
-          (unsafe
-            (arena.tl_arena_set scratch))
           (let
-            [mark : i64 (arena.tl_region_mark)]
-            [raw : ResultTcUnit
-              (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)]
-            [scratch-head : i64 (arena.tl_arena_current)]
+            [escaped : ResultTcUnit
+              (with-escape
+                (arena.Arena scratch)
+                (match (tc-check-nonfn-decl-with-global-env
+                  ctx
+                  top-env
+                  global-env
+                  decl)
+                  [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+                  [(ResultTcUnit.Err message)
+                    (ResultTcUnit.Err
+                      (tc-unbound-finalize-located-error message))]))]
             (begin
-              (unsafe
-                (arena.tl_arena_set enclosing))
-              (let
-                [escaped : ResultTcUnit
-                  (match raw
-                    [(ResultTcUnit.Ok) ResultTcUnit.Ok]
-                    [(ResultTcUnit.Err message)
-                      (ResultTcUnit.Err
-                        (clone (tc-unbound-finalize-located-error message)))])]
-                [new-enclosing : i64 (arena.tl_arena_current)]
-                (begin
-                  (unsafe
-                    (arena.tl_arena_set scratch-head)
-                    (arena.tl_region_reset mark)
-                    (arena.tl_arena_set new-enclosing))
-                  (tc-decl-scratch-depth-set!
-                    scratch-state
-                    (- (tc-decl-scratch-depth scratch-state) 1))
-                  (if (and
-                    (= (tc-decl-scratch-depth scratch-state) 0)
-                    (not (= scratch scratch-head)))
-                    (tc-decl-scratch-arena-release! scratch-state)
-                    unit)
-                  ;; Single-entry name caches may hold strings allocated in the
-                  ;; scratch that was just rewound; invalidate them before
-                  ;; anything can compare against freed memory.
-                  (tc-nominal-owner-cache-reset!)
-                  ;; The macro helper env cache persists across declarations, but
-                  ;; its spine is extended with per-check partial cache layers
-                  ;; while a DefMacro body is checked; those layers (and any
-                  ;; rewind-sensitive content reached through them) must not
-                  ;; outlive this declaration, so rebuild the cache per
-                  ;; declaration inside the scratch scope.
-                  (tc-macro-helper-env-cache-reset!
-                    (tc-context-macro-state ctx))
-                  escaped)))))))))
+              (tc-decl-scratch-depth-set!
+                scratch-state
+                (- (tc-decl-scratch-depth scratch-state) 1))
+              ;; Single-entry name caches may hold strings allocated in the
+              ;; scratch that was just rewound; invalidate them before anything
+              ;; can compare against freed memory.
+              (tc-nominal-owner-cache-reset!)
+              ;; The macro helper env cache persists across declarations, but
+              ;; its spine is extended with per-check partial cache layers while
+              ;; a DefMacro body is checked; those layers (and any
+              ;; rewind-sensitive content reached through them) must not outlive
+              ;; this declaration, so rebuild the cache per declaration inside
+              ;; the scratch scope.
+              (tc-macro-helper-env-cache-reset! (tc-context-macro-state ctx))
+              escaped)))))))
 
 (define (tc-scratch-arena-state-isolation-self-test) : bool
   (let

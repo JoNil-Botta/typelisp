@@ -3465,21 +3465,6 @@
   [rest : LowerNameEnv]) : LowerNameEnv
   (lower-name-env-bind-ids source-id logical-id symbol-id rest))
 
-(define (lower-name-env-bind-cached-logical-id
-  [source-id : i64]
-  [logical-name : String]
-  [logical-id : i64]
-  [cache : LowerNameCache]
-  [rest : LowerNameEnv]) : LowerNameEnv
-  (lower-name-env-bind-logical-symbol-id
-    source-id
-    logical-id
-    (lower-name-cache-lookup-symbol-id
-      (& cache)
-      logical-id
-      (lower-derived-symbol-id logical-name))
-    rest))
-
 (define (lower-extern-logical-symbol-id
   [logical-id : i64]
   [logical-name : String]
@@ -5048,54 +5033,6 @@
           cleanup-str
           cleanup-name))]))
 
-(define (lower-name-env-add-local-struct-cleanup
-  [names : LowerNameEnv]
-  [name-cache : LowerNameCache]
-  [module : String]
-  [cleanup : ast.AstStructCleanup]) : LowerNameEnv
-  (match cleanup
-    [(ast.AstStructCleanup.No) names]
-    [(ast.AstStructCleanup.Fn cleanup-name)
-      (let
-        [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
-        (lower-name-env-bind-cached-logical-id
-          cleanup-name
-          (lower-current-decl-logical-name-cache-id
-            name-cache
-            module
-            cleanup-str
-            cleanup-name)
-          (lower-name-cache-lookup-logical-id
-            (& name-cache)
-            (lower-module-name-key-id-by-id name-cache.module-id cleanup-name)
-            (lower-module-name-key-id-by-id name-cache.module-id cleanup-name))
-          name-cache
-          names))]))
-
-(define (lower-name-env-add-local-enum-cleanup
-  [names : LowerNameEnv]
-  [name-cache : LowerNameCache]
-  [module : String]
-  [cleanup : ast.AstEnumCleanup]) : LowerNameEnv
-  (match cleanup
-    [(ast.AstEnumCleanup.No) names]
-    [(ast.AstEnumCleanup.Fn cleanup-name)
-      (let
-        [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
-        (lower-name-env-bind-cached-logical-id
-          cleanup-name
-          (lower-current-decl-logical-name-cache-id
-            name-cache
-            module
-            cleanup-str
-            cleanup-name)
-          (lower-name-cache-lookup-logical-id
-            (& name-cache)
-            (lower-module-name-key-id-by-id name-cache.module-id cleanup-name)
-            (lower-module-name-key-id-by-id name-cache.module-id cleanup-name))
-          name-cache
-          names))]))
-
 (define (lower-name-has-clone-prefix? [name : String]) : bool
   (let
     [source-name : String (tc_core.tc-hygiene-global-call-name name)]
@@ -5939,22 +5876,6 @@
         decl-path
         logical-id
         source-id))))
-
-(define (lower-current-decl-logical-name-id
-  [names : LowerNameEnv]
-  [module : String]
-  [module-id : i64]
-  [source-name : String]
-  [source-id : i64]) : String
-  (let
-    [key-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
-    [symbol-id : i64 (lower-name-env-lookup-symbol-id names key-id -1)]
-    ;; Same pure-render deferral as the cache-backed twin above.
-    (if (>= symbol-id 0)
-      (ir.compiler-ir-symbol-text symbol-id)
-      (if (and (string.eq module "main") (string.eq source-name "main"))
-        "main"
-        (csym.compiler-symbol-module-key module source-name)))))
 
 (define (lower-current-decl-logical-name-cache-id
   [names : LowerNameCache]
@@ -7295,102 +7216,6 @@
     (match names
       [(LowerNameEnv.Nil) overlay]
       [_ (lower-name-env-append overlay names)])))
-
-;; `names` is the env to bind onto; `resolve-env` is the env used to
-;; resolve dispatch logical names (the only case that consults an env rather than
-;; the name cache). For the normal full build the two are identical. The
-;; module-local-only overlay build passes a fresh `names` base but the full env
-;; as `resolve-env`, so dispatch names still resolve against all in-scope
-;; bindings while only the module-local additions are accumulated.
-(define (lower-name-env-add-local-decl-resolve
-  [names : LowerNameEnv]
-  [resolve-env : LowerNameEnv]
-  [name-cache : LowerNameCache]
-  [module : String]
-  [decl : ast.AstDecl]) : LowerNameEnv
-  (match decl
-    [(ast.AstDecl.Def decl-meta name _ _)
-      (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
-        (lower-name-env-bind-cached-logical-id
-          name
-          (lower-current-decl-logical-name-cache-id
-            name-cache
-            module
-            name-str
-            name)
-          (lower-name-cache-lookup-logical-id
-            (& name-cache)
-            (lower-module-name-key-id-by-id name-cache.module-id name)
-            (lower-module-name-key-id-by-id name-cache.module-id name))
-          name-cache
-          names))]
-    [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-      (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
-        (lower-name-env-bind-cached-logical-id
-          name
-          (lower-current-decl-logical-name-cache-id
-            name-cache
-            module
-            name-str
-            name)
-          (lower-name-cache-lookup-logical-id
-            (& name-cache)
-            (lower-module-name-key-id-by-id name-cache.module-id name)
-            (lower-module-name-key-id-by-id name-cache.module-id name))
-          name-cache
-          names))]
-    [(ast.AstDecl.DefDispatch decl-meta name _)
-      (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
-        (lower-name-env-bind-cached-logical-id
-          name
-          (lower-current-decl-logical-name-id
-            resolve-env
-            module
-            name-cache.module-id
-            name-str
-            name)
-          (lower-name-cache-lookup-logical-id
-            (& name-cache)
-            (lower-module-name-key-id-by-id name-cache.module-id name)
-            (lower-module-name-key-id-by-id name-cache.module-id name))
-          name-cache
-          names))]
-    [(ast.AstDecl.Extern decl-meta name _ metadata _)
-      (let
-        [name-str : String (tc_core.tc-env-key-name-text name)]
-        [logical-id : i64
-          (lower-name-cache-lookup-logical-id
-            (& name-cache)
-            (lower-module-name-key-id-by-id name-cache.module-id name)
-            (lower-module-name-key-id-by-id name-cache.module-id name))]
-        [logical-name : String
-          (csym.compiler-symbol-module-key module name-str)]
-        (lower-name-env-bind-ids
-          name
-          logical-id
-          (lower-derived-symbol-id logical-name)
-          names))]
-    [(ast.AstDecl.DefEnum decl-meta _ cleanup _)
-      (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup _)
-      (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
-    [(ast.AstDecl.DefStruct decl-meta _ _ cleanup _)
-      (lower-name-env-add-local-struct-cleanup names name-cache module cleanup)]
-    [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup _)
-      (lower-name-env-add-local-struct-cleanup names name-cache module cleanup)]
-    [(ast.AstDecl.Unsafe inner-box)
-      (let
-        [inner : ast.AstDecl (__tl-box-place inner-box)]
-        (lower-name-env-add-local-decl-resolve
-          names
-          resolve-env
-          name-cache
-          module
-          inner))]
-    [_ names]))
 
 (define (lower-module-local-type-envs-bind-qualified
   [top-env : tc_core.TcTypeEnv]
@@ -21787,13 +21612,6 @@
     (- captures.count 1)
     env
     type-env))
-
-(define (lower-captured-param-list
-  [ctx : tc_core.TcContext]
-  [params : ast.AstParamList]) : ir.CompilerIrParamList
-  (ir.compiler-ir-param-cons
-    (ir.CompilerIrParam.Param "__tl_env" (ast.AstType.U64) 0)
-    (lower-param-list ctx params 1)))
 
 (define (lower-captured-internal-param-list
   [ctx : tc_core.TcContext]
@@ -48784,16 +48602,6 @@
         (ir.CompilerIrValue.Var v)
         elem-ty)]))
 
-(define (lower-emit-vector-load
-  [state : LowerState]
-  [base : ir.CompilerIrValue]
-  [index : ir.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : ast.AstType]) : LowerExpr
-  (match (lower-array-data-pointer-value state base)
-    [(LowerExpr.Expr data-state data-ptr _)
-      (lower-emit-vector-load-data data-state data-ptr index lanes elem-ty)]))
-
 (define (lower-emit-sequence-vector-load
   [state : LowerState]
   [sequence-var : i64]
@@ -48943,23 +48751,6 @@
                       (+ lane 1)
                       lanes
                       source-len)])])])])))
-
-(define (lower-emit-vector-store
-  [state : LowerState]
-  [base : ir.CompilerIrValue]
-  [index : ir.CompilerIrValue]
-  [value : ir.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : ast.AstType]) : LowerState
-  (match (lower-array-data-pointer-value state base)
-    [(LowerExpr.Expr data-state data-ptr _)
-      (lower-emit-vector-store-data
-        data-state
-        data-ptr
-        index
-        value
-        lanes
-        elem-ty)]))
 
 (define (lower-emit-vector-store-data
   [state : LowerState]
@@ -51081,23 +50872,6 @@
         (ir.CompilerIrValue.Var v)
         (ast.AstType.Bool))]))
 
-(define (lower-emit-predicated-load
-  [state : LowerState]
-  [base : ir.CompilerIrValue]
-  [index : ir.CompilerIrValue]
-  [mask : ir.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : ast.AstType]) : LowerExpr
-  (match (lower-array-data-pointer-value state base)
-    [(LowerExpr.Expr data-state data-ptr _)
-      (lower-emit-predicated-load-data
-        data-state
-        data-ptr
-        index
-        mask
-        lanes
-        elem-ty)]))
-
 (define (lower-emit-predicated-load-data
   [state : LowerState]
   [data-ptr : ir.CompilerIrValue]
@@ -51112,25 +50886,6 @@
           s
           (ir.ir-instr-predicated-load v data-ptr index mask lanes elem-ty))
         (ir.CompilerIrValue.Var v)
-        elem-ty)]))
-
-(define (lower-emit-predicated-store
-  [state : LowerState]
-  [base : ir.CompilerIrValue]
-  [index : ir.CompilerIrValue]
-  [value : ir.CompilerIrValue]
-  [mask : ir.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : ast.AstType]) : LowerState
-  (match (lower-array-data-pointer-value state base)
-    [(LowerExpr.Expr data-state data-ptr _)
-      (lower-emit-predicated-store-data
-        data-state
-        data-ptr
-        index
-        value
-        mask
-        lanes
         elem-ty)]))
 
 (define (lower-emit-predicated-store-data
@@ -62010,32 +61765,6 @@
     [(tc_core.ResultTcType.Err message)
       (ResultLowerState.Err (box (lower-diagnostic-at-expr callee message)))]))
 
-;; sret return ABI: when `sret-var` >= 0 the caller passed a
-;; hidden result-slot pointer (bound to that var). Copy the result aggregate
-;; into the caller's slot and return the slot pointer -- no per-return arena
-;; alloc + escape copy. `sret-var` < 0 keeps the arena escape-copy path, which
-;; is always correct (every call site uses the call's return value), so a
-;; non-threaded return path simply stays unoptimized rather than incorrect.
-(define (lower-return-expr-to-sret
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [value : ir.CompilerIrValue]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]) : ResultLowerState
-  (match (lower-inline-aggregate-copy-size ctx ret-ty)
-    [(ResultLowerSize.Ok size)
-      (ResultLowerState.Ok
-        (lower-state-emit
-          (lower-copy-return-bytes
-            state
-            (ir.CompilerIrValue.Var sret-var)
-            value
-            size)
-          (ir.CompilerIrInstr.Return
-            (lower-return-maybe (ir.CompilerIrValue.Var sret-var) ret-ty))))]
-    [(ResultLowerSize.Err message)
-      (ResultLowerState.Err (box (lower-diagnostic message)))]))
-
 (define (lower-return-expr-generic
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -64517,26 +64246,6 @@
         (tc_core.tc-context-type-get ctx referent))]
     [_ false]))
 
-(define (lower-type-list-contains-inline-aggregate?
-  [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]) : bool
-  (lower-type-list-contains-inline-aggregate-at? ctx (& types) 0))
-
-(define (lower-type-list-contains-inline-aggregate-at?
-  [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (let
-      [ty : ast.AstType
-        (tc_core.tc-context-type-get
-          ctx
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (or
-        (lower-type-contains-inline-aggregate? ctx ty)
-        (lower-type-list-contains-inline-aggregate-at? ctx types (+ index 1))))))
-
 (define (lower-param-list-contains-unsupported-reference?
   [ctx : tc_core.TcContext]
   [params : ast.AstParamList]) : bool
@@ -65934,35 +65643,6 @@
 
 (define (lower-dispatch-param-type-count [types : ast.AstTypeList]) : i64
   (ast.ast-type-list-len (& types)))
-
-(define (lower-dispatch-param-list-from-types
-  [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]
-  [idx : i64]) : ir.CompilerIrParamList
-  (lower-dispatch-param-list-from-types-at ctx (& types) idx))
-
-(define (lower-dispatch-param-list-from-types-at
-  [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [idx : i64]) : ir.CompilerIrParamList
-  (if (>= idx (ast.ast-type-list-len types))
-    ir.CompilerIrParamList.Nil
-    (ir.compiler-ir-param-cons
-      (ir.CompilerIrParam.Param
-        (str_cat.str-cat "arg" (string.int->string idx))
-        (tc_core.tc-type-without-regions
-          (tc_core.tc-context-type-get
-            ctx
-            (ast.ast-type-list-get types idx (ast.ast-type-id-fallback))))
-        idx)
-      (lower-dispatch-param-list-from-types-at ctx types (+ idx 1)))))
-
-(define (lower-dispatch-param-values [types : ast.AstTypeList] [idx : i64]) : ir.CompilerIrValueList
-  (if (>= idx (ast.ast-type-list-len (& types)))
-    ir.CompilerIrValueList.Nil
-    (ir.compiler-ir-value-cons
-      (ir.CompilerIrValue.Var idx)
-      (lower-dispatch-param-values types (+ idx 1)))))
 
 (define (lower-dispatch-physical-param-list
   [ctx : tc_core.TcContext]

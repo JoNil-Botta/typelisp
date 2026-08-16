@@ -9,6 +9,7 @@
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.json)
+(import stdlib.profile)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)
 (import lex as lexer)
@@ -158,6 +159,25 @@
 (defstruct LspWorkspaceSymbolResults
   (slots (__tl_dyn-array LspWorkspaceSymbolCandidate))
   (len i64))
+
+(defenum LspWorkspaceSemanticSourceRead
+  (Ok String i64 i64)
+  (Err))
+
+(defstruct LspWorkspaceSemanticRefreshMetrics
+  (source-checks i64)
+  (elapsed-ms i64)
+  (retained-owners i64)
+  (retained-records i64)
+  (cache-entries i64))
+
+(defstruct LspWorkspaceSemanticRefreshResult
+  (state lsp_vector_families.LspServerState)
+  (metrics LspWorkspaceSemanticRefreshMetrics))
+
+(defstruct LspWorkspaceSemanticQuery
+  (facts lsp_vector_families.LspWorkspaceSemanticFacts)
+  (completeness lsp_vector_families.LspWorkspaceSemanticCompleteness))
 
 (defstruct LspLineCol
   (line i64)
@@ -2216,6 +2236,25 @@
         (let
           [doc : lsp_vector_families.LspDocument
             (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+          (if (string.eq
+            (compiler_load.compiler-load-normalize-path doc.path)
+            normalized)
+            (set! found index)
+            (set! index (+ index 1)))))
+      found)))
+
+(define (lsp-documents-find-path-index-ref
+  [docs : (& docs lsp_document_vec.Vec)]
+  [path : String]) : i64
+  (let
+    [normalized : String (compiler_load.compiler-load-normalize-path path)]
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index (lsp_document_vec.len docs)) (< found 0))
+        (let
+          [doc : lsp_vector_families.LspDocument
+            (lsp_document_vec.get docs index (lsp-document-fallback))]
           (if (string.eq
             (compiler_load.compiler-load-normalize-path doc.path)
             normalized)
@@ -7467,6 +7506,177 @@
     (lsp-workspace-roots-copy index.roots)
     (lsp-workspace-sources-copy index.sources)))
 
+(define (lsp-workspace-semantic-cache-entry-fallback) : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+  (lsp_vector_families.LspWorkspaceSemanticCacheEntry
+    ""
+    ""
+    0
+    0
+    (compiler_semantic_index.compiler-semantic-source-index-empty)
+    false))
+
+(define (lsp-workspace-semantic-cache-new) : lsp_vector_families.LspWorkspaceSemanticCache
+  (lsp_vector_families.LspWorkspaceSemanticCache
+    ""
+    (__tl_make-array lsp_vector_families.LspWorkspaceSemanticCacheEntry 0)
+    0))
+
+(define (lsp-workspace-semantic-cache-get
+  [cache : (& cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [index : i64]) : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+  (if (and (>= index 0) (< index cache.len))
+    (array-ref cache.slots index)
+    (lsp-workspace-semantic-cache-entry-fallback)))
+
+(define (lsp-workspace-semantic-cache-find-uri
+  [cache : (& cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [uri : String]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index cache.len) (< found 0))
+        (if (string.eq (array-ref cache.slots index).uri uri)
+          (set! found index)
+          (set! index (+ index 1))))
+      found)))
+
+(define (lsp-workspace-semantic-cache-grow!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]) : unit
+  (let
+    [old-cap : i64 (array-length cache.slots)]
+    [new-cap : i64
+      (if (< old-cap 4)
+        4
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array
+      lsp_vector_families.LspWorkspaceSemanticCacheEntry)
+      (__tl_make-array
+        lsp_vector_families.LspWorkspaceSemanticCacheEntry
+        new-cap)]
+    [index : i64 0]
+    (begin
+      (while (< index cache.len)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset (array-data bigger) index)
+              (array-ref cache.slots index)))
+          (set! index (+ index 1))))
+      (set! cache.slots bigger))))
+
+(define (lsp-workspace-semantic-cache-push!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry]) : unit
+  (begin
+    (if (>= cache.len (array-length cache.slots))
+      (lsp-workspace-semantic-cache-grow! cache)
+      unit)
+    (unsafe
+      (ptr-write! (ptr-offset (array-data cache.slots) cache.len) entry))
+    (set! cache.len (+ cache.len 1))))
+
+(define (lsp-workspace-semantic-cache-release-entry!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [index : i64]) : unit
+  (if (and (>= index 0) (< index cache.len))
+    (let
+      [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+        (array-ref cache.slots index)]
+      (begin
+        (if entry.present
+          (compiler_semantic_index.compiler-semantic-source-index-release!
+            (&mut entry.index))
+          unit)
+        (unsafe
+          (ptr-write! (ptr-offset (array-data cache.slots) index) entry))))
+    unit))
+
+(define (lsp-workspace-semantic-cache-remove-index!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [index : i64]) : unit
+  (if (or (< index 0) (>= index cache.len))
+    unit
+    (let
+      [cursor : i64 index]
+      [last : i64 (- cache.len 1)]
+      (begin
+        (lsp-workspace-semantic-cache-release-entry! cache index)
+        (while (< cursor last)
+          (begin
+            (unsafe
+              (ptr-write!
+                (ptr-offset (array-data cache.slots) cursor)
+                (array-ref cache.slots (+ cursor 1))))
+            (set! cursor (+ cursor 1))))
+        (set! cache.len last)))))
+
+(define (lsp-workspace-semantic-cache-release-all!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index cache.len)
+        (begin
+          (lsp-workspace-semantic-cache-release-entry! cache index)
+          (set! index (+ index 1))))
+      (set! cache.len 0)
+      (set! cache.context-key ""))))
+
+(define (lsp-workspace-semantic-cache-entry-copy
+  [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry]) : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+  (lsp_vector_families.LspWorkspaceSemanticCacheEntry
+    (string.copy (& entry.uri))
+    (string.copy (& entry.path))
+    entry.source-fingerprint
+    entry.source-len
+    ;; Transfer the independent owner. The previous server-state arena is
+    ;; destroyed after the copy and never releases its stale value row.
+    entry.index
+    entry.present))
+
+(define (lsp-workspace-semantic-cache-copy
+  [cache : lsp_vector_families.LspWorkspaceSemanticCache]) : lsp_vector_families.LspWorkspaceSemanticCache
+  (let
+    [copy : lsp_vector_families.LspWorkspaceSemanticCache
+      (lsp-workspace-semantic-cache-new)]
+    [index : i64 0]
+    (begin
+      (set! copy.context-key (string.copy (& cache.context-key)))
+      (while (< index cache.len)
+        (begin
+          (lsp-workspace-semantic-cache-push!
+            (&mut copy)
+            (lsp-workspace-semantic-cache-entry-copy
+              (array-ref cache.slots index)))
+          (set! index (+ index 1))))
+      copy)))
+
+;; Invalidate the changed entry and every retained entry whose compiler import
+;; closure contains it. Negative cache entries have no dependency table, so a
+;; protocol source change conservatively drops them; they are bounded and will
+;; be recomputed once rather than risking a stale negative result.
+(define (lsp-workspace-semantic-cache-invalidate-path!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [path : String]) : unit
+  (let
+    [normalized : String (lsp-normalized-absolute-path path)]
+    [index : i64 0]
+    (while (< index cache.len)
+      (let
+        [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+          (array-ref cache.slots index)]
+        [affected : bool
+          (or
+            (string.eq entry.path normalized)
+            (not entry.present)
+            (compiler_semantic_index.compiler-semantic-source-index-contains-path?
+              (& entry.index)
+              normalized))]
+        (if affected
+          (lsp-workspace-semantic-cache-remove-index! cache index)
+          (set! index (+ index 1)))))))
+
 (define (lsp-workspace-root-for-path
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
   [path : String]
@@ -7655,7 +7865,8 @@
   (lsp_vector_families.LspServerState
     0
     (lsp-documents-copy state.documents)
-    (lsp-workspace-index-copy state.workspace)))
+    (lsp-workspace-index-copy state.workspace)
+    (lsp-workspace-semantic-cache-copy state.semantic-cache)))
 
 (define (lsp-server-state-finish-swap
   [old-state : lsp_vector_families.LspServerState]
@@ -7664,7 +7875,11 @@
   (let
     [owner : i64 (arena.tl_arena_current)]
     [next : lsp_vector_families.LspServerState
-      (lsp_vector_families.LspServerState owner draft.documents draft.workspace)]
+      (lsp_vector_families.LspServerState
+        owner
+        draft.documents
+        draft.workspace
+        draft.semantic-cache)]
     (begin
       (unsafe
         (arena.tl_arena_set previous-arena))
@@ -7687,13 +7902,15 @@
       (lsp_vector_families.LspWorkspaceIndex
         (lsp-workspace-roots-new)
         (lsp-workspace-sources-new))]
+    [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
+      (lsp-workspace-semantic-cache-new)]
     [head : i64 (arena.tl_arena_current)]
     [_restore : unit
       (unsafe
         (arena.tl_arena_set previous))]
     (begin
       (set! lsp-document-cache-arena head)
-      (lsp_vector_families.LspServerState head docs workspace))))
+      (lsp_vector_families.LspServerState head docs workspace semantic-cache))))
 
 (define (lsp-server-state-destroy!
   [state : lsp_vector_families.LspServerState (:consume)]) : unit
@@ -7701,11 +7918,849 @@
     [owner : i64 state.owner-arena]
     (begin
       (lsp-documents-release-all! (&mut state.documents))
+      (lsp-workspace-semantic-cache-release-all! (&mut state.semantic-cache))
       (set! lsp-document-cache-arena 0)
       (if (> owner 0)
         (unsafe
           (arena.tl_arena_destroy owner))
         unit))))
+
+(define (lsp-workspace-semantic-key-field [value : String]) : String
+  (str_cat.str-cat (string.int->string (string.string-length value)) ":" value))
+
+;; Exact framing avoids accidental cache reuse when roots/cfgs are reordered or
+;; contain punctuation. Position encoding is intentionally absent: semantic
+;; indexes retain both UTF-8 bytes and UTF-16 columns and do not depend on the
+;; negotiated rendering choice.
+(define (lsp-workspace-semantic-context-key
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [stdlib-roots : lsp_svec.Vec]) : String
+  (let
+    [cfg-names : lsp_svec.Vec (lsp-global-shared-view lsp-language-cfg-names)]
+    [key : String
+      (match lsp-language-target
+        [(target_cfg.CompilerTargetCfg.Linux) "lsp-semantic-v1|linux|"]
+        [(target_cfg.CompilerTargetCfg.Windows) "lsp-semantic-v1|windows|"])]
+    [index : i64 0]
+    (begin
+      (set!
+        key
+        (str_cat.str-cat
+          key
+          (string.int->string (lsp_svec.len (& cfg-names)))
+          "|cfg|"))
+      (while (< index (lsp_svec.len (& cfg-names)))
+        (begin
+          (set!
+            key
+            (str_cat.str-cat
+              key
+              (lsp-workspace-semantic-key-field
+                (lsp_svec.get (& cfg-names) index ""))
+              ""))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (set!
+        key
+        (str_cat.str-cat
+          key
+          (string.int->string (lsp_svec.len (& stdlib-roots)))
+          "|stdlib|"))
+      (while (< index (lsp_svec.len (& stdlib-roots)))
+        (begin
+          (set!
+            key
+            (str_cat.str-cat
+              key
+              (lsp-workspace-semantic-key-field
+                (lsp-normalized-absolute-path
+                  (lsp_svec.get (& stdlib-roots) index "")))
+              ""))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (set!
+        key
+        (str_cat.str-cat
+          key
+          (string.int->string (lsp-workspace-roots-len (& workspace.roots)))
+          "|workspace|"))
+      (while (< index (lsp-workspace-roots-len (& workspace.roots)))
+        (let
+          [root : lsp_vector_families.LspWorkspaceRoot
+            (lsp-workspace-roots-get (& workspace.roots) index)]
+          (begin
+            (set!
+              key
+              (str_cat.str-cat
+                key
+                (lsp-workspace-semantic-key-field root.uri)
+                (lsp-workspace-semantic-key-field root.path)))
+            (set! index (+ index 1)))))
+      key)))
+
+(define (lsp-workspace-semantic-source-fingerprint [text : String]) : i64
+  (let
+    ;; Two independent 31-bit polynomial hashes fit losslessly in one i64.
+    ;; Keeping the byte length beside this value makes accidental reuse far
+    ;; less plausible than the declaration-index hash used for internal maps,
+    ;; without retaining unopened disk text in long-lived workspace state.
+    [modulus-a : i64 2147483647]
+    [modulus-b : i64 2147483629]
+    [hash-a : i64 17]
+    [hash-b : i64 29]
+    [index : i64 0]
+    (begin
+      (while (< index (string.string-length text))
+        (let
+          [value : i64 (cast (string.string-ref text index) : i64)]
+          (begin
+            (set! hash-a (% (+ (* hash-a 131) value) modulus-a))
+            (set! hash-b (% (+ (* hash-b 137) value) modulus-b))
+            (set! index (+ index 1)))))
+      (+ (* hash-a modulus-b) hash-b))))
+
+(define (lsp-workspace-semantic-read-source [path : String]) : LspWorkspaceSemanticSourceRead
+  (match (io.try-read-file (& path))
+    [(io.OkIoBytes contents)
+      (let
+        [text : String (byte_buf.to-string contents)]
+        (LspWorkspaceSemanticSourceRead.Ok
+          text
+          (lsp-workspace-semantic-source-fingerprint text)
+          (string.string-length text)))]
+    [(io.ErrIoBytes _) LspWorkspaceSemanticSourceRead.Err]))
+
+(define (lsp-workspace-semantic-index-overlay-mismatch?
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [docs : lsp_document_vec.Vec]) : bool
+  (let
+    [doc-index : i64 0]
+    [mismatch : bool false]
+    (begin
+      (while (and (< doc-index (lsp_document_vec.len (& docs))) (not mismatch))
+        (let
+          [doc : lsp_vector_families.LspDocument
+            (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+          (begin
+            (if (and
+              (>= doc.version 0)
+              (compiler_semantic_index.compiler-semantic-source-index-contains-path?
+                index
+                doc.path))
+              (match (lsp-workspace-semantic-read-source doc.path)
+                [(LspWorkspaceSemanticSourceRead.Ok _ fingerprint source-len)
+                  (if (and
+                    (=
+                      fingerprint
+                      (lsp-workspace-semantic-source-fingerprint doc.text))
+                    (= source-len (string.string-length doc.text)))
+                    unit
+                    (set! mismatch true))]
+                [(LspWorkspaceSemanticSourceRead.Err) (set! mismatch true)])
+              unit)
+            (set! doc-index (+ doc-index 1)))))
+      mismatch)))
+
+(define (lsp-workspace-semantic-cache-source-live?
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [uri : String]) : bool
+  (let
+    [source-index : i64
+      (lsp-workspace-sources-find-uri (& workspace.sources) uri)]
+    (if (< source-index 0)
+      false
+      (not
+        (__tl-project-field
+          (lsp-workspace-sources-get (& workspace.sources) source-index)
+          overlay)))))
+
+(define (lsp-workspace-semantic-cache-prune!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index cache.len)
+      (let
+        [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+          (array-ref cache.slots index)]
+        [uri : String (string.copy (& entry.uri))]
+        (if (lsp-workspace-semantic-cache-source-live? workspace uri)
+          (set! index (+ index 1))
+          (lsp-workspace-semantic-cache-remove-index! cache index))))))
+
+(define (lsp-workspace-semantic-cache-install-negative!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [source : lsp_vector_families.LspWorkspaceSource]
+  [fingerprint : i64]
+  [source-len : i64]) : unit
+  (lsp-workspace-semantic-cache-push!
+    cache
+    (lsp_vector_families.LspWorkspaceSemanticCacheEntry
+      (string.copy (& source.uri))
+      (string.copy (& source.path))
+      fingerprint
+      source-len
+      (compiler_semantic_index.compiler-semantic-source-index-empty)
+      false)))
+
+(define (lsp-workspace-semantic-cache-install-index!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [source : lsp_vector_families.LspWorkspaceSource]
+  [fingerprint : i64]
+  [source-len : i64]
+  [semantic-index
+    : compiler_semantic_index.CompilerSemanticSourceIndex
+    (:consume)]) : unit
+  (lsp-workspace-semantic-cache-push!
+    cache
+    (lsp_vector_families.LspWorkspaceSemanticCacheEntry
+      (string.copy (& source.uri))
+      (string.copy (& source.path))
+      fingerprint
+      source-len
+      semantic-index
+      true)))
+
+(define (lsp-workspace-semantic-cache-refresh-source!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [source : lsp_vector_families.LspWorkspaceSource]
+  [docs : lsp_document_vec.Vec]
+  [stdlib-roots : lsp_svec.Vec]) : i64
+  (match (lsp-workspace-semantic-read-source source.path)
+    [(LspWorkspaceSemanticSourceRead.Err)
+      (let
+        [existing : i64
+          (lsp-workspace-semantic-cache-find-uri cache source.uri)]
+        (begin
+          (if (>= existing 0)
+            (lsp-workspace-semantic-cache-remove-index! cache existing)
+            unit)
+          0))]
+    [(LspWorkspaceSemanticSourceRead.Ok text fingerprint source-len)
+      (let
+        [existing : i64
+          (lsp-workspace-semantic-cache-find-uri cache source.uri)]
+        [fresh : bool
+          (if (< existing 0)
+            false
+            (let
+              [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+                (lsp-workspace-semantic-cache-get cache existing)]
+              (and
+                (= entry.source-fingerprint fingerprint)
+                (= entry.source-len source-len))))]
+        (if fresh
+          (let
+            [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+              (lsp-workspace-semantic-cache-get cache existing)]
+            (if (and
+              entry.present
+              (lsp-workspace-semantic-index-overlay-mismatch?
+                (& entry.index)
+                docs))
+              (begin
+                (lsp-workspace-semantic-cache-remove-index! cache existing)
+                (lsp-workspace-semantic-cache-install-negative!
+                  cache
+                  source
+                  fingerprint
+                  source-len)
+                0)
+              0))
+          (begin
+            (if (>= existing 0)
+              (lsp-workspace-semantic-cache-remove-index! cache existing)
+              unit)
+            (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
+              source.path
+              text
+              stdlib-roots
+              (lsp-language-cfgs))
+              [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Ok
+                  _
+                  semantic-index)
+                (if (lsp-workspace-semantic-index-overlay-mismatch?
+                  (& semantic-index)
+                  docs)
+                  (begin
+                    (compiler_semantic_index.compiler-semantic-source-index-release!
+                      (&mut semantic-index))
+                    (lsp-workspace-semantic-cache-install-negative!
+                      cache
+                      source
+                      fingerprint
+                      source-len))
+                  (lsp-workspace-semantic-cache-install-index!
+                    cache
+                    source
+                    fingerprint
+                    source-len
+                    semantic-index))]
+              [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Partial
+                  _
+                  semantic-index)
+                (if (lsp-workspace-semantic-index-overlay-mismatch?
+                  (& semantic-index)
+                  docs)
+                  (begin
+                    (compiler_semantic_index.compiler-semantic-source-index-release!
+                      (&mut semantic-index))
+                    (lsp-workspace-semantic-cache-install-negative!
+                      cache
+                      source
+                      fingerprint
+                      source-len))
+                  (lsp-workspace-semantic-cache-install-index!
+                    cache
+                    source
+                    fingerprint
+                    source-len
+                    semantic-index))]
+              [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Err
+                  _)
+                (lsp-workspace-semantic-cache-install-negative!
+                  cache
+                  source
+                  fingerprint
+                  source-len)])
+            1)))]))
+
+(define (lsp-workspace-semantic-cache-refresh!
+  [cache : (&mut cache lsp_vector_families.LspWorkspaceSemanticCache)]
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [stdlib-roots : lsp_svec.Vec]) : i64
+  (let
+    [context-key : String
+      (lsp-workspace-semantic-context-key workspace stdlib-roots)]
+    [source-index : i64 0]
+    [source-checks : i64 0]
+    (begin
+      (if (string.eq cache.context-key context-key)
+        unit
+        (begin
+          (lsp-workspace-semantic-cache-release-all! cache)
+          (set! cache.context-key (string.copy (& context-key)))))
+      (lsp-workspace-semantic-cache-prune! cache workspace)
+      (while (< source-index (lsp-workspace-sources-len (& workspace.sources)))
+        (let
+          [source : lsp_vector_families.LspWorkspaceSource
+            (lsp-workspace-sources-get (& workspace.sources) source-index)]
+          (begin
+            (if source.overlay
+              unit
+              (set!
+                source-checks
+                (+
+                  source-checks
+                  (lsp-workspace-semantic-cache-refresh-source!
+                    cache
+                    source
+                    docs
+                    stdlib-roots))))
+            (set! source-index (+ source-index 1)))))
+      source-checks)))
+
+(define (lsp-server-state-semantic-retained-owner-count
+  [state : (& state lsp_vector_families.LspServerState)]) : i64
+  (let
+    [count : i64 0]
+    [index : i64 0]
+    (begin
+      (while (< index (lsp_document_vec.len (& state.documents)))
+        (begin
+          (if (__tl-project-field
+            (__tl-project-field
+              (lsp_document_vec.get
+                (& state.documents)
+                index
+                (lsp-document-fallback))
+              semantic)
+            present)
+            (set! count (+ count 1))
+            unit)
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index state.semantic-cache.len)
+        (begin
+          (if (array-ref state.semantic-cache.slots index).present
+            (set! count (+ count 1))
+            unit)
+          (set! index (+ index 1))))
+      count)))
+
+(define (lsp-server-state-semantic-retained-record-count
+  [state : (& state lsp_vector_families.LspServerState)]) : i64
+  (let
+    [count : i64 0]
+    [index : i64 0]
+    (begin
+      (while (< index (lsp_document_vec.len (& state.documents)))
+        (let
+          [snapshot : lsp_vector_families.LspSemanticSnapshot
+            (__tl-project-field
+              (lsp_document_vec.get
+                (& state.documents)
+                index
+                (lsp-document-fallback))
+              semantic)]
+          (begin
+            (if snapshot.present
+              (set!
+                count
+                (+
+                  count
+                  (compiler_semantic_index.compiler-semantic-source-index-len
+                    (& snapshot.index))))
+              unit)
+            (set! index (+ index 1)))))
+      (set! index 0)
+      (while (< index state.semantic-cache.len)
+        (let
+          [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+            (array-ref state.semantic-cache.slots index)]
+          (begin
+            (if entry.present
+              (set!
+                count
+                (+
+                  count
+                  (compiler_semantic_index.compiler-semantic-source-index-len
+                    (& entry.index))))
+              unit)
+            (set! index (+ index 1)))))
+      count)))
+
+;; Refresh returns a new arena-swapped state. A cold call checks each missing or
+;; stale unopened entry once; a warm call performs fingerprint validation but
+;; reports zero source checks and retains the same bounded owners.
+(define (lsp-server-state-refresh-semantic-cache
+  [state : lsp_vector_families.LspServerState]
+  [stdlib-roots : lsp_svec.Vec]) : LspWorkspaceSemanticRefreshResult
+  (let
+    [started : i64 (profile.now-ms)]
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make)]
+    [_install : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [draft : lsp_vector_families.LspServerState
+      (lsp-server-state-copy-in-current state)]
+    [source-checks : i64
+      (lsp-workspace-semantic-cache-refresh!
+        (&mut draft.semantic-cache)
+        (& draft.workspace)
+        draft.documents
+        stdlib-roots)]
+    [next : lsp_vector_families.LspServerState
+      (lsp-server-state-finish-swap state draft previous)]
+    [elapsed : i64 (- (profile.now-ms) started)]
+    (LspWorkspaceSemanticRefreshResult
+      next
+      (LspWorkspaceSemanticRefreshMetrics
+        source-checks
+        (if (< elapsed 0)
+          0
+          elapsed)
+        (lsp-server-state-semantic-retained-owner-count (& next))
+        (lsp-server-state-semantic-retained-record-count (& next))
+        next.semantic-cache.len))))
+
+(define (lsp-workspace-semantic-fact-fallback) : lsp_vector_families.LspWorkspaceSemanticFact
+  (lsp_vector_families.LspWorkspaceSemanticFact
+    ""
+    ""
+    ""
+    false
+    -1
+    (compiler_semantic_index.compiler-semantic-record-fallback)))
+
+(define (lsp-workspace-semantic-facts-new) : lsp_vector_families.LspWorkspaceSemanticFacts
+  (lsp_vector_families.LspWorkspaceSemanticFacts
+    (__tl_make-array lsp_vector_families.LspWorkspaceSemanticFact 0)
+    0))
+
+(define (lsp-workspace-semantic-facts-get
+  [facts : (& facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+  [index : i64]) : lsp_vector_families.LspWorkspaceSemanticFact
+  (if (and (>= index 0) (< index facts.len))
+    (array-ref facts.slots index)
+    (lsp-workspace-semantic-fact-fallback)))
+
+(define (lsp-workspace-semantic-facts-grow!
+  [facts : (&mut facts lsp_vector_families.LspWorkspaceSemanticFacts)]) : unit
+  (let
+    [old-cap : i64 (array-length facts.slots)]
+    [new-cap : i64
+      (if (< old-cap 16)
+        16
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array lsp_vector_families.LspWorkspaceSemanticFact)
+      (__tl_make-array lsp_vector_families.LspWorkspaceSemanticFact new-cap)]
+    [index : i64 0]
+    (begin
+      (while (< index facts.len)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset (array-data bigger) index)
+              (array-ref facts.slots index)))
+          (set! index (+ index 1))))
+      (set! facts.slots bigger))))
+
+(define (lsp-workspace-semantic-role-tag
+  [role : (& role compiler_semantic_index.CompilerSemanticRecordRole)]) : i64
+  (match (deref role)
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Definition) 0]
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Use) 1]))
+
+(define (lsp-workspace-semantic-facts-same?
+  [left : (& left lsp_vector_families.LspWorkspaceSemanticFact)]
+  [right : (& right lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
+  (let
+    [left-span : compiler_semantic_index.CompilerSemanticSpan left.record.span]
+    [right-span : compiler_semantic_index.CompilerSemanticSpan
+      right.record.span]
+    (and
+      (string.eq left.canonical-key right.canonical-key)
+      (string.eq left.path right.path)
+      (= left-span.start-byte right-span.start-byte)
+      (= left-span.end-byte right-span.end-byte)
+      (=
+        (lsp-workspace-semantic-role-tag (& left.record.role))
+        (lsp-workspace-semantic-role-tag (& right.record.role))))))
+
+(define (lsp-workspace-semantic-string-less?
+  [left : (& left str)]
+  [right : (& right str)]) : bool
+  (let
+    [left-len : i64 (string.string-length left)]
+    [right-len : i64 (string.string-length right)]
+    [limit : i64
+      (if (< left-len right-len)
+        left-len
+        right-len)]
+    [index : i64 0]
+    [done : bool false]
+    [less : bool false]
+    (begin
+      (while (and (< index limit) (not done))
+        (let
+          [left-char : i64 (cast (string.string-ref left index) : i64)]
+          [right-char : i64 (cast (string.string-ref right index) : i64)]
+          (if (= left-char right-char)
+            (set! index (+ index 1))
+            (begin
+              (set! less (< left-char right-char))
+              (set! done true)))))
+      (if done
+        less
+        (< left-len right-len)))))
+
+(define (lsp-workspace-semantic-fact-less?
+  [left : (& left lsp_vector_families.LspWorkspaceSemanticFact)]
+  [right : (& right lsp_vector_families.LspWorkspaceSemanticFact)]) : bool
+  (let
+    [left-span : compiler_semantic_index.CompilerSemanticSpan left.record.span]
+    [right-span : compiler_semantic_index.CompilerSemanticSpan
+      right.record.span]
+    (cond
+      [(not (string.eq left.canonical-key right.canonical-key))
+        (lsp-workspace-semantic-string-less?
+          (& left.canonical-key)
+          (& right.canonical-key))]
+      [(not (string.eq left.path right.path))
+        (lsp-workspace-semantic-string-less? (& left.path) (& right.path))]
+      [(< left-span.start-byte right-span.start-byte) true]
+      [(> left-span.start-byte right-span.start-byte) false]
+      [(< left-span.end-byte right-span.end-byte) true]
+      [(> left-span.end-byte right-span.end-byte) false]
+      [else
+        (<
+          (lsp-workspace-semantic-role-tag (& left.record.role))
+          (lsp-workspace-semantic-role-tag (& right.record.role)))])))
+
+(define (lsp-workspace-semantic-facts-sort!
+  [facts : (&mut facts lsp_vector_families.LspWorkspaceSemanticFacts)]) : unit
+  (let
+    [order : (__tl_dyn-array i64) (__tl_make-array i64 facts.len)]
+    [index : i64 1]
+    (begin
+      (if (> facts.len 0)
+        (set! (array-ref order 0) 0)
+        unit)
+      (while (< index facts.len)
+        (let
+          [candidate : i64 index]
+          [cursor : i64 index]
+          (begin
+            (while (and
+              (> cursor 0)
+              (lsp-workspace-semantic-fact-less?
+                (& (array-ref facts.slots candidate))
+                (& (array-ref facts.slots (array-ref order (- cursor 1))))))
+              (begin
+                (set! (array-ref order cursor) (array-ref order (- cursor 1)))
+                (set! cursor (- cursor 1))))
+            (set! (array-ref order cursor) candidate)
+            (set! index (+ index 1)))))
+      (if (> facts.len 1)
+        (let
+          [sorted : (__tl_dyn-array
+            lsp_vector_families.LspWorkspaceSemanticFact)
+            (__tl_make-array
+              lsp_vector_families.LspWorkspaceSemanticFact
+              (array-length facts.slots))]
+          [copy-index : i64 0]
+          (begin
+            (while (< copy-index facts.len)
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset (array-data sorted) copy-index)
+                    (array-ref facts.slots (array-ref order copy-index))))
+                (set! copy-index (+ copy-index 1))))
+            (set! facts.slots sorted)))
+        unit))))
+
+(define (lsp-workspace-semantic-facts-contain?
+  [facts : (& facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+  [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index facts.len) (not found))
+        (begin
+          (if (lsp-workspace-semantic-facts-same?
+            (& candidate)
+            (& (array-ref facts.slots index)))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (lsp-workspace-semantic-facts-push!
+  [facts : (&mut facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+  [candidate : lsp_vector_families.LspWorkspaceSemanticFact]) : unit
+  (if (lsp-workspace-semantic-facts-contain? facts candidate)
+    unit
+    (begin
+      (if (>= facts.len (array-length facts.slots))
+        (lsp-workspace-semantic-facts-grow! facts)
+        unit)
+      (unsafe
+        (ptr-write! (ptr-offset (array-data facts.slots) facts.len) candidate))
+      (set! facts.len (+ facts.len 1)))))
+
+(define (lsp-workspace-semantic-completeness-merge
+  [left : lsp_vector_families.LspWorkspaceSemanticCompleteness]
+  [right : lsp_vector_families.LspWorkspaceSemanticCompleteness]) : lsp_vector_families.LspWorkspaceSemanticCompleteness
+  (match left
+    [(lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete)
+      left]
+    [(lsp_vector_families.LspWorkspaceSemanticCompleteness.Refreshable)
+      (match right
+        [(lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete)
+          right]
+        [_ left])]
+    [(lsp_vector_families.LspWorkspaceSemanticCompleteness.Complete) right]))
+
+(define (lsp-workspace-semantic-facts-add-index!
+  [facts : (&mut facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+  [semantic-index
+    : (& semantic-index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [docs : (& docs lsp_document_vec.Vec)]
+  [canonical-key : String]) : unit
+  (let
+    [record-index : i64 0]
+    (while (<
+      record-index
+      (compiler_semantic_index.compiler-semantic-source-index-len
+        semantic-index))
+      (let
+        [record : compiler_semantic_index.CompilerSemanticRecord
+          (compiler_semantic_index.compiler-semantic-source-index-get
+            semantic-index
+            record-index)]
+        [record-key : String
+          (compiler_semantic_index.compiler-semantic-source-index-record-canonical-key
+            semantic-index
+            (& record))]
+        (begin
+          (if (and
+            (> (string.string-length canonical-key) 0)
+            (string.eq canonical-key record-key))
+            (let
+              [path : String
+                (if (> (string.string-length record.span.path) 0)
+                  (lsp-normalized-absolute-path record.span.path)
+                  "")]
+              [doc-index : i64
+                (if (> (string.string-length path) 0)
+                  (lsp-documents-find-path-index-ref docs path)
+                  -1)]
+              [open : bool (>= doc-index 0)]
+              [version : i64
+                (if open
+                  (__tl-project-field
+                    (lsp_document_vec.get
+                      docs
+                      doc-index
+                      (lsp-document-fallback))
+                    version)
+                  -1)]
+              (lsp-workspace-semantic-facts-push!
+                facts
+                (lsp_vector_families.LspWorkspaceSemanticFact
+                  (string.copy (& record-key))
+                  (if (> (string.string-length path) 0)
+                    (lsp-path-to-file-uri path)
+                    "")
+                  path
+                  open
+                  version
+                  (compiler_semantic_index.compiler-semantic-record-owned-copy
+                    (& record)))))
+            unit)
+          (set! record-index (+ record-index 1)))))))
+
+(define (lsp-document-semantic-canonical-key-at
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [byte-position : i64]) : String
+  (let
+    [record-index : i64 (lsp-document-semantic-record-at doc byte-position)]
+    (if (< record-index 0)
+      ""
+      (let
+        [record : compiler_semantic_index.CompilerSemanticRecord
+          (compiler_semantic_index.compiler-semantic-source-index-get
+            (& doc.semantic.index)
+            record-index)]
+        (compiler_semantic_index.compiler-semantic-source-index-record-canonical-key
+          (& doc.semantic.index)
+          (& record))))))
+
+;; Read-only provider boundary. It never checks source: missing or stale disk
+;; entries are omitted and reported as Refreshable, while current partial or
+;; unavailable open/negative entries are reported as CurrentlyIncomplete.
+(define (lsp-workspace-semantic-query
+  [state : (& state lsp_vector_families.LspServerState)]
+  [stdlib-roots : lsp_svec.Vec]
+  [canonical-key : String]) : LspWorkspaceSemanticQuery
+  (let
+    [facts : lsp_vector_families.LspWorkspaceSemanticFacts
+      (lsp-workspace-semantic-facts-new)]
+    [completeness : lsp_vector_families.LspWorkspaceSemanticCompleteness
+      lsp_vector_families.LspWorkspaceSemanticCompleteness.Complete]
+    [doc-index : i64 0]
+    [source-index : i64 0]
+    [context-current : bool
+      (string.eq
+        state.semantic-cache.context-key
+        (lsp-workspace-semantic-context-key (& state.workspace) stdlib-roots))]
+    (begin
+      ;; Open buffers are authoritative and scanned first, so exact duplicate
+      ;; dependency records from unopened entry closures collapse onto them.
+      (while (< doc-index (lsp_document_vec.len (& state.documents)))
+        (let
+          [doc : lsp_vector_families.LspDocument
+            (lsp_document_vec.get
+              (& state.documents)
+              doc-index
+              (lsp-document-fallback))]
+          (begin
+            (match (lsp-document-semantic-snapshot-status (& doc))
+              [(LspSemanticSnapshotStatus.Current _ complete)
+                (begin
+                  (lsp-workspace-semantic-facts-add-index!
+                    (&mut facts)
+                    (& doc.semantic.index)
+                    (& state.documents)
+                    canonical-key)
+                  (if complete
+                    unit
+                    (set!
+                      completeness
+                      (lsp-workspace-semantic-completeness-merge
+                        completeness
+                        lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete))))]
+              [_
+                (set!
+                  completeness
+                  (lsp-workspace-semantic-completeness-merge
+                    completeness
+                    lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete))])
+            (set! doc-index (+ doc-index 1)))))
+      (while (<
+        source-index
+        (lsp-workspace-sources-len (& state.workspace.sources)))
+        (let
+          [source : lsp_vector_families.LspWorkspaceSource
+            (lsp-workspace-sources-get (& state.workspace.sources) source-index)]
+          (begin
+            (if source.overlay
+              unit
+              (let
+                [cache-index : i64
+                  (if context-current
+                    (lsp-workspace-semantic-cache-find-uri
+                      (& state.semantic-cache)
+                      source.uri)
+                    -1)]
+                (if (< cache-index 0)
+                  (set!
+                    completeness
+                    (lsp-workspace-semantic-completeness-merge
+                      completeness
+                      lsp_vector_families.LspWorkspaceSemanticCompleteness.Refreshable))
+                  (let
+                    [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
+                      (lsp-workspace-semantic-cache-get
+                        (& state.semantic-cache)
+                        cache-index)]
+                    (match (lsp-workspace-semantic-read-source source.path)
+                      [(LspWorkspaceSemanticSourceRead.Err)
+                        (set!
+                          completeness
+                          (lsp-workspace-semantic-completeness-merge
+                            completeness
+                            lsp_vector_families.LspWorkspaceSemanticCompleteness.Refreshable))]
+                      [(LspWorkspaceSemanticSourceRead.Ok
+                          _
+                          fingerprint
+                          source-len)
+                        (if (or
+                          (not (= fingerprint entry.source-fingerprint))
+                          (not (= source-len entry.source-len)))
+                          (set!
+                            completeness
+                            (lsp-workspace-semantic-completeness-merge
+                              completeness
+                              lsp_vector_families.LspWorkspaceSemanticCompleteness.Refreshable))
+                          (if entry.present
+                            (begin
+                              (lsp-workspace-semantic-facts-add-index!
+                                (&mut facts)
+                                (& entry.index)
+                                (& state.documents)
+                                canonical-key)
+                              (if (compiler_semantic_index.compiler-semantic-source-index-complete?
+                                (& entry.index))
+                                unit
+                                (set!
+                                  completeness
+                                  (lsp-workspace-semantic-completeness-merge
+                                    completeness
+                                    lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete))))
+                            (set!
+                              completeness
+                              (lsp-workspace-semantic-completeness-merge
+                                completeness
+                                lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete))))])))))
+            (set! source-index (+ source-index 1)))))
+      (lsp-workspace-semantic-facts-sort! (&mut facts))
+      (LspWorkspaceSemanticQuery facts completeness))))
 
 (define (lsp-server-state-initialize-workspaces
   [state : lsp_vector_families.LspServerState]
@@ -7722,8 +8777,12 @@
         (lsp-initialize-workspace-roots message)
         (lsp-workspace-sources-new))]
     [_build : unit (lsp-workspace-index-build-sources! (&mut workspace) docs)]
+    [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
+      (lsp-workspace-semantic-cache-copy state.semantic-cache)]
+    [_invalidate : unit
+      (lsp-workspace-semantic-cache-release-all! (&mut semantic-cache))]
     [draft : lsp_vector_families.LspServerState
-      (lsp_vector_families.LspServerState 0 docs workspace)]
+      (lsp_vector_families.LspServerState 0 docs workspace semantic-cache)]
     (lsp-server-state-finish-swap state draft previous)))
 
 (define (lsp-workspace-index-declaration-count
@@ -8065,14 +9124,24 @@
             [docs : lsp_document_vec.Vec (lsp-documents-copy next-documents)]
             [workspace : lsp_vector_families.LspWorkspaceIndex
               (lsp-workspace-index-copy state.workspace)]
+            [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
+              (lsp-workspace-semantic-cache-copy state.semantic-cache)]
             [_refresh : unit
               (lsp-workspace-index-refresh-path!
                 (&mut workspace)
                 docs
                 path
                 deleted)]
+            [_invalidate : unit
+              (lsp-workspace-semantic-cache-invalidate-path!
+                (&mut semantic-cache)
+                path)]
             [draft : lsp_vector_families.LspServerState
-              (lsp_vector_families.LspServerState 0 docs workspace)]
+              (lsp_vector_families.LspServerState
+                0
+                docs
+                workspace
+                semantic-cache)]
             (LspHandleResult.Continue
               (lsp-server-state-finish-swap state draft previous)))])]
     [(LspDocumentHandleResult.Exit next-documents)
@@ -8099,12 +9168,18 @@
         [docs : lsp_document_vec.Vec (lsp-documents-copy next-documents)]
         [workspace : lsp_vector_families.LspWorkspaceIndex
           (lsp-workspace-index-copy state.workspace)]
+        [semantic-cache : lsp_vector_families.LspWorkspaceSemanticCache
+          (lsp-workspace-semantic-cache-copy state.semantic-cache)]
         [_refresh : unit
           (if refresh-documents
             (lsp-workspace-index-refresh-documents! (&mut workspace) docs)
             unit)]
+        [_invalidate : unit
+          (if refresh-documents
+            (lsp-workspace-semantic-cache-release-all! (&mut semantic-cache))
+            unit)]
         [draft : lsp_vector_families.LspServerState
-          (lsp_vector_families.LspServerState 0 docs workspace)]
+          (lsp_vector_families.LspServerState 0 docs workspace semantic-cache)]
         (LspHandleResult.Continue
           (lsp-server-state-finish-swap state draft previous)))]
     [(LspDocumentHandleResult.Exit next-documents)
@@ -8117,6 +9192,8 @@
 
 (define (lsp-watched-files-refresh-items!
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
+  [semantic-cache
+    : (&mut semantic-cache lsp_vector_families.LspWorkspaceSemanticCache)]
   [docs : lsp_document_vec.Vec]
   [items : json.JsonSeq]) : unit
   (let
@@ -8134,11 +9211,15 @@
                   [(LspUriPath.Err _) unit]
                   [(LspUriPath.Ok path)
                     (if (string.eq (fs.extension (& path)) "tl")
-                      (lsp-workspace-index-refresh-path!
-                        workspace
-                        docs
-                        path
-                        (= (lsp-json-int-field-default change "type" 2) 3))
+                      (begin
+                        (lsp-workspace-semantic-cache-invalidate-path!
+                          semantic-cache
+                          path)
+                        (lsp-workspace-index-refresh-path!
+                          workspace
+                          docs
+                          path
+                          (= (lsp-json-int-field-default change "type" 2) 3)))
                       unit)])])])
         (set! index (+ index 1))))))
 
@@ -8162,6 +9243,7 @@
             [(json.JsonArray items)
               (lsp-watched-files-refresh-items!
                 (&mut draft.workspace)
+                (&mut draft.semantic-cache)
                 draft.documents
                 (__tl-box-place items))]
             [_ unit])])]
@@ -8355,6 +9437,8 @@
             (&mut draft.workspace)
             draft.documents
             event)])]
+    [_invalidate : unit
+      (lsp-workspace-semantic-cache-release-all! (&mut draft.semantic-cache))]
     (lsp-server-state-finish-swap state draft previous)))
 
 ;; Helper: extract document from params
@@ -12237,6 +13321,24 @@
     (lsp-semantic-snapshot-lifecycle-smoke-ok?)
     (io.panic "lsp-semantic-snapshot-lifecycle failed")))
 
+(test
+  lsp-workspace-semantic-cache
+  (unless
+    (lsp-workspace-semantic-cache-smoke-ok?)
+    (io.panic "lsp-workspace-semantic-cache failed")))
+
+(test
+  lsp-workspace-semantic-cache-incomplete
+  (unless
+    (lsp-workspace-semantic-cache-incomplete-smoke-ok?)
+    (io.panic "lsp-workspace-semantic-cache-incomplete failed")))
+
+(test
+  lsp-workspace-semantic-cache-overlay
+  (unless
+    (lsp-workspace-semantic-cache-overlay-smoke-ok?)
+    (io.panic "lsp-workspace-semantic-cache-overlay failed")))
+
 (define (lsp-declaration-context-smoke-ok?) : bool
   (let
     [text : String
@@ -14109,6 +15211,547 @@
       (string.contains (& rendered) (& let-needle))
       (string.contains (& rendered) (& match-needle))
       (string.contains (& rendered) (& ok-needle)))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-smoke-workspace-state
+    [state : lsp_vector_families.LspServerState]
+    [shared-path : String]
+    [shared-text : String]
+    [open-path : String]
+    [open-text : String]
+    [closed-path : String]
+    [closed-text : String]
+    [noise-path : String]
+    [noise-text : String]) : lsp_vector_families.LspServerState
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (arena.tl_arena_make)]
+      [_install : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      [draft : lsp_vector_families.LspServerState
+        (lsp-server-state-copy-in-current state)]
+      (begin
+        (lsp-workspace-index-add-text-source!
+          (&mut draft.workspace)
+          lsp_vector_families.LspWorkspaceRootLookup.Missing
+          shared-path
+          shared-text
+          true)
+        (lsp-workspace-index-add-text-source!
+          (&mut draft.workspace)
+          lsp_vector_families.LspWorkspaceRootLookup.Missing
+          open-path
+          open-text
+          true)
+        (lsp-workspace-index-add-text-source!
+          (&mut draft.workspace)
+          lsp_vector_families.LspWorkspaceRootLookup.Missing
+          closed-path
+          closed-text
+          false)
+        (lsp-workspace-index-add-text-source!
+          (&mut draft.workspace)
+          lsp_vector_families.LspWorkspaceRootLookup.Missing
+          noise-path
+          noise-text
+          false)
+        (lsp-server-state-finish-swap state draft previous)))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-smoke-invalidate-state
+    [state : lsp_vector_families.LspServerState]
+    [path : String]) : lsp_vector_families.LspServerState
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (arena.tl_arena_make)]
+      [_install : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      [draft : lsp_vector_families.LspServerState
+        (lsp-server-state-copy-in-current state)]
+      (begin
+        (lsp-workspace-semantic-cache-invalidate-path!
+          (&mut draft.semantic-cache)
+          path)
+        (lsp-server-state-finish-swap state draft previous)))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-smoke-add-source-state
+    [state : lsp_vector_families.LspServerState]
+    [path : String]
+    [text : String]
+    [overlay : bool]) : lsp_vector_families.LspServerState
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (arena.tl_arena_make)]
+      [_install : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      [draft : lsp_vector_families.LspServerState
+        (lsp-server-state-copy-in-current state)]
+      (begin
+        (lsp-workspace-index-add-text-source!
+          (&mut draft.workspace)
+          lsp_vector_families.LspWorkspaceRootLookup.Missing
+          path
+          text
+          overlay)
+        (lsp-server-state-finish-swap state draft previous)))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-smoke-query-complete?
+    [query : (& query LspWorkspaceSemanticQuery)]) : bool
+    (match query.completeness
+      [(lsp_vector_families.LspWorkspaceSemanticCompleteness.Complete) true]
+      [_ false])))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-smoke-query-incomplete?
+    [query : (& query LspWorkspaceSemanticQuery)]) : bool
+    (match query.completeness
+      [(lsp_vector_families.LspWorkspaceSemanticCompleteness.CurrentlyIncomplete)
+        true]
+      [_ false])))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-smoke-fact-at?
+    [facts : (& facts lsp_vector_families.LspWorkspaceSemanticFacts)]
+    [path : String]
+    [role : compiler_semantic_index.CompilerSemanticRecordRole]) : bool
+    (let
+      [normalized : String (lsp-normalized-absolute-path path)]
+      [wanted-role : i64 (lsp-workspace-semantic-role-tag (& role))]
+      [index : i64 0]
+      [found : bool false]
+      (begin
+        (while (and (< index facts.len) (not found))
+          (let
+            [fact : lsp_vector_families.LspWorkspaceSemanticFact
+              (lsp-workspace-semantic-facts-get facts index)]
+            (begin
+              (if (and
+                (string.eq fact.path normalized)
+                (=
+                  (lsp-workspace-semantic-role-tag (& fact.record.role))
+                  wanted-role))
+                (set! found true)
+                unit)
+              (set! index (+ index 1)))))
+        found))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-smoke-facts-sorted?
+    [facts : (& facts lsp_vector_families.LspWorkspaceSemanticFacts)]) : bool
+    (let
+      [index : i64 1]
+      [sorted : bool true]
+      (begin
+        (while (and (< index facts.len) sorted)
+          (begin
+            (if (lsp-workspace-semantic-fact-less?
+              (& (array-ref facts.slots index))
+              (& (array-ref facts.slots (- index 1))))
+              (set! sorted false)
+              unit)
+            (set! index (+ index 1))))
+        sorted))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-cache-smoke-with-open
+    [owners-before : i64]
+    [shared-path : String]
+    [shared-text : String]
+    [open-path : String]
+    [open-text : String]
+    [closed-path : String]
+    [closed-text : String]
+    [noise-path : String]
+    [noise-text : String]
+    [shared-index
+      : compiler_semantic_index.CompilerSemanticSourceIndex
+      (:consume)]
+    [open-index
+      : compiler_semantic_index.CompilerSemanticSourceIndex
+      (:consume)]) : bool
+    (let
+      [shared-uri : String (lsp-path-to-file-uri shared-path)]
+      [open-uri : String (lsp-path-to-file-uri open-path)]
+      [docs : lsp_document_vec.Vec
+        (lsp-semantic-smoke-install
+          (lsp-semantic-smoke-install
+            (lsp_document_vec.new)
+            shared-uri
+            shared-path
+            shared-text
+            1
+            shared-index)
+          open-uri
+          open-path
+          open-text
+          1
+          open-index)]
+      [empty-state : lsp_vector_families.LspServerState (lsp-server-state-new)]
+      [document-state : lsp_vector_families.LspServerState
+        (match (lsp-server-state-copy-document-result
+          empty-state
+          (LspDocumentHandleResult.Continue docs)
+          false)
+          [(LspHandleResult.Continue next) next]
+          [(LspHandleResult.Exit next) next])]
+      [workspace-state : lsp_vector_families.LspServerState
+        (lsp-workspace-semantic-smoke-workspace-state
+          document-state
+          shared-path
+          shared-text
+          open-path
+          open-text
+          closed-path
+          closed-text
+          noise-path
+          noise-text)]
+      [roots : lsp_svec.Vec (lsp_svec.new)]
+      [cold : LspWorkspaceSemanticRefreshResult
+        (lsp-server-state-refresh-semantic-cache workspace-state roots)]
+      [cold-state : lsp_vector_families.LspServerState cold.state]
+      [shared-doc-index : i64
+        (lsp-documents-find-index cold-state.documents shared-uri)]
+      [shared-doc : lsp_vector_families.LspDocument
+        (lsp_document_vec.get
+          (& cold-state.documents)
+          shared-doc-index
+          (lsp-document-fallback))]
+      [definition-index : i64
+        (compiler_semantic_index.compiler-semantic-source-index-find-definition
+          (& shared-doc.semantic.index)
+          shared-path
+          "target-value")]
+      [definition : compiler_semantic_index.CompilerSemanticRecord
+        (compiler_semantic_index.compiler-semantic-source-index-get
+          (& shared-doc.semantic.index)
+          definition-index)]
+      [canonical-key : String
+        (compiler_semantic_index.compiler-semantic-source-index-record-canonical-key
+          (& shared-doc.semantic.index)
+          (& definition))]
+      [cold-query : LspWorkspaceSemanticQuery
+        (lsp-workspace-semantic-query (& cold-state) roots canonical-key)]
+      [cold-records : i64 cold.metrics.retained-records]
+      [warm : LspWorkspaceSemanticRefreshResult
+        (lsp-server-state-refresh-semantic-cache cold-state roots)]
+      [warm-state : lsp_vector_families.LspServerState warm.state]
+      [warm-query : LspWorkspaceSemanticQuery
+        (lsp-workspace-semantic-query (& warm-state) roots canonical-key)]
+      [invalidated-state : lsp_vector_families.LspServerState
+        (lsp-workspace-semantic-smoke-invalidate-state warm-state shared-path)]
+      [affected-only : bool (= invalidated-state.semantic-cache.len 1)]
+      [rebuilt : LspWorkspaceSemanticRefreshResult
+        (lsp-server-state-refresh-semantic-cache invalidated-state roots)]
+      [final-state : lsp_vector_families.LspServerState rebuilt.state]
+      [ok : bool
+        (and
+          (>= definition-index 0)
+          (> (string.string-length canonical-key) 0)
+          (= cold.metrics.source-checks 2)
+          (= cold.metrics.cache-entries 2)
+          (= cold.metrics.retained-owners 4)
+          (> cold.metrics.retained-records 0)
+          (lsp-workspace-semantic-smoke-query-complete? (& cold-query))
+          (= cold-query.facts.len 3)
+          (lsp-workspace-semantic-smoke-facts-sorted? (& cold-query.facts))
+          (lsp-workspace-semantic-smoke-fact-at?
+            (& cold-query.facts)
+            shared-path
+            compiler_semantic_index.CompilerSemanticRecordRole.Definition)
+          (lsp-workspace-semantic-smoke-fact-at?
+            (& cold-query.facts)
+            open-path
+            compiler_semantic_index.CompilerSemanticRecordRole.Use)
+          (lsp-workspace-semantic-smoke-fact-at?
+            (& cold-query.facts)
+            closed-path
+            compiler_semantic_index.CompilerSemanticRecordRole.Use)
+          (not
+            (lsp-workspace-semantic-smoke-fact-at?
+              (& cold-query.facts)
+              noise-path
+              compiler_semantic_index.CompilerSemanticRecordRole.Definition))
+          (= warm.metrics.source-checks 0)
+          (= warm.metrics.retained-owners 4)
+          (= warm.metrics.retained-records cold-records)
+          (lsp-workspace-semantic-smoke-query-complete? (& warm-query))
+          (= warm-query.facts.len cold-query.facts.len)
+          (lsp-workspace-semantic-smoke-facts-sorted? (& warm-query.facts))
+          affected-only
+          (= rebuilt.metrics.source-checks 1)
+          (= rebuilt.metrics.cache-entries 2)
+          (= rebuilt.metrics.retained-owners 4))]
+      (begin
+        (lsp-server-state-destroy! final-state)
+        (and
+          ok
+          (=
+            owners-before
+            (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)))))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-cache-smoke-ok?) : bool
+    (let
+      [shared-path : String "src/tests/semantic/lsp_cache/shared.tl"]
+      [open-path : String "src/tests/lsp_semantic_cache_open_consumer.tl"]
+      [closed-path : String "src/tests/lsp_semantic_cache_closed_consumer.tl"]
+      [noise-path : String "src/tests/semantic/lsp_cache/noise.tl"]
+      [shared-text : String (lsp-read-file-text-or (& shared-path) "")]
+      [open-text : String (lsp-read-file-text-or (& open-path) "")]
+      [closed-text : String (lsp-read-file-text-or (& closed-path) "")]
+      [noise-text : String (lsp-read-file-text-or (& noise-path) "")]
+      [owners-before : i64
+        (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)]
+      (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
+        shared-path
+        shared-text
+        (lsp_svec.new)
+        (lsp-language-cfgs))
+        [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Ok
+            _
+            shared-index)
+          (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
+            open-path
+            open-text
+            (lsp_svec.new)
+            (lsp-language-cfgs))
+            [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Ok
+                _
+                open-index)
+              (lsp-workspace-semantic-cache-smoke-with-open
+                owners-before
+                shared-path
+                shared-text
+                open-path
+                open-text
+                closed-path
+                closed-text
+                noise-path
+                noise-text
+                shared-index
+                open-index)]
+            [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Partial
+                _
+                partial)
+              (begin
+                (compiler_semantic_index.compiler-semantic-source-index-release!
+                  (&mut partial))
+                (compiler_semantic_index.compiler-semantic-source-index-release!
+                  (&mut shared-index))
+                false)]
+            [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Err
+                _)
+              (begin
+                (compiler_semantic_index.compiler-semantic-source-index-release!
+                  (&mut shared-index))
+                false)])]
+        [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Partial
+            _
+            partial)
+          (begin
+            (compiler_semantic_index.compiler-semantic-source-index-release!
+              (&mut partial))
+            false)]
+        [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Err _)
+          false]))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-cache-incomplete-smoke-ok?) : bool
+    (let
+      [path : String "src/tests/semantic/lsp_cache/invalid.tl"]
+      [text : String (lsp-read-file-text-or (& path) "")]
+      [roots : lsp_svec.Vec (lsp_svec.new)]
+      [owners-before : i64
+        (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)]
+      [state : lsp_vector_families.LspServerState
+        (lsp-workspace-semantic-smoke-add-source-state
+          (lsp-server-state-new)
+          path
+          text
+          false)]
+      [cold : LspWorkspaceSemanticRefreshResult
+        (lsp-server-state-refresh-semantic-cache state roots)]
+      [cold-state : lsp_vector_families.LspServerState cold.state]
+      [query : LspWorkspaceSemanticQuery
+        (lsp-workspace-semantic-query
+          (& cold-state)
+          roots
+          "missing-canonical-key")]
+      [warm : LspWorkspaceSemanticRefreshResult
+        (lsp-server-state-refresh-semantic-cache cold-state roots)]
+      [final-state : lsp_vector_families.LspServerState warm.state]
+      [ok : bool
+        (and
+          (= cold.metrics.source-checks 1)
+          (= cold.metrics.cache-entries 1)
+          (lsp-workspace-semantic-smoke-query-incomplete? (& query))
+          (= query.facts.len 0)
+          (= warm.metrics.source-checks 0)
+          (= warm.metrics.cache-entries 1)
+          (= warm.metrics.retained-owners cold.metrics.retained-owners)
+          (= warm.metrics.retained-records cold.metrics.retained-records))]
+      (begin
+        (lsp-server-state-destroy! final-state)
+        (and
+          ok
+          (=
+            owners-before
+            (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)))))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-cache-overlay-smoke-with-index
+    [owners-before : i64]
+    [shared-path : String]
+    [shared-text : String]
+    [closed-path : String]
+    [closed-text : String]
+    [shared-index
+      : compiler_semantic_index.CompilerSemanticSourceIndex
+      (:consume)]) : bool
+    (let
+      [shared-uri : String (lsp-path-to-file-uri shared-path)]
+      [docs : lsp_document_vec.Vec
+        (lsp-semantic-smoke-install
+          (lsp_document_vec.new)
+          shared-uri
+          shared-path
+          shared-text
+          7
+          shared-index)]
+      [empty-state : lsp_vector_families.LspServerState (lsp-server-state-new)]
+      [document-state : lsp_vector_families.LspServerState
+        (match (lsp-server-state-copy-document-result
+          empty-state
+          (LspDocumentHandleResult.Continue docs)
+          false)
+          [(LspHandleResult.Continue next) next]
+          [(LspHandleResult.Exit next) next])]
+      [overlay-state : lsp_vector_families.LspServerState
+        (lsp-workspace-semantic-smoke-add-source-state
+          document-state
+          shared-path
+          shared-text
+          true)]
+      [workspace-state : lsp_vector_families.LspServerState
+        (lsp-workspace-semantic-smoke-add-source-state
+          overlay-state
+          closed-path
+          closed-text
+          false)]
+      [roots : lsp_svec.Vec (lsp_svec.new)]
+      [cold : LspWorkspaceSemanticRefreshResult
+        (lsp-server-state-refresh-semantic-cache workspace-state roots)]
+      [cold-state : lsp_vector_families.LspServerState cold.state]
+      [doc : lsp_vector_families.LspDocument
+        (lsp_document_vec.get
+          (& cold-state.documents)
+          0
+          (lsp-document-fallback))]
+      [definition-index : i64
+        (compiler_semantic_index.compiler-semantic-source-index-find-definition
+          (& doc.semantic.index)
+          shared-path
+          "target-value")]
+      [definition : compiler_semantic_index.CompilerSemanticRecord
+        (compiler_semantic_index.compiler-semantic-source-index-get
+          (& doc.semantic.index)
+          definition-index)]
+      [canonical-key : String
+        (compiler_semantic_index.compiler-semantic-source-index-record-canonical-key
+          (& doc.semantic.index)
+          (& definition))]
+      [query : LspWorkspaceSemanticQuery
+        (lsp-workspace-semantic-query (& cold-state) roots canonical-key)]
+      [negative : bool
+        (if (= cold-state.semantic-cache.len 1)
+          (not
+            (__tl-project-field
+              (lsp-workspace-semantic-cache-get (& cold-state.semantic-cache) 0)
+              present))
+          false)]
+      [warm : LspWorkspaceSemanticRefreshResult
+        (lsp-server-state-refresh-semantic-cache cold-state roots)]
+      [final-state : lsp_vector_families.LspServerState warm.state]
+      [ok : bool
+        (and
+          (>= definition-index 0)
+          (= cold.metrics.source-checks 1)
+          (= cold.metrics.cache-entries 1)
+          (= cold.metrics.retained-owners 1)
+          negative
+          (lsp-workspace-semantic-smoke-query-incomplete? (& query))
+          (= query.facts.len 1)
+          (lsp-workspace-semantic-smoke-fact-at?
+            (& query.facts)
+            shared-path
+            compiler_semantic_index.CompilerSemanticRecordRole.Definition)
+          (not
+            (lsp-workspace-semantic-smoke-fact-at?
+              (& query.facts)
+              closed-path
+              compiler_semantic_index.CompilerSemanticRecordRole.Use))
+          (= warm.metrics.source-checks 0)
+          (= warm.metrics.cache-entries 1)
+          (= warm.metrics.retained-owners 1))]
+      (begin
+        (lsp-server-state-destroy! final-state)
+        (and
+          ok
+          (=
+            owners-before
+            (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)))))))
+
+(cfg
+  test
+  (define (lsp-workspace-semantic-cache-overlay-smoke-ok?) : bool
+    (let
+      [shared-path : String "src/tests/semantic/lsp_cache/shared.tl"]
+      [closed-path : String "src/tests/lsp_semantic_cache_closed_consumer.tl"]
+      [shared-text : String
+        "(module semantic.lsp_cache.shared)\n;; Unsaved authoritative overlay.\n(define target-value : i64 41)\n"]
+      [closed-text : String (lsp-read-file-text-or (& closed-path) "")]
+      [owners-before : i64
+        (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)]
+      (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
+        shared-path
+        shared-text
+        (lsp_svec.new)
+        (lsp-language-cfgs))
+        [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Ok
+            _
+            shared-index)
+          (lsp-workspace-semantic-cache-overlay-smoke-with-index
+            owners-before
+            shared-path
+            shared-text
+            closed-path
+            closed-text
+            shared-index)]
+        [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Partial
+            _
+            partial)
+          (begin
+            (compiler_semantic_index.compiler-semantic-source-index-release!
+              (&mut partial))
+            false)]
+        [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Err _)
+          false]))))
 
 (define (lsp-workspace-symbol-test-decl [name : String] [line : i64]) : lsp_vector_families.LspDeclEntry
   (lsp_vector_families.LspDeclEntry

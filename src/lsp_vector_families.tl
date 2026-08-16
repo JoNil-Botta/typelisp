@@ -86,6 +86,53 @@
   (roots LspWorkspaceRoots)
   (sources LspWorkspaceSources))
 
+;; One independently owned compiler snapshot for an unopened workspace entry.
+;; The row itself lives in the server-state arena, while `index` owns a separate
+;; arena that is moved across state snapshots and released on invalidation.
+;; `present` is false for a fingerprinted entry whose current source could not
+;; produce even a recovery index; retaining that negative result avoids
+;; repeatedly checking the same invalid source on warm queries.
+(defstruct LspWorkspaceSemanticCacheEntry
+  (uri String)
+  (path String)
+  (source-fingerprint i64)
+  (source-len i64)
+  (index compiler_semantic_index.CompilerSemanticSourceIndex)
+  (present bool))
+
+;; Cache size is bounded by the current unopened `sources` rows: there is at
+;; most one entry per URI, including negative entries. `context-key` exactly
+;; frames every workspace root, stdlib root, target, and user cfg input that can
+;; affect a check; a context change releases the whole cache before reuse.
+(defstruct LspWorkspaceSemanticCache
+  (context-key String)
+  (slots (__tl_dyn-array LspWorkspaceSemanticCacheEntry))
+  (len i64))
+
+(defenum LspWorkspaceSemanticCompleteness
+  (Complete)
+  ;; One or more unopened entries are missing or stale and can be checked.
+  (Refreshable)
+  ;; Current open/disk text has no complete semantic index. Partial current
+  ;; recovery facts may still be present in the result.
+  (CurrentlyIncomplete))
+
+;; Provider-neutral immutable occurrence fact. `record` and `canonical-key`
+;; borrow immutable bytes from one current owned semantic snapshot. `path` is
+;; normalized, while `uri`, `open`, and `version` describe provider edit policy
+;; without deciding it here.
+(defstruct LspWorkspaceSemanticFact
+  (canonical-key String)
+  (uri String)
+  (path String)
+  (open bool)
+  (version i64)
+  (record compiler_semantic_index.CompilerSemanticRecord))
+
+(defstruct LspWorkspaceSemanticFacts
+  (slots (__tl_dyn-array LspWorkspaceSemanticFact))
+  (len i64))
+
 ;; Immutable flattened declaration returned by the workspace query boundary.
 ;; Callers receive a value row, never either mutable index collection.
 (defstruct LspWorkspaceDeclRow
@@ -112,7 +159,8 @@
 (defstruct LspServerState
   (owner-arena i64)
   (documents lsp_document_vec.Vec)
-  (workspace LspWorkspaceIndex))
+  (workspace LspWorkspaceIndex)
+  (semantic-cache LspWorkspaceSemanticCache))
 
 ;; One candidate `textDocument/foldingRange` result. Positions stay 1-based
 ;; internally like every other LSP scanner here; `kind` is 0 for an unlabelled

@@ -7258,7 +7258,9 @@ in documentation passes.
   formatting, hover, document links, flat top-level document-symbol outlines,
   lexical document highlights, lexical folding ranges for multiline forms and
   comment blocks, a deterministic multi-root workspace source/declaration index
-  with open-document overlays and incremental file/root updates, and TypeLisp
+  with open-document overlays and incremental file/root updates, a bounded
+  owned semantic cache for unopened workspace sources with canonical
+  cross-snapshot occurrence queries and explicit completeness, and TypeLisp
   structural-edit/query extensions,
   structured source locations for source-authored semantic diagnostics, plus
   a REPL that evaluates through the real compile/link/run pipeline.

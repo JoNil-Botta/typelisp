@@ -319,6 +319,60 @@
     false
     CompilerSemanticProvenance.EditableSource))
 
+;; Copy one tool-facing occurrence into the caller's current arena.  Query
+;; consumers can retain this value after the source index that produced it is
+;; invalidated or released.
+(define (compiler-semantic-record-owned-copy
+  [record : (& record CompilerSemanticRecord)]) : CompilerSemanticRecord
+  (CompilerSemanticRecord
+    (CompilerSemanticSymbolId
+      record.symbol.module-id
+      record.symbol.declaration-ordinal
+      record.symbol.local-ordinal)
+    record.canonical-index
+    (match record.role
+      [(CompilerSemanticRecordRole.Definition)
+        CompilerSemanticRecordRole.Definition]
+      [(CompilerSemanticRecordRole.Use) CompilerSemanticRecordRole.Use])
+    (match record.kind
+      [(CompilerSemanticSymbolKind.Value) CompilerSemanticSymbolKind.Value]
+      [(CompilerSemanticSymbolKind.Function)
+        CompilerSemanticSymbolKind.Function]
+      [(CompilerSemanticSymbolKind.Macro) CompilerSemanticSymbolKind.Macro]
+      [(CompilerSemanticSymbolKind.ExternValue)
+        CompilerSemanticSymbolKind.ExternValue]
+      [(CompilerSemanticSymbolKind.ExternFunction)
+        CompilerSemanticSymbolKind.ExternFunction]
+      [(CompilerSemanticSymbolKind.Struct) CompilerSemanticSymbolKind.Struct]
+      [(CompilerSemanticSymbolKind.Enum) CompilerSemanticSymbolKind.Enum]
+      [(CompilerSemanticSymbolKind.Parameter)
+        CompilerSemanticSymbolKind.Parameter]
+      [(CompilerSemanticSymbolKind.Local) CompilerSemanticSymbolKind.Local])
+    (string.copy (& record.display-name))
+    (string.copy (& record.resolved-type))
+    (string.copy (& record.documentation))
+    record.module-id
+    (CompilerSemanticSpan
+      (string.copy (& record.span.path))
+      record.span.start-byte
+      record.span.end-byte
+      (ast.ast-source-span
+        (cast record.span.source.start-line : i64)
+        (cast record.span.source.start-col : i64)
+        (cast record.span.source.end-line : i64)
+        (cast record.span.source.end-col : i64))
+      record.span.utf16-start-col
+      record.span.utf16-end-col)
+    record.editable
+    (match record.provenance
+      [(CompilerSemanticProvenance.EditableSource)
+        CompilerSemanticProvenance.EditableSource]
+      [(CompilerSemanticProvenance.Generated generator item key)
+        (CompilerSemanticProvenance.Generated
+          (string.copy (& generator))
+          (string.copy (& item))
+          (string.copy (& key)))])))
+
 (define (compiler-semantic-binding-namespace-value-mask) : i64
   1)
 
@@ -978,6 +1032,31 @@
 (define (compiler-semantic-source-index-path-count
   [index : (& index CompilerSemanticSourceIndex)]) : i64
   index.path-len)
+
+;; Query whether this immutable snapshot was resolved with `path` in its entry
+;; or import closure. LSP cache invalidation uses this instead of exposing the
+;; owned path table or retaining a duplicate dependency graph.
+(define (compiler-semantic-source-index-contains-path?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]) : bool
+  (let
+    [normalized : String (cload.compiler-load-canonical-path path)]
+    [path-index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< path-index index.path-len) (not found))
+        (let
+          [info : CompilerSemanticSourcePathInfo
+            (array-ref index.paths path-index)]
+          [owned-path : String (string.copy (& info.path))]
+          (begin
+            (if (string.eq
+              (cload.compiler-load-canonical-path owned-path)
+              normalized)
+              (set! found true)
+              unit)
+            (set! path-index (+ path-index 1)))))
+      found)))
 
 (define (compiler-semantic-source-index-retained-byte-estimate
   [index : (& index CompilerSemanticSourceIndex)]) : i64

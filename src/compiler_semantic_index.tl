@@ -979,6 +979,31 @@
   [index : (& index CompilerSemanticSourceIndex)]) : i64
   index.path-len)
 
+;; Query whether this immutable snapshot was resolved with `path` in its entry
+;; or import closure. LSP cache invalidation uses this instead of exposing the
+;; owned path table or retaining a duplicate dependency graph.
+(define (compiler-semantic-source-index-contains-path?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]) : bool
+  (let
+    [normalized : String (cload.compiler-load-canonical-path path)]
+    [path-index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< path-index index.path-len) (not found))
+        (let
+          [info : CompilerSemanticSourcePathInfo
+            (array-ref index.paths path-index)]
+          [owned-path : String (string.copy (& info.path))]
+          (begin
+            (if (string.eq
+              (cload.compiler-load-canonical-path owned-path)
+              normalized)
+              (set! found true)
+              unit)
+            (set! path-index (+ path-index 1)))))
+      found)))
+
 (define (compiler-semantic-source-index-retained-byte-estimate
   [index : (& index CompilerSemanticSourceIndex)]) : i64
   (let

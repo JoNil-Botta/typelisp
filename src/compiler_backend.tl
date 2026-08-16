@@ -20392,44 +20392,28 @@
             [_ false]))))))
 
 (define (compiler-backend-global-type-count
-  [globals : compiler_ir_types.CompilerIrGlobalList]) : i64
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil) 0]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons _ rest)
-      (+ 1 (compiler-backend-global-type-count (__tl-box-place rest)))]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (compiler_ir_types.compiler-ir-global-seq-count seq)]))
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]) : i64
+  (compiler_ir_types.compiler-ir-global-seq-count globals))
 
 (define (compiler-backend-global-types-fill
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [ids : backend_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array compiler_ast_types.AstType)]
   [index : i64]) : backend_i64_i64_map.Map
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil) ids]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(compiler_ir_types.CompilerIrGlobal.Global name ty _)
-          (begin
-            (set! (array-ref values index) ty)
-            (backend_i64_i64_map.insert-ref!
-              (&mut ids)
-              (compiler_ir_types.compiler-ir-symbol-id name)
-              index)
-            (compiler-backend-global-types-fill
-              (__tl-box-place rest)
-              ids
-              values
-              (+ index 1)))])]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (compiler-backend-global-types-fill
-        (compiler_ir_types.compiler-ir-global-seq-to-list seq)
-        ids
-        values
-        index)]))
+  (if (>= index globals.len)
+    ids
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+      [(compiler_ir_types.CompilerIrGlobal.Global name ty _)
+        (begin
+          (set! (array-ref values index) ty)
+          (backend_i64_i64_map.insert-ref!
+            (&mut ids)
+            (compiler_ir_types.compiler-ir-symbol-id name)
+            index)
+          (compiler-backend-global-types-fill globals ids values (+ index 1)))])))
 
 (define (compiler-backend-global-types
-  [globals : compiler_ir_types.CompilerIrGlobalList]) : CompilerBackendGlobalTypeTable
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]) : CompilerBackendGlobalTypeTable
   (let
     [count : i64 (compiler-backend-global-type-count globals)]
     [values : (__tl_dyn-array compiler_ast_types.AstType)
@@ -36336,35 +36320,36 @@
         (compiler-backend-plan-provides-id? plan name-id))
       (compiler-backend-plan-provides-id? plan link-symbol-id))))
 
+(define (compiler-backend-validate-global-symbols-from
+  [backend-state : CompilerBackendState]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [seen : backend_string_i64_map.Map (:consume)]
+  [index : i64]) : ResultCompilerBackendSymbolValidation
+  (if (>= index globals.len)
+    (ResultCompilerBackendSymbolValidation.Ok seen)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+      [(compiler_ir_types.CompilerIrGlobal.Global name _ _)
+        (let
+          [symbol : String
+            (compiler-backend-state-user-symbol-id backend-state name)]
+          (if (backend_string_i64_map.contains? (& seen) symbol)
+            (compiler-backend-symbol-validation-error
+              (str_cat.str-cat
+                "backend: duplicate emitted global symbol "
+                symbol))
+            (begin
+              (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
+              (compiler-backend-validate-global-symbols-from
+                backend-state
+                globals
+                seen
+                (+ index 1)))))])))
+
 (define (compiler-backend-validate-global-symbols-into
   [backend-state : CompilerBackendState]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [seen : backend_string_i64_map.Map (:consume)]) : ResultCompilerBackendSymbolValidation
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil)
-      (ResultCompilerBackendSymbolValidation.Ok seen)]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(compiler_ir_types.CompilerIrGlobal.Global name _ _)
-          (let
-            [symbol : String
-              (compiler-backend-state-user-symbol-id backend-state name)]
-            (if (backend_string_i64_map.contains? (& seen) symbol)
-              (compiler-backend-symbol-validation-error
-                (str_cat.str-cat
-                  "backend: duplicate emitted global symbol "
-                  symbol))
-              (begin
-                (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
-                (compiler-backend-validate-global-symbols-into
-                  backend-state
-                  (__tl-box-place rest)
-                  seen))))])]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (compiler-backend-validate-global-symbols-into
-        backend-state
-        (compiler_ir_types.compiler-ir-global-seq-to-list seq)
-        seen)]))
+  (compiler-backend-validate-global-symbols-from backend-state globals seen 0))
 
 (define (compiler-backend-runtime-prelude-string-helper-export?
   [backend-state : CompilerBackendState]
@@ -36559,7 +36544,7 @@
         seen)]))
 
 (define (compiler-backend-validate-function-symbols
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionList]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -36571,7 +36556,7 @@
       (+
         (*
           (+
-            (compiler_ir_types.compiler-ir-global-list-count globals)
+            (compiler_ir_types.compiler-ir-global-seq-count globals)
             (compiler-backend-function-list-count functions))
           2)
         1)))
@@ -67041,7 +67026,7 @@
   [mode : CompilerBackendMode]
   [func : compiler_ir_types.CompilerIrFunction]
   [functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -68700,7 +68685,7 @@
   [mode : CompilerBackendMode]
   [func : compiler_ir_types.CompilerIrFunction]
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -68766,7 +68751,7 @@
   [mode : CompilerBackendMode]
   [func : compiler_ir_types.CompilerIrFunction]
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -68875,7 +68860,7 @@
   [mode : CompilerBackendMode]
   [functions : compiler_ir_types.CompilerIrFunctionList]
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -68978,7 +68963,7 @@
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -69065,7 +69050,7 @@
   [mode : CompilerBackendMode]
   [functions : compiler_ir_types.CompilerIrFunctionList]
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -69185,7 +69170,7 @@
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -69286,7 +69271,7 @@
   [mode : CompilerBackendMode]
   [functions : compiler_ir_types.CompilerIrFunctionList]
   [all-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -70242,21 +70227,23 @@
     [(CompilerBackendCollectState.Collections out) out]
     [_ collections]))
 
+(define (compiler-backend-collect-global-collections-from
+  [collections : CompilerBackendProgramCollections (:consume)]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [index : i64]) : CompilerBackendProgramCollections
+  (if (>= index globals.len)
+    collections
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+      [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
+        (compiler-backend-collect-global-collections-from
+          (compiler-backend-collect-value-collections collections value)
+          globals
+          (+ index 1))])))
+
 (define (compiler-backend-collect-global-collections
   [collections : CompilerBackendProgramCollections (:consume)]
-  [globals : compiler_ir_types.CompilerIrGlobalList]) : CompilerBackendProgramCollections
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil) collections]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
-          (compiler-backend-collect-global-collections
-            (compiler-backend-collect-value-collections collections value)
-            (__tl-box-place rest))])]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (compiler-backend-collect-global-collections
-        collections
-        (compiler_ir_types.compiler-ir-global-seq-to-list seq))]))
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]) : CompilerBackendProgramCollections
+  (compiler-backend-collect-global-collections-from collections globals 0))
 
 (define (compiler-backend-collect-program-collections
   [type-segment-bases : i64]
@@ -70655,37 +70642,44 @@
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)])))]))
 
+(define (compiler-backend-emit-globals-buffer-from
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [buf : text_buf.TextBuf]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]) : ResultCompilerBackendBuffer
+  (if (>= index globals.len)
+    (ResultCompilerBackendBuffer.Ok buf)
+    (match (compiler-backend-emit-global
+      type-segment-bases
+      target
+      (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+      program-index)
+      [(ResultCompilerBackend.Ok head)
+        (compiler-backend-emit-globals-buffer-from
+          type-segment-bases
+          target
+          globals
+          (text_buf.append buf head)
+          program-index
+          (+ index 1))]
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackendBuffer.Err message)])))
+
 (define (compiler-backend-emit-globals-buffer-into
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [buf : text_buf.TextBuf]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackendBuffer
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil)
-      (ResultCompilerBackendBuffer.Ok buf)]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (match (compiler-backend-emit-global
-        type-segment-bases
-        target
-        global
-        program-index)
-        [(ResultCompilerBackend.Ok head)
-          (compiler-backend-emit-globals-buffer-into
-            type-segment-bases
-            target
-            (__tl-box-place rest)
-            (text_buf.append buf head)
-            program-index)]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackendBuffer.Err message)])]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (compiler-backend-emit-globals-buffer-into
-        type-segment-bases
-        target
-        (compiler_ir_types.compiler-ir-global-seq-to-list seq)
-        buf
-        program-index)]))
+  (compiler-backend-emit-globals-buffer-from
+    type-segment-bases
+    target
+    globals
+    buf
+    program-index
+    0))
 
 (define (compiler-backend-global-init-call
   [type-segment-bases : i64]
@@ -70722,34 +70716,40 @@
           (str_cat.str-cat "    movq %rax, " symbol "(%rip)\n")))
       "")))
 
+(define (compiler-backend-global-initializers-from
+  [type-segment-bases : i64]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]) : String
+  (if (>= index globals.len)
+    ""
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+      [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
+        (str_cat.str-cat
+          (match value
+            [(compiler_ir_types.CompilerIrValue.RuntimeGlobal init)
+              (compiler-backend-global-init-call
+                type-segment-bases
+                name
+                init
+                ty
+                program-index)]
+            [_ ""])
+          (compiler-backend-global-initializers-from
+            type-segment-bases
+            globals
+            program-index
+            (+ index 1)))])))
+
 (define (compiler-backend-global-initializers
   [type-segment-bases : i64]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [program-index : CompilerBackendProgramIndex]) : String
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil) ""]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
-          (str_cat.str-cat
-            (match value
-              [(compiler_ir_types.CompilerIrValue.RuntimeGlobal init)
-                (compiler-backend-global-init-call
-                  type-segment-bases
-                  name
-                  init
-                  ty
-                  program-index)]
-              [_ ""])
-            (compiler-backend-global-initializers
-              type-segment-bases
-              (__tl-box-place rest)
-              program-index))])]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (compiler-backend-global-initializers
-        type-segment-bases
-        (compiler_ir_types.compiler-ir-global-seq-to-list seq)
-        program-index)]))
+  (compiler-backend-global-initializers-from
+    type-segment-bases
+    globals
+    program-index
+    0))
 
 (define (compiler-backend-function-list-defines?
   [functions : compiler_ir_types.CompilerIrFunctionList]
@@ -71884,7 +71884,7 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [crt-entry : bool]
   [program-index : CompilerBackendProgramIndex]) : String
   (match target
@@ -72130,7 +72130,7 @@
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [entry-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
@@ -75329,53 +75329,55 @@
           (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [_ parts]))
 
+(define (compiler-backend-object-globals-from
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [target : CompilerBackendTarget]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
+  (if (>= index globals.len)
+    parts
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+      [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
+        (let
+          [symbol : String
+            (compiler-backend-state-user-symbol-id
+              program-index.backend-state
+              name)]
+          (compiler-backend-object-globals-from
+            (if (compiler-backend-runtime-global? ty value)
+              (object_target.compiler-backend-object-add-bss
+                (object_target.compiler-backend-object-add-bss
+                  (object_target.compiler-backend-object-symbol-export-section
+                    parts
+                    symbol
+                    (cobj.CompilerObjectSectionKind.Bss)
+                    (cobj.CompilerObjectSymbolKind.Data))
+                  (cobj.CompilerObjectDataRecord.Label symbol))
+                (cobj.CompilerObjectDataRecord.Zero 8))
+              (compiler-backend-object-global-value
+                (object_target.compiler-backend-object-add-data
+                  (object_target.compiler-backend-object-symbol-export-section
+                    parts
+                    symbol
+                    (cobj.CompilerObjectSectionKind.Data)
+                    (cobj.CompilerObjectSymbolKind.Data))
+                  (cobj.CompilerObjectDataRecord.Label symbol))
+                symbol
+                ty
+                value
+                program-index))
+            target
+            globals
+            program-index
+            (+ index 1)))])))
+
 (define (compiler-backend-object-globals
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil) parts]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
-          (let
-            [symbol : String
-              (compiler-backend-state-user-symbol-id
-                program-index.backend-state
-                name)]
-            (compiler-backend-object-globals
-              (if (compiler-backend-runtime-global? ty value)
-                (object_target.compiler-backend-object-add-bss
-                  (object_target.compiler-backend-object-add-bss
-                    (object_target.compiler-backend-object-symbol-export-section
-                      parts
-                      symbol
-                      (cobj.CompilerObjectSectionKind.Bss)
-                      (cobj.CompilerObjectSymbolKind.Data))
-                    (cobj.CompilerObjectDataRecord.Label symbol))
-                  (cobj.CompilerObjectDataRecord.Zero 8))
-                (compiler-backend-object-global-value
-                  (object_target.compiler-backend-object-add-data
-                    (object_target.compiler-backend-object-symbol-export-section
-                      parts
-                      symbol
-                      (cobj.CompilerObjectSectionKind.Data)
-                      (cobj.CompilerObjectSymbolKind.Data))
-                    (cobj.CompilerObjectDataRecord.Label symbol))
-                  symbol
-                  ty
-                  value
-                  program-index))
-              target
-              (__tl-box-place rest)
-              program-index))])]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (compiler-backend-object-globals
-        parts
-        target
-        (compiler_ir_types.compiler-ir-global-seq-to-list seq)
-        program-index)]))
+  (compiler-backend-object-globals-from parts target globals program-index 0))
 
 (define (compiler-backend-object-strings
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -75785,7 +75787,7 @@
   [target : CompilerBackendTarget]
   [_mode : CompilerBackendMode]
   [entry-functions : compiler_ir_types.CompilerIrFunctionList]
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [externs : compiler_ir_types.CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -76072,38 +76074,19 @@
       false)))
 
 (define (compiler-backend-object-globals-semantically-supported?
-  [globals : compiler_ir_types.CompilerIrGlobalList]) : bool
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]) : bool
   (let
-    [cursor : compiler_ir_types.CompilerIrGlobalList globals]
+    [index : i64 0]
     (begin
-      (while true
-        (match cursor
-          [(compiler_ir_types.CompilerIrGlobalList.Nil) (return true)]
-          [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-            (match global
-              [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
-                (if (compiler-backend-object-semantic-value-supported? value)
-                  (set! cursor (__tl-box-place rest))
-                  (return false))])]
-          [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-            (let
-              [index : i64 0]
-              [count : i64 (compiler_ir_types.compiler-ir-global-seq-count seq)]
-              (begin
-                (while (< index count)
-                  (begin
-                    (match (compiler_ir_types.compiler-ir-global-seq-ref
-                      seq
-                      index)
-                      [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
-                        (when
-                          (not
-                            (compiler-backend-object-semantic-value-supported?
-                              value))
-                          (return false))])
-                    (set! index (+ index 1))))
-                (return true)))]))
-      false)))
+      (while (< index globals.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+            [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
+              (when
+                (not (compiler-backend-object-semantic-value-supported? value))
+                (return false))])
+          (set! index (+ index 1))))
+      true)))
 
 (define (compiler-backend-object-functions-semantically-supported?
   [backend-state : CompilerBackendState]
@@ -82397,7 +82380,7 @@
 
 (define (compiler-backend-runtime-helper-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         cbi.compiler-builtin-id-fix-main
@@ -82663,7 +82646,7 @@
 
 (define (compiler-backend-unused-str-view-extern-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "stdlib/runtime.tl::str-view")
@@ -82859,7 +82842,7 @@
 
 (define (compiler-backend-user-helper-name-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "tl_alloc")
@@ -82912,7 +82895,7 @@
 
 (define (compiler-backend-runtime-coexist-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "tl_alloc")
@@ -82986,7 +82969,7 @@
 
 (define (compiler-backend-module-symbol-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
-    compiler_ir_types.CompilerIrGlobalList.Nil
+    (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-cons
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "lib.tl::helper")

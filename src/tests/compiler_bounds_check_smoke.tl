@@ -12,7 +12,7 @@
 
 (define (bounds-check-smoke-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program
-    ir.CompilerIrGlobalList.Nil
+    (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-cons
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-label "main")

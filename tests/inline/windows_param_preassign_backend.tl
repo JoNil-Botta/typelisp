@@ -25,25 +25,36 @@
   [pa : i64]
   [pb : i64]
   [pc : i64]
-  [pd : i64]) : ir.CompilerIrGlobalList
-  (ir.compiler-ir-global-cons
-    (ir.CompilerIrGlobal.Global pa (ast.AstType.I64) (ir.CompilerIrValue.I64 0))
-    (ir.compiler-ir-global-cons
-      (ir.CompilerIrGlobal.Global
-        pb
-        (ast.AstType.I64)
-        (ir.CompilerIrValue.I64 0))
-      (ir.compiler-ir-global-cons
+  [pd : i64]) : ir.CompilerIrGlobalSeq
+  (let
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity 4)]
+    (begin
+      (ir.compiler-ir-global-builder-push!
+        (&mut builder)
+        (ir.CompilerIrGlobal.Global
+          pa
+          (ast.AstType.I64)
+          (ir.CompilerIrValue.I64 0)))
+      (ir.compiler-ir-global-builder-push!
+        (&mut builder)
+        (ir.CompilerIrGlobal.Global
+          pb
+          (ast.AstType.I64)
+          (ir.CompilerIrValue.I64 0)))
+      (ir.compiler-ir-global-builder-push!
+        (&mut builder)
         (ir.CompilerIrGlobal.Global
           pc
           (ast.AstType.I64)
-          (ir.CompilerIrValue.I64 0))
-        (ir.compiler-ir-global-cons
-          (ir.CompilerIrGlobal.Global
-            pd
-            (ast.AstType.I64)
-            (ir.CompilerIrValue.I64 0))
-          ir.CompilerIrGlobalList.Nil)))))
+          (ir.CompilerIrValue.I64 0)))
+      (ir.compiler-ir-global-builder-push!
+        (&mut builder)
+        (ir.CompilerIrGlobal.Global
+          pd
+          (ast.AstType.I64)
+          (ir.CompilerIrValue.I64 0)))
+      (ir.compiler-ir-global-builder-to-seq builder))))
 
 (define (win-param-preassign-function
   [function-name : i64]

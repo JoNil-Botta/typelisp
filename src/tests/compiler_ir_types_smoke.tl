@@ -253,13 +253,10 @@
       (= (compiler_ir_types.compiler-ir-function-seq-count seq) 2)]
     [_ false]))
 
-(define (compiler-ir-smoke-global-list-array-count?
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+(define (compiler-ir-smoke-global-seq-count?
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [want : i64]) : bool
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (= (compiler_ir_types.compiler-ir-global-seq-count seq) want)]
-    [_ false]))
+  (= (compiler_ir_types.compiler-ir-global-seq-count globals) want))
 
 (define (compiler-ir-smoke-extern-list-array-count?
   [externs : compiler_ir_types.CompilerIrExternList]
@@ -269,25 +266,26 @@
       (= (compiler_ir_types.compiler-ir-extern-seq-count seq) want)]
     [_ false]))
 
-(define (compiler-ir-smoke-global-list-name-at?
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+(define (compiler-ir-smoke-global-seq-name-at?
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [index : i64]
   [want : String]) : bool
-  (match (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (compiler_ir_types.compiler-ir-global-seq-to-list seq)]
-    [_ globals])
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (if (= index 0)
-        (match global
-          [(compiler_ir_types.CompilerIrGlobal.Global name _ _)
-            (string.eq (ci.intern-str name) want)])
-        (compiler-ir-smoke-global-list-name-at?
-          (__tl-box-place rest)
-          (- index 1)
-          want))]
-    [(compiler_ir_types.CompilerIrGlobalList.Nil) false]
-    [(compiler_ir_types.CompilerIrGlobalList.Array _) false]))
+  (if (or (< index 0) (>= index globals.len))
+    false
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+      [(compiler_ir_types.CompilerIrGlobal.Global name _ _)
+        (string.eq (ci.intern-str name) want)])))
+
+(define (compiler-ir-smoke-global-seq-two
+  [first : compiler_ir_types.CompilerIrGlobal]
+  [second : compiler_ir_types.CompilerIrGlobal]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 2)]
+    (begin
+      (compiler_ir_types.compiler-ir-global-builder-push! (&mut builder) first)
+      (compiler_ir_types.compiler-ir-global-builder-push! (&mut builder) second)
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
 (define (compiler-ir-smoke-extern-list-name-at?
   [externs : compiler_ir_types.CompilerIrExternList]
@@ -321,20 +319,10 @@
         (compiler-ir-smoke-symbol-id "second-global")
         (ast.AstType.Bool)
         (compiler_ir_types.CompilerIrValue.Bool true))]
-    [reversed-globals : compiler_ir_types.CompilerIrGlobalList
-      (compiler_ir_types.compiler-ir-global-cons
-        second-global
-        (compiler_ir_types.compiler-ir-global-cons
-          first-global
-          compiler_ir_types.CompilerIrGlobalList.Nil))]
-    [compact-globals : compiler_ir_types.CompilerIrGlobalList
-      (compiler_ir_types.compiler-ir-global-list-compact-reversed
-        reversed-globals)]
-    [array-reversed-globals : compiler_ir_types.CompilerIrGlobalList
-      (compiler_ir_types.compiler-ir-global-list-compact-reversed
-        compact-globals)]
-    [cloned-globals : compiler_ir_types.CompilerIrGlobalList
-      (compiler_ir_types.compiler-ir-clone-global-list
+    [compact-globals : compiler_ir_types.CompilerIrGlobalSeq
+      (compiler-ir-smoke-global-seq-two first-global second-global)]
+    [cloned-globals : compiler_ir_types.CompilerIrGlobalSeq
+      (compiler_ir_types.compiler-ir-clone-global-seq
         (ast.ast-node-pool-reader-context-current)
         compact-globals)]
     [first-extern : compiler_ir_types.CompilerIrExtern
@@ -370,14 +358,10 @@
           compiler_ir_types.CompilerIrFunctionList.Nil
           compact-externs))]
     (and
-      (compiler-ir-smoke-global-list-array-count? compact-globals 2)
-      (compiler-ir-smoke-global-list-name-at? compact-globals 0 "first-global")
-      (compiler-ir-smoke-global-list-name-at? compact-globals 1 "second-global")
-      (compiler-ir-smoke-global-list-name-at?
-        array-reversed-globals
-        0
-        "second-global")
-      (compiler-ir-smoke-global-list-name-at? cloned-globals 0 "first-global")
+      (compiler-ir-smoke-global-seq-count? compact-globals 2)
+      (compiler-ir-smoke-global-seq-name-at? compact-globals 0 "first-global")
+      (compiler-ir-smoke-global-seq-name-at? compact-globals 1 "second-global")
+      (compiler-ir-smoke-global-seq-name-at? cloned-globals 0 "first-global")
       (compiler-ir-smoke-extern-list-array-count? compact-externs 2)
       (compiler-ir-smoke-extern-list-name-at? compact-externs 0 "first-extern")
       (compiler-ir-smoke-extern-list-name-at? compact-externs 1 "second-extern")
@@ -439,7 +423,7 @@
     [summary : compiler_ir_types.CompilerIrSummary
       (compiler_ir_types.compiler-ir-program-summary
         (compiler_ir_types.CompilerIrProgram.Program
-          compiler_ir_types.CompilerIrGlobalList.Nil
+          (compiler_ir_types.compiler-ir-global-seq-empty)
           compact
           compiler_ir_types.CompilerIrExternList.Nil))]
     (and

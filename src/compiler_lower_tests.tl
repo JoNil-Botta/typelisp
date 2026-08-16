@@ -5795,23 +5795,24 @@
         name
         global-name)]))
 
+(define (lower-test-global-seq-has-name-at?
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index globals.len)
+    false
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+      [(compiler_ir_types.CompilerIrGlobal.Global global-name _ _)
+        (if (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text global-name)
+          name)
+          true
+          (lower-test-global-seq-has-name-at? globals name (+ index 1)))])))
+
 (define (lower-test-global-list-has-name?
-  [globals : compiler_ir_types.CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [name : String]) : bool
-  (match globals
-    [(compiler_ir_types.CompilerIrGlobalList.Nil) false]
-    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
-      (match global
-        [(compiler_ir_types.CompilerIrGlobal.Global global-name _ _)
-          (if (string.eq
-            (compiler_ir_types.compiler-ir-symbol-text global-name)
-            name)
-            true
-            (lower-test-global-list-has-name? (__tl-box-place rest) name))])]
-    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
-      (lower-test-global-list-has-name?
-        (compiler_ir_types.compiler-ir-global-seq-to-list seq)
-        name)]))
+  (lower-test-global-seq-has-name-at? globals name 0))
 
 (define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
   (match (compiler_lower.lower-compiler-source
@@ -6776,9 +6777,7 @@
           (let
             [ok : bool true]
             (begin
-              (if (match globals
-                [(compiler_ir_types.CompilerIrGlobalList.Array _) true]
-                [_ false])
+              (if (= globals.len 3)
                 unit
                 (set! ok false))
               (if (match externs

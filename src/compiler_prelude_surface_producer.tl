@@ -156,7 +156,6 @@
   [prefix-cache : tc.TcPrefixSnapshotCacheState]
   [job-state : tc.TcJobState]
   [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state : ci.InternCompatState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [surface-program : ast.AstProgram]
@@ -184,7 +183,7 @@
         (tc.tc-prefix-default-cache-scope)
         pools
         source-names
-        intern-state)]
+        (ci.intern-compat-state-capture-active))]
     (match checked
       [(tc.ResultCompilerTypecheckChecked.Partial diag _ _ _)
         (begin
@@ -221,7 +220,6 @@
   [prefix-cache : tc.TcPrefixSnapshotCacheState]
   [job-state : tc.TcJobState]
   [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state : ci.InternCompatState]
   [expanded : ast.AstProgram]
   [expanded-paths : ast.AstDeclPathList]
   [roots : surface_svec.Vec]
@@ -232,12 +230,11 @@
         [(ast.AstProgram.Program decls-box)
           (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
     (if (spec.compiler-specialize-needed-with-pools expanded pools)
-      (match (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
+      (match (spec.compiler-specialize-program-with-paths-and-pools
         expanded
         expanded-paths
         ""
-        pools
-        intern-state)
+        pools)
         [(spec.ResultSpecProgramWithPaths.Err diag)
           (prelude-surface-facts-error
             "prelude surface specialization failed: "
@@ -248,7 +245,6 @@
             prefix-cache
             job-state
             source-names
-            intern-state
             specialized
             specialized-paths
             expanded
@@ -261,7 +257,6 @@
         prefix-cache
         job-state
         source-names
-        intern-state
         expanded
         expanded-paths
         expanded
@@ -281,21 +276,19 @@
     [prefix-cache : tc.TcPrefixSnapshotCacheState
       (tc.tc-prefix-snapshot-cache-state-new)]
     [job-state : tc.TcJobState (tc.tc-job-state-new)]
-    [intern-state : ci.InternCompatState
-      (ci.intern-compat-state-capture-active)]
     [source-names : ci.InternSourceNameSessionHandle
-      (ci.intern-source-name-session-handle-from-state intern-state)]
-    (match (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+      (ci.intern-source-name-session-capture-active-handle)]
+    (match (spec.gen-normalize-program-with-paths-and-pools
       (ast.ast-program decls)
       paths
       ""
-      (spec.spec-owner-context-new pools intern-state))
+      pools)
       [(spec.ResultGenProgramWithPaths.Err diag)
         (prelude-surface-facts-error
           "prelude surface normalization failed: "
           diag)]
       [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
-        (match (tc.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
+        (match (tc.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
           load-state
           generated
           generated-paths
@@ -303,8 +296,7 @@
           source-names
           job-state
           roots
-          cfgs
-          intern-state)
+          cfgs)
           [(tc.ResultMacroExpand.Err diag)
             (prelude-surface-facts-error
               "prelude surface expansion failed: "
@@ -315,7 +307,6 @@
               prefix-cache
               job-state
               source-names
-              intern-state
               expanded
               expanded-paths
               roots

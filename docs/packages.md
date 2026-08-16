@@ -46,8 +46,26 @@ and emit compiled template, bracket, borrow, array, match, and let
 declarations the same way; unsupported bodies
 retain explicit shells for interpreted fallback. `typelisp inspect <file.tlci>`
 renders the image
-header, sections, and package metadata. General dependency-catalog discovery
-and consumer dispatch remain staged separately from emission.
+header, sections, and package metadata.
+
+Package consumers discover dependency images from the resolved package DAG and
+verify both the package identity and exact source-set binding before admission.
+That binding is an integrity and rebuild identity, not proof of publisher
+authenticity. Code-bearing images are mapped only when their host platform
+matches the compiler's build host; that host remains independent of the
+program's selected runtime target. Metadata-only images are portable and are
+admitted without mapping executable pages or registering entries. The
+zero-entry/no-map behavior is covered by the metadata-only gate tracked in
+[#2778](https://github.com/JoNil-Botta/typelisp/issues/2778) and landed through
+[#6594](https://github.com/JoNil-Botta/typelisp/pull/6594).
+
+Ordinary declaration resolution carries the physical defining source and then
+selects its owning, job-scoped dependency catalog. A selected dependency
+catalog currently stands down to deterministic source CTFE: native dependency
+entry invocation and transactional result commit remain staged in
+[#2755](https://github.com/JoNil-Botta/typelisp/issues/2755), followed by the
+stale-source/rebuild verification in
+[#2777](https://github.com/JoNil-Botta/typelisp/issues/2777).
 
 Runtime outputs and the host comptime image have independent freshness. A
 second identical build reports each as `Fresh`, preserves the assembly,

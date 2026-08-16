@@ -3286,12 +3286,17 @@ Example:
   expressions) through session locals and then emit compiled template,
   bracket-clause, borrow, array, match, and let declarations the same way;
   unsupported bodies retain an explicit registered shell and interpreted
-  fallback. General
-  consumer catalog
-  discovery/dispatch is a separate integration layer. The tlci image follows
-  the build host in v2: it always executes on the host platform that produced
-  it and stays separate from the selected runtime target's artifacts; it is
-  not portable code across host operating systems.
+  fallback. Package consumers discover dependency catalogs from the resolved
+  DAG, verify the package identity and exact source-set binding, apply host
+  admission, retain the result in a job-owned registry, and select the owning
+  catalog by physical defining-source provenance. Metadata-only catalogs are
+  admitted without native mapping; code-bearing catalogs are mapped only for
+  the compiler's build host. A selected dependency catalog currently stands
+  down to interpreted source fallback; native dependency execution and result
+  commit remain staged. The tlci image follows the build host in v2: it always
+  executes on the host platform that produced it and stays separate from the
+  selected runtime target's artifacts; it is not portable code across host
+  operating systems.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`
@@ -7277,7 +7282,7 @@ in documentation passes.
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
-| Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use the trusted embedded-stdlib image by default. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; modified, unavailable, or untrusted source fails closed to CTFE. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally, while registration shells and uncataloged identities retain counted CTFE fallback. Two-host differential, sustained reset/remap stress, and bootstrap fixpoint gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. General dependency-package catalog selection and consumer dispatch remain staged. |
+| Compiled comptime execution from embedded/package `tlci` images | Partially implemented: published Linux and Windows compilers use the trusted embedded-stdlib image by default. Exact embedded or byte-identical source provenance admits a stdlib module to its native registration catalog; modified, unavailable, or untrusted source fails closed to CTFE. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally, while registration shells and uncataloged identities retain counted CTFE fallback. Two-host differential, sustained reset/remap stress, and bootstrap fixpoint gates require route activity plus byte-identical assembly and equivalent diagnostics. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Dependency-package catalog discovery, exact-source and host admission, job-owned lifetime, and defining-provenance selection are implemented; metadata-only catalogs remain zero-entry/no-map and cross-host portable. Selected dependency entries currently stand down to deterministic source CTFE, while native dependency execution/commit and stale-rebuild verification remain staged. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
 | Richer LSP/IDE features | The immutable workspace source/declaration index and overlay/event plumbing are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, and references/rename through standard methods remain pending. |
 

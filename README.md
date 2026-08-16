@@ -135,8 +135,10 @@ Some capabilities remain restricted or experimental:
   restricted set of canonical scan forms. General scan vectorization is not
   complete.
 - Published compilers dispatch trusted embedded-stdlib comptime macros through
-  their TLCI native catalog on Linux and Windows. General dependency-package
-  TLCI selection and dispatch remain staged.
+  their TLCI native catalog on Linux and Windows. Package dependency catalogs
+  are discovered, source- and host-admitted, and selected by defining
+  provenance, but selected dependency macros still use deterministic source
+  CTFE; native dependency dispatch remains staged.
 - Public vector and mask value types, general vectorized SPMD support, a
   package registry, and workspaces are not complete.
 - General `free` and GC are intentionally not planned. TypeLisp uses arenas as

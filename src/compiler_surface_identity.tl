@@ -73,15 +73,6 @@
 (define surface-identity-max-count : i64
   1048576)
 
-(cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
-  (define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
-    (__tl_make-array u8 0)))
-
 (define (surface-identity-string-eq? [left : String] [right : String]) : bool
   (let
     [left-len : i64 (binary.surface-binary-string-length left)]
@@ -989,6 +980,20 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-identity-test-copy-bytes [bytes : (__tl_dyn-array u8)]) : (__tl_dyn-array
+      u8)
+    (let
+      [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
+      [index : i64 0]
+      (begin
+        (while (< index (array-length bytes))
+          (begin
+            (set! (array-ref out index) (array-ref bytes index))
+            (set! index (+ index 1))))
+        out))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-identity-test-key) : SurfaceIdentityKey
     (let
       [modules : (__tl_dyn-array String) (__tl_make-array String 2)]
@@ -1084,7 +1089,8 @@
           [(ResultSurfaceIdentityBytes.Err _) false]
           [(ResultSurfaceIdentityBytes.Ok bytes)
             (let
-              [copy : (__tl_dyn-array u8) (binary.surface-binary-copy bytes)]
+              [copy : (__tl_dyn-array u8)
+                (surface-identity-test-copy-bytes bytes)]
               (begin
                 (ci.intern-reset!)
                 (let

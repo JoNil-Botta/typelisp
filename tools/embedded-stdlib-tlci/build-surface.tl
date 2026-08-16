@@ -1,7 +1,7 @@
 ;; Build relocatable frontend-surface sections separately from native TLCl
 ;; production so compiler-internal nominal identities never cross the byte
 ;; boundary between the two translation units.
-(import compiler_prelude_surface_producer)
+(import prelude_surface_producer)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -20,17 +20,17 @@
       [build-hash : String (io.arg 4)]
       [source-hash : String (io.arg 5)]
       (if (or (string.eq target "linux") (string.eq target "windows"))
-        (match (compiler_prelude_surface_producer.prelude-surface-build
+        (match (prelude_surface_producer.prelude-surface-build
           root
           source-hash
           build-hash
           (string.eq target "windows"))
-          [(compiler_prelude_surface_producer.ResultPreludeSurface.Err message)
+          [(prelude_surface_producer.ResultPreludeSurface.Err message)
             (begin
               (io.print-error
                 (str_cat.str-cat "prelude surface: " message "\n"))
               1)]
-          [(compiler_prelude_surface_producer.ResultPreludeSurface.Ok bytes)
+          [(prelude_surface_producer.ResultPreludeSurface.Ok bytes)
             (let
               [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
               (begin

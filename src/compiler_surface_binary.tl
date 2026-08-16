@@ -105,21 +105,3 @@
           (set! index (+ index 1))))
       (unsafe
         (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) length)))))
-
-(cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
-  (define (surface-binary-copy [bytes : (__tl_dyn-array u8)]) : (__tl_dyn-array
-      u8)
-    (let
-      [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
-      [index : i64 0]
-      (begin
-        (while (< index (array-length bytes))
-          (begin
-            (set! (array-ref out index) (array-ref bytes index))
-            (set! index (+ index 1))))
-        out))))
